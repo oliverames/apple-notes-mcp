@@ -110,7 +110,7 @@ Creates a new note in Apple Notes.
 | `title` | string | Yes | The title of the note. Automatically prepended as `<h1>` — do NOT include the title in `content` |
 | `content` | string | Yes | The body content of the note (do not repeat the title here) |
 | `tags` | string[] | No | Tags for organization (stored in metadata) |
-| `format` | string | No | Content format: `"plaintext"` (default) or `"html"`. In both formats, the title is automatically prepended as `<h1>` |
+| `format` | string | No | Content format: `"plaintext"` (default) or `"html"`. In both formats, the title is automatically prepended as `<h1>`. In plaintext mode, newlines become `<br>`, tabs become `<br>`, and backslashes are preserved as HTML entities |
 
 **Example:**
 ```json
@@ -295,7 +295,7 @@ Updates an existing note's content and/or title.
 ```json
 {
   "id": "x-coredata://ABC123/ICNote/p456",
-  "newContent": "<h1>Updated Report</h1><p>New findings with <b>bold</b> emphasis.</p><pre><code>console.log('hello');</code></pre>",
+  "newContent": "<p>New findings with <b>bold</b> emphasis.</p><pre><code>console.log('hello');</code></pre>",
   "format": "html"
 }
 ```
