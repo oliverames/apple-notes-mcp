@@ -107,10 +107,10 @@ Creates a new note in Apple Notes.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `title` | string | Yes | The title of the note (becomes first line) |
-| `content` | string | Yes | The body content of the note |
+| `title` | string | Yes | The title of the note. Automatically prepended as `<h1>` — do NOT include the title in `content` |
+| `content` | string | Yes | The body content of the note (do not repeat the title here) |
 | `tags` | string[] | No | Tags for organization (stored in metadata) |
-| `format` | string | No | Content format: `"plaintext"` (default) or `"html"`. When `"html"`, content is used as raw HTML for rich formatting |
+| `format` | string | No | Content format: `"plaintext"` (default) or `"html"`. In both formats, the title is automatically prepended as `<h1>` |
 
 **Example:**
 ```json
@@ -125,10 +125,12 @@ Creates a new note in Apple Notes.
 ```json
 {
   "title": "Status Report",
-  "content": "<h1>Status Report</h1><h2>Summary</h2><p>All tasks <b>on track</b>.</p><ul><li>Feature A: complete</li><li>Feature B: in progress</li></ul>",
+  "content": "<h2>Summary</h2><p>All tasks <b>on track</b>.</p><ul><li>Feature A: complete</li><li>Feature B: in progress</li></ul>",
   "format": "html"
 }
 ```
+
+> **Note:** The title is automatically prepended as `<h1>` in both plaintext and HTML formats. Do not include a `<h1>` title tag in the `content` parameter, or the title will appear twice.
 
 **Returns:** Confirmation message with note title and ID. Save the ID for subsequent operations like `update-note`, `delete-note`, etc.
 

@@ -475,8 +475,8 @@ export class AppleNotesManager {
    * // Create in a different account
    * const gmail = manager.createNote("Draft", "...", [], undefined, "Gmail");
    *
-   * // Create with HTML formatting
-   * const html = manager.createNote("Report", "<h1>Report</h1><p>Details here</p>",
+   * // Create with HTML formatting (no need for <h1> — title is auto-prepended)
+   * const html = manager.createNote("Report", "<p>Details here</p>",
    *   [], undefined, undefined, "html");
    * ```
    */
@@ -490,27 +490,38 @@ export class AppleNotesManager {
   ): Note | null {
     const targetAccount = this.resolveAccount(account);
 
-    // Escape content for AppleScript embedding
-    const safeTitle = escapeForAppleScript(title);
-    const safeContent =
-      format === "html" ? escapeHtmlForAppleScript(content) : escapeForAppleScript(content);
+    // Build body HTML: title as <h1>, content follows.
+    // We set only 'body' (not 'name') to avoid title duplication —
+    // Notes.app auto-uses the first line of body as the note's display title.
+    const htmlTitle = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const bodyContent =
+      format === "html"
+        ? content
+        : content
+            .replace(/&/g, "&amp;")
+            .replace(/\\/g, "&#92;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\n/g, "<br>")
+            .replace(/\t/g, "<br>");
+
+    const safeBody = escapeHtmlForAppleScript(`<h1>${htmlTitle}</h1>${bodyContent}`);
 
     // Build the AppleScript command
-    // Notes.app uses 'name' for the title and 'body' for content
-    // We capture the ID of the newly created note
     let createCommand: string;
 
     if (folder) {
       // Create note in specific folder
       const safeFolder = escapeForAppleScript(folder);
       createCommand = `
-        set newNote to make new note at folder "${safeFolder}" with properties {name:"${safeTitle}", body:"${safeContent}"}
+        set newNote to make new note at folder "${safeFolder}" with properties {body:"${safeBody}"}
         return id of newNote
       `;
     } else {
       // Create note in default location
       createCommand = `
-        set newNote to make new note with properties {name:"${safeTitle}", body:"${safeContent}"}
+        set newNote to make new note with properties {body:"${safeBody}"}
         return id of newNote
       `;
     }

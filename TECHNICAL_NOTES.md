@@ -249,6 +249,10 @@ Can export notes to HTML/Markdown using built-in actions, but limited programmat
 | Attachment positioning unknown | Can't recreate note layout | Accept limitation |
 | Password-protected notes | Cannot read | Skip or warn user |
 
+### Note Creation: Body-Only Approach
+
+When creating notes via AppleScript, setting both the `name` property and the `body` causes title duplication — the title appears twice in the rendered note. The fix is to set only the `body`, with the title prepended as an `<h1>` tag. Apple Notes derives the note's display title from the first element in the body HTML. This approach works for both plaintext (converted to HTML) and HTML format content.
+
 ### Database Access Issues
 
 - Launch agents cannot access Group Containers even with Full Disk Access

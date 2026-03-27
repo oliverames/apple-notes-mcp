@@ -74,7 +74,8 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 ### create-note / update-note
 - Always escape backslashes in content (see above)
 - Newlines can be sent as `\n` (this is a valid JSON escape)
-- The title becomes the first line of the note
+- **Title handling:** The `title` parameter is automatically prepended as `<h1>` in the note body. Do NOT include the title in the `content` parameter, or it will appear twice.
+- **HTML format:** When using `format: "html"`, do NOT include a `<h1>` tag in `content` — the title is prepended automatically as `<h1>`.
 - `create-note` returns the new note's ID for subsequent operations
 
 ### Whitespace Accumulation on Iterative Updates
