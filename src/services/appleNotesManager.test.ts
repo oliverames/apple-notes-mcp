@@ -20,6 +20,7 @@ import {
   buildFolderReference,
   splitFolderPath,
   parseAppleScriptDate,
+  sanitizeId,
 } from "./appleNotesManager.js";
 
 // Mock the AppleScript execution module
@@ -896,7 +897,9 @@ describe("AppleNotesManager", () => {
         error: "Note not found",
       });
 
-      const result = manager.isNotePasswordProtectedById("x-coredata://invalid");
+      const result = manager.isNotePasswordProtectedById(
+        "x-coredata://00000000-0000-0000-0000-000000000000/ICNote/p999"
+      );
 
       expect(result).toBe(false);
     });
@@ -930,7 +933,9 @@ describe("AppleNotesManager", () => {
         error: "Can't get note id",
       });
 
-      const result = manager.getNoteById("x-coredata://invalid");
+      const result = manager.getNoteById(
+        "x-coredata://00000000-0000-0000-0000-000000000000/ICNote/p999"
+      );
 
       expect(result).toBeNull();
     });
@@ -1194,7 +1199,12 @@ describe("AppleNotesManager", () => {
       });
 
       const htmlContent = "<h1>My Title</h1><div>A &amp; B</div>";
-      const result = manager.updateNoteById("x-coredata://abc/123", undefined, htmlContent, "html");
+      const result = manager.updateNoteById(
+        "x-coredata://ABC00000-0000-0000-0000-000000000001/ICNote/p123",
+        undefined,
+        htmlContent,
+        "html"
+      );
 
       expect(result).toBe(true);
       // HTML mode: content passed directly, no <div> wrapper
@@ -1214,7 +1224,12 @@ describe("AppleNotesManager", () => {
       });
 
       const htmlContent = "<h1>Title</h1><div>Body</div>";
-      manager.updateNoteById("x-coredata://abc/456", undefined, htmlContent, "html");
+      manager.updateNoteById(
+        "x-coredata://ABC00000-0000-0000-0000-000000000002/ICNote/p456",
+        undefined,
+        htmlContent,
+        "html"
+      );
 
       // In HTML mode, getNoteById should NOT be called (it would trigger
       // an additional executeAppleScript call). Only one call should happen:
@@ -1874,11 +1889,20 @@ describe("AppleNotesManager", () => {
         // Second note: deleteNoteById
         .mockReturnValueOnce({ success: true, output: "" });
 
-      const results = manager.batchDeleteNotes(["id1", "id2"]);
+      const results = manager.batchDeleteNotes([
+        "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+        "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2",
+      ]);
 
       expect(results).toHaveLength(2);
-      expect(results[0]).toEqual({ id: "id1", success: true });
-      expect(results[1]).toEqual({ id: "id2", success: true });
+      expect(results[0]).toEqual({
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+        success: true,
+      });
+      expect(results[1]).toEqual({
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2",
+        success: true,
+      });
     });
 
     it("returns error for non-existent note", () => {
@@ -1888,10 +1912,12 @@ describe("AppleNotesManager", () => {
         error: "Not found",
       });
 
-      const results = manager.batchDeleteNotes(["nonexistent"]);
+      const results = manager.batchDeleteNotes([
+        "x-coredata://ABC00000-0000-0000-0000-000000000099/ICNote/p404",
+      ]);
 
       expect(results[0]).toEqual({
-        id: "nonexistent",
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000099/ICNote/p404",
         success: false,
         error: "Note not found",
       });
@@ -1904,10 +1930,12 @@ describe("AppleNotesManager", () => {
         // getNoteById for password check (returns true for passwordProtected)
         .mockReturnValueOnce({ success: true, output: noteByIdOutput("Locked Note", true) });
 
-      const results = manager.batchDeleteNotes(["id1"]);
+      const results = manager.batchDeleteNotes([
+        "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+      ]);
 
       expect(results[0]).toEqual({
-        id: "id1",
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
         success: false,
         error: "Note is password-protected",
       });
@@ -1922,10 +1950,20 @@ describe("AppleNotesManager", () => {
         // Second note: not found
         .mockReturnValueOnce({ success: false, output: "", error: "Not found" });
 
-      const results = manager.batchDeleteNotes(["id1", "id2"]);
+      const results = manager.batchDeleteNotes([
+        "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+        "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2",
+      ]);
 
-      expect(results[0]).toEqual({ id: "id1", success: true });
-      expect(results[1]).toEqual({ id: "id2", success: false, error: "Note not found" });
+      expect(results[0]).toEqual({
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+        success: true,
+      });
+      expect(results[1]).toEqual({
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2",
+        success: false,
+        error: "Note not found",
+      });
     });
   });
 
@@ -1958,11 +1996,23 @@ describe("AppleNotesManager", () => {
         // Second note: deleteNoteById (original)
         .mockReturnValueOnce({ success: true, output: "" });
 
-      const results = manager.batchMoveNotes(["id1", "id2"], "Archive");
+      const results = manager.batchMoveNotes(
+        [
+          "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+          "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2",
+        ],
+        "Archive"
+      );
 
       expect(results).toHaveLength(2);
-      expect(results[0]).toEqual({ id: "id1", success: true });
-      expect(results[1]).toEqual({ id: "id2", success: true });
+      expect(results[0]).toEqual({
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
+        success: true,
+      });
+      expect(results[1]).toEqual({
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000012/ICNote/p2",
+        success: true,
+      });
     });
 
     it("returns error for non-existent note", () => {
@@ -1973,10 +2023,13 @@ describe("AppleNotesManager", () => {
         error: "Not found",
       });
 
-      const results = manager.batchMoveNotes(["nonexistent"], "Archive");
+      const results = manager.batchMoveNotes(
+        ["x-coredata://ABC00000-0000-0000-0000-000000000099/ICNote/p404"],
+        "Archive"
+      );
 
       expect(results[0]).toEqual({
-        id: "nonexistent",
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000099/ICNote/p404",
         success: false,
         error: "Note not found",
       });
@@ -1989,10 +2042,13 @@ describe("AppleNotesManager", () => {
         // getNoteById for password check (returns true for passwordProtected)
         .mockReturnValueOnce({ success: true, output: noteByIdOutput("Locked Note", true) });
 
-      const results = manager.batchMoveNotes(["id1"], "Archive");
+      const results = manager.batchMoveNotes(
+        ["x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1"],
+        "Archive"
+      );
 
       expect(results[0]).toEqual({
-        id: "id1",
+        id: "x-coredata://ABC00000-0000-0000-0000-000000000011/ICNote/p1",
         success: false,
         error: "Note is password-protected",
       });
@@ -2143,7 +2199,9 @@ describe("AppleNotesManager", () => {
         error: "Note not found",
       });
 
-      const markdown = manager.getNoteMarkdownById("x-coredata://invalid");
+      const markdown = manager.getNoteMarkdownById(
+        "x-coredata://00000000-0000-0000-0000-000000000000/ICNote/p999"
+      );
 
       expect(markdown).toBe("");
     });
@@ -2185,6 +2243,134 @@ describe("AppleNotesManager", () => {
       expect(markdown).toMatch(/-\s+Item 2/);
       expect(markdown).not.toContain("[x]");
       expect(markdown).not.toContain("[ ]");
+    });
+  });
+
+  // ===========================================================================
+  // Security Tests
+  // ===========================================================================
+
+  describe("sanitizeId", () => {
+    it("accepts valid CoreData IDs", () => {
+      const id = "x-coredata://12345ABC-DEF0-1234-5678-9ABCDEF01234/ICNote/p100";
+      expect(sanitizeId(id)).toBe(id);
+    });
+
+    it("accepts temp IDs from generateFallbackId", () => {
+      expect(sanitizeId("temp-1704067200000-0")).toBe("temp-1704067200000-0");
+      expect(sanitizeId("temp-1704067200000-42")).toBe("temp-1704067200000-42");
+    });
+
+    it("rejects IDs with AppleScript injection", () => {
+      expect(() => sanitizeId('x-coredata://test" & do shell script "rm -rf ~" & "')).toThrow(
+        "Invalid note ID format"
+      );
+    });
+
+    it("rejects IDs with double-quote breakout", () => {
+      expect(() => sanitizeId('x-coredata://test"; delete note id "dummy" & "')).toThrow(
+        "Invalid note ID format"
+      );
+    });
+
+    it("rejects arbitrary strings", () => {
+      expect(() => sanitizeId("not-a-valid-id")).toThrow("Invalid note ID format");
+    });
+
+    it("rejects empty string", () => {
+      expect(() => sanitizeId("")).toThrow("Invalid note ID format");
+    });
+
+    it("accepts various ICEntity types", () => {
+      expect(sanitizeId("x-coredata://ABC123/ICFolder/p50")).toBe(
+        "x-coredata://ABC123/ICFolder/p50"
+      );
+      expect(sanitizeId("x-coredata://ABC123/ICAttachment/p1")).toBe(
+        "x-coredata://ABC123/ICAttachment/p1"
+      );
+    });
+  });
+
+  describe("escapeForAppleScript - injection prevention", () => {
+    it("escapes double quotes to prevent AppleScript string breakout", () => {
+      const malicious = 'Hello "World" end tell';
+      const escaped = escapeForAppleScript(malicious);
+      expect(escaped).toContain('\\"');
+      expect(escaped).not.toContain('"World"');
+    });
+
+    it("escapes backslashes to prevent escape sequence injection", () => {
+      const malicious = "path\\to\\file";
+      const escaped = escapeForAppleScript(malicious);
+      // Backslashes should be encoded as HTML entities (&#92;)
+      expect(escaped).toContain("&#92;");
+    });
+
+    it("handles combined injection payload", () => {
+      const payload = '" & do shell script "echo pwned" & "';
+      const escaped = escapeForAppleScript(payload);
+      // All double quotes must be escaped with backslash
+      // Count unescaped double quotes — there should be none
+      const unescapedQuotes = escaped.replace(/\\"/g, "").match(/"/g);
+      expect(unescapedQuotes).toBeNull();
+    });
+  });
+
+  describe("buildFolderReference - input validation", () => {
+    it("rejects empty folder paths", () => {
+      expect(() => buildFolderReference("")).toThrow("Folder path is empty");
+    });
+
+    it("rejects paths that are only slashes", () => {
+      expect(() => buildFolderReference("///")).toThrow("Folder path is empty");
+    });
+
+    it("rejects excessively deep folder nesting", () => {
+      const deepPath = Array(25).fill("folder").join("/");
+      expect(() => buildFolderReference(deepPath)).toThrow("maximum nesting depth");
+    });
+
+    it("rejects excessively long folder paths", () => {
+      const longPath = "a".repeat(1001);
+      expect(() => buildFolderReference(longPath)).toThrow("maximum length");
+    });
+
+    it("escapes folder names with double quotes", () => {
+      const result = buildFolderReference('My "Special" Folder');
+      expect(result).toContain('\\"');
+      expect(result).not.toContain('"Special"');
+    });
+
+    it("handles folder names with emoji", () => {
+      const result = buildFolderReference("Food & Drink/\uD83C\uDF72 Recipes");
+      expect(result).toContain("folder");
+      expect(result).toContain("of");
+    });
+  });
+
+  describe("ID-based operations sanitize input", () => {
+    it("getNoteById rejects malformed IDs", () => {
+      expect(() => {
+        manager.getNoteById('malicious" & do shell script "echo pwned');
+      }).toThrow("Invalid note ID format");
+    });
+
+    it("deleteNoteById rejects malformed IDs", () => {
+      expect(() => {
+        manager.deleteNoteById('x-coredata://test"; delete note 1 & "');
+      }).toThrow("Invalid note ID format");
+    });
+
+    it("getNoteContentById rejects malformed IDs", () => {
+      expect(() => {
+        manager.getNoteContentById("arbitrary string");
+      }).toThrow("Invalid note ID format");
+    });
+
+    it("updateNoteById rejects malformed IDs", () => {
+      expect(() => {
+        manager.updateNoteById("not-valid", undefined, "content");
+      }).toThrow("Invalid note ID format");
     });
   });
 });

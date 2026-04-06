@@ -124,6 +124,78 @@ export function escapeHtmlForAppleScript(htmlContent: string): string {
   return htmlContent.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+// =============================================================================
+// Input Validation & Sanitization
+// =============================================================================
+
+/** Maximum allowed length for note titles */
+const MAX_TITLE_LENGTH = 2000;
+
+/** Maximum allowed length for note content (5 MB of text) */
+const MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
+
+/** Maximum allowed length for folder names/paths */
+const MAX_FOLDER_PATH_LENGTH = 1000;
+
+/** Maximum allowed length for account names */
+const MAX_ACCOUNT_LENGTH = 200;
+
+/** Maximum nesting depth for folder paths */
+const MAX_FOLDER_DEPTH = 20;
+
+/**
+ * Validates and constrains string input length.
+ *
+ * @param value - The input string
+ * @param maxLength - Maximum allowed length
+ * @param label - Human-readable label for error messages
+ * @returns The validated string
+ * @throws Error if input exceeds maximum length
+ */
+function validateLength(value: string, maxLength: number, label: string): string {
+  if (value.length > maxLength) {
+    throw new Error(
+      `${label} exceeds maximum length of ${maxLength} characters (got ${value.length})`
+    );
+  }
+  return value;
+}
+
+/**
+ * Sanitizes a CoreData ID for safe embedding in AppleScript.
+ *
+ * CoreData IDs follow the pattern: x-coredata://UUID/ICNote/pNNN
+ * This function validates the format and escapes the value for AppleScript.
+ *
+ * @param id - CoreData URL identifier
+ * @returns Escaped ID safe for AppleScript string embedding
+ * @throws Error if ID format is invalid
+ */
+export function sanitizeId(id: string): string {
+  // CoreData IDs should match: x-coredata://hex-hex-hex-hex-hex/ICEntity/pDigits
+  // or temp-timestamp-counter format from generateFallbackId()
+  const coreDataPattern = /^x-coredata:\/\/[0-9A-Fa-f-]+\/IC[A-Za-z]+\/p\d+$/;
+  const tempIdPattern = /^temp-\d+-\d+$/;
+  if (!coreDataPattern.test(id) && !tempIdPattern.test(id)) {
+    throw new Error(
+      `Invalid note ID format: "${id.substring(0, 80)}". Expected CoreData URL (x-coredata://...) or temp ID.`
+    );
+  }
+  // Even with validation, escape for defense-in-depth
+  return escapeForAppleScript(id);
+}
+
+/**
+ * Sanitizes an account name for safe embedding in AppleScript.
+ *
+ * @param account - Account name string
+ * @returns Escaped account name safe for AppleScript string embedding
+ */
+function sanitizeAccountName(account: string): string {
+  validateLength(account, MAX_ACCOUNT_LENGTH, "Account name");
+  return escapeForAppleScript(account);
+}
+
 /**
  * Counter for generating unique fallback IDs within the same millisecond.
  */
@@ -322,7 +394,16 @@ function escapeFolderName(name: string): string {
  * @returns AppleScript folder reference string
  */
 export function buildFolderReference(folderPath: string): string {
+  validateLength(folderPath, MAX_FOLDER_PATH_LENGTH, "Folder path");
   const parts = splitFolderPath(folderPath);
+  if (parts.length > MAX_FOLDER_DEPTH) {
+    throw new Error(
+      `Folder path exceeds maximum nesting depth of ${MAX_FOLDER_DEPTH} (got ${parts.length})`
+    );
+  }
+  if (parts.length === 0) {
+    throw new Error("Folder path is empty");
+  }
   // Build inside-out: last part is innermost, first part is outermost
   return parts
     .reverse()
@@ -349,9 +430,10 @@ export function buildFolderReference(folderPath: string): string {
  * @returns Complete AppleScript ready for execution
  */
 function buildAccountScopedScript(scope: AccountScope, command: string): string {
+  const safeAccount = sanitizeAccountName(scope.account);
   return `
     tell application "Notes"
-      tell account "${scope.account}"
+      tell account "${safeAccount}"
         ${command}
       end tell
     end tell
@@ -537,6 +619,8 @@ export class AppleNotesManager {
     account?: string,
     format: "plaintext" | "html" = "plaintext"
   ): Note | null {
+    validateLength(title, MAX_TITLE_LENGTH, "Note title");
+    validateLength(content, MAX_CONTENT_LENGTH, "Note content");
     const targetAccount = this.resolveAccount(account);
 
     // Build body HTML: title as <h1>, content follows.
@@ -786,8 +870,9 @@ export class AppleNotesManager {
    * @returns HTML content of the note, or empty string if not found
    */
   getNoteContentById(id: string): string {
+    const safeId = sanitizeId(id);
     // Note IDs work at the application level, not scoped to account
-    const getCommand = `get body of note id "${id}"`;
+    const getCommand = `get body of note id "${safeId}"`;
     const script = buildAppLevelScript(getCommand);
     const result = executeAppleScript(script);
 
@@ -811,9 +896,10 @@ export class AppleNotesManager {
    * @returns Note object with metadata, or null if not found
    */
   getNoteById(id: string): Note | null {
+    const safeId = sanitizeId(id);
     // Note IDs work at the application level, not scoped to account
     const getCommand = `
-      set n to note id "${id}"
+      set n to note id "${safeId}"
       set noteProps to {name of n, id of n, creation date of n, modification date of n, shared of n, password protected of n}
       return noteProps
     `;
@@ -926,7 +1012,8 @@ export class AppleNotesManager {
    * @returns true if deletion succeeded, false otherwise
    */
   deleteNoteById(id: string): boolean {
-    const deleteCommand = `delete note id "${id}"`;
+    const safeId = sanitizeId(id);
+    const deleteCommand = `delete note id "${safeId}"`;
     const script = buildAppLevelScript(deleteCommand);
     const result = executeAppleScript(script);
 
@@ -966,6 +1053,8 @@ export class AppleNotesManager {
     account?: string,
     format: "plaintext" | "html" = "plaintext"
   ): boolean {
+    if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
+    validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
     const targetAccount = this.resolveAccount(account);
     const safeCurrentTitle = escapeForAppleScript(title);
 
@@ -1018,6 +1107,8 @@ export class AppleNotesManager {
     newContent: string,
     format: "plaintext" | "html" = "plaintext"
   ): boolean {
+    if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
+    validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
     let fullBody: string;
     if (format === "html") {
       // HTML mode: content is the complete body, escaped only for AppleScript string
@@ -1040,7 +1131,8 @@ export class AppleNotesManager {
       fullBody = `<div>${safeEffectiveTitle}</div><div>${safeContent}</div>`;
     }
 
-    const updateCommand = `set body of note id "${id}" to "${fullBody}"`;
+    const safeId = sanitizeId(id);
+    const updateCommand = `set body of note id "${safeId}" to "${fullBody}"`;
     const script = buildAppLevelScript(updateCommand);
     const result = executeAppleScript(script);
 
@@ -1155,17 +1247,19 @@ export class AppleNotesManager {
     const accounts = this.listAccounts();
 
     for (const account of accounts) {
+      // Use delimited output to avoid fragile comma-based parsing.
+      // Format: name|||id|||createdDate|||modifiedDate|||shared|||passwordProtected
       const script = buildAccountScopedScript(
         { account: account.name },
         `
-        set sharedList to {}
+        set resultList to {}
         repeat with n in notes
           if shared of n is true then
-            set noteProps to {name of n, id of n, creation date of n, modification date of n, shared of n, password protected of n}
-            set end of sharedList to noteProps
+            set end of resultList to (name of n) & "|||" & (id of n) & "|||" & (creation date of n as text) & "|||" & (modification date of n as text) & "|||" & (shared of n as text) & "|||" & (password protected of n as text)
           end if
         end repeat
-        return sharedList
+        set AppleScript's text item delimiters to "|||ITEM|||"
+        return resultList as text
         `
       );
 
@@ -1176,25 +1270,23 @@ export class AppleNotesManager {
         continue;
       }
 
-      // Parse the result - format is: {{name, id, date, date, bool, bool}, {...}, ...}
       const output = result.output.trim();
-      if (!output || output === "{}" || output === "{}") {
+      if (!output) {
         continue;
       }
 
-      // Extract individual note data using regex
-      const notePattern = /\{([^{}]+)\}/g;
-      let match;
+      // Parse delimited output: "name|||id|||created|||modified|||shared|||pp|||ITEM|||..."
+      const items = output.split("|||ITEM|||");
 
-      while ((match = notePattern.exec(output)) !== null) {
-        const parts = match[1].split(", ");
+      for (const item of items) {
+        const parts = item.split("|||");
         if (parts.length >= 6) {
           const title = parts[0].trim();
           const id = parts[1].trim();
-          const createdStr = parts.slice(2, parts.length - 3).join(", ");
-          const modifiedStr = parts[parts.length - 3];
-          const shared = parts[parts.length - 2] === "true";
-          const passwordProtected = parts[parts.length - 1] === "true";
+          const createdStr = parts[2].trim();
+          const modifiedStr = parts[3].trim();
+          const shared = parts[4].trim() === "true";
+          const passwordProtected = parts[5].trim() === "true";
 
           sharedNotes.push({
             id,
@@ -1405,7 +1497,8 @@ export class AppleNotesManager {
     }
 
     // Step 4: Delete the original by ID (not by title, since there are now two notes with the same title)
-    const deleteCommand = `delete note id "${originalNote.id}"`;
+    const safeOrigId = sanitizeId(originalNote.id);
+    const deleteCommand = `delete note id "${safeOrigId}"`;
     const deleteScript = buildAppLevelScript(deleteCommand);
     const deleteResult = executeAppleScript(deleteScript);
 
@@ -1435,6 +1528,7 @@ export class AppleNotesManager {
    */
   moveNoteById(id: string, destinationFolder: string, account?: string): boolean {
     const targetAccount = this.resolveAccount(account);
+    const safeId = sanitizeId(id);
 
     // Step 1: Retrieve the original note's content by ID
     const originalContent = this.getNoteContentById(id);
@@ -1459,7 +1553,7 @@ export class AppleNotesManager {
     }
 
     // Step 3: Delete the original by ID
-    const deleteCommand = `delete note id "${id}"`;
+    const deleteCommand = `delete note id "${safeId}"`;
     const deleteScript = buildAppLevelScript(deleteCommand);
     const deleteResult = executeAppleScript(deleteScript);
 
@@ -1743,7 +1837,7 @@ export class AppleNotesManager {
    * ```
    */
   listAttachmentsById(id: string): Attachment[] {
-    const safeId = escapeForAppleScript(id);
+    const safeId = sanitizeId(id);
 
     const script = `
       tell application "Notes"
