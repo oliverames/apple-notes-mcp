@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-04-06
+
+### Fixed
+- **Nested folder creation** — `create-folder` now supports hierarchical paths (e.g., `"Retro Tech/PC/CPUs"`) by creating intermediate folders and checking existence first to prevent duplicate ghost folders in CoreData
+- **Note creation in deeply nested folders** — Fixed AppleScript `-1728` error when creating notes in nested folder contexts by switching to implicit return pattern
+- **Updated `create-folder` tool description** — Schema now documents nested path support
+
+### Contributors
+- @robschmitt — nested folder creation fix and deep folder note creation fix (PR #9)
+
 ## [1.4.0] - 2026-04-06
 
 ### Added
