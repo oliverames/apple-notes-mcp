@@ -27,6 +27,7 @@ import { z } from "zod";
 import { AppleNotesManager } from "@/services/appleNotesManager.js";
 import { getSyncStatus, withSyncAwarenessSync } from "@/utils/syncDetection.js";
 import { getChecklistItems, hasFullDiskAccess } from "@/utils/checklistParser.js";
+import { detectChecklistAttempt } from "@/utils/contentWarnings.js";
 
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
@@ -131,7 +132,12 @@ server.tool(
   "create-note",
   {
     title: z.string().min(1, "Title is required"),
-    content: z.string().min(1, "Content is required"),
+    content: z
+      .string()
+      .min(1, "Content is required")
+      .describe(
+        'Note body. AppleScript cannot create true Apple Notes checklists — `<input type="checkbox">`, checklist CSS classes, and markdown `- [ ]` lines do not render as checkable items. To produce a checklist, create the note with a plain `<ul>` or `- ` list and convert it in Notes.app with ⇧⌘L.'
+      ),
     format: z
       .enum(["plaintext", "html"])
       .optional()
@@ -153,7 +159,8 @@ server.tool(
       );
     }
 
-    return successResponse(`Note created: "${note.title}" [id: ${note.id}]`);
+    const checklistWarning = detectChecklistAttempt(content) ?? "";
+    return successResponse(`Note created: "${note.title}" [id: ${note.id}]${checklistWarning}`);
   }, "Error creating note")
 );
 
@@ -344,7 +351,12 @@ server.tool(
     id: z.string().optional().describe("Note ID (preferred - more reliable than title)"),
     title: z.string().optional().describe("Current note title (use id instead when available)"),
     newTitle: z.string().optional().describe("New title for the note"),
-    newContent: z.string().min(1, "New content is required"),
+    newContent: z
+      .string()
+      .min(1, "New content is required")
+      .describe(
+        "New note body. AppleScript cannot produce true Apple Notes checklists; checkbox inputs and `- [ ]` markdown do not render as checkable items. Use a plain list and convert in Notes.app with ⇧⌘L."
+      ),
     format: z
       .enum(["plaintext", "html"])
       .optional()
@@ -377,7 +389,8 @@ server.tool(
       const sharedWarning = note.shared
         ? "\n\n⚠️ This note is shared with collaborators. Your changes will be visible to them."
         : "";
-      return successResponse(`Note updated: "${displayTitle}"${sharedWarning}`);
+      const checklistWarning = detectChecklistAttempt(newContent) ?? "";
+      return successResponse(`Note updated: "${displayTitle}"${sharedWarning}${checklistWarning}`);
     }
 
     // Fall back to title-based update
@@ -408,7 +421,8 @@ server.tool(
     const sharedWarning = note.shared
       ? "\n\n⚠️ This note is shared with collaborators. Your changes will be visible to them."
       : "";
-    return successResponse(`Note updated: "${finalTitle}"${sharedWarning}`);
+    const checklistWarning = detectChecklistAttempt(newContent) ?? "";
+    return successResponse(`Note updated: "${finalTitle}"${sharedWarning}${checklistWarning}`);
   }, "Error updating note")
 );
 

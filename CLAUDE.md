@@ -78,6 +78,28 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 - **HTML format:** When using `format: "html"`, do NOT include a `<h1>` tag in `content` — the title is prepended automatically as `<h1>`.
 - `create-note` returns the new note's ID for subsequent operations
 
+### Checklist Creation Is Not Supported
+
+**You cannot create an Apple Notes checklist (the interactive ☐ / ☑ items) via this MCP server.** This is an Apple Notes limitation, not a server bug.
+
+When you send checklist HTML or markdown to `create-note` or `update-note`:
+
+| You send | What Notes.app renders |
+|----------|------------------------|
+| `<input type="checkbox"> Buy milk` | `Buy milk` (the `<input>` is stripped) |
+| `<ul class="checklist"><li>Buy milk</li></ul>` | A plain bulleted list (the class is dropped) |
+| `- [ ] Buy milk` in `plaintext` mode | Literal text `- [ ] Buy milk` |
+
+Apple Notes stores checklists as a paragraph style inside a gzipped protobuf blob. AppleScript's `body` interface does not expose paragraph styles, so there is no HTML or markdown input that produces a real checklist.
+
+**What to do when a user asks for a checklist note:**
+
+1. Create the note with `<ul><li>…</li></ul>` items (HTML) or `- ` bullet lines (plaintext) — the list structure is preserved.
+2. Tell the user to open the note in Notes.app, select the list items, and press **⇧⌘L** (or **Format → Checklist**) to convert them.
+3. Once converted, `get-checklist-state` and `get-note-markdown` can read the done/undone state correctly.
+
+Do not try alternative HTML class names, data attributes, or Unicode characters like `☐` — none of them produce a real checklist. The interface to set paragraph styles simply isn't exposed.
+
 ### Whitespace Accumulation on Iterative Updates
 
 **Important:** When repeatedly updating a note (especially with HTML content), Apple Notes can accumulate whitespace artifacts - specifically `<div><br></div>` tags that persist between sections even after removing them from your content.

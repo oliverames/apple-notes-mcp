@@ -757,6 +757,29 @@ All other tools work normally without Full Disk Access. Only checklist state fea
 | Limited rich formatting | Use `format: "html"` on create/update for headings, lists, bold, code blocks; some complex formatting may not render |
 | Title matching | Most operations require exact title matches |
 | Checklist state | Requires Full Disk Access to read done/undone state from the database |
+| Checklist **creation** | Not supported. AppleScript's `body of note` setter strips `<input type="checkbox">` and ignores any checklist-styling CSS class. Apple Notes stores checklist items as a protobuf paragraph style (`style_type=103`) that AppleScript doesn't expose, and the SQLite database is read-only. See [Creating Checklists](#creating-checklists) below for the workaround. |
+
+### Creating Checklists
+
+**There is no programmatic way to create a true Apple Notes checklist via AppleScript** — and therefore no way via this MCP server. This is an Apple limitation, not a bug.
+
+When a note is created or updated via AppleScript:
+
+| You send | What Notes.app actually renders |
+|----------|--------------------------------|
+| `<input type="checkbox"> Item` | `Item` (the `<input>` tag is stripped) |
+| `<ul class="checklist"><li>Item</li></ul>` | A plain bulleted list — the `checklist` class is dropped |
+| Markdown `- [ ] Item` (in `plaintext` mode) | The literal text `- [ ] Item` |
+
+Apple Notes stores checklists as a paragraph style (`style_type=103`) inside a gzipped protobuf blob in the `NoteStore.sqlite` database. AppleScript's note `body` interface does not expose paragraph styles, and writing directly to the live database is unsafe.
+
+**Workarounds:**
+
+1. **Create the note with bulleted list items, then convert manually in Notes.app.** Select the items and press <kbd>⇧⌘L</kbd> (or **Format → Checklist**). This converts the list in place and the resulting checklist will be readable by `get-checklist-state` and annotated by `get-note-markdown`.
+2. **Use the Apple Shortcuts app** to script the checklist creation, since Shortcuts can manipulate Notes content at a higher level than AppleScript.
+3. **Read-only checklist support is fully implemented** — once a checklist exists (created manually or by another app), `get-checklist-state` and `get-note-markdown` will read its done/undone state correctly (with Full Disk Access).
+
+If you need to *track* todos programmatically and don't strictly need them rendered as Apple Notes checklist UI, plain markdown-style `- [ ] item` / `- [x] item` lines in a `plaintext` note are a reasonable alternative — they are searchable, human-readable, and can be parsed by downstream tooling.
 
 ### Backslash Escaping (Important for AI Agents)
 
