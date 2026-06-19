@@ -29,6 +29,11 @@ import { getSyncStatus, withSyncAwarenessSync } from "@/utils/syncDetection.js";
 import { getChecklistItems, hasFullDiskAccess } from "@/utils/checklistParser.js";
 import { detectChecklistAttempt } from "@/utils/contentWarnings.js";
 import { runDoctor, formatDoctorReport } from "@/tools/doctor.js";
+import { loadFileConfig } from "@/services/fileConfig.js";
+
+// Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
+// Lets users configure the server when the host app strips the MCP env block.
+loadFileConfig();
 
 // Read version from package.json to keep it in sync
 const require = createRequire(import.meta.url);
