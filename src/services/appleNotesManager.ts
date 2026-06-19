@@ -760,7 +760,7 @@ export class AppleNotesManager {
     limit?: number
   ): Note[] {
     const targetAccount = this.resolveAccount(account);
-    const safeQuery = escapeForAppleScript(query);
+    const safeQuery = escapePlainStringForAppleScript(query);
     const safeLimit = limit !== undefined && limit > 0 ? Math.floor(limit) : undefined;
 
     // Build the where clause based on search type
@@ -875,7 +875,7 @@ export class AppleNotesManager {
    */
   getNoteContent(title: string, account?: string): string {
     const targetAccount = this.resolveAccount(account);
-    const safeTitle = escapeForAppleScript(title);
+    const safeTitle = escapePlainStringForAppleScript(title);
 
     // Retrieve the body property of the note
     const getCommand = `get body of note "${safeTitle}"`;
@@ -978,7 +978,7 @@ export class AppleNotesManager {
    */
   getNoteDetails(title: string, account?: string): Note | null {
     const targetAccount = this.resolveAccount(account);
-    const safeTitle = escapeForAppleScript(title);
+    const safeTitle = escapePlainStringForAppleScript(title);
 
     // Fetch multiple properties at once
     const getCommand = `
@@ -1028,7 +1028,7 @@ export class AppleNotesManager {
    */
   deleteNote(title: string, account?: string): boolean {
     const targetAccount = this.resolveAccount(account);
-    const safeTitle = escapeForAppleScript(title);
+    const safeTitle = escapePlainStringForAppleScript(title);
 
     const deleteCommand = `delete note "${safeTitle}"`;
     const script = buildAccountScopedScript({ account: targetAccount }, deleteCommand);
@@ -1096,7 +1096,7 @@ export class AppleNotesManager {
     if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
     validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
     const targetAccount = this.resolveAccount(account);
-    const safeCurrentTitle = escapeForAppleScript(title);
+    const safeCurrentTitle = escapePlainStringForAppleScript(title);
 
     let fullBody: string;
     if (format === "html") {
@@ -1469,7 +1469,7 @@ export class AppleNotesManager {
       }
 
       // Folder doesn't exist — create it
-      const segmentName = escapeForAppleScript(parts[i]);
+      const segmentName = escapePlainStringForAppleScript(parts[i]);
       let createCommand: string;
 
       if (i === 0) {
@@ -1993,7 +1993,7 @@ export class AppleNotesManager {
    */
   listAttachments(title: string, account?: string): Attachment[] {
     const targetAccount = this.resolveAccount(account);
-    const safeTitle = escapeForAppleScript(title);
+    const safeTitle = escapePlainStringForAppleScript(title);
 
     const script = `
       tell application "Notes"
@@ -2063,8 +2063,8 @@ export class AppleNotesManager {
     }
 
     const safeNoteId = sanitizeId(noteId);
-    const safeAttId = escapeForAppleScript(attachmentId);
-    const safePath = escapeForAppleScript(abs);
+    const safeAttId = escapePlainStringForAppleScript(attachmentId);
+    const safePath = escapePlainStringForAppleScript(abs);
 
     const script = `
       tell application "Notes"
