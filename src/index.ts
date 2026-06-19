@@ -30,6 +30,7 @@ import { getChecklistItems, hasFullDiskAccess } from "@/utils/checklistParser.js
 import { detectChecklistAttempt } from "@/utils/contentWarnings.js";
 import { runDoctor, formatDoctorReport } from "@/tools/doctor.js";
 import { loadFileConfig } from "@/services/fileConfig.js";
+import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -1137,5 +1138,8 @@ server.tool(
  * The server uses stdio transport for communication with MCP clients.
  * This is the standard transport for CLI-based MCP servers.
  */
+// Register read-only resources and workflow prompts (#23).
+registerResourcesAndPrompts(server, notesManager);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
