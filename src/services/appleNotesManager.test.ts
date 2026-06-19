@@ -620,16 +620,14 @@ describe("AppleNotesManager", () => {
       expect(results).toHaveLength(0);
     });
 
-    it("returns empty array on AppleScript error", () => {
+    it("throws on AppleScript error rather than returning empty (#19)", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: false,
         output: "",
         error: "Search failed",
       });
 
-      const results = manager.searchNotes("test");
-
-      expect(results).toHaveLength(0);
+      expect(() => manager.searchNotes("test")).toThrow(/Search failed/);
     });
 
     it("searches content when searchContent is true", () => {
@@ -1330,16 +1328,14 @@ describe("AppleNotesManager", () => {
       expect(titles).toEqual(["Note A", "Note B"]);
     });
 
-    it("returns empty array on failure", () => {
+    it("throws on failure rather than returning empty (#19)", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: false,
         output: "",
         error: "Account not found",
       });
 
-      const titles = manager.listNotes();
-
-      expect(titles).toEqual([]);
+      expect(() => manager.listNotes()).toThrow(/Account not found/);
     });
 
     it("filters by folder when specified", () => {
@@ -1777,16 +1773,14 @@ describe("AppleNotesManager", () => {
       expect(accounts[2].name).toBe("Exchange");
     });
 
-    it("returns empty array on failure", () => {
+    it("throws on failure rather than returning empty (#19)", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: false,
         output: "",
         error: "Notes.app not available",
       });
 
-      const accounts = manager.listAccounts();
-
-      expect(accounts).toEqual([]);
+      expect(() => manager.listAccounts()).toThrow(/Notes.app not available/);
     });
   });
 

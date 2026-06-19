@@ -786,8 +786,8 @@ export class AppleNotesManager {
     const result = executeAppleScript(script);
 
     if (!result.success) {
-      console.error(`Failed to search notes for "${query}":`, result.error);
-      return [];
+      // Surface the failure (#19) — an empty array would look like "no matches".
+      throw new Error(`Failed to search notes for "${query}": ${result.error ?? "unknown error"}`);
     }
 
     // Handle empty results
@@ -1190,8 +1190,7 @@ export class AppleNotesManager {
       const result = executeAppleScript(script);
 
       if (!result.success) {
-        console.error("Failed to list notes:", result.error);
-        return [];
+        throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
       }
 
       if (!result.output.trim()) {
@@ -1217,8 +1216,7 @@ export class AppleNotesManager {
     const result = executeAppleScript(script);
 
     if (!result.success) {
-      console.error("Failed to list notes:", result.error);
-      return [];
+      throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
     }
     if (!result.output.trim()) return [];
 
@@ -1349,8 +1347,7 @@ export class AppleNotesManager {
     const result = executeAppleScript(script);
 
     if (!result.success) {
-      console.error("Failed to list folders:", result.error);
-      return [];
+      throw new Error(`Failed to list folders: ${result.error ?? "unknown error"}`);
     }
 
     if (!result.output.trim()) {
@@ -1640,8 +1637,7 @@ export class AppleNotesManager {
     const result = executeAppleScript(script);
 
     if (!result.success) {
-      console.error("Failed to list accounts:", result.error);
-      return [];
+      throw new Error(`Failed to list accounts: ${result.error ?? "unknown error"}`);
     }
 
     const names = result.output
@@ -1843,8 +1839,12 @@ export class AppleNotesManager {
     `;
 
     const result = executeAppleScript(script);
-    if (!result.success || !result.output) {
-      return { last24h: 0, last7d: 0, last30d: 0 };
+    if (!result.success) {
+      // Surface the failure (#19) rather than reporting fake zero recent activity.
+      throw new Error(`Failed to read recent activity: ${result.error ?? "unknown error"}`);
+    }
+    if (!result.output) {
+      return { last24h: 0, last7d: 0, last30d: 0 }; // genuinely no notes
     }
 
     const now = new Date();
