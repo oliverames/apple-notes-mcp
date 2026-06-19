@@ -35,6 +35,22 @@ import { getChecklistItems, type ChecklistItem } from "@/utils/checklistParser.j
 import TurndownService from "turndown";
 
 // =============================================================================
+// Result delimiters (#18)
+//
+// AppleScript output is delimited with ASCII control characters that cannot
+// appear in user-entered note titles, folder names, or body text — unlike the
+// old printable "|||" / "," / "ITEM" tokens, which collide with ordinary
+// content (a note titled "Groceries, etc." used to split into phantom notes).
+//   FIELD_SEP  (US, \x1f) separates fields within a record
+//   RECORD_SEP (RS, \x1e) separates records within a list
+// In AppleScript these are emitted via `ASCII character 31 / 30`.
+// =============================================================================
+const FIELD_SEP = "\x1f";
+const RECORD_SEP = "\x1e";
+const AS_FIELD_SEP = "(ASCII character 31)";
+const AS_RECORD_SEP = "(ASCII character 30)";
+
+// =============================================================================
 // Text Processing Utilities
 // =============================================================================
 
@@ -318,41 +334,23 @@ interface ParsedNoteProperties {
  * @returns Parsed properties, or null if format is invalid
  */
 export function parseNotePropertiesOutput(output: string): ParsedNoteProperties | null {
-  // Extract dates using regex - they start with "date " and have a recognizable format
-  // Pattern matches: "date Saturday, December 27, 2025 at 3:44:02 PM"
-  const dateMatches = output.match(/date [A-Z][^,]*(?:, [A-Z][^,]*)* at \d+:\d+:\d+ [AP]M/g) || [];
-
-  // Extract title (everything before the first comma)
-  const firstComma = output.indexOf(",");
-  if (firstComma === -1) {
-    console.error("Unexpected response format: no comma found in note properties");
+  // Fields are control-char delimited (#18): title, id, created, modified,
+  // shared, passwordProtected — robust against commas in titles, unlike the
+  // old comma/regex parsing.
+  const parts = output.split(FIELD_SEP);
+  if (parts.length < 6) {
+    console.error("Unexpected response format: expected 6 delimited note properties");
     return null;
   }
-  const title = output.substring(0, firstComma).trim();
-
-  // Extract ID (between first and second comma)
-  const afterTitle = output.substring(firstComma + 1);
-  const secondComma = afterTitle.indexOf(",");
-  if (secondComma === -1) {
-    console.error("Unexpected response format: missing second comma in note properties");
-    return null;
-  }
-  const id = afterTitle.substring(0, secondComma).trim();
-
-  // Extract boolean values from the end (shared, passwordProtected)
-  // They appear as ", true" or ", false" at the end
-  const boolPattern = /, (true|false), (true|false)$/;
-  const boolMatch = output.match(boolPattern);
-  const shared = boolMatch ? boolMatch[1] === "true" : false;
-  const passwordProtected = boolMatch ? boolMatch[2] === "true" : false;
+  const [title, id, createdStr, modifiedStr, sharedStr, ppStr] = parts;
 
   return {
-    title,
-    id,
-    created: dateMatches[0] ? parseAppleScriptDate(dateMatches[0]) : new Date(),
-    modified: dateMatches[1] ? parseAppleScriptDate(dateMatches[1]) : new Date(),
-    shared,
-    passwordProtected,
+    title: title.trim(),
+    id: id.trim(),
+    created: createdStr?.trim() ? parseAppleScriptDate(createdStr.trim()) : new Date(),
+    modified: modifiedStr?.trim() ? parseAppleScriptDate(modifiedStr.trim()) : new Date(),
+    shared: sharedStr?.trim() === "true",
+    passwordProtected: ppStr?.trim() === "true",
   };
 }
 
@@ -480,24 +478,6 @@ function buildAppLevelScript(command: string): string {
 // =============================================================================
 // Result Parsing Utilities
 // =============================================================================
-
-/**
- * Parses a comma-separated list from AppleScript output.
- *
- * AppleScript often returns lists as comma-separated strings:
- * "Note 1, Note 2, Note 3"
- *
- * This function splits and cleans the output.
- *
- * @param output - Raw AppleScript output
- * @returns Array of trimmed, non-empty strings
- */
-function parseCommaSeparatedList(output: string): string[] {
-  return output
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
 
 /**
  * Extracts a CoreData ID from AppleScript output.
@@ -790,16 +770,16 @@ export class AppleNotesManager {
           set noteName to name of n
           set noteId to id of n
           set noteFolder to name of container of n
-          set end of resultList to noteName & "|||" & noteId & "|||" & noteFolder
+          set end of resultList to noteName & ${AS_FIELD_SEP} & noteId & ${AS_FIELD_SEP} & noteFolder
         on error
           try
             set noteName to name of n
             set noteId to id of n
-            set end of resultList to noteName & "|||" & noteId & "|||" & "Notes"
+            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId & ${AS_FIELD_SEP} & "Notes"
           end try
         end try
       end repeat
-      set AppleScript's text item delimiters to "|||ITEM|||"
+      set AppleScript's text item delimiters to ${AS_RECORD_SEP}
       return resultList as text
     `;
     const script = buildAccountScopedScript({ account: targetAccount }, searchCommand);
@@ -815,12 +795,12 @@ export class AppleNotesManager {
       return [];
     }
 
-    // Parse the delimited output: "name|||id|||folder|||ITEM|||name|||id|||folder..."
-    const items = result.output.split("|||ITEM|||");
+    // Parse the control-char-delimited output (#18): fields by FIELD_SEP, records by RECORD_SEP.
+    const items = result.output.split(RECORD_SEP);
 
     const notes: Note[] = [];
     for (const item of items) {
-      const [title, id, folder] = item.split("|||");
+      const [title, id, folder] = item.split(FIELD_SEP);
       if (!title?.trim()) continue;
       notes.push({
         id: id?.trim() || generateFallbackId(), // Use real ID, fallback to unique temp ID
@@ -916,8 +896,9 @@ export class AppleNotesManager {
     // Note IDs work at the application level, not scoped to account
     const getCommand = `
       set n to note id "${safeId}"
-      set noteProps to {name of n, id of n, creation date of n, modification date of n, shared of n, password protected of n}
-      return noteProps
+      set noteProps to {name of n, id of n, (creation date of n as text), (modification date of n as text), (shared of n as text), (password protected of n as text)}
+      set AppleScript's text item delimiters to ${AS_FIELD_SEP}
+      return noteProps as text
     `;
     const script = buildAppLevelScript(getCommand);
     const result = executeAppleScript(script);
@@ -962,8 +943,9 @@ export class AppleNotesManager {
     // Fetch multiple properties at once
     const getCommand = `
       set n to note "${safeTitle}"
-      set noteProps to {name of n, id of n, creation date of n, modification date of n, shared of n, password protected of n}
-      return noteProps
+      set noteProps to {name of n, id of n, (creation date of n as text), (modification date of n as text), (shared of n as text), (password protected of n as text)}
+      set AppleScript's text item delimiters to ${AS_FIELD_SEP}
+      return noteProps as text
     `;
     const script = buildAccountScopedScript({ account: targetAccount }, getCommand);
     const result = executeAppleScript(script);
@@ -1200,7 +1182,7 @@ export class AppleNotesManager {
         repeat with n in ${notesSource}${limitCheck}
           set end of resultList to name of n
         end repeat
-        set AppleScript's text item delimiters to "|||"
+        set AppleScript's text item delimiters to ${AS_RECORD_SEP}
         return resultList as text
       `;
 
@@ -1217,19 +1199,19 @@ export class AppleNotesManager {
       }
 
       return result.output
-        .split("|||")
+        .split(RECORD_SEP)
         .map((item) => item.trim())
         .filter((item) => item.length > 0);
     }
 
-    // Simple path: no date or limit filters
-    let listCommand: string;
-
-    if (folder) {
-      listCommand = `get name of notes of ${buildFolderReference(folder)}`;
-    } else {
-      listCommand = `get name of notes`;
-    }
+    // Simple path: no date or limit filters. Coerce the name list to text with a
+    // control-char record separator so titles containing commas don't split (#18).
+    const notesRef = folder ? `notes of ${buildFolderReference(folder)}` : `notes`;
+    const listCommand = `
+      set resultList to name of ${notesRef}
+      set AppleScript's text item delimiters to ${AS_RECORD_SEP}
+      return resultList as text
+    `;
 
     const script = buildAccountScopedScript({ account: targetAccount }, listCommand);
     const result = executeAppleScript(script);
@@ -1238,8 +1220,12 @@ export class AppleNotesManager {
       console.error("Failed to list notes:", result.error);
       return [];
     }
+    if (!result.output.trim()) return [];
 
-    return parseCommaSeparatedList(result.output);
+    return result.output
+      .split(RECORD_SEP)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
   }
 
   /**
@@ -1271,10 +1257,10 @@ export class AppleNotesManager {
         set resultList to {}
         repeat with n in notes
           if shared of n is true then
-            set end of resultList to (name of n) & "|||" & (id of n) & "|||" & (creation date of n as text) & "|||" & (modification date of n as text) & "|||" & (shared of n as text) & "|||" & (password protected of n as text)
+            set end of resultList to (name of n) & ${AS_FIELD_SEP} & (id of n) & ${AS_FIELD_SEP} & (creation date of n as text) & ${AS_FIELD_SEP} & (modification date of n as text) & ${AS_FIELD_SEP} & (shared of n as text) & ${AS_FIELD_SEP} & (password protected of n as text)
           end if
         end repeat
-        set AppleScript's text item delimiters to "|||ITEM|||"
+        set AppleScript's text item delimiters to ${AS_RECORD_SEP}
         return resultList as text
         `
       );
@@ -1291,11 +1277,11 @@ export class AppleNotesManager {
         continue;
       }
 
-      // Parse delimited output: "name|||id|||created|||modified|||shared|||pp|||ITEM|||..."
-      const items = output.split("|||ITEM|||");
+      // Parse control-char-delimited output (#18): fields by FIELD_SEP, records by RECORD_SEP.
+      const items = output.split(RECORD_SEP);
 
       for (const item of items) {
-        const parts = item.split("|||");
+        const parts = item.split(FIELD_SEP);
         if (parts.length >= 6) {
           const title = parts[0].trim();
           const id = parts[1].trim();
@@ -1643,7 +1629,13 @@ export class AppleNotesManager {
    * @returns Array of Account objects
    */
   listAccounts(): Account[] {
-    const listCommand = `get name of accounts`;
+    // Coerce the name list to text with a control-char record separator so an
+    // account name containing a comma can't split into phantom accounts (#18).
+    const listCommand = `
+      set resultList to name of accounts
+      set AppleScript's text item delimiters to ${AS_RECORD_SEP}
+      return resultList as text
+    `;
     const script = buildAppLevelScript(listCommand);
     const result = executeAppleScript(script);
 
@@ -1652,8 +1644,10 @@ export class AppleNotesManager {
       return [];
     }
 
-    // Convert names to Account objects
-    const names = parseCommaSeparatedList(result.output);
+    const names = result.output
+      .split(RECORD_SEP)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
     return names.map((name) => ({ name }));
   }
@@ -1842,7 +1836,7 @@ export class AppleNotesManager {
         end repeat
         set output to ""
         repeat with d in modDates
-          set output to output & (d as string) & "|||"
+          set output to output & (d as string) & ${AS_RECORD_SEP}
         end repeat
         return output
       end tell
@@ -1862,7 +1856,7 @@ export class AppleNotesManager {
     let last7d = 0;
     let last30d = 0;
 
-    const dateStrings = result.output.split("|||").filter((s) => s.trim());
+    const dateStrings = result.output.split(RECORD_SEP).filter((s) => s.trim());
     for (const dateStr of dateStrings) {
       try {
         const date = new Date(dateStr.trim());
@@ -1909,11 +1903,11 @@ export class AppleNotesManager {
           set attachId to id of a
           set attachName to name of a
           set attachType to content identifier of a
-          set end of attachmentList to attachId & "|||" & attachName & "|||" & attachType
+          set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachType
         end repeat
         set output to ""
         repeat with item in attachmentList
-          set output to output & item & "ITEM"
+          set output to output & item & ${AS_RECORD_SEP}
         end repeat
         return output
       end tell
@@ -1929,10 +1923,10 @@ export class AppleNotesManager {
 
     // Parse the results
     const attachments: Attachment[] = [];
-    const items = result.output.split("ITEM").filter((s) => s.trim());
+    const items = result.output.split(RECORD_SEP).filter((s) => s.trim());
 
     for (const item of items) {
-      const parts = item.split("|||");
+      const parts = item.split(FIELD_SEP);
       if (parts.length >= 3) {
         attachments.push({
           id: parts[0].trim(),
@@ -1965,11 +1959,11 @@ export class AppleNotesManager {
             set attachId to id of a
             set attachName to name of a
             set attachType to content identifier of a
-            set end of attachmentList to attachId & "|||" & attachName & "|||" & attachType
+            set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachType
           end repeat
           set output to ""
           repeat with item in attachmentList
-            set output to output & item & "ITEM"
+            set output to output & item & ${AS_RECORD_SEP}
           end repeat
           return output
         end tell
@@ -1986,10 +1980,10 @@ export class AppleNotesManager {
 
     // Parse the results
     const attachments: Attachment[] = [];
-    const items = result.output.split("ITEM").filter((s) => s.trim());
+    const items = result.output.split(RECORD_SEP).filter((s) => s.trim());
 
     for (const item of items) {
-      const parts = item.split("|||");
+      const parts = item.split(FIELD_SEP);
       if (parts.length >= 3) {
         attachments.push({
           id: parts[0].trim(),
