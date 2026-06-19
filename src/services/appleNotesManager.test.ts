@@ -1871,14 +1871,13 @@ describe("AppleNotesManager", () => {
       mockExecuteAppleScript
         // listAccounts
         .mockReturnValueOnce({ success: true, output: "iCloud" })
-        // listFolders for iCloud
-        .mockReturnValueOnce({ success: true, output: "id1\tNotes\nid2\tWork" })
-        // listNotes for Notes folder
-        .mockReturnValueOnce({ success: true, output: ["Note 1", "Note 2", "Note 3"].join(R) })
-        // listNotes for Work folder
-        .mockReturnValueOnce({ success: true, output: ["Task 1", "Task 2"].join(R) })
-        // getRecentlyModifiedCounts
-        .mockReturnValueOnce({ success: true, output: "" });
+        // per-account folder counts: name<F>count, records joined by R
+        .mockReturnValueOnce({
+          success: true,
+          output: ["Notes", "3"].join(F) + R + ["Work", "2"].join(F) + R,
+        })
+        // getRecentlyModifiedCounts: c1<F>c7<F>c30
+        .mockReturnValueOnce({ success: true, output: ["0", "0", "0"].join(F) });
 
       const stats = manager.getNotesStats();
 
@@ -1893,9 +1892,8 @@ describe("AppleNotesManager", () => {
     it("returns zero counts when no notes exist", () => {
       mockExecuteAppleScript
         .mockReturnValueOnce({ success: true, output: "iCloud" })
-        .mockReturnValueOnce({ success: true, output: "id1\tNotes" })
-        .mockReturnValueOnce({ success: true, output: "" })
-        .mockReturnValueOnce({ success: true, output: "" });
+        .mockReturnValueOnce({ success: true, output: ["Notes", "0"].join(F) + R })
+        .mockReturnValueOnce({ success: true, output: ["0", "0", "0"].join(F) });
 
       const stats = manager.getNotesStats();
 
@@ -1909,16 +1907,12 @@ describe("AppleNotesManager", () => {
       mockExecuteAppleScript
         // listAccounts
         .mockReturnValueOnce({ success: true, output: ["iCloud", "Gmail"].join(R) })
-        // listFolders for iCloud
-        .mockReturnValueOnce({ success: true, output: "id1\tNotes" })
-        // listNotes for iCloud/Notes
-        .mockReturnValueOnce({ success: true, output: "Note 1" })
-        // listFolders for Gmail
-        .mockReturnValueOnce({ success: true, output: "id2\tNotes" })
-        // listNotes for Gmail/Notes
-        .mockReturnValueOnce({ success: true, output: "Email Note" })
+        // iCloud folder counts
+        .mockReturnValueOnce({ success: true, output: ["Notes", "1"].join(F) + R })
+        // Gmail folder counts
+        .mockReturnValueOnce({ success: true, output: ["Notes", "1"].join(F) + R })
         // getRecentlyModifiedCounts
-        .mockReturnValueOnce({ success: true, output: "" });
+        .mockReturnValueOnce({ success: true, output: ["0", "0", "0"].join(F) });
 
       const stats = manager.getNotesStats();
 

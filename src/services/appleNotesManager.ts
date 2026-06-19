@@ -1777,28 +1777,42 @@ export class AppleNotesManager {
     const accountStats: AccountStats[] = [];
     let totalNotes = 0;
 
-    // Collect stats per account
+    // Collect stats per account with ONE bounded script per account (#20/#26):
+    // count notes server-side per folder instead of fetching every note's name
+    // (unbounded) via a listNotes call per folder (N+1 osascript spawns).
     for (const account of accounts) {
-      const folders = this.listFolders(account.name);
+      const countScript = buildAccountScopedScript(
+        { account: account.name },
+        `
+        set out to ""
+        repeat with fldr in folders
+          set out to out & (name of fldr) & ${AS_FIELD_SEP} & (count of notes of fldr) & ${AS_RECORD_SEP}
+        end repeat
+        return out
+        `
+      );
+      const res = executeAppleScript(countScript);
+      if (!res.success) {
+        throw new Error(
+          `Failed to read folder stats for "${account.name}": ${res.error ?? "unknown error"}`
+        );
+      }
+
       const folderStats: FolderStats[] = [];
       let accountTotal = 0;
-
-      for (const folder of folders) {
-        const notes = this.listNotes(account.name, folder.name);
-        const noteCount = notes.length;
+      for (const rec of res.output.split(RECORD_SEP)) {
+        if (!rec.trim()) continue;
+        const [fname, cnt] = rec.split(FIELD_SEP);
+        const noteCount = parseInt((cnt ?? "").trim(), 10) || 0;
         accountTotal += noteCount;
-
-        folderStats.push({
-          name: folder.name,
-          noteCount,
-        });
+        folderStats.push({ name: (fname ?? "").trim(), noteCount });
       }
 
       totalNotes += accountTotal;
       accountStats.push({
         name: account.name,
         totalNotes: accountTotal,
-        folderCount: folders.length,
+        folderCount: folderStats.length,
         folders: folderStats,
       });
     }
@@ -1821,20 +1835,28 @@ export class AppleNotesManager {
     last7d: number;
     last30d: number;
   } {
-    // Get modification dates for all notes across all accounts
+    // Count server-side with locale-safe date variables (#20/#25): instead of
+    // streaming every note's modification date to JS (unbounded, ENOBUFS-prone,
+    // locale-fragile), let AppleScript count matches via a `whose` filter — three
+    // counts per account, regardless of library size.
+    const now = new Date();
+    const d1 = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const script = `
       tell application "Notes"
-        set modDates to {}
+        ${buildAppleScriptDateVar(d1, "d1")}
+        ${buildAppleScriptDateVar(d7, "d7")}
+        ${buildAppleScriptDateVar(d30, "d30")}
+        set c1 to 0
+        set c7 to 0
+        set c30 to 0
         repeat with acct in accounts
-          repeat with n in notes of acct
-            set end of modDates to modification date of n
-          end repeat
+          set c1 to c1 + (count of (notes of acct whose modification date >= d1))
+          set c7 to c7 + (count of (notes of acct whose modification date >= d7))
+          set c30 to c30 + (count of (notes of acct whose modification date >= d30))
         end repeat
-        set output to ""
-        repeat with d in modDates
-          set output to output & (d as string) & ${AS_RECORD_SEP}
-        end repeat
-        return output
+        return (c1 as text) & ${AS_FIELD_SEP} & (c7 as text) & ${AS_FIELD_SEP} & (c30 as text)
       end tell
     `;
 
@@ -1843,34 +1865,13 @@ export class AppleNotesManager {
       // Surface the failure (#19) rather than reporting fake zero recent activity.
       throw new Error(`Failed to read recent activity: ${result.error ?? "unknown error"}`);
     }
-    if (!result.output) {
-      return { last24h: 0, last7d: 0, last30d: 0 }; // genuinely no notes
-    }
 
-    const now = new Date();
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-    let last24h = 0;
-    let last7d = 0;
-    let last30d = 0;
-
-    const dateStrings = result.output.split(RECORD_SEP).filter((s) => s.trim());
-    for (const dateStr of dateStrings) {
-      try {
-        const date = new Date(dateStr.trim());
-        if (isNaN(date.getTime())) continue;
-
-        if (date >= oneDayAgo) last24h++;
-        if (date >= sevenDaysAgo) last7d++;
-        if (date >= thirtyDaysAgo) last30d++;
-      } catch {
-        // Skip invalid date strings
-      }
-    }
-
-    return { last24h, last7d, last30d };
+    const parts = result.output.trim().split(FIELD_SEP);
+    const toInt = (s: string | undefined): number => {
+      const n = parseInt((s ?? "").trim(), 10);
+      return Number.isFinite(n) ? n : 0;
+    };
+    return { last24h: toInt(parts[0]), last7d: toInt(parts[1]), last30d: toInt(parts[2]) };
   }
 
   // ===========================================================================
