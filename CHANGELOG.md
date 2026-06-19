@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-06-19
+
+### Fixed
+- **By-title / by-name lookups failed on `&` (and other HTML-significant characters).** `get-note-content`, `get-note-details`, `delete-note`, `update-note`, `search-notes`, `list-attachments` (by title), folder creation, and the new attachment tools were escaping the lookup string with the HTML body-escaper (turning `&` into `&amp;`), so a note titled e.g. "Tom & Jerry" could never be found by title. These now use the literal AppleScript-string escaper. Found during live testing of 2.0.0. (Note bodies, which Notes stores as HTML, still use the HTML escaper — unchanged.)
+
 ## [2.0.0] - 2026-06-19
 
 Maturity release bringing apple-notes-mcp to feature/stability parity with apple-mail-mcp.

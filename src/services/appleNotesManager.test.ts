@@ -837,6 +837,16 @@ describe("AppleNotesManager", () => {
       expect(content).toBe("");
     });
 
+    it("looks up titles containing & literally, not HTML-escaped (regression)", () => {
+      // Bug found in live testing: titles with "&" were HTML-escaped to "&amp;"
+      // in the `note "..."` lookup, so the note could never be found.
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "<div>x</div>" });
+      manager.getNoteContent("Tom & Jerry", "iCloud");
+      const script = mockExecuteAppleScript.mock.calls[0][0];
+      expect(script).toContain("Tom & Jerry");
+      expect(script).not.toContain("Tom &amp; Jerry");
+    });
+
     it("uses specified account", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
