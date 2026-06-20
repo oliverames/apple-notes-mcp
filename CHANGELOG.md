@@ -5,7 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] - 2026-06-20
+
+Closes the remaining maturity-parity backlog (#16–#32). Eleven of the seventeen
+items were already implemented in the 2.0 line and are now verified/closed; this
+release adds the six that remained: partial-coverage diagnostics, batch-op
+collapse, inline-hashtag surfacing, an integration suite, and documentation of
+the pinned-notes and note-link AppleScript limitations.
 
 ### Added
 - **Integration test suite against real Notes.app (#31).** New `test/integration.test.ts` + `vitest.integration.config.ts` exercise the full `AppleNotesManager → AppleScript → Notes.app` stack (create → read → hashtags → search → delete, plus stats coverage), run via `npm run test:integration` / `npm run test:all`. The live tests self-skip when no writable Notes account is available, so the suite is safe on CI; a new `integration` CI job runs it on macOS. Default `npm test` (unit) is unchanged.
