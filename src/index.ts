@@ -28,6 +28,7 @@ import { AppleNotesManager } from "@/services/appleNotesManager.js";
 import { getSyncStatus, withSyncAwarenessSync } from "@/utils/syncDetection.js";
 import { getChecklistItems, hasFullDiskAccess } from "@/utils/checklistParser.js";
 import { detectChecklistAttempt } from "@/utils/contentWarnings.js";
+import { parseHashtags } from "@/utils/hashtags.js";
 import { runDoctor, formatDoctorReport } from "@/tools/doctor.js";
 import { loadFileConfig } from "@/services/fileConfig.js";
 import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
@@ -268,7 +269,8 @@ server.tool(
       if (!content) {
         return errorResponse(`Failed to read content of note "${note.title}"`);
       }
-      return successResponse(content, { title: note.title, content });
+      const hashtags = parseHashtags(content);
+      return successResponse(content, { title: note.title, content, hashtags });
     }
 
     // Fall back to title-based lookup
@@ -292,7 +294,8 @@ server.tool(
       return errorResponse(`Failed to read content of note "${title}"`);
     }
 
-    return successResponse(content, { title, content });
+    const hashtags = parseHashtags(content);
+    return successResponse(content, { title, content, hashtags });
   }, "Error retrieving note content")
 );
 

@@ -71,10 +71,13 @@ export interface Note {
   content: string;
 
   /**
-   * User-defined tags for organization.
+   * Application-level tags supplied at create time.
    *
-   * Note: Apple Notes doesn't natively support tags in its UI,
-   * but this field can be used for application-level organization.
+   * This is a pass-through convenience field: Apple Notes does NOT store these
+   * in any scriptable property. Apple's own "tags" are inline `#hashtag` tokens
+   * typed into the note body — surface those with `parseHashtags` (the
+   * `get-note-content` tool returns them as `hashtags` in its structuredContent).
+   * See docs/APPLESCRIPT-LIMITATIONS.md and issue #29.
    */
   tags: string[];
 

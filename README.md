@@ -244,7 +244,10 @@ Retrieves the full content of a specific note.
 }
 ```
 
-**Returns:** The HTML content of the note, or error if not found.
+**Returns:** The HTML content of the note, or error if not found. The
+`structuredContent` also includes `hashtags` — any inline `#hashtag` tags parsed
+from the body. Apple Notes tags are inline hashtags, not a scriptable property;
+see [docs/APPLESCRIPT-LIMITATIONS.md](../docs/APPLESCRIPT-LIMITATIONS.md#tags--hashtags-29). Smart Folders are not scriptable.
 
 ---
 
