@@ -6,6 +6,18 @@ This file provides guidance for AI agents (Claude, etc.) when using this MCP ser
 
 This MCP server enables AI assistants to interact with Apple Notes on macOS via AppleScript. All operations are local - no data leaves the user's machine.
 
+## Contribution Review Workflow
+
+When issues, PRs, or other external submissions arrive, handle them in this order:
+
+1. **Read the full submission** — pull the complete issue/PR body and diff from GitHub before touching any code. Don't skim the email notification; get the source.
+2. **Bug fixes first** — if a submission includes both a bug report (issue) and feature PRs, fix the bug locally first: edit, run `npm test`, commit with a message that references the issue number (so GitHub auto-closes it), push.
+3. **Review each PR** — use the `/review` skill per PR. Cover correctness, tests, performance, and any concerns. State a clear verdict.
+4. **Merge** — `gh pr merge --squash` with a clean subject line, then `git pull` to sync local.
+5. **Thank the submitter** — leave a specific comment on each item (issue + each PR) referencing what they actually contributed. Generic "thanks!" is not enough; name the thing they did well.
+
+Ordering note: merge pure bug-fix PRs before feature PRs. If a feature PR touches the same files as your local fix, having your fix already in main avoids merge conflicts.
+
 ## Related Documentation
 
 - **[TECHNICAL_NOTES.md](./TECHNICAL_NOTES.md)** - Deep technical research on Apple Notes internals, database structure, protobuf format, and alternative access methods
