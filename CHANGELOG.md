@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`get-note-content` now surfaces inline hashtags (#29).** The body is parsed for `#hashtag` tokens and they are returned as `hashtags` in `structuredContent`. Parsing matches Notes' own rule (a tag needs at least one letter, so `#123` is ignored) and de-duplicates case-insensitively (`src/utils/hashtags.ts`). Documented that Apple Notes tags are inline hashtags (not a scriptable property), that the `create-note` `tags` param is an app-level pass-through, and that Smart Folders are not scriptable.
+
 ### Documented
 - **Pinned notes are not supported (#28).** Investigated and confirmed Apple Notes exposes no scriptable `pinned` property (raises AppleScript error `-1700`); pin state lives only in the private Core Data store. Documented in `docs/APPLESCRIPT-LIMITATIONS.md`.
 - **Note-to-note links are not exposed (#30).** Investigated and confirmed a note has no `URL`/`link` property (error `-2753`) and no readable/constructable `applenotes://` deep link; the `x-coredata://` `id` is the only stable handle. The `show` command can reveal a note in the UI by id but is intentionally not wrapped as a tool. Documented in `docs/APPLESCRIPT-LIMITATIONS.md`.

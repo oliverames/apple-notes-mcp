@@ -66,3 +66,27 @@ cannot be read at all, so a "list links in this note" feature is not possible.
 **Conclusion:** note-to-note link data is not exposed and cannot be surfaced.
 The `id` field already returned by every read tool is the canonical reference;
 use that to address a specific note.
+
+## Tags / hashtags (#29)
+
+**Status: parsed from the body, not first-class.** Apple Notes "tags" are inline
+`#hashtag` tokens you type into a note's text. They are **not** a scriptable
+property — the `note` class exposes no `tags` element, and the tag relationship
+lives only in Notes' private Core Data store. So the only way to surface a
+note's tags via AppleScript is to read them back out of the body text.
+
+This server does that: `get-note-content` parses the body and returns the tags
+as `hashtags` in its `structuredContent` (see `src/utils/hashtags.ts`). The
+rules match Notes' own behaviour — a token is `#` followed by letters/digits/
+underscores containing **at least one letter**, so `#123` is not a tag; tokens
+are de-duplicated case-insensitively.
+
+Two related caveats:
+
+- The `tags` parameter on `create-note` is an application-level pass-through. It
+  is stored on the returned object but Notes does **not** persist it, and it does
+  **not** create real `#hashtags` in the body. To make a real tag, put `#tag`
+  in the note content.
+- **Smart folders are not scriptable.** Notes' tag-driven Smart Folders cannot be
+  created, read, or enumerated via AppleScript; there is no `smart folder` class
+  in the dictionary. Only regular folders are scriptable.
