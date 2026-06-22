@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-06-22
+### Added
+- **Additional AppleScript Notes surfaces (#41).** Three new read-only/UI tools — `show-note` (reveal a note in Notes.app by ID), `get-selected-notes` (the current Notes.app selection), and `get-default-location` (the default account/folder for new notes) — plus richer metadata: folder/account `shared` flags, account `upgraded` state and default folder, and attachment `url`/`created`/`modified`/`shared` fields. Output stays backward-compatible with the prior tab/newline AppleScript format. Thanks @oliverames.
+
+### Tests
+- Added branch-coverage tests for the new surfaces (AppleScript failure paths, legacy tab/newline + plain-name fallbacks, and empty-field parsing), keeping `src/services/**` branch coverage above the 80% gate.
+
 ## [2.1.1] - 2026-06-22
 ### Added
 - **Hermes and Antigravity plugin packaging (#40).** Adds `.hermes-plugin/` and `.antigravity-plugin/` marketplace manifests plus the Apple Notes skill, so the server installs as a plugin on those hosts alongside the Claude Code and Codex packaging; each launches the published `apple-notes-mcp` via `npx`. Wired into `scripts/sync-plugin-version.mjs` so their versions track `package.json`, and documented in the README. Thanks @oliverames.
