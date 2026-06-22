@@ -52,6 +52,10 @@ codex plugin add apple-notes@apple-notes-mcp
 
 The Codex plugin runs the published `apple-notes-mcp` server through `npx` and ships the same Apple Notes skill, so behavior matches the Claude Code plugin.
 
+### Other Hosts (Hermes, Antigravity)
+
+Plugin packaging for the Hermes and Antigravity hosts is also included (`.hermes-plugin/` and `.antigravity-plugin/`). Each registers the same `apple-notes` MCP server (launched via `npx -y apple-notes-mcp`) and bundles the Apple Notes skill, so behavior matches the Claude Code and Codex plugins. Install them through each host's plugin/marketplace mechanism pointed at this repository.
+
 ### Manual Installation
 
 **1. Install the server:**
