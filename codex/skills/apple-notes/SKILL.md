@@ -61,6 +61,7 @@ Use this skill when the user:
 | `save-attachment` | Save an attachment to disk |
 | `fetch-attachment` | Fetch attachment bytes as base64 |
 | `get-checklist-state` | Read checked/unchecked state for existing checklists |
+| `get-note-metadata` | [BETA] Read pinned/trash/snippet metadata from the NoteStore DB |
 | `list-shared-notes` | List notes shared with collaborators |
 | `get-sync-status` | Check whether iCloud sync is active |
 | `health-check` | Quickly verify Notes.app access |
