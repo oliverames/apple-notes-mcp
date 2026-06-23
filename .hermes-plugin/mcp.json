@@ -1,9 +1,0 @@
-{
-  "apple-notes": {
-    "command": "npx",
-    "args": [
-      "-y",
-      "apple-notes-mcp"
-    ]
-  }
-}
