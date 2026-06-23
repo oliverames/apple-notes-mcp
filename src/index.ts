@@ -168,7 +168,13 @@ server.tool(
     }
 
     const checklistWarning = detectChecklistAttempt(content) ?? "";
-    return successResponse(`Note created: "${note.title}" [id: ${note.id}]${checklistWarning}`);
+    return successResponse(`Note created: "${note.title}" [id: ${note.id}]${checklistWarning}`, {
+      ok: true,
+      id: note.id,
+      title: note.title,
+      folder,
+      account,
+    });
   }, "Error creating note")
 );
 
@@ -428,7 +434,12 @@ server.tool(
         ? "\n\n⚠️ This note is shared with collaborators. Your changes will be visible to them."
         : "";
       const checklistWarning = detectChecklistAttempt(newContent) ?? "";
-      return successResponse(`Note updated: "${displayTitle}"${sharedWarning}${checklistWarning}`);
+      return successResponse(`Note updated: "${displayTitle}"${sharedWarning}${checklistWarning}`, {
+        ok: true,
+        id,
+        title: displayTitle,
+        shared: note.shared ?? false,
+      });
     }
 
     // Fall back to title-based update
@@ -460,7 +471,11 @@ server.tool(
       ? "\n\n⚠️ This note is shared with collaborators. Your changes will be visible to them."
       : "";
     const checklistWarning = detectChecklistAttempt(newContent) ?? "";
-    return successResponse(`Note updated: "${finalTitle}"${sharedWarning}${checklistWarning}`);
+    return successResponse(`Note updated: "${finalTitle}"${sharedWarning}${checklistWarning}`, {
+      ok: true,
+      title: finalTitle,
+      shared: note.shared ?? false,
+    });
   }, "Error updating note")
 );
 
@@ -493,7 +508,12 @@ server.tool(
       const sharedWarning = note.shared
         ? "\n\n⚠️ This note was shared with collaborators. They will no longer have access."
         : "";
-      return successResponse(`Note deleted: "${note.title}"${sharedWarning}`);
+      return successResponse(`Note deleted: "${note.title}"${sharedWarning}`, {
+        ok: true,
+        id,
+        title: note.title,
+        wasShared: note.shared ?? false,
+      });
     }
 
     // Fall back to title-based deletion
@@ -518,7 +538,11 @@ server.tool(
     const sharedWarning = note.shared
       ? "\n\n⚠️ This note was shared with collaborators. They will no longer have access."
       : "";
-    return successResponse(`Note deleted: "${title}"${sharedWarning}`);
+    return successResponse(`Note deleted: "${title}"${sharedWarning}`, {
+      ok: true,
+      title,
+      wasShared: note.shared ?? false,
+    });
   }, "Error deleting note")
 );
 
@@ -547,7 +571,12 @@ server.tool(
           `Failed to move note "${note.title}" to folder "${folder}". Folder may not exist.`
         );
       }
-      return successResponse(`Note moved: "${note.title}" -> "${folder}"`);
+      return successResponse(`Note moved: "${note.title}" -> "${folder}"`, {
+        ok: true,
+        id,
+        title: note.title,
+        folder,
+      });
     }
 
     // Fall back to title-based move
@@ -570,7 +599,11 @@ server.tool(
       );
     }
 
-    return successResponse(`Note moved: "${title}" -> "${folder}"`);
+    return successResponse(`Note moved: "${title}" -> "${folder}"`, {
+      ok: true,
+      title,
+      folder,
+    });
   }, "Error moving note")
 );
 
@@ -715,7 +748,10 @@ server.tool(
       return errorResponse(`Failed to create folder "${name}".`);
     }
 
-    return successResponse(`Folder created: "${folder.name}"`);
+    return successResponse(`Folder created: "${folder.name}"`, {
+      ok: true,
+      folder: folder.name,
+    });
   }, "Error creating folder")
 );
 
@@ -734,7 +770,7 @@ server.tool(
       );
     }
 
-    return successResponse(`Folder deleted: "${name}"`);
+    return successResponse(`Folder deleted: "${name}"`, { ok: true, folder: name });
   }, "Error deleting folder")
 );
 
@@ -884,7 +920,11 @@ server.tool(
       ? "  ✓ full_disk_access: Granted (checklist features available)"
       : "  ⓘ full_disk_access: Not granted (optional — needed for get-checklist-state and checklist annotations in get-note-markdown). Grant in System Settings > Privacy & Security > Full Disk Access.";
 
-    return successResponse(`${statusIcon} ${statusText}\n\n${checkLines}\n${fdaLine}`);
+    return successResponse(`${statusIcon} ${statusText}\n\n${checkLines}\n${fdaLine}`, {
+      healthy: result.healthy,
+      checks: result.checks,
+      fullDiskAccess: fdaAvailable,
+    });
   }, "Error running health check")
 );
 
@@ -1037,7 +1077,14 @@ server.tool(
       }
     }
 
-    return succeeded > 0 ? successResponse(lines.join("\n")) : errorResponse(lines.join("\n"));
+    return succeeded > 0
+      ? successResponse(lines.join("\n"), {
+          ok: failed === 0,
+          succeeded,
+          failed,
+          results,
+        })
+      : errorResponse(lines.join("\n"));
   }, "Error performing batch delete")
 );
 
@@ -1072,7 +1119,15 @@ server.tool(
       }
     }
 
-    return succeeded > 0 ? successResponse(lines.join("\n")) : errorResponse(lines.join("\n"));
+    return succeeded > 0
+      ? successResponse(lines.join("\n"), {
+          ok: failed === 0,
+          folder,
+          succeeded,
+          failed,
+          results,
+        })
+      : errorResponse(lines.join("\n"));
   }, "Error performing batch move")
 );
 

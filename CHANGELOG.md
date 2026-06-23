@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.2.0] - 2026-06-23
+### Added
+- **Full `structuredContent` coverage across all tools.** Filled the last nine gaps so every data-returning and mutation tool now emits a typed `structuredContent` payload alongside its human-readable text: `health-check` (`{ healthy, checks[], fullDiskAccess }`) and the eight mutation tools — `create-note` (`{ ok, id, title, folder?, account? }`), `update-note` (`{ ok, id?, title, shared }`), `delete-note` (`{ ok, id?, title, wasShared }`), `move-note` (`{ ok, id?, title, folder }`), `batch-delete-notes` and `batch-move-notes` (`{ ok, succeeded, failed, results[] }`, the latter also `folder`), and `create-folder` / `delete-folder` (`{ ok, folder }`). Text output is unchanged; agents can now consume results without parsing prose.
+
 ### Changed
 - **Rewrote the Hermes Agent packaging to match NousResearch's real spec.** `.hermes-plugin/` previously shipped Claude-format JSON (`plugin.json` / `marketplace.json` / `mcp.json`) that Hermes never reads; it now provides a `config.yaml` (a `~/.hermes/config.yaml` `mcp_servers:` snippet) plus a README with the `hermes mcp add` command. The README "Other Hosts" section is corrected to match (Hermes has no plugin/marketplace drop-in; Antigravity uses its native `mcp_config.json`). Claude Code, Codex, and Antigravity packaging are unchanged.
 
