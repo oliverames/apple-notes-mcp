@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [2.4.0] - 2026-06-23
 ### Added
 - **Regression fixtures for Notes-normalized HTML to Markdown.** `src/services/__fixtures__/notesNormalizedHtml.ts` captures representative Apple Notes-normalized bodies (div-wrapped paragraphs, `<div><br></div>` spacer rows, headings, native lists, inline emphasis, `<tt>` code spans) alongside the Markdown `getNoteMarkdown` currently produces, and `notesHtmlMarkdown.test.ts` locks it in. These characterization tests pin two existing quirks so future changes are deliberate: a `<div><br></div>` spacer leaves a stray two-space line (the Markdown-side fingerprint of the whitespace-accumulation behavior), and `<tt>` is dropped so code styling does not round-trip.
 - **Reveal folders, accounts, and attachments in Notes.app.** Three new tools extend the existing `show-note` to the rest of the objects the Notes scripting dictionary's `show` command accepts: `show-folder` (by folder id), `show-account` (by account id), and `show-attachment` (by note id + attachment id, since attachments are note-scoped). Each takes an optional `separately` flag, mirroring `show-note`. This closes the "show or reveal a note, folder, account, or attachment" surface gap from the roadmap; everything is additive AppleScript, and no existing tool changed.
