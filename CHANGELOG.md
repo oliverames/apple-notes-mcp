@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-06-23
+### Changed
+- Bumped `@modelcontextprotocol/sdk` to ^1.29.0, clearing the remaining `npm audit` advisory (transitive, from the SDK's unused HTTP transport) — `npm audit --omit=dev` is now clean, and the SDK version is in line with the other Apple MCP servers.
+- `publish.yml`'s `npm install -g npm@latest` step now retries, so a transient registry `ECONNRESET` no longer aborts a release.
+
 ## [2.1.3] - 2026-06-23
 ### Documentation
 - README: added npm-downloads, supported-Node, platform-macOS, and MCP badges next to the existing version/CI/License badges.
