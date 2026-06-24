@@ -3077,3 +3077,43 @@ describe("AppleNotesManager", () => {
     });
   });
 });
+
+describe("htmlToPlaintext (export helper)", () => {
+  // htmlToPlaintext is a private, pure string transform used by exportNote; it
+  // touches no AppleScript, so we exercise it directly through a cast.
+  const toPlaintext = (html: string): string =>
+    (
+      new AppleNotesManager() as unknown as {
+        htmlToPlaintext(h: string): string;
+      }
+    ).htmlToPlaintext(html);
+
+  it("decodes the basic HTML entities", () => {
+    expect(toPlaintext("a &amp; b")).toBe("a & b");
+    expect(toPlaintext("&lt;tag&gt;")).toBe("<tag>");
+    expect(toPlaintext("say &quot;hi&quot;")).toBe('say "hi"');
+    expect(toPlaintext("path&#92;file")).toBe("path\\file");
+    expect(toPlaintext("a&nbsp;b")).toBe("a b");
+  });
+
+  it("decodes &amp; last so encoded entities round-trip (no double-unescape)", () => {
+    // The literal text "&lt;" is stored in HTML as "&amp;lt;" and must decode
+    // back to "&lt;", NOT be double-unescaped to "<".
+    expect(toPlaintext("&amp;lt;")).toBe("&lt;");
+    expect(toPlaintext("&amp;gt;")).toBe("&gt;");
+    expect(toPlaintext("&amp;amp;")).toBe("&amp;");
+    expect(toPlaintext("&amp;nbsp;")).toBe("&nbsp;");
+  });
+
+  it("converts block/line tags to newlines and strips other tags", () => {
+    expect(toPlaintext("one<br>two")).toBe("one\ntwo");
+    expect(toPlaintext("<div>a</div><div>b</div>")).toBe("a\nb");
+    expect(toPlaintext("<p>x</p><p>y</p>")).toBe("x\ny");
+    expect(toPlaintext("<b>bold</b>")).toBe("bold");
+  });
+
+  it("collapses 3+ newlines and trims surrounding whitespace", () => {
+    expect(toPlaintext("a<br><br><br><br>b")).toBe("a\n\nb");
+    expect(toPlaintext("  <div>x</div>  ")).toBe("x");
+  });
+});

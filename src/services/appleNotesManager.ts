@@ -2829,19 +2829,23 @@ export class AppleNotesManager {
    * Simple HTML to plaintext conversion for export.
    */
   private htmlToPlaintext(html: string): string {
-    return html
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/div>/gi, "\n")
-      .replace(/<\/p>/gi, "\n")
-      .replace(/<[^>]+>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#92;/g, "\\")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
+    return (
+      html
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/div>/gi, "\n")
+        .replace(/<\/p>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#92;/g, "\\")
+        // Decode &amp; LAST so an encoded entity like "&amp;lt;" round-trips to the
+        // literal "&lt;" instead of being double-unescaped to "<".
+        .replace(/&amp;/g, "&")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+    );
   }
 
   /**
