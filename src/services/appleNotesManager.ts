@@ -2383,11 +2383,12 @@ export class AppleNotesManager {
    */
   listAttachments(title: string, account?: string): Attachment[] {
     const targetAccount = this.resolveAccount(account);
+    const safeAccount = escapePlainStringForAppleScript(targetAccount);
     const safeTitle = escapePlainStringForAppleScript(title);
 
     const script = `
       tell application "Notes"
-        tell account "${targetAccount}"
+        tell account "${safeAccount}"
           set theNote to note "${safeTitle}"
         set attachmentList to {}
         repeat with a in attachments of theNote

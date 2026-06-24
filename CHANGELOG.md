@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-06-24
+### Security
+- **Fixed an AppleScript injection in `list-attachments` (title path).** The `account` parameter was interpolated into the AppleScript `tell account "…"` block without escaping — every other method escapes it — so a crafted `account` value could terminate the string literal and inject AppleScript (e.g. `do shell script`). It is now escaped via `escapePlainStringForAppleScript`, matching the rest of the codebase, with a regression test added. Found by an internal security audit. No other tool was affected (ids/titles/folders were already escaped or schema-constrained).
+
+### Changed
+- **Hardened `checklistParser` SQLite access** to use `execFileSync` with an argument array instead of an `execSync` shell string (matching `noteMetadata`). Defense-in-depth — the query was already constrained to a digit-only primary key, so this is consistency hardening, not a fix for an exploitable bug.
+
 ## [2.5.0] - 2026-06-24
 ### Added
 - **`get-note-metadata` tool (BETA).** Reads note metadata AppleScript cannot expose — pinned state (`ZISPINNED`), checklist flags, trash/recovery state, preview snippet, and password hint — by querying plain scalar columns on `ZICCLOUDSYNCINGOBJECT` in the NoteStore database. No protobuf decoding (these are not the body blob), opened read-only via `execFileSync` (no shell), with Full Disk Access required. The reader feature-detects columns with `PRAGMA table_info`, so it degrades gracefully as the schema changes across macOS versions, and it resolves trashed notes AppleScript can no longer find. Marked BETA because the private schema is version-dependent. This makes pinned state **readable** for the first time (it remains unsettable); see the updated "Known limitations" note in the README.

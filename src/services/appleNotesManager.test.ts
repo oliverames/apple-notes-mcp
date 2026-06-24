@@ -393,6 +393,18 @@ describe("AppleNotesManager", () => {
     vi.clearAllMocks();
   });
 
+  describe("listAttachments — security", () => {
+    it("escapes the account name so it cannot break out of the AppleScript literal (injection regression)", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
+      manager.listAttachments("My Note", 'evil" injected');
+      const script = String(mockExecuteAppleScript.mock.calls.at(-1)?.[0]);
+      // The account's double-quote must be escaped (\\") — a raw quote would
+      // terminate the tell-account string literal and allow `do shell script` injection.
+      expect(script).toContain('tell account "evil\\" injected"');
+      expect(script).not.toContain('tell account "evil" injected"');
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // Note Creation
   // ---------------------------------------------------------------------------

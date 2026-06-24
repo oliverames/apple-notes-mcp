@@ -11,7 +11,7 @@ import { getChecklistItems, hasFullDiskAccess } from "./checklistParser.js";
 
 // Mock child_process to avoid actual database access
 vi.mock("child_process", () => ({
-  execSync: vi.fn(),
+  execFileSync: vi.fn(),
   spawnSync: vi.fn(() => ({ error: null })),
 }));
 
@@ -21,9 +21,9 @@ vi.mock("fs", () => ({
   statSync: vi.fn(() => ({ mtimeMs: Date.now() })),
 }));
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { existsSync } from "fs";
-const mockExecSync = vi.mocked(execSync);
+const mockExecSync = vi.mocked(execFileSync);
 const mockExistsSync = vi.mocked(existsSync);
 
 /**
@@ -287,7 +287,8 @@ describe("getChecklistItems", () => {
     getChecklistItems("x-coredata://12345-ABCDE/ICNote/p42");
 
     expect(mockExecSync).toHaveBeenCalledWith(
-      expect.stringContaining("Z_PK = 42"),
+      "sqlite3",
+      expect.arrayContaining([expect.stringContaining("Z_PK = 42")]),
       expect.any(Object)
     );
   });
