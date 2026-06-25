@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.3] - 2026-06-25
+### Fixed
+- Added a process-level uncaughtException/unhandledRejection safety net so a stray error or a broken stdout pipe (EPIPE) on client disconnect can no longer crash the long-lived server; EPIPE now exits cleanly.
+
+
 ## [2.5.2] - 2026-06-24
 ### Fixed
 - **`htmlToPlaintext` (note export) no longer double-unescapes HTML entities.** It decoded `&amp;` before the other entities, so an encoded sequence like `&amp;lt;` (the literal text `&lt;`) was wrongly collapsed to `<`. `&amp;` is now decoded last, so entities round-trip correctly in the exported `plaintext` field. Added unit tests covering each entity and the round-trip case. (Surfaced by CodeQL `js/double-escaping`.)
