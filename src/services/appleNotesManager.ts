@@ -40,6 +40,7 @@ import {
   fileSize,
   makeTempDir,
   cleanupTempDir,
+  ensureParentDir,
 } from "@/utils/attachmentFs.js";
 import { existsSync } from "fs";
 import TurndownService from "turndown";
@@ -1963,7 +1964,7 @@ export class AppleNotesManager {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
         show theAttachment${separatelyClause}
         return "OK"
@@ -2416,6 +2417,9 @@ export class AppleNotesManager {
     let abs: string;
     try {
       abs = assertSafeSavePath(savePath);
+      // Notes' `save` does not create intermediate directories and fails with
+      // an opaque error when the parent is missing, so create it up front.
+      ensureParentDir(abs);
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -2435,10 +2439,18 @@ export class AppleNotesManager {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
-        save theAttachment in (POSIX file "${safePath}")
-        return "OK${AS_FIELD_SEP}" & (name of theAttachment) & "${AS_FIELD_SEP}" & (content identifier of theAttachment)
+        set attachUrl to ""
+        try
+          set attachUrl to URL of theAttachment as text
+        end try
+        try
+          save theAttachment in (POSIX file "${safePath}")
+        on error errMsg
+          return "ERRSAVE" & ${AS_FIELD_SEP} & errMsg & ${AS_FIELD_SEP} & attachUrl
+        end try
+        return "OK" & ${AS_FIELD_SEP} & (name of theAttachment) & ${AS_FIELD_SEP} & (content identifier of theAttachment)
       end tell
     `;
 
@@ -2447,6 +2459,20 @@ export class AppleNotesManager {
       return { success: false, error: result.error ?? "unknown error" };
     }
     const parts = (result.output ?? "").trim().split(FIELD_SEP);
+    if (parts[0] === "ERRSAVE") {
+      const saveErr = (parts[1]?.trim() || "unknown error").replace(/\.$/, "");
+      const rawUrl = parts[2]?.trim();
+      const attachUrl = rawUrl && rawUrl !== "missing value" ? rawUrl : undefined;
+      // Link-preview attachments (a pasted URL's rich preview) have no file
+      // payload; Notes' `save` raises "AppleEvent handler failed" for them.
+      const linkHint = attachUrl
+        ? ` This attachment appears to be a link preview (URL: ${attachUrl}) rather than a file, and link previews have no file payload to save.`
+        : "";
+      return {
+        success: false,
+        error: `Notes could not save this attachment: ${saveErr}.${linkHint}`,
+      };
+    }
     if (parts[0] !== "OK") {
       return { success: false, error: parts[1]?.trim() || "attachment not found" };
     }

@@ -39140,11 +39140,21 @@ function getChecklistItems(noteId) {
 }
 
 // src/utils/attachmentFs.ts
-import { existsSync as existsSync2, mkdtempSync, readFileSync, rmSync, statSync } from "fs";
-import { isAbsolute, resolve, sep } from "path";
+import { existsSync as existsSync2, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "fs";
+import { dirname, isAbsolute, resolve, sep } from "path";
 import { homedir as homedir2, tmpdir } from "os";
 function allowedSaveRoots() {
-  return [resolve(homedir2()), resolve(tmpdir()), "/Volumes", "/private/var/folders", "/tmp"];
+  return [
+    resolve(homedir2()),
+    resolve(tmpdir()),
+    "/Volumes",
+    "/private/var/folders",
+    "/tmp",
+    "/private/tmp"
+  ];
+}
+function ensureParentDir(abs) {
+  mkdirSync(dirname(abs), { recursive: true });
 }
 function assertSafeSavePath(p, roots = allowedSaveRoots()) {
   if (!p || !p.trim()) throw new Error("A destination path is required.");
@@ -40471,7 +40481,7 @@ var AppleNotesManager = class {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
         show theAttachment${separatelyClause}
         return "OK"
@@ -40847,6 +40857,7 @@ var AppleNotesManager = class {
     let abs;
     try {
       abs = assertSafeSavePath(savePath);
+      ensureParentDir(abs);
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -40864,10 +40875,18 @@ var AppleNotesManager = class {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
-        save theAttachment in (POSIX file "${safePath}")
-        return "OK${AS_FIELD_SEP}" & (name of theAttachment) & "${AS_FIELD_SEP}" & (content identifier of theAttachment)
+        set attachUrl to ""
+        try
+          set attachUrl to URL of theAttachment as text
+        end try
+        try
+          save theAttachment in (POSIX file "${safePath}")
+        on error errMsg
+          return "ERRSAVE" & ${AS_FIELD_SEP} & errMsg & ${AS_FIELD_SEP} & attachUrl
+        end try
+        return "OK" & ${AS_FIELD_SEP} & (name of theAttachment) & ${AS_FIELD_SEP} & (content identifier of theAttachment)
       end tell
     `;
     const result = executeAppleScript(script);
@@ -40875,6 +40894,16 @@ var AppleNotesManager = class {
       return { success: false, error: result.error ?? "unknown error" };
     }
     const parts = (result.output ?? "").trim().split(FIELD_SEP);
+    if (parts[0] === "ERRSAVE") {
+      const saveErr = (parts[1]?.trim() || "unknown error").replace(/\.$/, "");
+      const rawUrl = parts[2]?.trim();
+      const attachUrl = rawUrl && rawUrl !== "missing value" ? rawUrl : void 0;
+      const linkHint = attachUrl ? ` This attachment appears to be a link preview (URL: ${attachUrl}) rather than a file, and link previews have no file payload to save.` : "";
+      return {
+        success: false,
+        error: `Notes could not save this attachment: ${saveErr}.${linkHint}`
+      };
+    }
     if (parts[0] !== "OK") {
       return { success: false, error: parts[1]?.trim() || "attachment not found" };
     }
