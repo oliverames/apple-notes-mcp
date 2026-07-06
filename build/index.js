@@ -41552,6 +41552,46 @@ function parseHashtags(body) {
   return result;
 }
 
+// src/utils/inlineImages.ts
+var DEFAULT_MAX_INLINE_IMAGE_BYTES = 256 * 1024;
+function maxInlineImageBytes(env = process.env) {
+  const raw = env.APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES;
+  if (raw !== void 0) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_MAX_INLINE_IMAGE_BYTES;
+}
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+var INLINE_IMG_RE = /<img\b[^>]*\bsrc\s*=\s*(["'])data:([^;'"]+);base64,([^"']*)\1[^>]*\/?>/gi;
+function stripLargeInlineImages(html, maxBytes = maxInlineImageBytes()) {
+  let strippedCount = 0;
+  let strippedBytes = 0;
+  const result = html.replace(INLINE_IMG_RE, (tag, _quote, mediaType, b64) => {
+    if (b64.length <= maxBytes) return tag;
+    const decodedBytes = Math.floor(b64.length * 3 / 4);
+    strippedCount += 1;
+    strippedBytes += decodedBytes;
+    return `<div>[inline image omitted: ${mediaType}, ~${formatBytes(
+      decodedBytes
+    )}; use list-attachments and save-attachment or fetch-attachment to export it]</div>`;
+  });
+  return { html: result, strippedCount, strippedBytes };
+}
+function strippedImagesWarning(stripped) {
+  if (stripped.strippedCount === 0) return null;
+  const plural = stripped.strippedCount === 1 ? "image" : "images";
+  return `
+
+\u26A0\uFE0F ${stripped.strippedCount} inline ${plural} (~${formatBytes(
+    stripped.strippedBytes
+  )} decoded) exceeded the per-image inline cap and ${stripped.strippedCount === 1 ? "was" : "were"} replaced with placeholders so the response stays within MCP message limits. The images are still in the note: use list-attachments with save-attachment or fetch-attachment to export them, or raise APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES.`;
+}
+
 // src/tools/doctor.ts
 import { spawnSync as spawnSync2 } from "child_process";
 function runDoctor(manager) {
@@ -41911,12 +41951,19 @@ server.registerTool(
           `Note "${note2.title}" is password-protected and cannot be read. Unlock it in Notes.app first.`
         );
       }
-      const content2 = notesManager.getNoteContentById(id);
-      if (!content2) {
+      const rawContent2 = notesManager.getNoteContentById(id);
+      if (!rawContent2) {
         return errorResponse(`Failed to read content of note "${note2.title}"`);
       }
+      const stripped2 = stripLargeInlineImages(rawContent2);
+      const content2 = stripped2.html;
       const hashtags2 = parseHashtags(content2);
-      return successResponse(content2, { title: note2.title, content: content2, hashtags: hashtags2 });
+      const warning2 = strippedImagesWarning(stripped2);
+      return successResponse(warning2 ? content2 + warning2 : content2, {
+        title: note2.title,
+        content: content2,
+        hashtags: hashtags2
+      });
     }
     if (!title) {
       return errorResponse("Either 'id' or 'title' is required");
@@ -41930,12 +41977,15 @@ server.registerTool(
         `Note "${title}" is password-protected and cannot be read. Unlock it in Notes.app first.`
       );
     }
-    const content = notesManager.getNoteContent(title, account);
-    if (!content) {
+    const rawContent = notesManager.getNoteContent(title, account);
+    if (!rawContent) {
       return errorResponse(`Failed to read content of note "${title}"`);
     }
+    const stripped = stripLargeInlineImages(rawContent);
+    const content = stripped.html;
     const hashtags = parseHashtags(content);
-    return successResponse(content, { title, content, hashtags });
+    const warning = strippedImagesWarning(stripped);
+    return successResponse(warning ? content + warning : content, { title, content, hashtags });
   }, "Error retrieving note content")
 );
 server.registerTool(
