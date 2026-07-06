@@ -899,9 +899,9 @@ npm install -g github:sweetrb/apple-notes-mcp
 ```bash
 git clone https://github.com/sweetrb/apple-notes-mcp.git
 cd apple-notes-mcp
-npm install
-npm run build
 ```
+
+The repo ships a prebuilt, dependency-free `build/index.js`, so a bare clone runs with nothing but Node installed. `npm install` and `npm run build` are only needed when you change the source.
 
 If installed from source, use this configuration:
 ```json
@@ -917,7 +917,7 @@ If installed from source, use this configuration:
 
 #### Running from a clone in Claude Code (project-scope `.mcp.json`)
 
-This repo ships a `.mcp.json` at its root so that, when you run `claude` from inside a clone, the server is registered automatically as a **project-scope** server — no manual config needed. After `npm run build`, just launch Claude Code from the repo directory and approve the server when prompted.
+This repo ships a `.mcp.json` at its root so that, when you run `claude` from inside a clone, the server is registered automatically as a **project-scope** server — no manual config needed. Just launch Claude Code from the repo directory and approve the server when prompted (the bundled `build/index.js` is committed, so no build step is required).
 
 The entrypoint is written as:
 
@@ -1095,7 +1095,7 @@ The `\\\\` in JSON becomes `\\` in the actual string, which represents a single 
 
 ### `apple-notes` server fails to connect when run from a clone
 - Launch `claude` from **inside the repo directory** so `CLAUDE_PROJECT_DIR` resolves to the repo root (the bare `.` fallback is unreliable — it points at the launching process's working directory)
-- Run `npm run build` first — the entrypoint is `${CLAUDE_PROJECT_DIR:-.}/build/index.js`, which won't exist until you build
+- If you've been editing the source, rerun `npm run build` — the entrypoint is `${CLAUDE_PROJECT_DIR:-.}/build/index.js`, and the committed bundle only reflects your changes after a rebuild
 - Run `claude mcp list` to check for a conflicting `apple-notes` entry at another scope (project-scope outranks user-scope, but local-scope outranks project-scope)
 - Approve the pending project-scope server when Claude Code prompts you
 
@@ -1105,7 +1105,7 @@ The `\\\\` in JSON becomes `\\` in the actual string, which represents a single 
 
 ```bash
 npm install            # Install dependencies
-npm run build          # Compile TypeScript
+npm run build          # Typecheck, then bundle src/index.ts into build/index.js (esbuild)
 npm test               # Run unit test suite (mocked AppleScript)
 npm run test:integration  # Run integration tests against real Notes.app
 npm run test:all       # Unit + integration

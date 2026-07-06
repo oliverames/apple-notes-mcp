@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **A bare git clone now runs the server with nothing but Node present (fixes #68).** Committing `build/` (#65) gave a fresh clone the entrypoint, but the compiled output still imported its runtime dependencies from `node_modules/`, which a git clone never has. Claude Code's marketplace auto-update re-clones the plugin from scratch, so every refresh left the server dying at session start on `ERR_MODULE_NOT_FOUND: Cannot find package '@modelcontextprotocol/sdk'`, with no install step anywhere between "marketplace refresh" and "server process starts". `npm run build` now typechecks (`tsc --noEmit`) and bundles `src/index.ts` with esbuild into a single self-contained `build/index.js` (shebang preserved, `@/` path aliases resolved from tsconfig). The only runtime file the bundle reads is `../package.json` (for the version string), which every distribution layout ships. `tsc-alias` is no longer needed and was dropped; the per-module compiled files under `build/` are gone, and only the bundled entrypoint is tracked in git.
 
 ## [2.5.7] - 2026-07-03
 ### Fixed
