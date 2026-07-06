@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.9] - 2026-07-06
+### Fixed
+- **`list-attachments` always returned an empty list.** Both `listAttachmentsById` and `listAttachments` built their output with `repeat with item in attachmentList`; `item` is an AppleScript class name, so the generated script failed to compile ("Expected variable name or property but found class name", -2741) and every call surfaced as zero attachments. The silent empty array defeated the attachment-safety check callers are told to run before `update-note`, which replaces the whole body and drops attachments. The loop variable is renamed, and a regression test now inspects the generated script for reserved loop variables, which the mocked unit tests cannot catch on their own. (#72)
+- **`url` no longer leaks the literal string `"missing value"`.** `URL of a as text` renders as `missing value` for attachments without a URL (most images); the parsed `url` field is now absent in that case. (#72)
+
 ## [2.5.8] - 2026-07-06
 ### Added
 - **Process-wide reliability knobs for AppleScript execution** (thanks [@oliverames](https://github.com/oliverames), #70). Three env vars now tune the AppleScript layer without a per-call override: `APPLE_NOTES_MCP_TIMEOUT_MS` (default `30000`) raises the per-call timeout for full-library operations on very large Notes libraries; `APPLE_NOTES_MCP_MAX_RETRIES` (default `2`, i.e. one retry) sets the total attempt count for transient failures, with `1` restoring the old fail-fast behavior; `APPLE_NOTES_MCP_RETRY_DELAY_MS` (default `1000`) sets the base retry delay before exponential back-off. Precedence is per-call options → env knob → built-in default; invalid values fall through to the default. A shared `envPositiveNumber()` helper validates all of them (and the existing `APPLE_NOTES_MCP_MAX_BUFFER`) the same way. Documented in the README.
