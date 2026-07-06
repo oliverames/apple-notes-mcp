@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.10] - 2026-07-06
+### Fixed
+- **`save-attachment` misreported every successful save as "attachment not found".** The OK/ERR sentinel interpolated the field separator inside the AppleScript string literal (`return "OK${AS_FIELD_SEP}" & ...`), so the script returned the literal text `OK(ASCII character 31)...` instead of a control character and the TypeScript split never matched, even though the file landed on disk. Separators are now concatenated as expressions, matching the list methods; `show-attachment` had the same quirk in its ERR return and is fixed for consistency. A regression test inspects the generated script for separators inside string literals. (#73)
+- **`/private/tmp` destinations are allowed.** `allowedSaveRoots` accepted `/tmp` but rejected `/private/tmp`, the real directory behind macOS's `/tmp` symlink. (#73)
+- **Missing parent directories no longer fail the save.** Notes' `save` does not create intermediate directories and raised an opaque "Failed saving an attachment" error; the parent directory is now created up front. (#73)
+- **Link-preview attachments get a clear error.** Saving the rich preview Notes builds for a pasted URL raised a bare "AppleEvent handler failed"; the error now explains that link previews have no file payload and includes the preview's URL. (#73)
+
 ## [2.5.8] - 2026-07-06
 ### Added
 - **Process-wide reliability knobs for AppleScript execution** (thanks [@oliverames](https://github.com/oliverames), #70). Three env vars now tune the AppleScript layer without a per-call override: `APPLE_NOTES_MCP_TIMEOUT_MS` (default `30000`) raises the per-call timeout for full-library operations on very large Notes libraries; `APPLE_NOTES_MCP_MAX_RETRIES` (default `2`, i.e. one retry) sets the total attempt count for transient failures, with `1` restoring the old fail-fast behavior; `APPLE_NOTES_MCP_RETRY_DELAY_MS` (default `1000`) sets the base retry delay before exponential back-off. Precedence is per-call options → env knob → built-in default; invalid values fall through to the default. A shared `envPositiveNumber()` helper validates all of them (and the existing `APPLE_NOTES_MCP_MAX_BUFFER`) the same way. Documented in the README.
