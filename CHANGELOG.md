@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.11] - 2026-07-06
+### Fixed
+- **Image-heavy notes no longer kill the MCP connection on `get-note-content`.** Notes returns a note's body with pasted images embedded as base64 `data:` URIs; a note with a few photos produces a 10+ MB body, and a response that large can exceed the client's message limit and take down the whole stdio transport (observed as "MCP error -32000: Connection closed" on a 10.5 MB note). Each inline image whose base64 payload exceeds a per-image cap (256 KB default, `APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES` to override) is now replaced with a placeholder naming the media type and decoded size, and a warning appended to the response points at `list-attachments` / `save-attachment` / `fetch-attachment` for exporting the real files. Small pasted images stay inline; note text is never touched. (#74)
+
 ## [2.5.8] - 2026-07-06
 ### Added
 - **Process-wide reliability knobs for AppleScript execution** (thanks [@oliverames](https://github.com/oliverames), #70). Three env vars now tune the AppleScript layer without a per-call override: `APPLE_NOTES_MCP_TIMEOUT_MS` (default `30000`) raises the per-call timeout for full-library operations on very large Notes libraries; `APPLE_NOTES_MCP_MAX_RETRIES` (default `2`, i.e. one retry) sets the total attempt count for transient failures, with `1` restoring the old fail-fast behavior; `APPLE_NOTES_MCP_RETRY_DELAY_MS` (default `1000`) sets the base retry delay before exponential back-off. Precedence is per-call options → env knob → built-in default; invalid values fall through to the default. A shared `envPositiveNumber()` helper validates all of them (and the existing `APPLE_NOTES_MCP_MAX_BUFFER`) the same way. Documented in the README.
