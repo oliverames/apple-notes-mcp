@@ -11,6 +11,7 @@ import {
   makeTempDir,
   cleanupTempDir,
   allowedSaveRoots,
+  ensureParentDir,
 } from "@/utils/attachmentFs.js";
 
 const dirs: string[] = [];
@@ -22,6 +23,13 @@ describe("assertSafeSavePath (#27)", () => {
     expect(assertSafeSavePath(p)).toBe(p);
     const h = join(homedir(), "Downloads", "x.png");
     expect(assertSafeSavePath(h)).toBe(h);
+  });
+
+  it("accepts /private/tmp, the real path behind the /tmp symlink", () => {
+    // macOS's /tmp is a symlink to /private/tmp. A caller passing the resolved
+    // real path must not be rejected while the symlinked spelling is accepted.
+    expect(assertSafeSavePath("/private/tmp/x.png")).toBe("/private/tmp/x.png");
+    expect(assertSafeSavePath("/tmp/x.png")).toBe("/tmp/x.png");
   });
 
   it("rejects empty, relative, and out-of-root paths", () => {
@@ -91,5 +99,24 @@ describe("readFileBase64Capped / maxAttachmentBytes (size guard)", () => {
       25 * 1024 * 1024
     );
     expect(maxAttachmentBytes({})).toBe(25 * 1024 * 1024);
+  });
+});
+
+describe("ensureParentDir", () => {
+  it("creates missing intermediate directories for a save destination", () => {
+    const dir = makeTempDir();
+    dirs.push(dir);
+    const dest = join(dir, "deep", "nested", "photo.png");
+    expect(existsSync(join(dir, "deep", "nested"))).toBe(false);
+    ensureParentDir(dest);
+    expect(existsSync(join(dir, "deep", "nested"))).toBe(true);
+    writeFileSync(dest, "x");
+    expect(existsSync(dest)).toBe(true);
+  });
+
+  it("is a no-op when the parent already exists", () => {
+    const dir = makeTempDir();
+    dirs.push(dir);
+    expect(() => ensureParentDir(join(dir, "photo.png"))).not.toThrow();
   });
 });
