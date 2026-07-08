@@ -7,13 +7,34 @@
  *
  * @module utils/attachmentFs
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "fs";
-import { isAbsolute, resolve, sep } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "fs";
+import { dirname, isAbsolute, resolve, sep } from "path";
 import { homedir, tmpdir } from "os";
 
-/** Roots an attachment may be written to. */
+/**
+ * Roots an attachment may be written to. `/private/tmp` is listed alongside
+ * `/tmp` because macOS's `/tmp` is a symlink to it: a caller that passes the
+ * resolved real path must not be rejected while the symlinked spelling of the
+ * same directory is accepted (the same reason `/private/var/folders` is here).
+ */
 export function allowedSaveRoots(): string[] {
-  return [resolve(homedir()), resolve(tmpdir()), "/Volumes", "/private/var/folders", "/tmp"];
+  return [
+    resolve(homedir()),
+    resolve(tmpdir()),
+    "/Volumes",
+    "/private/var/folders",
+    "/tmp",
+    "/private/tmp",
+  ];
+}
+
+/**
+ * Ensure the parent directory of a save destination exists. Notes.app's
+ * AppleScript `save` does not create intermediate directories; without this it
+ * fails with an opaque "Failed saving an attachment to <path>" error.
+ */
+export function ensureParentDir(abs: string): void {
+  mkdirSync(dirname(abs), { recursive: true });
 }
 
 /**

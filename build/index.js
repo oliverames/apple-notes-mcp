@@ -39140,11 +39140,21 @@ function getChecklistItems(noteId) {
 }
 
 // src/utils/attachmentFs.ts
-import { existsSync as existsSync2, mkdtempSync, readFileSync, rmSync, statSync } from "fs";
-import { isAbsolute, resolve, sep } from "path";
+import { existsSync as existsSync2, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "fs";
+import { dirname, isAbsolute, resolve, sep } from "path";
 import { homedir as homedir2, tmpdir } from "os";
 function allowedSaveRoots() {
-  return [resolve(homedir2()), resolve(tmpdir()), "/Volumes", "/private/var/folders", "/tmp"];
+  return [
+    resolve(homedir2()),
+    resolve(tmpdir()),
+    "/Volumes",
+    "/private/var/folders",
+    "/tmp",
+    "/private/tmp"
+  ];
+}
+function ensureParentDir(abs) {
+  mkdirSync(dirname(abs), { recursive: true });
 }
 function assertSafeSavePath(p, roots = allowedSaveRoots()) {
   if (!p || !p.trim()) throw new Error("A destination path is required.");
@@ -39281,6 +39291,10 @@ function buildAppleScriptDateVar(date3, varName = "thresholdDate") {
 }
 function asDatePartsExpr(v) {
   return `((year of ${v}) as text) & "-" & ((month of ${v}) as integer as text) & "-" & ((day of ${v}) as text) & "-" & ((hours of ${v}) as text) & "-" & ((minutes of ${v}) as text) & "-" & ((seconds of ${v}) as text)`;
+}
+function normalizeAppleScriptText(field) {
+  const trimmed = field?.trim();
+  return trimmed && trimmed !== "missing value" ? trimmed : void 0;
 }
 function parseNotePropertiesOutput(output) {
   const parts = output.split(FIELD_SEP);
@@ -40471,7 +40485,7 @@ var AppleNotesManager = class {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
         show theAttachment${separatelyClause}
         return "OK"
@@ -40737,8 +40751,8 @@ var AppleNotesManager = class {
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
         set output to ""
-        repeat with item in attachmentList
-          set output to output & item & ${AS_RECORD_SEP}
+        repeat with recordItem in attachmentList
+          set output to output & recordItem & ${AS_RECORD_SEP}
         end repeat
         return output
       end tell
@@ -40760,7 +40774,7 @@ var AppleNotesManager = class {
           name: parts[1].trim(),
           contentType: parts[2].trim(),
           contentId: parts[2].trim() || void 0,
-          url: parts[3]?.trim() || void 0,
+          url: normalizeAppleScriptText(parts[3]),
           created: parts[4] ? parseAppleScriptDate(parts[4].trim()) : void 0,
           modified: parts[5] ? parseAppleScriptDate(parts[5].trim()) : void 0,
           shared: parts[6] ? parts[6].trim().toLowerCase() === "true" : void 0
@@ -40801,8 +40815,8 @@ var AppleNotesManager = class {
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
           set output to ""
-          repeat with item in attachmentList
-            set output to output & item & ${AS_RECORD_SEP}
+          repeat with recordItem in attachmentList
+            set output to output & recordItem & ${AS_RECORD_SEP}
           end repeat
           return output
         end tell
@@ -40825,7 +40839,7 @@ var AppleNotesManager = class {
           name: parts[1].trim(),
           contentType: parts[2].trim(),
           contentId: parts[2].trim() || void 0,
-          url: parts[3]?.trim() || void 0,
+          url: normalizeAppleScriptText(parts[3]),
           created: parts[4] ? parseAppleScriptDate(parts[4].trim()) : void 0,
           modified: parts[5] ? parseAppleScriptDate(parts[5].trim()) : void 0,
           shared: parts[6] ? parts[6].trim().toLowerCase() === "true" : void 0
@@ -40847,6 +40861,7 @@ var AppleNotesManager = class {
     let abs;
     try {
       abs = assertSafeSavePath(savePath);
+      ensureParentDir(abs);
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -40864,10 +40879,18 @@ var AppleNotesManager = class {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
-        save theAttachment in (POSIX file "${safePath}")
-        return "OK${AS_FIELD_SEP}" & (name of theAttachment) & "${AS_FIELD_SEP}" & (content identifier of theAttachment)
+        set attachUrl to ""
+        try
+          set attachUrl to URL of theAttachment as text
+        end try
+        try
+          save theAttachment in (POSIX file "${safePath}")
+        on error errMsg
+          return "ERRSAVE" & ${AS_FIELD_SEP} & errMsg & ${AS_FIELD_SEP} & attachUrl
+        end try
+        return "OK" & ${AS_FIELD_SEP} & (name of theAttachment) & ${AS_FIELD_SEP} & (content identifier of theAttachment)
       end tell
     `;
     const result = executeAppleScript(script);
@@ -40875,6 +40898,16 @@ var AppleNotesManager = class {
       return { success: false, error: result.error ?? "unknown error" };
     }
     const parts = (result.output ?? "").trim().split(FIELD_SEP);
+    if (parts[0] === "ERRSAVE") {
+      const saveErr = (parts[1]?.trim() || "unknown error").replace(/\.$/, "");
+      const rawUrl = parts[2]?.trim();
+      const attachUrl = rawUrl && rawUrl !== "missing value" ? rawUrl : void 0;
+      const linkHint = attachUrl ? ` This attachment appears to be a link preview (URL: ${attachUrl}) rather than a file, and link previews have no file payload to save.` : "";
+      return {
+        success: false,
+        error: `Notes could not save this attachment: ${saveErr}.${linkHint}`
+      };
+    }
     if (parts[0] !== "OK") {
       return { success: false, error: parts[1]?.trim() || "attachment not found" };
     }
@@ -41552,6 +41585,46 @@ function parseHashtags(body) {
   return result;
 }
 
+// src/utils/inlineImages.ts
+var DEFAULT_MAX_INLINE_IMAGE_BYTES = 256 * 1024;
+function maxInlineImageBytes(env = process.env) {
+  const raw = env.APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES;
+  if (raw !== void 0) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_MAX_INLINE_IMAGE_BYTES;
+}
+function formatBytes(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+var INLINE_IMG_RE = /<img\b[^>]*\bsrc\s*=\s*(["'])data:([^;'"]+);base64,([^"']*)\1[^>]*\/?>/gi;
+function stripLargeInlineImages(html, maxBytes = maxInlineImageBytes()) {
+  let strippedCount = 0;
+  let strippedBytes = 0;
+  const result = html.replace(INLINE_IMG_RE, (tag, _quote, mediaType, b64) => {
+    if (b64.length <= maxBytes) return tag;
+    const decodedBytes = Math.floor(b64.length * 3 / 4);
+    strippedCount += 1;
+    strippedBytes += decodedBytes;
+    return `<div>[inline image omitted: ${mediaType}, ~${formatBytes(
+      decodedBytes
+    )}; use list-attachments and save-attachment or fetch-attachment to export it]</div>`;
+  });
+  return { html: result, strippedCount, strippedBytes };
+}
+function strippedImagesWarning(stripped) {
+  if (stripped.strippedCount === 0) return null;
+  const plural = stripped.strippedCount === 1 ? "image" : "images";
+  return `
+
+\u26A0\uFE0F ${stripped.strippedCount} inline ${plural} (~${formatBytes(
+    stripped.strippedBytes
+  )} decoded) exceeded the per-image inline cap and ${stripped.strippedCount === 1 ? "was" : "were"} replaced with placeholders so the response stays within MCP message limits. The images are still in the note: use list-attachments with save-attachment or fetch-attachment to export them, or raise APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES.`;
+}
+
 // src/tools/doctor.ts
 import { spawnSync as spawnSync2 } from "child_process";
 function runDoctor(manager) {
@@ -41911,12 +41984,19 @@ server.registerTool(
           `Note "${note2.title}" is password-protected and cannot be read. Unlock it in Notes.app first.`
         );
       }
-      const content2 = notesManager.getNoteContentById(id);
-      if (!content2) {
+      const rawContent2 = notesManager.getNoteContentById(id);
+      if (!rawContent2) {
         return errorResponse(`Failed to read content of note "${note2.title}"`);
       }
+      const stripped2 = stripLargeInlineImages(rawContent2);
+      const content2 = stripped2.html;
       const hashtags2 = parseHashtags(content2);
-      return successResponse(content2, { title: note2.title, content: content2, hashtags: hashtags2 });
+      const warning2 = strippedImagesWarning(stripped2);
+      return successResponse(warning2 ? content2 + warning2 : content2, {
+        title: note2.title,
+        content: content2,
+        hashtags: hashtags2
+      });
     }
     if (!title) {
       return errorResponse("Either 'id' or 'title' is required");
@@ -41930,12 +42010,15 @@ server.registerTool(
         `Note "${title}" is password-protected and cannot be read. Unlock it in Notes.app first.`
       );
     }
-    const content = notesManager.getNoteContent(title, account);
-    if (!content) {
+    const rawContent = notesManager.getNoteContent(title, account);
+    if (!rawContent) {
       return errorResponse(`Failed to read content of note "${title}"`);
     }
+    const stripped = stripLargeInlineImages(rawContent);
+    const content = stripped.html;
     const hashtags = parseHashtags(content);
-    return successResponse(content, { title, content, hashtags });
+    const warning = strippedImagesWarning(stripped);
+    return successResponse(warning ? content + warning : content, { title, content, hashtags });
   }, "Error retrieving note content")
 );
 server.registerTool(

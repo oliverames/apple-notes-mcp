@@ -40,6 +40,7 @@ import {
   fileSize,
   makeTempDir,
   cleanupTempDir,
+  ensureParentDir,
 } from "@/utils/attachmentFs.js";
 import { existsSync } from "fs";
 import TurndownService from "turndown";
@@ -348,6 +349,18 @@ export function asDatePartsExpr(v: string): string {
     `((day of ${v}) as text) & "-" & ((hours of ${v}) as text) & "-" & ` +
     `((minutes of ${v}) as text) & "-" & ((seconds of ${v}) as text)`
   );
+}
+
+/**
+ * Normalizes an optional AppleScript text field: trims it and converts the
+ * literal "missing value" (what `URL of a as text` yields when the property is
+ * unset) to undefined, so callers never see the sentinel string as data.
+ *
+ * @param field - raw field text from the AppleScript record, if any
+ */
+function normalizeAppleScriptText(field: string | undefined): string | undefined {
+  const trimmed = field?.trim();
+  return trimmed && trimmed !== "missing value" ? trimmed : undefined;
 }
 
 /**
@@ -1963,7 +1976,7 @@ export class AppleNotesManager {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
         show theAttachment${separatelyClause}
         return "OK"
@@ -2289,8 +2302,8 @@ export class AppleNotesManager {
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
         set output to ""
-        repeat with item in attachmentList
-          set output to output & item & ${AS_RECORD_SEP}
+        repeat with recordItem in attachmentList
+          set output to output & recordItem & ${AS_RECORD_SEP}
         end repeat
         return output
       end tell
@@ -2316,7 +2329,7 @@ export class AppleNotesManager {
           name: parts[1].trim(),
           contentType: parts[2].trim(),
           contentId: parts[2].trim() || undefined,
-          url: parts[3]?.trim() || undefined,
+          url: normalizeAppleScriptText(parts[3]),
           created: parts[4] ? parseAppleScriptDate(parts[4].trim()) : undefined,
           modified: parts[5] ? parseAppleScriptDate(parts[5].trim()) : undefined,
           shared: parts[6] ? parts[6].trim().toLowerCase() === "true" : undefined,
@@ -2360,8 +2373,8 @@ export class AppleNotesManager {
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
           set output to ""
-          repeat with item in attachmentList
-            set output to output & item & ${AS_RECORD_SEP}
+          repeat with recordItem in attachmentList
+            set output to output & recordItem & ${AS_RECORD_SEP}
           end repeat
           return output
         end tell
@@ -2388,7 +2401,7 @@ export class AppleNotesManager {
           name: parts[1].trim(),
           contentType: parts[2].trim(),
           contentId: parts[2].trim() || undefined,
-          url: parts[3]?.trim() || undefined,
+          url: normalizeAppleScriptText(parts[3]),
           created: parts[4] ? parseAppleScriptDate(parts[4].trim()) : undefined,
           modified: parts[5] ? parseAppleScriptDate(parts[5].trim()) : undefined,
           shared: parts[6] ? parts[6].trim().toLowerCase() === "true" : undefined,
@@ -2416,6 +2429,9 @@ export class AppleNotesManager {
     let abs: string;
     try {
       abs = assertSafeSavePath(savePath);
+      // Notes' `save` does not create intermediate directories and fails with
+      // an opaque error when the parent is missing, so create it up front.
+      ensureParentDir(abs);
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -2435,10 +2451,18 @@ export class AppleNotesManager {
           end if
         end repeat
         if theAttachment is missing value then
-          return "ERR${AS_FIELD_SEP}attachment not found"
+          return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
-        save theAttachment in (POSIX file "${safePath}")
-        return "OK${AS_FIELD_SEP}" & (name of theAttachment) & "${AS_FIELD_SEP}" & (content identifier of theAttachment)
+        set attachUrl to ""
+        try
+          set attachUrl to URL of theAttachment as text
+        end try
+        try
+          save theAttachment in (POSIX file "${safePath}")
+        on error errMsg
+          return "ERRSAVE" & ${AS_FIELD_SEP} & errMsg & ${AS_FIELD_SEP} & attachUrl
+        end try
+        return "OK" & ${AS_FIELD_SEP} & (name of theAttachment) & ${AS_FIELD_SEP} & (content identifier of theAttachment)
       end tell
     `;
 
@@ -2447,6 +2471,20 @@ export class AppleNotesManager {
       return { success: false, error: result.error ?? "unknown error" };
     }
     const parts = (result.output ?? "").trim().split(FIELD_SEP);
+    if (parts[0] === "ERRSAVE") {
+      const saveErr = (parts[1]?.trim() || "unknown error").replace(/\.$/, "");
+      const rawUrl = parts[2]?.trim();
+      const attachUrl = rawUrl && rawUrl !== "missing value" ? rawUrl : undefined;
+      // Link-preview attachments (a pasted URL's rich preview) have no file
+      // payload; Notes' `save` raises "AppleEvent handler failed" for them.
+      const linkHint = attachUrl
+        ? ` This attachment appears to be a link preview (URL: ${attachUrl}) rather than a file, and link previews have no file payload to save.`
+        : "";
+      return {
+        success: false,
+        error: `Notes could not save this attachment: ${saveErr}.${linkHint}`,
+      };
+    }
     if (parts[0] !== "OK") {
       return { success: false, error: parts[1]?.trim() || "attachment not found" };
     }

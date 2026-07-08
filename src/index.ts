@@ -30,6 +30,7 @@ import { getChecklistItems, hasFullDiskAccess } from "@/utils/checklistParser.js
 import { getNoteMetadata } from "@/utils/noteMetadata.js";
 import { detectChecklistAttempt } from "@/utils/contentWarnings.js";
 import { parseHashtags } from "@/utils/hashtags.js";
+import { stripLargeInlineImages, strippedImagesWarning } from "@/utils/inlineImages.js";
 import { runDoctor, formatDoctorReport } from "@/tools/doctor.js";
 import { loadFileConfig } from "@/services/fileConfig.js";
 import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
@@ -344,12 +345,21 @@ server.registerTool(
           `Note "${note.title}" is password-protected and cannot be read. Unlock it in Notes.app first.`
         );
       }
-      const content = notesManager.getNoteContentById(id);
-      if (!content) {
+      const rawContent = notesManager.getNoteContentById(id);
+      if (!rawContent) {
         return errorResponse(`Failed to read content of note "${note.title}"`);
       }
+      // Cap inline base64 images so an image-heavy note cannot produce a
+      // response large enough to blow the client's MCP message limit.
+      const stripped = stripLargeInlineImages(rawContent);
+      const content = stripped.html;
       const hashtags = parseHashtags(content);
-      return successResponse(content, { title: note.title, content, hashtags });
+      const warning = strippedImagesWarning(stripped);
+      return successResponse(warning ? content + warning : content, {
+        title: note.title,
+        content,
+        hashtags,
+      });
     }
 
     // Fall back to title-based lookup
@@ -368,13 +378,16 @@ server.registerTool(
       );
     }
 
-    const content = notesManager.getNoteContent(title, account);
-    if (!content) {
+    const rawContent = notesManager.getNoteContent(title, account);
+    if (!rawContent) {
       return errorResponse(`Failed to read content of note "${title}"`);
     }
 
+    const stripped = stripLargeInlineImages(rawContent);
+    const content = stripped.html;
     const hashtags = parseHashtags(content);
-    return successResponse(content, { title, content, hashtags });
+    const warning = strippedImagesWarning(stripped);
+    return successResponse(warning ? content + warning : content, { title, content, hashtags });
   }, "Error retrieving note content")
 );
 

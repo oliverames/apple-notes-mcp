@@ -47,6 +47,71 @@ describe("saveAttachmentById (#27)", () => {
     expect(r.contentType).toBe("public.png");
   });
 
+  it("emits real separator characters in the OK/ERR sentinel protocol", () => {
+    // Regression: `return "OK${AS_FIELD_SEP}" & ...` interpolated the
+    // separator INSIDE the AppleScript string literal, so the script returned
+    // the literal text "OK(ASCII character 31)..." instead of a control
+    // character. The TS split never matched and every successful save was
+    // misreported as "attachment not found" even though the file was written.
+    mockExec.mockReturnValueOnce({ success: true, output: "" });
+
+    manager.saveAttachmentById("x-coredata://A/ICNote/p1", "att-1", join(tmpdir(), "x.png"));
+
+    const script = mockExec.mock.calls[0][0] as string;
+    expect(script).not.toMatch(/"(?:OK|ERR|ERRSAVE)\(ASCII character/);
+    expect(script).toContain('return "OK" & (ASCII character 31) &');
+  });
+
+  it("creates missing parent directories before invoking Notes", () => {
+    // Notes' `save` does not create intermediate directories and fails with an
+    // opaque error when the parent is missing.
+    const dir = mkdtempSync(join(tmpdir(), "anatt-"));
+    tmpDirs.push(dir);
+    const dest = join(dir, "not", "yet", "created", "photo.png");
+    mockExec.mockImplementation((script: string) => {
+      const m = script.match(/POSIX file "([^"]+)"/);
+      if (m) writeFileSync(m[1], Buffer.from("PNGDATA"));
+      return { success: true, output: ["OK", "photo.png", "public.png"].join(F) };
+    });
+
+    const r = manager.saveAttachmentById("x-coredata://A/ICNote/p1", "att-1", dest);
+    expect(r.success).toBe(true);
+    expect(r.savedPath).toBe(dest);
+  });
+
+  it("explains link-preview attachments when Notes' save raises an AppleEvent error", () => {
+    mockExec.mockReturnValueOnce({
+      success: true,
+      output: ["ERRSAVE", "AppleEvent handler failed.", "https://example.com/app"].join(F),
+    });
+
+    const r = manager.saveAttachmentById(
+      "x-coredata://A/ICNote/p1",
+      "att-1",
+      join(tmpdir(), "x.bin")
+    );
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("AppleEvent handler failed");
+    expect(r.error).toContain("link preview");
+    expect(r.error).toContain("https://example.com/app");
+  });
+
+  it("reports a plain save error without the link hint when the attachment has no URL", () => {
+    mockExec.mockReturnValueOnce({
+      success: true,
+      output: ["ERRSAVE", "Failed saving an attachment to /nope.", "missing value"].join(F),
+    });
+
+    const r = manager.saveAttachmentById(
+      "x-coredata://A/ICNote/p1",
+      "att-1",
+      join(tmpdir(), "x.bin")
+    );
+    expect(r.success).toBe(false);
+    expect(r.error).toContain("Failed saving an attachment");
+    expect(r.error).not.toContain("link preview");
+  });
+
   it("rejects an unsafe destination before running AppleScript", () => {
     const r = manager.saveAttachmentById("x-coredata://A/ICNote/p1", "att-1", "/etc/evil.png");
     expect(r.success).toBe(false);
