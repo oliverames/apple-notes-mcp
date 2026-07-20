@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **`update-note` no longer reports an ignored `newTitle` as the note's title for HTML updates.** In `format: "html"` mode, Apple Notes derives the visible title from the first line of `newContent` and the manager intentionally ignores `newTitle`, but the tool response still echoed `newTitle` as though it had been applied. The response now keeps the known current title for HTML updates, and the live tool schema explicitly tells callers to put the visible title first in `newContent`.
+- **`update-note` no longer reports an ignored `newTitle` as the note's title for HTML updates.** In `format: "html"` mode, Apple Notes derives the visible title from the first line of `newContent` and the manager intentionally ignores `newTitle`, but the tool response still echoed `newTitle` as though it had been applied. The response now reports the first visible HTML line (falling back to the known current title when the body has no text), and the live tool schema explicitly tells callers to put the visible title first in `newContent`.
 
 ## [2.6.2] - 2026-07-20
 ### Changed

@@ -769,7 +769,7 @@ server.registerTool(
       if (!success) {
         return errorResponse(`Failed to update note "${note.title}"`);
       }
-      const displayTitle = resolveUpdateResponseTitle(note.title, newTitle, format);
+      const displayTitle = resolveUpdateResponseTitle(note.title, newTitle, format, newContent);
       // Add collaboration warning if note is shared
       const sharedWarning = note.shared
         ? "\n\n⚠️ This note is shared with collaborators. Your changes will be visible to them."
@@ -806,7 +806,7 @@ server.registerTool(
       return errorResponse(`Failed to update note "${title}"`);
     }
 
-    const finalTitle = resolveUpdateResponseTitle(note.title, newTitle, format);
+    const finalTitle = resolveUpdateResponseTitle(note.title, newTitle, format, newContent);
     // Add collaboration warning if note is shared
     const sharedWarning = note.shared
       ? "\n\n⚠️ This note is shared with collaborators. Your changes will be visible to them."

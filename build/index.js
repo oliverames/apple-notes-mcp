@@ -41755,8 +41755,31 @@ function strippedImagesWarning(stripped) {
 }
 
 // src/utils/updateResponseTitle.ts
-function resolveUpdateResponseTitle(currentTitle, newTitle, format) {
-  if (format === "html") return currentTitle;
+var BLOCK_END_RE = /<\/(?:div|h[1-6]|p|li)>/gi;
+var BREAK_RE = /<br\s*\/?\s*>/gi;
+var TAG_RE = /<[^>]*>/g;
+var NON_RENDERED_BLOCK_RE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi;
+function decodeHtmlEntities(text) {
+  const decodeCodePoint = (match, value, radix) => {
+    const codePoint = Number.parseInt(value, radix);
+    if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 1114111 || codePoint >= 55296 && codePoint <= 57343) {
+      return match;
+    }
+    return String.fromCodePoint(codePoint);
+  };
+  return text.replace(/&#x([0-9a-f]+);?/gi, (match, hex) => decodeCodePoint(match, hex, 16)).replace(/&#([0-9]+);?/g, (match, decimal) => decodeCodePoint(match, decimal, 10)).replace(/&nbsp(?:;|(?![0-9a-z]))/gi, " ").replace(/&quot(?:;|(?![0-9a-z]))/gi, '"').replace(/&apos(?:;|(?![0-9a-z]))/gi, "'").replace(/&lt(?:;|(?![0-9a-z]))/gi, "<").replace(/&gt(?:;|(?![0-9a-z]))/gi, ">").replace(/&amp(?:;|(?![0-9a-z]))/gi, "&");
+}
+function firstVisibleHtmlLine(html) {
+  let text = html.replace(NON_RENDERED_BLOCK_RE, "").replace(BREAK_RE, "\n").replace(BLOCK_END_RE, "\n");
+  let previous;
+  do {
+    previous = text;
+    text = text.replace(TAG_RE, "");
+  } while (text !== previous);
+  return decodeHtmlEntities(text).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
+}
+function resolveUpdateResponseTitle(currentTitle, newTitle, format, newContent) {
+  if (format === "html") return firstVisibleHtmlLine(newContent) ?? currentTitle;
   return newTitle || currentTitle;
 }
 
@@ -42426,7 +42449,7 @@ server.registerTool(
       if (!success2) {
         return errorResponse(`Failed to update note "${note2.title}"`);
       }
-      const displayTitle = resolveUpdateResponseTitle(note2.title, newTitle, format);
+      const displayTitle = resolveUpdateResponseTitle(note2.title, newTitle, format, newContent);
       const sharedWarning2 = note2.shared ? "\n\n\u26A0\uFE0F This note is shared with collaborators. Your changes will be visible to them." : "";
       const checklistWarning2 = detectChecklistAttempt(newContent) ?? "";
       return successResponse(`Note updated: "${displayTitle}"${sharedWarning2}${checklistWarning2}`, {
@@ -42454,7 +42477,7 @@ server.registerTool(
     if (!success) {
       return errorResponse(`Failed to update note "${title}"`);
     }
-    const finalTitle = resolveUpdateResponseTitle(note.title, newTitle, format);
+    const finalTitle = resolveUpdateResponseTitle(note.title, newTitle, format, newContent);
     const sharedWarning = note.shared ? "\n\n\u26A0\uFE0F This note is shared with collaborators. Your changes will be visible to them." : "";
     const checklistWarning = detectChecklistAttempt(newContent) ?? "";
     return successResponse(`Note updated: "${finalTitle}"${sharedWarning}${checklistWarning}`, {
