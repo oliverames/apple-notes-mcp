@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-07-20
+### Changed
+- CI/release hardening: `version-guard` now treats the committed `build/` bundle as shipped bytes (closing the lockfile-only and devDep silent-never-publish vectors) with an npm version-collision check; `publish.yml` gained a daily self-healing watchdog, manual dispatch, exact-version skip, CI-validated-commit checkout, and GitHub-Release self-heal; Dependabot bundle rebuilds now auto-bump a patch version; CI boots the committed bundle standalone on Node 20 every run; the bundle is now built with `--target=node20`, making the `engines.node >= 20` claim enforced at build time.
+
 ## [2.6.1] - 2026-07-20
 ### Changed
 - **`list-notes` fetches note properties in bulk instead of two Apple Events per note (#86).** Full-library listings scaled at roughly 8 notes/second, so a 524-note library took 63 seconds and blew past the 60-second tool timeout MCP clients enforce; `health-check` runs an unbounded listing internally, so large libraries looked broken to clients. Names, ids, and (when `modifiedSince` is set) modification dates now come back as whole-list Apple Events, with the date comparison done locally in AppleScript rather than a `whose` clause, which Notes evaluates per-note. Measured on the same 524-note library: filtered listing 63s → 6.7s, `health-check` 60s+ → ~10s. Dedup and `limit` are applied in JS after the bulk fetch. Thanks @oliverames.

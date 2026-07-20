@@ -41697,7 +41697,7 @@ function detectChecklistAttempt(content) {
 function htmlToText(html) {
   return html.replace(/<[^>]*>/g, " ").replace(/&#x?[0-9a-f]+;/gi, " ").replace(/&[a-z]+;/gi, " ");
 }
-var HASHTAG_RE = /(?<![\p{L}\p{N}_])#([\p{L}\p{N}_]*\p{L}[\p{L}\p{N}_]*)/gu;
+var HASHTAG_RE = new RegExp("(?<![\\p{L}\\p{N}_])#([\\p{L}\\p{N}_]*\\p{L}[\\p{L}\\p{N}_]*)", "gu");
 function parseHashtags(body) {
   if (!body) return [];
   const text = htmlToText(body);
