@@ -1549,20 +1549,22 @@ describe("AppleNotesManager", () => {
       expect(results).toEqual(["Recent Note 1", "Recent Note 2"]);
     });
 
-    it("uses repeat loop when limit is provided", () => {
+    it("bulk-fetches and applies limit in JS when limit is provided", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
         output: [
           ["Note 1", "x-coredata://ABC/ICNote/p1"].join(F),
           ["Note 2", "x-coredata://ABC/ICNote/p2"].join(F),
           ["Note 3", "x-coredata://ABC/ICNote/p3"].join(F),
+          ["Note 4", "x-coredata://ABC/ICNote/p4"].join(F),
         ].join(R),
       });
 
       const results = manager.listNotes(undefined, undefined, undefined, 3);
 
       const script = mockExecuteAppleScript.mock.calls[0][0];
-      expect(script).toContain("(count of resultList) >= 3");
+      expect(script).toContain("set noteNames to name of notes");
+      expect(script).toContain("set noteIds to id of notes");
       expect(results).toEqual(["Note 1", "Note 2", "Note 3"]);
     });
 
@@ -1580,7 +1582,7 @@ describe("AppleNotesManager", () => {
       const script = mockExecuteAppleScript.mock.calls[0][0];
       expect(script).toContain("whose modification date >= thresholdDate");
       expect(script).toContain('notes of folder "Work"');
-      expect(script).toContain("(count of resultList) >= 10");
+      expect(script).toContain("set noteNames to name of (notes of folder");
     });
 
     it("returns empty array when modifiedSince yields no results", () => {
@@ -1607,7 +1609,7 @@ describe("AppleNotesManager", () => {
 
       const script = mockExecuteAppleScript.mock.calls[0][0];
       expect(script).not.toContain("thresholdDate");
-      expect(script).toContain("(count of resultList) >= 5");
+      expect(script).toContain("set noteNames to name of notes");
       expect(results).toEqual(["Note 1", "Note 2"]);
     });
   });

@@ -1344,26 +1344,15 @@ export class AppleNotesManager {
         }
       }
 
-      // Build the limit check. Check after appending so deduped results,
-      // rather than duplicate AppleScript references, determine the limit.
-      const limitCheck =
-        safeLimit !== undefined
-          ? `
-            if (count of resultList) >= ${safeLimit} then exit repeat`
-          : "";
-
+      // Bulk-fetch names and ids as two whole-list Apple Events instead of two
+      // events per note; per-note round trips scale linearly and push large
+      // libraries past client tool timeouts. Dedup and limit stay in JS. (#17)
       const listCommand = `
-        ${dateSetup}set resultList to {}
-        set seenIds to {}
-        repeat with n in ${notesSource}
-          try
-            set noteName to name of n
-            set noteId to id of n
-            if seenIds does not contain noteId then
-              set end of seenIds to noteId
-              set end of resultList to noteName & ${AS_FIELD_SEP} & noteId${limitCheck}
-            end if
-          end try
+        ${dateSetup}set noteNames to name of ${notesSource}
+        set noteIds to id of ${notesSource}
+        set resultList to {}
+        repeat with i from 1 to count of noteNames
+          set end of resultList to (item i of noteNames) & ${AS_FIELD_SEP} & (item i of noteIds)
         end repeat
         set AppleScript's text item delimiters to ${AS_RECORD_SEP}
         return resultList as text
@@ -1389,25 +1378,21 @@ export class AppleNotesManager {
         if (seenIds.has(noteId)) continue;
         seenIds.add(noteId);
         titles.push(title.trim());
+        if (safeLimit !== undefined && titles.length >= safeLimit) break;
       }
       return titles;
     }
 
-    // Simple path: no date or limit filters. Use a repeat loop so duplicate
-    // CoreData note references can be deduped by ID before returning titles.
+    // Simple path: no date or limit filters. Bulk-fetch names and ids as two
+    // whole-list Apple Events; duplicate CoreData references are deduped by
+    // ID in JS below. (#17)
     const notesRef = folder ? `notes of ${buildFolderReference(folder)}` : `notes`;
     const listCommand = `
+      set noteNames to name of ${notesRef}
+      set noteIds to id of ${notesRef}
       set resultList to {}
-      set seenIds to {}
-      repeat with n in ${notesRef}
-        try
-          set noteName to name of n
-          set noteId to id of n
-          if seenIds does not contain noteId then
-            set end of seenIds to noteId
-            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId
-          end if
-        end try
+      repeat with i from 1 to count of noteNames
+        set end of resultList to (item i of noteNames) & ${AS_FIELD_SEP} & (item i of noteIds)
       end repeat
       set AppleScript's text item delimiters to ${AS_RECORD_SEP}
       return resultList as text
