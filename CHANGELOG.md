@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-07-20
+### Changed
+- **`list-notes` fetches note properties in bulk instead of two Apple Events per note.** Full-library listings scaled at roughly 8 notes/second, so a 524-note library took 63 seconds and blew past the 60-second tool timeout MCP clients enforce; `health-check` runs an unbounded listing internally, so large libraries looked broken to clients. Names, ids, and (when `modifiedSince` is set) modification dates now come back as whole-list Apple Events, with the date comparison done locally in AppleScript rather than a `whose` clause, which Notes evaluates per-note. Measured on the same 524-note library: filtered listing 63s → 6.7s, `health-check` 60s+ → ~10s. Dedup and `limit` are applied in JS after the bulk fetch.
+
 ## [2.6.0] - 2026-07-16
 ### Added
 - **`append-to-note`**: Appends or prepends content to an existing note by id or title, preserving all existing rich HTML formatting (bold, italic, etc.). Always reads and writes as HTML, splitting the title `<div>` from body to prevent title duplication. Supports `position` (`"after"` / `"before"`), `separator`, and `format` (`"plaintext"` / `"html"`) parameters.
