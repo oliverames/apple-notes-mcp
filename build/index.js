@@ -38677,6 +38677,7 @@ function getMaxBuffer() {
   return envPositiveNumber("APPLE_NOTES_MCP_MAX_BUFFER") ?? DEFAULT_MAX_BUFFER_BYTES;
 }
 var SCRIPT_TIMEOUT_HEADROOM_MS = 5e3;
+var MIN_ATTEMPT_BUDGET_MS = 1e3;
 function wrapWithTimeout(script, processTimeoutMs) {
   const seconds = Math.max(1, Math.ceil((processTimeoutMs - SCRIPT_TIMEOUT_HEADROOM_MS) / 1e3));
   return `with timeout of ${seconds} seconds
@@ -38888,7 +38889,7 @@ function executeAppleScript(script, options = {}) {
       const canRetry = isTimeout || isRetryableError(errorMessage);
       const hasAttemptsLeft = attempt < maxRetries;
       const delayMs = retryDelayMs * Math.pow(2, attempt - 1);
-      const hasTimeForRetry = Date.now() + delayMs < deadline;
+      const hasTimeForRetry = Date.now() + delayMs + MIN_ATTEMPT_BUDGET_MS < deadline;
       if (canRetry && hasAttemptsLeft && hasTimeForRetry) {
         console.error(
           `AppleScript retry: Attempt ${attempt}/${maxRetries} failed with "${errorMessage}". Retrying in ${delayMs}ms...`
