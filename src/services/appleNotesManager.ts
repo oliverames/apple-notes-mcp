@@ -888,14 +888,24 @@ export class AppleNotesManager {
           set noteId to id of n
           if seenIds does not contain noteId then
             set end of seenIds to noteId
-            set noteCreated to creation date of n
-            set noteModified to modification date of n
+            try
+              set noteCreated to creation date of n
+              set createdParts to ${asDatePartsExpr("noteCreated")}
+            on error
+              set createdParts to ""
+            end try
+            try
+              set noteModified to modification date of n
+              set modifiedParts to ${asDatePartsExpr("noteModified")}
+            on error
+              set modifiedParts to ""
+            end try
             try
               set noteFolder to name of container of n
             on error
               set noteFolder to "Notes"
             end try
-            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId & ${AS_FIELD_SEP} & noteFolder & ${AS_FIELD_SEP} & ${asDatePartsExpr("noteCreated")} & ${AS_FIELD_SEP} & ${asDatePartsExpr("noteModified")}${limitCheck}
+            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId & ${AS_FIELD_SEP} & noteFolder & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts${limitCheck}
           end if
         end try
       end repeat
