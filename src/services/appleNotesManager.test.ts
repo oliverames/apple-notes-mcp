@@ -2762,6 +2762,23 @@ describe("AppleNotesManager", () => {
       );
     });
 
+    it("bulk-fetches properties instead of sending Apple Events per attachment", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
+
+      manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+      manager.listAttachments("My Note", "iCloud");
+
+      for (const [script] of mockExecuteAppleScript.mock.calls) {
+        expect(script).toContain("set attachmentIds to id of every attachment of theNote");
+        expect(script).toContain("set attachmentNames to name of every attachment of theNote");
+        expect(script).toContain(
+          'if (count of attachmentNames) is not (count of attachmentIds) then error "Notes changed during listing"'
+        );
+        expect(script).toContain("repeat with i from 1 to count of attachmentIds");
+        expect(script).not.toContain("repeat with a in attachments of theNote");
+      }
+    });
+
     it("does not use the reserved word `item` as a repeat loop variable", () => {
       // Regression: `repeat with item in ...` fails to COMPILE ("Expected
       // variable name or property but found class name", -2741), so every

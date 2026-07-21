@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-07-20
+
+### Fixed
+- **`list-attachments` now fetches attachment properties in bulk instead of sending seven Apple Events per attachment.** The per-attachment loop made image-heavy notes exceed the default 30-second AppleScript timeout and surface as an empty attachment list, defeating the safety check callers use before replacing a note body. The property lists are now fetched as whole-list Apple Events and zipped locally, with length guards that retry on a concurrent Notes mutation. A live 60-attachment note that previously timed out now returns all 60 attachments within the default timeout.
+
 ## [2.6.5] - 2026-07-20
 
 ### Fixed
