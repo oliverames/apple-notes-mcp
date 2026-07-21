@@ -12,6 +12,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { writeFileSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   AppleNotesManager,
   escapeForAppleScript,
@@ -2431,7 +2434,10 @@ describe("AppleNotesManager", () => {
       expect(manager.showAttachmentById("x-coredata://ABC/ICNote/p1", "att-123")).toBe(true);
       const script = mockExecuteAppleScript.mock.calls[0][0] as string;
       expect(script).toContain('set theNote to note id "x-coredata://ABC/ICNote/p1"');
-      expect(script).toContain('is "att-123"');
+      // Addressed directly rather than scanned for: one Apple Event instead of up
+      // to N, and still scoped to theNote (a foreign id resolves to missing value).
+      expect(script).toContain('set theAttachment to attachment id "att-123" of theNote');
+      expect(script).not.toContain("repeat with a in attachments of theNote");
       expect(script).toContain("show theAttachment");
     });
 
@@ -2884,6 +2890,56 @@ describe("AppleNotesManager", () => {
       mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "" });
 
       expect(manager.listAttachmentsById("x-coredata://ABC/ICNote/p123")).toEqual([]);
+    });
+
+    it("does not surface the literal 'missing value' as an attachment name", () => {
+      // Notes leaves `name` unset on some attachments; `name of a as text` then
+      // renders the AppleScript sentinel, which previously reached callers as a
+      // filename (`- missing value (cid:abc)`).
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: [
+          "x-coredata://ABC/ICAttachment/p1",
+          "missing value",
+          "cid:abc",
+          "missing value",
+          "2026-7-5-22-7-39",
+          "2026-7-5-22-7-39",
+          "false",
+        ].join(F),
+      });
+
+      const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+
+      expect(attachments[0].name).not.toBe("missing value");
+      expect(attachments[0].name).toBe("cid:abc");
+    });
+
+    it("leaves an unnamed saved attachment's name undefined rather than the sentinel", () => {
+      // save-attachment/fetch-attachment render `r.name ?? "attachment"`, and `??`
+      // does not catch the literal string -- so this must be undefined, not passed
+      // through, or the response reads `Saved "missing value" to ...`.
+      // AppleScript is mocked, so stand in for the file Notes would have written
+      // (the manager verifies a non-empty file landed before reporting success).
+      // mkdtemp, not a predictable name in the shared temp dir: a guessable path
+      // there is a symlink-race vector (CodeQL js/insecure-temporary-file).
+      const dir = mkdtempSync(join(tmpdir(), "apple-notes-mcp-test-"));
+      const dest = join(dir, "attachment.bin");
+      writeFileSync(dest, "x");
+      try {
+        mockExecuteAppleScript.mockReturnValueOnce({
+          success: true,
+          output: `OK${F}missing value${F}missing value`,
+        });
+
+        const saved = manager.saveAttachmentById("x-coredata://ABC/ICNote/p1", "att-1", dest);
+
+        expect(saved.success).toBe(true);
+        expect(saved.name).toBeUndefined();
+        expect(saved.contentType).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 
