@@ -807,6 +807,8 @@ Lists attachments in a note.
 
 **Returns:** List of attachments with IDs, names, content identifiers, URLs when available, created/modified dates, and shared state.
 
+**⚠️ Safety:** A lookup failure is reported as an error, never as an empty list — so an empty result reliably means the note has no attachments and is safe to replace wholesale. Treat an error as "unknown", not "none".
+
 ---
 
 #### `save-attachment`

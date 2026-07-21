@@ -40865,7 +40865,9 @@ var AppleNotesManager = class {
    * Note: The position within the note cannot be determined via AppleScript.
    *
    * @param id - CoreData URL identifier for the note
-   * @returns Array of Attachment objects, or empty array if none found
+   * @returns Array of Attachment objects, or empty array if the note genuinely has none
+   * @throws If the AppleScript call fails, so a lookup failure is never mistaken for
+   *   an attachment-free note (callers gate destructive full-body updates on this)
    *
    * @example
    * ```typescript
@@ -40879,19 +40881,34 @@ var AppleNotesManager = class {
       tell application "Notes"
         set theNote to note id "${safeId}"
         set attachmentList to {}
-        repeat with a in attachments of theNote
-          set attachId to id of a
-          set attachName to name of a
-          set attachContentId to content identifier of a
-          set attachUrl to ""
-          try
-            set attachUrl to URL of a as text
-          end try
-          set createdDate to creation date of a
-          set modifiedDate to modification date of a
+        set attachmentIds to id of every attachment of theNote
+        set attachmentNames to name of every attachment of theNote
+        set attachmentContentIds to content identifier of every attachment of theNote
+        set attachmentUrls to URL of every attachment of theNote
+        set attachmentCreatedDates to creation date of every attachment of theNote
+        set attachmentModifiedDates to modification date of every attachment of theNote
+        set attachmentSharedFlags to shared of every attachment of theNote
+        set attachmentIdsAfter to id of every attachment of theNote
+        if (count of attachmentNames) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentContentIds) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentUrls) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentCreatedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentModifiedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentSharedFlags) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentIdsAfter) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        repeat with i from 1 to count of attachmentIds
+          if (item i of attachmentIdsAfter) is not (item i of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        end repeat
+        repeat with i from 1 to count of attachmentIds
+          set attachId to item i of attachmentIds
+          set attachName to item i of attachmentNames
+          set attachContentId to item i of attachmentContentIds
+          set attachUrl to item i of attachmentUrls as text
+          set createdDate to item i of attachmentCreatedDates
+          set modifiedDate to item i of attachmentModifiedDates
           set createdParts to ${asDatePartsExpr("createdDate")}
           set modifiedParts to ${asDatePartsExpr("modifiedDate")}
-          set sharedFlag to shared of a as text
+          set sharedFlag to item i of attachmentSharedFlags as text
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
         set output to ""
@@ -40902,10 +40919,12 @@ var AppleNotesManager = class {
       end tell
     `;
     const result = executeAppleScript(script);
-    if (!result.success || !result.output) {
-      if (result.error) {
-        console.error(`Failed to list attachments for note ID "${id}":`, result.error);
-      }
+    if (!result.success) {
+      throw new Error(
+        `Failed to list attachments for note ID "${id}": ${result.error ?? "unknown AppleScript error"}`
+      );
+    }
+    if (!result.output) {
       return [];
     }
     const attachments = [];
@@ -40932,7 +40951,9 @@ var AppleNotesManager = class {
    *
    * @param title - Title of the note
    * @param account - Account containing the note (defaults to iCloud)
-   * @returns Array of Attachment objects, or empty array if none found
+   * @returns Array of Attachment objects, or empty array if the note genuinely has none
+   * @throws If the AppleScript call fails, so a lookup failure is never mistaken for
+   *   an attachment-free note (callers gate destructive full-body updates on this)
    */
   listAttachments(title, account) {
     const targetAccount = this.resolveAccount(account);
@@ -40943,19 +40964,34 @@ var AppleNotesManager = class {
         tell account "${safeAccount}"
           set theNote to note "${safeTitle}"
         set attachmentList to {}
-        repeat with a in attachments of theNote
-          set attachId to id of a
-          set attachName to name of a
-          set attachContentId to content identifier of a
-          set attachUrl to ""
-          try
-            set attachUrl to URL of a as text
-          end try
-          set createdDate to creation date of a
-          set modifiedDate to modification date of a
+        set attachmentIds to id of every attachment of theNote
+        set attachmentNames to name of every attachment of theNote
+        set attachmentContentIds to content identifier of every attachment of theNote
+        set attachmentUrls to URL of every attachment of theNote
+        set attachmentCreatedDates to creation date of every attachment of theNote
+        set attachmentModifiedDates to modification date of every attachment of theNote
+        set attachmentSharedFlags to shared of every attachment of theNote
+        set attachmentIdsAfter to id of every attachment of theNote
+        if (count of attachmentNames) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentContentIds) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentUrls) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentCreatedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentModifiedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentSharedFlags) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentIdsAfter) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        repeat with i from 1 to count of attachmentIds
+          if (item i of attachmentIdsAfter) is not (item i of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        end repeat
+        repeat with i from 1 to count of attachmentIds
+          set attachId to item i of attachmentIds
+          set attachName to item i of attachmentNames
+          set attachContentId to item i of attachmentContentIds
+          set attachUrl to item i of attachmentUrls as text
+          set createdDate to item i of attachmentCreatedDates
+          set modifiedDate to item i of attachmentModifiedDates
           set createdParts to ${asDatePartsExpr("createdDate")}
           set modifiedParts to ${asDatePartsExpr("modifiedDate")}
-          set sharedFlag to shared of a as text
+          set sharedFlag to item i of attachmentSharedFlags as text
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
           set output to ""
@@ -40967,10 +41003,12 @@ var AppleNotesManager = class {
       end tell
     `;
     const result = executeAppleScript(script);
-    if (!result.success || !result.output) {
-      if (result.error) {
-        console.error(`Failed to list attachments for note "${title}":`, result.error);
-      }
+    if (!result.success) {
+      throw new Error(
+        `Failed to list attachments for note "${title}": ${result.error ?? "unknown AppleScript error"}`
+      );
+    }
+    if (!result.output) {
       return [];
     }
     const attachments = [];

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-07-20
+
+### Fixed
+- **`list-attachments` now fetches attachment properties in bulk instead of sending seven Apple Events per attachment.** The per-attachment loop made image-heavy notes exceed the operation's AppleScript timeout and surface as an empty attachment list, defeating the safety check callers use before replacing a note body. The property lists are now fetched as whole-list Apple Events and zipped locally, with guards that retry on a concurrent Notes mutation. A live 60-attachment note that previously timed out now returns all 60 attachments within the default timeout; a 7-attachment note measured 3.9s to 1.75s end-to-end.
+- **A failed attachment lookup no longer masquerades as a note with no attachments.** `listAttachmentsById`/`listAttachments` returned `[]` on a hard AppleScript failure, which the tool layer rendered as `Note "X" has no attachments` — a successful-looking response that is exactly the false-empty this tool exists to prevent, since callers gate destructive full-body updates on it. Exhausted retries now surface as an error; only a successful call with no output reports an empty note.
+- **The bulk zip is guarded by attachment identity, not just list lengths.** The per-attachment loop re-resolved each attachment by its stable ID, so a record's fields could never come from different attachments. Zipping seven independently-fetched lists lost that guarantee: a same-length reorder (or a delete plus an add) between Apple Events would pass every count check and yield a record carrying one attachment's ID with another's name and dates — and `save-attachment`/`fetch-attachment` resolve bytes from that ID, so the wrong file could be written under the wrong name. The script now re-reads the IDs after the other six fetches and compares them element-wise.
+
 ## [2.6.5] - 2026-07-20
 
 ### Fixed
