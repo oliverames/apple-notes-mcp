@@ -2740,16 +2740,18 @@ describe("AppleNotesManager", () => {
       expect(attachments).toEqual([]);
     });
 
-    it("returns empty array on error", () => {
+    it("surfaces an error rather than an empty array when the lookup fails", () => {
+      // Previously this returned [], which the tool layer rendered as the cheerful
+      // "has no attachments" -- indistinguishable from a genuinely empty note.
       mockExecuteAppleScript.mockReturnValueOnce({
         success: false,
         output: "",
         error: "Note not found",
       });
 
-      const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p999");
-
-      expect(attachments).toEqual([]);
+      expect(() => manager.listAttachmentsById("x-coredata://ABC/ICNote/p999")).toThrow(
+        /Note not found/
+      );
     });
 
     it("generates correct AppleScript for ID lookup", () => {
@@ -2813,6 +2815,75 @@ describe("AppleNotesManager", () => {
 
       expect(attachments).toHaveLength(1);
       expect(attachments[0].url).toBeUndefined();
+    });
+
+    it("keeps every field aligned with its own attachment across records", () => {
+      // The bulk fetch zips seven independently-fetched lists. If the zip ever
+      // slipped, a record would carry one attachment's id with another's name --
+      // and save-attachment/fetch-attachment resolve bytes from that id, so the
+      // wrong file would be written under the wrong name.
+      const record = (n: number) =>
+        [
+          `x-coredata://ABC/ICAttachment/p${n}`,
+          `file${n}.png`,
+          `cid:${n}`,
+          "missing value",
+          "2026-7-5-22-7-39",
+          "2026-7-5-22-7-39",
+          n === 2 ? "true" : "false",
+        ].join(F);
+
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: [record(1), record(2), record(3)].join(R),
+      });
+
+      const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+
+      expect(attachments).toHaveLength(3);
+      attachments.forEach((a, i) => {
+        const n = i + 1;
+        expect(a.id).toBe(`x-coredata://ABC/ICAttachment/p${n}`);
+        expect(a.name).toBe(`file${n}.png`);
+        expect(a.contentId).toBe(`cid:${n}`);
+        expect(a.shared).toBe(n === 2);
+      });
+    });
+
+    it("guards the zip against a concurrent mutation that preserves the count", () => {
+      // Count guards alone cannot see a same-length reorder or delete+add, so the
+      // script re-reads the ids after the other six fetches and compares them
+      // element-wise. Without this, a swap between Apple Events passes every check.
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
+
+      manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+      manager.listAttachments("My Note", "iCloud");
+
+      for (const [script] of mockExecuteAppleScript.mock.calls) {
+        expect(script).toContain("set attachmentIdsAfter to id of every attachment of theNote");
+        expect(script).toContain(
+          'if (item i of attachmentIdsAfter) is not (item i of attachmentIds) then error "Notes changed during listing"'
+        );
+      }
+    });
+
+    it("throws instead of reporting an empty note when the AppleScript call fails", () => {
+      // A false empty is the exact hazard this tool exists to prevent: callers gate
+      // destructive full-body updates on it. Exhausted retries must surface as an error.
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: false,
+        error: "Notes changed during listing",
+      });
+
+      expect(() => manager.listAttachmentsById("x-coredata://ABC/ICNote/p123")).toThrow(
+        /Notes changed during listing/
+      );
+    });
+
+    it("still returns an empty array when the note genuinely has no attachments", () => {
+      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "" });
+
+      expect(manager.listAttachmentsById("x-coredata://ABC/ICNote/p123")).toEqual([]);
     });
   });
 
