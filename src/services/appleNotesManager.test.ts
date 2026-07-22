@@ -12,6 +12,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { writeFileSync, rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   AppleNotesManager,
   escapeForAppleScript,
@@ -27,6 +30,7 @@ import {
 // This prevents actual osascript calls during testing
 vi.mock("@/utils/applescript.js", () => ({
   executeAppleScript: vi.fn(),
+  BULK_LIST_MUTATION_ERROR: "Notes changed during listing",
 }));
 
 // Mock the checklist parser to avoid SQLite access during tests
@@ -36,6 +40,7 @@ vi.mock("@/utils/checklistParser.js", () => ({
 
 import { executeAppleScript } from "@/utils/applescript.js";
 const mockExecuteAppleScript = vi.mocked(executeAppleScript);
+const NO_RETRY_OPTIONS = { maxRetries: 1 };
 
 import { getChecklistItems } from "@/utils/checklistParser.js";
 const mockGetChecklistItems = vi.mocked(getChecklistItems);
@@ -379,6 +384,23 @@ describe("buildAppleScriptDateVar", () => {
     // 9*3600 + 5*60 + 3 = 32703
     expect(result).toContain("set time of thresholdDate to 32703");
   });
+
+  it("resets day to 1 before month to prevent month rollover (#86)", () => {
+    // AppleScript rolls invalid intermediate dates: with `current date` on the
+    // 31st, setting month to June yields July 1 before day is ever assigned.
+    // Day must be pinned to 1 before the year/month assignments.
+    const date = new Date(2025, 5, 15, 0, 0, 0); // June 15, 2025
+    const result = buildAppleScriptDateVar(date);
+    const lines = result.split("\n");
+    const dayResetIdx = lines.indexOf("set day of thresholdDate to 1");
+    const yearIdx = lines.indexOf("set year of thresholdDate to 2025");
+    const monthIdx = lines.indexOf("set month of thresholdDate to 6");
+    const dayIdx = lines.indexOf("set day of thresholdDate to 15");
+    expect(dayResetIdx).toBeGreaterThan(-1);
+    expect(dayResetIdx).toBeLessThan(yearIdx);
+    expect(yearIdx).toBeLessThan(monthIdx);
+    expect(monthIdx).toBeLessThan(dayIdx);
+  });
 });
 
 // =============================================================================
@@ -410,6 +432,18 @@ describe("AppleNotesManager", () => {
   // ---------------------------------------------------------------------------
 
   describe("createNote", () => {
+    it("does not retry creation after an ambiguous timeout", () => {
+      mockExecuteAppleScript.mockReturnValue({
+        success: false,
+        output: "",
+        error: "Operation timed out after 30 seconds",
+      });
+
+      manager.createNote("One copy", "Body");
+
+      expect(mockExecuteAppleScript).toHaveBeenCalledWith(expect.any(String), { maxRetries: 1 });
+    });
+
     it("returns Note object on successful creation", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
@@ -479,7 +513,8 @@ describe("AppleNotesManager", () => {
 
       expect(result?.account).toBe("Gmail");
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('tell account "Gmail"')
+        expect.stringContaining('tell account "Gmail"'),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -492,7 +527,8 @@ describe("AppleNotesManager", () => {
       manager.createNote("Work Note", "Content", [], "Work Projects");
 
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('at folder "Work Projects"')
+        expect.stringContaining('at folder "Work Projects"'),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -520,7 +556,8 @@ describe("AppleNotesManager", () => {
       // HTML tags should NOT be entity-encoded — they should pass through to AppleScript
       // escapeHtmlForAppleScript only escapes \ and ", not HTML tags
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<h2>Heading</h2><div>Body text</div>")
+        expect.stringContaining("<h2>Heading</h2><div>Body text</div>"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -535,7 +572,8 @@ describe("AppleNotesManager", () => {
       expect(result).not.toBeNull();
       // Default plaintext: newlines become <br>
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("Simple text with<br>newline")
+        expect.stringContaining("Simple text with<br>newline"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -556,7 +594,8 @@ describe("AppleNotesManager", () => {
 
       // Double quotes must be escaped for AppleScript string embedding
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('<div class=\\"test\\">Content</div>')
+        expect.stringContaining('<div class=\\"test\\">Content</div>'),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -584,7 +623,8 @@ describe("AppleNotesManager", () => {
       manager.createNote("Q&A: <Hello> World", "Content");
 
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<h1>Q&amp;A: &lt;Hello&gt; World</h1>")
+        expect.stringContaining("<h1>Q&amp;A: &lt;Hello&gt; World</h1>"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -671,6 +711,43 @@ describe("AppleNotesManager", () => {
       expect(results[2].title).toBe("Weekly Review");
       expect(results[2].id).toBe("x-coredata://ABC/ICNote/p3");
       expect(results[2].folder).toBe("Archive");
+    });
+
+    it("dereferences the note container before reading its folder name", () => {
+      mockExecuteAppleScript.mockReturnValue({
+        success: true,
+        output: ["Meeting Notes", "x-coredata://ABC/ICNote/p1", "Work"].join(F),
+      });
+
+      manager.searchNotes("meeting");
+
+      const script = mockExecuteAppleScript.mock.calls[0][0] as string;
+      expect(script).toContain("set noteContainer to container of n");
+      expect(script).toContain("set noteFolder to name of noteContainer");
+      expect(script).not.toContain("set noteFolder to name of container of n");
+    });
+
+    it("returns actual creation and modification timestamps", () => {
+      mockExecuteAppleScript.mockReturnValue({
+        success: true,
+        output: [
+          "Meeting Notes",
+          "x-coredata://ABC/ICNote/p1",
+          "Work",
+          "2024-2-3-10-11-12",
+          "2025-6-7-13-14-15",
+        ].join(F),
+      });
+
+      const [result] = manager.searchNotes("meeting");
+
+      expect(result.created).toEqual(new Date(2024, 1, 3, 10, 11, 12));
+      expect(result.modified).toEqual(new Date(2025, 5, 7, 13, 14, 15));
+      const script = mockExecuteAppleScript.mock.calls[0][0];
+      expect(script).toContain("set noteCreated to creation date of n");
+      expect(script).toContain("set noteModified to modification date of n");
+      expect(script).toContain("year of noteCreated");
+      expect(script).toContain("year of noteModified");
     });
 
     it("returns empty array when no matches found", () => {
@@ -836,7 +913,7 @@ describe("AppleNotesManager", () => {
       manager.searchNotes("note", false, undefined, undefined, "not-a-date");
 
       const script = mockExecuteAppleScript.mock.calls[0][0];
-      expect(script).not.toContain("modification date");
+      expect(script).not.toContain("modification date >= thresholdDate");
     });
 
     it("applies limit to search results", () => {
@@ -1286,7 +1363,8 @@ describe("AppleNotesManager", () => {
       manager.deleteNote("Draft", "Gmail");
 
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('tell account "Gmail"')
+        expect.stringContaining('tell account "Gmail"'),
+        NO_RETRY_OPTIONS
       );
     });
   });
@@ -1329,7 +1407,8 @@ describe("AppleNotesManager", () => {
 
       // The generated body should use the original title
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<div>Keep This Title</div>")
+        expect.stringContaining("<div>Keep This Title</div>"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -1342,7 +1421,8 @@ describe("AppleNotesManager", () => {
       manager.updateNote("Old Title", "Brand New Title", "Content");
 
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<div>Brand New Title</div>")
+        expect.stringContaining("<div>Brand New Title</div>"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -1360,7 +1440,8 @@ describe("AppleNotesManager", () => {
       expect(result).toBe(true);
       // In HTML mode: content is used as-is, no <div> wrapper added
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining(`to "${htmlContent}"`)
+        expect.stringContaining(`to "${htmlContent}"`),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -1380,7 +1461,8 @@ describe("AppleNotesManager", () => {
 
       // Should NOT contain the <div>Old Title</div> wrapper
       expect(mockExecuteAppleScript).not.toHaveBeenCalledWith(
-        expect.stringContaining("<div>Old Title</div>")
+        expect.stringContaining("<div>Old Title</div>"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -1394,7 +1476,8 @@ describe("AppleNotesManager", () => {
 
       // Default behavior: should have <div> wrapper
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("<div>My Title</div><div>Plain content</div>")
+        expect.stringContaining("<div>My Title</div><div>Plain content</div>"),
+        NO_RETRY_OPTIONS
       );
     });
   });
@@ -1421,11 +1504,13 @@ describe("AppleNotesManager", () => {
       expect(result).toBe(true);
       // HTML mode: content passed directly, no <div> wrapper
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining(`to "${htmlContent}"`)
+        expect.stringContaining(`to "${htmlContent}"`),
+        NO_RETRY_OPTIONS
       );
       // Should NOT contain the div-wrapped title pattern
       expect(mockExecuteAppleScript).not.toHaveBeenCalledWith(
-        expect.stringContaining("<div>My Title</div>")
+        expect.stringContaining("<div>My Title</div>"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -1528,7 +1613,7 @@ describe("AppleNotesManager", () => {
       );
     });
 
-    it("uses whose clause when modifiedSince is provided", () => {
+    it("filters by bulk-fetched modification dates when modifiedSince is provided", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
         output: [
@@ -1540,19 +1625,23 @@ describe("AppleNotesManager", () => {
       const results = manager.listNotes(undefined, undefined, "2025-06-15T00:00:00");
 
       const script = mockExecuteAppleScript.mock.calls[0][0];
-      // Locale-safe: uses variable setup + whose clause (no sort order assumption)
+      // Locale-safe: variable setup + local comparison over bulk-fetched
+      // dates (whose clauses evaluate per-note server-side and are slow)
       expect(script).toContain("set thresholdDate to current date");
       expect(script).toContain("set year of thresholdDate to 2025");
       expect(script).toContain("set month of thresholdDate to 6");
       expect(script).toContain("set day of thresholdDate to 15");
-      expect(script).toContain("whose modification date >= thresholdDate");
+      expect(script).toContain("set noteDates to modification date of notes");
+      expect(script).toContain("if (item i of noteDates) >= thresholdDate then");
       expect(results).toEqual(["Recent Note 1", "Recent Note 2"]);
     });
 
-    it("uses repeat loop when limit is provided", () => {
+    it("slices the AppleScript fetch to the limit and returns a totalCount header", () => {
+      // Sliced response: totalCount header record, then limit records.
       mockExecuteAppleScript.mockReturnValue({
         success: true,
         output: [
+          "10",
           ["Note 1", "x-coredata://ABC/ICNote/p1"].join(F),
           ["Note 2", "x-coredata://ABC/ICNote/p2"].join(F),
           ["Note 3", "x-coredata://ABC/ICNote/p3"].join(F),
@@ -1561,9 +1650,118 @@ describe("AppleNotesManager", () => {
 
       const results = manager.listNotes(undefined, undefined, undefined, 3);
 
+      // One sliced call satisfies the limit — no full-fetch fallback.
+      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
       const script = mockExecuteAppleScript.mock.calls[0][0];
-      expect(script).toContain("(count of resultList) >= 3");
+      expect(script).toContain("set totalCount to count of notes");
+      expect(script).toContain("set fetchCount to 3");
+      expect(script).toContain("set noteNames to name of (notes 1 thru fetchCount)");
+      expect(script).toContain("set noteIds to id of (notes 1 thru fetchCount)");
       expect(results).toEqual(["Note 1", "Note 2", "Note 3"]);
+    });
+
+    it("returns short slice without fallback when the library is smaller than the limit", () => {
+      mockExecuteAppleScript.mockReturnValue({
+        success: true,
+        output: ["2", ["Note 1", "p1"].join(F), ["Note 2", "p2"].join(F)].join(R),
+      });
+
+      const results = manager.listNotes(undefined, undefined, undefined, 5);
+
+      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
+      expect(results).toEqual(["Note 1", "Note 2"]);
+    });
+
+    it("falls back to a full fetch when dedup leaves the slice short of the limit", () => {
+      // Slice of 3 contains a duplicated id -> only 2 uniques, but 10 total
+      // notes exist, so later uniques may have been hidden by the duplicate.
+      mockExecuteAppleScript
+        .mockReturnValueOnce({
+          success: true,
+          output: [
+            "10",
+            ["Note 1", "p1"].join(F),
+            ["Note 1 dup", "p1"].join(F),
+            ["Note 2", "p2"].join(F),
+          ].join(R),
+        })
+        .mockReturnValueOnce({
+          success: true,
+          output: [
+            ["Note 1", "p1"].join(F),
+            ["Note 2", "p2"].join(F),
+            ["Note 3", "p3"].join(F),
+            ["Note 4", "p4"].join(F),
+          ].join(R),
+        });
+
+      const results = manager.listNotes(undefined, undefined, undefined, 3);
+
+      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(2);
+      // Fallback is the unsliced full fetch.
+      const fallbackScript = mockExecuteAppleScript.mock.calls[1][0];
+      expect(fallbackScript).not.toContain("thru fetchCount");
+      expect(fallbackScript).toContain("set noteNames to name of notes");
+      expect(results).toEqual(["Note 1", "Note 2", "Note 3"]);
+    });
+
+    it("falls back to a full fetch when the slice header is malformed", () => {
+      mockExecuteAppleScript
+        .mockReturnValueOnce({
+          success: true,
+          // No totalCount header — should not be trusted as a sliced response.
+          output: [["Note 1", "p1"].join(F), ["Note 2", "p2"].join(F)].join(R),
+        })
+        .mockReturnValueOnce({
+          success: true,
+          output: [["Note 1", "p1"].join(F), ["Note 2", "p2"].join(F)].join(R),
+        });
+
+      const results = manager.listNotes(undefined, undefined, undefined, 5);
+
+      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(2);
+      expect(results).toEqual(["Note 1", "Note 2"]);
+    });
+
+    it("returns empty from an empty sliced library without fallback", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: `0${R}` });
+
+      const results = manager.listNotes(undefined, undefined, undefined, 3);
+
+      expect(mockExecuteAppleScript).toHaveBeenCalledTimes(1);
+      expect(results).toEqual([]);
+    });
+
+    it("guards every bulk list against mid-listing library mutation", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
+
+      // Unfiltered full fetch: names/ids count guard.
+      manager.listNotes();
+      const fullScript = mockExecuteAppleScript.mock.calls[0][0];
+      expect(fullScript).toContain(
+        'if (count of noteIds) is not (count of noteNames) then error "Notes changed during listing"'
+      );
+
+      // Date-filtered fetch adds the dates count guard.
+      manager.listNotes(undefined, undefined, "2025-06-15T00:00:00");
+      const dateScript = mockExecuteAppleScript.mock.calls[1][0];
+      expect(dateScript).toContain(
+        'if (count of noteDates) is not (count of noteNames) then error "Notes changed during listing"'
+      );
+
+      // Sliced fetch guards and remaps a shrink between count and fetch —
+      // but ONLY the out-of-range error numbers. Timeouts (-1712), lost
+      // connection, and permission errors must be rethrown unchanged so
+      // their honest messages and remedies survive.
+      manager.listNotes(undefined, undefined, undefined, 3);
+      const sliceScript = mockExecuteAppleScript.mock.calls[2][0];
+      expect(sliceScript).toContain(
+        'if (count of noteIds) is not (count of noteNames) then error "Notes changed during listing"'
+      );
+      expect(sliceScript).toContain("on error errMsg number errNum");
+      expect(sliceScript).toContain("if errNum is -1719 or errNum is -1728 then");
+      expect(sliceScript).toContain('error "Notes changed during listing"');
+      expect(sliceScript).toContain("error errMsg number errNum");
     });
 
     it("combines folder, modifiedSince, and limit", () => {
@@ -1578,9 +1776,9 @@ describe("AppleNotesManager", () => {
       manager.listNotes("iCloud", "Work", "2025-01-01", 10);
 
       const script = mockExecuteAppleScript.mock.calls[0][0];
-      expect(script).toContain("whose modification date >= thresholdDate");
       expect(script).toContain('notes of folder "Work"');
-      expect(script).toContain("(count of resultList) >= 10");
+      expect(script).toContain('set noteDates to modification date of notes of folder "Work"');
+      expect(script).toContain('set noteNames to name of notes of folder "Work"');
     });
 
     it("returns empty array when modifiedSince yields no results", () => {
@@ -1598,6 +1796,7 @@ describe("AppleNotesManager", () => {
       mockExecuteAppleScript.mockReturnValue({
         success: true,
         output: [
+          "2",
           ["Note 1", "x-coredata://ABC/ICNote/p1"].join(F),
           ["Note 2", "x-coredata://ABC/ICNote/p2"].join(F),
         ].join(R),
@@ -1605,9 +1804,10 @@ describe("AppleNotesManager", () => {
 
       const results = manager.listNotes(undefined, undefined, "not-a-date", 5);
 
+      // Invalid date means no date filter, so the limit-only slice path runs.
       const script = mockExecuteAppleScript.mock.calls[0][0];
       expect(script).not.toContain("thresholdDate");
-      expect(script).toContain("(count of resultList) >= 5");
+      expect(script).toContain("set noteNames to name of (notes 1 thru fetchCount)");
       expect(results).toEqual(["Note 1", "Note 2"]);
     });
   });
@@ -2152,7 +2352,8 @@ describe("AppleNotesManager", () => {
 
       expect(manager.showNoteById("x-coredata://ABC/ICNote/p1")).toBe(true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('show note id "x-coredata://ABC/ICNote/p1"')
+        expect.stringContaining('show note id "x-coredata://ABC/ICNote/p1"'),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2164,7 +2365,8 @@ describe("AppleNotesManager", () => {
 
       manager.showNoteById("x-coredata://ABC/ICNote/p1", true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("separately true")
+        expect.stringContaining("separately true"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2181,7 +2383,8 @@ describe("AppleNotesManager", () => {
 
       expect(manager.showFolderById("x-coredata://ABC/ICFolder/p1")).toBe(true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('show folder id "x-coredata://ABC/ICFolder/p1"')
+        expect.stringContaining('show folder id "x-coredata://ABC/ICFolder/p1"'),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2190,7 +2393,8 @@ describe("AppleNotesManager", () => {
 
       manager.showFolderById("x-coredata://ABC/ICFolder/p1", true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("separately true")
+        expect.stringContaining("separately true"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2211,7 +2415,8 @@ describe("AppleNotesManager", () => {
 
       expect(manager.showAccountById("x-coredata://ABC/ICAccount/p1")).toBe(true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining('show account id "x-coredata://ABC/ICAccount/p1"')
+        expect.stringContaining('show account id "x-coredata://ABC/ICAccount/p1"'),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2220,7 +2425,8 @@ describe("AppleNotesManager", () => {
 
       manager.showAccountById("x-coredata://ABC/ICAccount/p1", true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("separately true")
+        expect.stringContaining("separately true"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2242,7 +2448,10 @@ describe("AppleNotesManager", () => {
       expect(manager.showAttachmentById("x-coredata://ABC/ICNote/p1", "att-123")).toBe(true);
       const script = mockExecuteAppleScript.mock.calls[0][0] as string;
       expect(script).toContain('set theNote to note id "x-coredata://ABC/ICNote/p1"');
-      expect(script).toContain('is "att-123"');
+      // Addressed directly rather than scanned for: one Apple Event instead of up
+      // to N, and still scoped to theNote (a foreign id resolves to missing value).
+      expect(script).toContain('set theAttachment to attachment id "att-123" of theNote');
+      expect(script).not.toContain("repeat with a in attachments of theNote");
       expect(script).toContain("show theAttachment");
     });
 
@@ -2251,7 +2460,8 @@ describe("AppleNotesManager", () => {
 
       manager.showAttachmentById("x-coredata://ABC/ICNote/p1", "att-123", true);
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
-        expect.stringContaining("separately true")
+        expect.stringContaining("separately true"),
+        NO_RETRY_OPTIONS
       );
     });
 
@@ -2550,16 +2760,18 @@ describe("AppleNotesManager", () => {
       expect(attachments).toEqual([]);
     });
 
-    it("returns empty array on error", () => {
+    it("surfaces an error rather than an empty array when the lookup fails", () => {
+      // Previously this returned [], which the tool layer rendered as the cheerful
+      // "has no attachments" -- indistinguishable from a genuinely empty note.
       mockExecuteAppleScript.mockReturnValueOnce({
         success: false,
         output: "",
         error: "Note not found",
       });
 
-      const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p999");
-
-      expect(attachments).toEqual([]);
+      expect(() => manager.listAttachmentsById("x-coredata://ABC/ICNote/p999")).toThrow(
+        /Note not found/
+      );
     });
 
     it("generates correct AppleScript for ID lookup", () => {
@@ -2570,6 +2782,23 @@ describe("AppleNotesManager", () => {
       expect(mockExecuteAppleScript).toHaveBeenCalledWith(
         expect.stringContaining('note id "x-coredata://ABC/ICNote/p123"')
       );
+    });
+
+    it("bulk-fetches properties instead of sending Apple Events per attachment", () => {
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
+
+      manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+      manager.listAttachments("My Note", "iCloud");
+
+      for (const [script] of mockExecuteAppleScript.mock.calls) {
+        expect(script).toContain("set attachmentIds to id of every attachment of theNote");
+        expect(script).toContain("set attachmentNames to name of every attachment of theNote");
+        expect(script).toContain(
+          'if (count of attachmentNames) is not (count of attachmentIds) then error "Notes changed during listing"'
+        );
+        expect(script).toContain("repeat with i from 1 to count of attachmentIds");
+        expect(script).not.toContain("repeat with a in attachments of theNote");
+      }
     });
 
     it("does not use the reserved word `item` as a repeat loop variable", () => {
@@ -2606,6 +2835,125 @@ describe("AppleNotesManager", () => {
 
       expect(attachments).toHaveLength(1);
       expect(attachments[0].url).toBeUndefined();
+    });
+
+    it("keeps every field aligned with its own attachment across records", () => {
+      // The bulk fetch zips seven independently-fetched lists. If the zip ever
+      // slipped, a record would carry one attachment's id with another's name --
+      // and save-attachment/fetch-attachment resolve bytes from that id, so the
+      // wrong file would be written under the wrong name.
+      const record = (n: number) =>
+        [
+          `x-coredata://ABC/ICAttachment/p${n}`,
+          `file${n}.png`,
+          `cid:${n}`,
+          "missing value",
+          "2026-7-5-22-7-39",
+          "2026-7-5-22-7-39",
+          n === 2 ? "true" : "false",
+        ].join(F);
+
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: [record(1), record(2), record(3)].join(R),
+      });
+
+      const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+
+      expect(attachments).toHaveLength(3);
+      attachments.forEach((a, i) => {
+        const n = i + 1;
+        expect(a.id).toBe(`x-coredata://ABC/ICAttachment/p${n}`);
+        expect(a.name).toBe(`file${n}.png`);
+        expect(a.contentId).toBe(`cid:${n}`);
+        expect(a.shared).toBe(n === 2);
+      });
+    });
+
+    it("guards the zip against a concurrent mutation that preserves the count", () => {
+      // Count guards alone cannot see a same-length reorder or delete+add, so the
+      // script re-reads the ids after the other six fetches and compares them
+      // element-wise. Without this, a swap between Apple Events passes every check.
+      mockExecuteAppleScript.mockReturnValue({ success: true, output: "" });
+
+      manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+      manager.listAttachments("My Note", "iCloud");
+
+      for (const [script] of mockExecuteAppleScript.mock.calls) {
+        expect(script).toContain("set attachmentIdsAfter to id of every attachment of theNote");
+        expect(script).toContain(
+          'if (item i of attachmentIdsAfter) is not (item i of attachmentIds) then error "Notes changed during listing"'
+        );
+      }
+    });
+
+    it("throws instead of reporting an empty note when the AppleScript call fails", () => {
+      // A false empty is the exact hazard this tool exists to prevent: callers gate
+      // destructive full-body updates on it. Exhausted retries must surface as an error.
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: false,
+        error: "Notes changed during listing",
+      });
+
+      expect(() => manager.listAttachmentsById("x-coredata://ABC/ICNote/p123")).toThrow(
+        /Notes changed during listing/
+      );
+    });
+
+    it("still returns an empty array when the note genuinely has no attachments", () => {
+      mockExecuteAppleScript.mockReturnValueOnce({ success: true, output: "" });
+
+      expect(manager.listAttachmentsById("x-coredata://ABC/ICNote/p123")).toEqual([]);
+    });
+
+    it("does not surface the literal 'missing value' as an attachment name", () => {
+      // Notes leaves `name` unset on some attachments; `name of a as text` then
+      // renders the AppleScript sentinel, which previously reached callers as a
+      // filename (`- missing value (cid:abc)`).
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: [
+          "x-coredata://ABC/ICAttachment/p1",
+          "missing value",
+          "cid:abc",
+          "missing value",
+          "2026-7-5-22-7-39",
+          "2026-7-5-22-7-39",
+          "false",
+        ].join(F),
+      });
+
+      const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
+
+      expect(attachments[0].name).not.toBe("missing value");
+      expect(attachments[0].name).toBe("cid:abc");
+    });
+
+    it("leaves an unnamed saved attachment's name undefined rather than the sentinel", () => {
+      // save-attachment/fetch-attachment render `r.name ?? "attachment"`, and `??`
+      // does not catch the literal string -- so this must be undefined, not passed
+      // through, or the response reads `Saved "missing value" to ...`.
+      // AppleScript is mocked, so stand in for the file Notes would have written
+      // (the manager verifies a non-empty file landed before reporting success).
+      // mkdtemp, not a predictable name in the shared temp dir: a guessable path
+      // there is a symlink-race vector (CodeQL js/insecure-temporary-file).
+      const dir = mkdtempSync(join(tmpdir(), "apple-notes-mcp-test-"));
+      const dest = join(dir, "attachment.bin");
+      writeFileSync(dest, "x");
+      try {
+        mockExecuteAppleScript.mockReturnValueOnce({
+          success: true,
+          output: `OK${F}missing value${F}missing value`,
+        });
+
+        const saved = manager.saveAttachmentById("x-coredata://ABC/ICNote/p1", "att-1", dest);
+
+        expect(saved.success).toBe(true);
+        expect(saved.name).toBeUndefined();
+        expect(saved.contentType).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -3128,6 +3476,97 @@ describe("AppleNotesManager", () => {
         manager.updateNoteById("not-valid", undefined, "content");
       }).toThrow("Invalid note ID format");
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getNoteLinkById
+  // ---------------------------------------------------------------------------
+
+  describe("getNoteLinkById", () => {
+    const VALID_ID = "x-coredata://ABC123/ICNote/p50338";
+
+    it("returns null immediately for a password-protected note without calling executeAppleScript for the link", () => {
+      // First call: getNoteById (returns a protected note)
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: [
+          "Locked Note",
+          VALID_ID,
+          "2025-12-27-15-0-0",
+          "2025-12-27-15-0-0",
+          "false",
+          "true", // passwordProtected = true
+        ].join(F),
+      });
+
+      const result = manager.getNoteLinkById(VALID_ID);
+
+      expect(result).toBeNull();
+      // The link-fetching AppleScript (note link property) must NOT be called
+      // — the function should bail out after the password check.
+      const calls = mockExecuteAppleScript.mock.calls;
+      // Only one call: getNoteById
+      expect(calls).toHaveLength(1);
+    });
+
+    it("returns null when the note is not found", () => {
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: false,
+        output: "",
+        error: "Can't get note id",
+      });
+
+      const result = manager.getNoteLinkById(VALID_ID);
+
+      expect(result).toBeNull();
+    });
+
+    it("returns a notes:// URL for a valid, non-protected note", () => {
+      // getNoteById returns a non-protected note
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: [
+          "My Note",
+          VALID_ID,
+          "2025-12-27-15-0-0",
+          "2025-12-27-15-0-0",
+          "false",
+          "false",
+        ].join(F),
+      });
+      // SQLite path (getNoteLinkFromDB) may succeed (if the Notes DB is
+      // accessible on the test machine) or fail and fall through to the
+      // AppleScript fallback.  Mock the AppleScript fallback so it can
+      // return a URL in the fallback-path case.
+      mockExecuteAppleScript.mockReturnValueOnce({
+        success: true,
+        output: "notes://showNote?identifier=ABCD-1234-5678",
+      });
+
+      const result = manager.getNoteLinkById(VALID_ID);
+
+      // Either the SQLite path or the AppleScript fallback should return
+      // a notes:// URL — either form is acceptable.
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/^notes:\/\/showNote\?identifier=/);
+    });
+  });
+});
+
+describe("getNoteLinkFromDB — CoreData PK parsing", () => {
+  // getNoteLinkFromDB is module-private, but we can verify the PK extraction
+  // logic indirectly by checking that getNoteLinkById passes the right primary
+  // key to the database query.  We test the regex rule by covering the
+  // CoreData ID formats the function must handle.
+
+  it("sanitizeId accepts the x-coredata URL used by getNoteLinkById", () => {
+    // If sanitizeId throws, getNoteLinkById would not even reach the DB call.
+    // This assertion confirms the ID format is considered valid.
+    expect(() => sanitizeId("x-coredata://ABC123/ICNote/p50338")).not.toThrow();
+  });
+
+  it("sanitizeId rejects IDs without a /p<digits> suffix", () => {
+    expect(() => sanitizeId("x-coredata://ABC123/ICNote/pXXX")).toThrow("Invalid note ID format");
   });
 });
 

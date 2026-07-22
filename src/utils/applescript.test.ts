@@ -322,6 +322,55 @@ describe("executeAppleScript", () => {
   });
 
   describe("retry logic", () => {
+    it("treats timeoutMs as a total deadline across retries", () => {
+      let now = 0;
+      let callCount = 0;
+      const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+      mockExecFileSync.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          now += 26000;
+          throw makeTimeoutError();
+        }
+        return "recovered";
+      });
+
+      const result = executeAppleScript("test", {
+        timeoutMs: 30000,
+        maxRetries: 2,
+        retryDelayMs: 1,
+      });
+      dateNow.mockRestore();
+
+      expect(result.success).toBe(true);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(2);
+      expect(execOptions(1).timeout).toBe(4000);
+    });
+
+    it("skips a retry that would start with under a second of budget left", () => {
+      // wrapWithTimeout floors the in-script `with timeout` at one second, so a
+      // retry with less than that remaining would be wrapped in a 1s in-script
+      // guard while its process timeout is far shorter — inverting the ordering
+      // the headroom exists to guarantee. Previously this retried with a 90ms
+      // process timeout inside `with timeout of 1 seconds`.
+      let now = 0;
+      const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+      mockExecFileSync.mockImplementation(() => {
+        now += 10;
+        throw new Error("Notes.app is not responding");
+      });
+
+      const result = executeAppleScript("test", {
+        timeoutMs: 1100,
+        maxRetries: 2,
+        retryDelayMs: 1000,
+      });
+      dateNow.mockRestore();
+
+      expect(result.success).toBe(false);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    });
+
     it("retries transient errors once by default (maxRetries=2)", () => {
       vi.stubEnv("APPLE_NOTES_MCP_RETRY_DELAY_MS", "1");
       mockExecFileSync.mockImplementation(() => {
@@ -491,6 +540,37 @@ describe("executeAppleScript", () => {
 
       expect(result.success).toBe(true);
       expect(mockExecFileSync).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries on mid-listing mutation errors raised by bulk list count guards (#86)", () => {
+      let callCount = 0;
+      mockExecFileSync.mockImplementation(() => {
+        callCount++;
+        if (callCount < 2) {
+          // Exact shape osascript emits for `error "Notes changed during listing"`.
+          throw new Error("120:150: execution error: Notes changed during listing (-2700)");
+        }
+        return "recovered";
+      });
+
+      const result = executeAppleScript("test", { maxRetries: 3, retryDelayMs: 1 });
+
+      expect(result.success).toBe(true);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(2);
+    });
+
+    it("maps exhausted mutation retries to a friendly, still-retryable message (#86)", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("120:150: execution error: Notes changed during listing (-2700)");
+      });
+
+      const result = executeAppleScript("test", { maxRetries: 2, retryDelayMs: 1 });
+
+      expect(result.success).toBe(false);
+      // Retried to exhaustion — the pattern must match the mapped message too.
+      expect(mockExecFileSync).toHaveBeenCalledTimes(2);
+      expect(result.error).toContain("changed during listing");
+      expect(result.error).toContain("iCloud sync");
     });
 
     it("uses exponential backoff between retries", () => {

@@ -238,9 +238,10 @@ export interface DefaultLocation {
  */
 export interface AppleScriptOptions {
   /**
-   * Maximum execution time in milliseconds.
+   * Maximum execution time in milliseconds for the complete operation,
+   * including retries and retry delays.
    *
-   * If the script takes longer than this, execution is aborted
+   * If the operation takes longer than this, execution is aborted
    * and an error is returned. Defaults to 30000 (30 seconds).
    *
    * Recommended values:
@@ -255,11 +256,11 @@ export interface AppleScriptOptions {
    *
    * When set to a value > 1, the executor will retry on transient
    * errors (timeout, "not responding") with exponential backoff.
-   * Defaults to 1 (no retries).
+   * Defaults to 2 (one retry).
    *
-   * Recommended values:
-   * - Simple operations: 1 (no retry)
-   * - Critical operations: 3
+   * Mutation safety:
+   * Mutating operations override this to 1 because a timed-out write may have
+   * completed in Notes.app before the response was lost.
    */
   maxRetries?: number;
 
@@ -515,7 +516,7 @@ export interface HealthCheckResult {
  * const attachment: Attachment = {
  *   id: "x-coredata://ABC/ICAttachment/p1",
  *   name: "photo.jpg",
- *   contentType: "public.jpeg"
+ *   contentType: "cid:1A2B3C@icloud.apple.com"
  * };
  * ```
  */
@@ -523,10 +524,19 @@ export interface Attachment {
   /** Unique identifier for the attachment */
   id: string;
 
-  /** Filename of the attachment */
+  /**
+   * Filename of the attachment. Empty when Notes reports no name and no content
+   * identifier is available — never the literal string "missing value".
+   */
   name: string;
 
-  /** UTI (Uniform Type Identifier) of the attachment, e.g., "public.jpeg" */
+  /**
+   * Content identifier of the attachment, e.g. "cid:1A2B3C@icloud.apple.com".
+   *
+   * Despite the field name this is NOT a UTI — Notes' AppleScript dictionary
+   * exposes no MIME type or UTI for attachments, so this mirrors {@link contentId}.
+   * Kept for backwards compatibility with existing consumers.
+   */
   contentType: string;
 
   /** Content-id URL used in the note's HTML body. */

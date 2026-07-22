@@ -6,23 +6,25 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/sweetrb/mcp-apple-notes.git
-   cd mcp-apple-notes
+   git clone https://github.com/sweetrb/apple-notes-mcp.git
+   cd apple-notes-mcp
    ```
 
 2. **Install dependencies**
    ```bash
-   npm install
+   pnpm install
    ```
+
+   This repo pins pnpm via `packageManager` in `package.json` — `corepack enable` provides it. Development needs Node >= 22.13 (CI tests on Node 22 and 24); the published server itself runs on Node >= 20.
 
 3. **Build the project**
    ```bash
-   npm run build
+   pnpm run build
    ```
 
 4. **Run tests**
    ```bash
-   npm test
+   pnpm test
    ```
 
 ## Code Style
@@ -31,16 +33,16 @@ This project uses ESLint and Prettier for code quality and formatting.
 
 ```bash
 # Check for linting issues
-npm run lint
+pnpm run lint
 
 # Auto-fix linting issues
-npm run lint:fix
+pnpm run lint:fix
 
 # Format code
-npm run format
+pnpm run format
 
 # Check formatting
-npm run format:check
+pnpm run format:check
 ```
 
 ## Testing
@@ -49,10 +51,10 @@ All new features should include tests. We use Vitest for testing.
 
 ```bash
 # Run tests once
-npm test
+pnpm test
 
 # Run tests in watch mode
-npm run test:watch
+pnpm run test:watch
 ```
 
 ### Testing Guidelines
@@ -75,17 +77,22 @@ npm run test:watch
 
 3. **Run all checks**
    ```bash
-   npm run lint
-   npm run typecheck
-   npm test
-   npm run build
+   pnpm run lint
+   pnpm run typecheck
+   pnpm run format:check
+   pnpm test
+   pnpm run build
    ```
 
-4. **Commit your changes**
+4. **Version bump & committed bundle** (shipped-code changes only)
+   - Any change to shipped code (`src/**` excluding tests, or the runtime `dependencies` in `package.json`) must bump `package.json` at least a patch (`pnpm version patch --no-git-tag-version`) and add a CHANGELOG.md entry in the same PR — the `require-version-bump` CI check fails the PR otherwise. Docs-only and test-only PRs are exempt.
+   - The bundled `build/index.js` is committed to git: after source changes, rebuild (`pnpm run build`) and commit the updated bundle alongside `src/` — CI verifies the committed bundle matches the source.
+
+5. **Commit your changes**
    - Use clear, descriptive commit messages
    - Reference any related issues
 
-5. **Push and create a PR**
+6. **Push and create a PR**
    - Describe what your PR does
    - Link any related issues
 
@@ -93,11 +100,11 @@ npm run test:watch
 
 When adding a new MCP tool:
 
-1. **Add the schema** in `src/index.ts`
+1. **Add the schema** in `src/index.ts` (with a structured `Use when: / Returns: / Do not use when:` description, plus `Safety:` for any write/destructive tool)
 2. **Implement the method** in `src/services/appleNotesManager.ts`
 3. **Add type definitions** in `src/types.ts`
 4. **Write tests** in `src/services/appleNotesManager.test.ts`
-5. **Update documentation** in README.md and CHANGELOG.md
+5. **Update documentation** in README.md and CHANGELOG.md. If the skill guidance changed, edit `skills/apple-notes/SKILL.md` (the canonical copy) and run `pnpm run sync:skills` — the `codex/` and `.antigravity-plugin/` copies are generated from it and CI fails if they drift
 
 ## AppleScript Guidelines
 

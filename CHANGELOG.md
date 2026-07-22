@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.8] - 2026-07-21
+
+### Fixed
+- **`search-notes` now reports the note's actual folder instead of falling back to `Notes`.** Notes.app does not resolve `name of container of n` as one chained AppleScript expression, so the lookup threw and every result used the fallback even when the note was in a nested folder or Recently Deleted. The script now captures the container first, then reads its name.
+
+## [2.6.7] - 2026-07-21
+
+### Fixed
+- **`show-attachment` and `save-attachment` now address the attachment directly instead of scanning the note.** Both built an AppleScript loop over every attachment comparing `id of a as text`, so resolving a single attachment cost up to one Apple Event per attachment — the same per-attachment storm removed from `list-attachments` in 2.6.6, and worst on exactly the image-heavy notes that motivated it. Notes supports `attachment id "…" of theNote`, which is one event and, as before, resolves only within that note: an id belonging to a different note yields `missing value` and still reports "attachment not found".
+- **Attachment names no longer surface the literal string `missing value`.** Notes leaves `name` unset on some attachments, and the AppleScript sentinel was passed through verbatim, so `list-attachments` reported entries such as `- missing value (cid:…)` and callers saw it as a filename. The name now falls back to the content identifier, matching how the `url` field already handled the sentinel. `save-attachment` and `fetch-attachment` resolve the name through a separate script and leaked it the same way (`Saved "missing value" to …`); they now leave it unset so their existing `"attachment"` fallback applies.
+
+### Documentation
+- Corrected the `Attachment.contentType` doc comment, which described a UTI (`"public.jpeg"`). Notes' AppleScript dictionary exposes no MIME type or UTI for attachments, so the field has always carried the content identifier and mirrors `contentId`; it is documented as such and kept for backwards compatibility.
+
+## [2.6.6] - 2026-07-20
+
+### Fixed
+- **`list-attachments` now fetches attachment properties in bulk instead of sending seven Apple Events per attachment.** The per-attachment loop made image-heavy notes exceed the operation's AppleScript timeout and surface as an empty attachment list, defeating the safety check callers use before replacing a note body. The property lists are now fetched as whole-list Apple Events and zipped locally, with guards that retry on a concurrent Notes mutation. A live 60-attachment note that previously timed out now returns all 60 attachments within the default timeout; a 7-attachment note measured 3.9s to 1.75s end-to-end.
+- **A failed attachment lookup no longer masquerades as a note with no attachments.** `listAttachmentsById`/`listAttachments` returned `[]` on a hard AppleScript failure, which the tool layer rendered as `Note "X" has no attachments` — a successful-looking response that is exactly the false-empty this tool exists to prevent, since callers gate destructive full-body updates on it. Exhausted retries now surface as an error; only a successful call with no output reports an empty note.
+- **The bulk zip is guarded by attachment identity, not just list lengths.** The per-attachment loop re-resolved each attachment by its stable ID, so a record's fields could never come from different attachments. Zipping seven independently-fetched lists lost that guarantee: a same-length reorder (or a delete plus an add) between Apple Events would pass every count check and yield a record carrying one attachment's ID with another's name and dates — and `save-attachment`/`fetch-attachment` resolve bytes from that ID, so the wrong file could be written under the wrong name. The script now re-reads the IDs after the other six fetches and compares them element-wise.
+
+## [2.6.5] - 2026-07-20
+
+### Fixed
+- **AppleScript retry attempts now share one timeout budget.** The configured 30-second timeout was applied independently to each attempt, so the default retry path could run for about 61 seconds and outlive a client's 60-second tool call. Retries now use only the time remaining in the original operation budget.
+- **Mutating AppleScripts no longer retry after ambiguous timeouts.** Notes.app can apply a create, update, delete, move, folder, attachment-save, or UI-show action before `osascript` loses the response. Replaying the action could create duplicate notes or misreport a completed mutation, so those operations now run once while read-only calls retain transient retries.
+- A retry is no longer started when too little of the budget remains for a meaningful attempt. `wrapWithTimeout` floors the in-script `with timeout` at one second, so a retry beginning with under a second left inverted the intended ordering — the in-script guard is supposed to abort *inside* Notes.app's dispatch before Node SIGKILLs `osascript`, since killing `osascript` alone does not stop work already handed to Notes.app. Measured before the fix: `timeoutMs: 1100, retryDelayMs: 1000` gave attempt 2 a 90 ms process timeout wrapped in `with timeout of 1 seconds`. The retry gate now also requires one second of headroom, matching that floor.
+
+## [2.6.4] - 2026-07-20
+
+### Fixed
+- **`update-note` no longer reports an ignored `newTitle` as the note's title for HTML updates.** In `format: "html"` mode, Apple Notes derives the visible title from the first line of `newContent` and the manager intentionally ignores `newTitle`, but the tool response still echoed `newTitle` as though it had been applied. The response now reports the first visible HTML line (falling back to the known current title when the body has no text), and the live tool schema explicitly tells callers to put the visible title first in `newContent`.
+- Stripping `<script>`/`<style>` blocks while deriving that title is now linear rather than quadratic in document size. The pattern had no end-of-input alternative, so every *unclosed* `<script`/`<style>` scanned to EOF, failed, and backtracked — and the fixpoint loop repeated that. Measured on inputs of many unclosed blocks: 211 KB 63 ms, 422 KB 247 ms, 844 KB 1039 ms (quadratic), against a 5 MiB accepted-content ceiling. Now 0–2 ms across the same inputs. Unclosed blocks are also now consumed to end-of-input, which is what browsers do and prevents a truncated leading `<style>` from contributing its CSS to the reported title.
+
+## [2.6.3] - 2026-07-20
+
+### Fixed
+- **`search-notes` now returns each result's real creation and modification timestamps.** Search results previously filled both fields with the current time, making unrelated notes appear to have been created and modified when the search ran. The search AppleScript now emits locale-independent date components for each match and the manager parses those values into the structured response.
+- Each date read in the search loop is individually guarded with an `on error` fallback, matching the adjacent folder-name read. Without it a note whose `creation date`/`modification date` property throws would be dropped from the results entirely — and, because its ID was already recorded for deduplication, any later reference to that note would be suppressed too. The fallback degrades to the previous behaviour (current time) for that one field instead.
+
+## [2.6.2] - 2026-07-20
+### Changed
+- CI/release hardening: `version-guard` now treats the committed `build/` bundle as shipped bytes (closing the lockfile-only and devDep silent-never-publish vectors) with an npm version-collision check; `publish.yml` gained a daily self-healing watchdog, manual dispatch, exact-version skip, CI-validated-commit checkout, and GitHub-Release self-heal; Dependabot bundle rebuilds now auto-bump a patch version; CI boots the committed bundle standalone on Node 20 every run; the bundle is now built with `--target=node20`, making the `engines.node >= 20` claim enforced at build time.
+
+## [2.6.1] - 2026-07-20
+### Changed
+- **`list-notes` fetches note properties in bulk instead of two Apple Events per note (#86).** Full-library listings scaled at roughly 8 notes/second, so a 524-note library took 63 seconds and blew past the 60-second tool timeout MCP clients enforce; `health-check` runs an unbounded listing internally, so large libraries looked broken to clients. Names, ids, and (when `modifiedSince` is set) modification dates now come back as whole-list Apple Events, with the date comparison done locally in AppleScript rather than a `whose` clause, which Notes evaluates per-note. Measured on the same 524-note library: filtered listing 63s → 6.7s, `health-check` 60s+ → ~10s. Dedup and `limit` are applied in JS after the bulk fetch. Thanks @oliverames.
+- **Bounded `list-notes` calls stay O(limit), not O(library) (#86).** When `limit` is set without `modifiedSince`, the AppleScript fetch is sliced to the first `limit` notes (`notes 1 thru N`) instead of bulk-fetching the whole library and discarding the rest, so small limits on large libraries can't creep up on the osascript timeout. The script returns the library's total count alongside the slice; if id-dedup leaves the slice short while more notes exist, the listing transparently falls back to a full fetch so `limit` semantics are identical to the unsliced path.
+
+### Fixed
+- **Mid-listing library mutation is now detected instead of silently mispairing note names and ids (#86).** The bulk name/id/date lists are separate snapshots of a live, syncing collection; if a note was created or deleted between those Apple Events (iCloud sync landing, a concurrent client writing), zipping the lists by index could silently attach the wrong id — and the wrong modification date — to a note, or read past the end of a list and abort. Every bulk listing now guards that the lists are the same length and raises a retryable "Notes changed during listing" error on mismatch, which `executeAppleScript` retries on a fresh snapshot automatically. (A length check can't see an exactly-offsetting delete+create landing in the milliseconds between two fetches; that residual window is accepted rather than paying an extra whole-list fetch on every listing.) In the sliced path, only the out-of-range error numbers (-1719/-1728) are remapped to the mutation error — timeouts, lost-connection, and permission errors keep their own messages and remedies.
+- **`modifiedSince` thresholds no longer shift a month on rollover days.** The AppleScript threshold date was built by assigning year → month → day onto `current date`; run on the 31st with a shorter target month, AppleScript rolls the intermediate date forward (June 31 → July 1), landing the threshold a month late and silently dropping matching notes. The day is now pinned to 1 before the month is assigned. Affects `list-notes`, `search-notes`, and `get-notes-stats` date filtering.
+
+## [2.6.0] - 2026-07-16
+### Added
+- **`append-to-note`**: Appends or prepends content to an existing note by id or title, preserving all existing rich HTML formatting (bold, italic, etc.). Always reads and writes as HTML, splitting the title `<div>` from body to prevent title duplication. Supports `position` (`"after"` / `"before"`), `separator`, and `format` (`"plaintext"` / `"html"`) parameters.
+- **`get-note-link`**: Returns the `notes://showNote?identifier=<uuid>` deep-link URL for a note by id or title. Primary path queries the Notes SQLite database for `ZIDENTIFIER` (works on all macOS versions including macOS 26+); falls back to the AppleScript `note link` property on macOS 12–15. Skips password-protected notes.
+
 ## [2.5.12] - 2026-07-13
 ### Fixed
 - **`get-sync-status` no longer reports orphaned Core Data rows as pending uploads.** The detector counted every `ZICCLOUDSTATE` version gap, including historical rows whose Notes syncing object no longer exists. It now requires a matching live `ZICCLOUDSYNCINGOBJECT` reference before treating a row as pending, preventing a permanent false active-sync warning while preserving detection for live unsynced objects.

@@ -32,7 +32,7 @@ import type {
   ExportedFolder,
   ExportedNote,
 } from "@/types.js";
-import { executeAppleScript } from "@/utils/applescript.js";
+import { BULK_LIST_MUTATION_ERROR, executeAppleScript } from "@/utils/applescript.js";
 import { getChecklistItems, type ChecklistItem } from "@/utils/checklistParser.js";
 import {
   assertSafeSavePath,
@@ -43,6 +43,8 @@ import {
   ensureParentDir,
 } from "@/utils/attachmentFs.js";
 import { existsSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import TurndownService from "turndown";
 
 // =============================================================================
@@ -60,6 +62,16 @@ const FIELD_SEP = "\x1f";
 const RECORD_SEP = "\x1e";
 const AS_FIELD_SEP = "(ASCII character 31)";
 const AS_RECORD_SEP = "(ASCII character 30)";
+
+/**
+ * Run an AppleScript that changes Notes.app or writes an attachment exactly
+ * once. A timeout is ambiguous because Notes.app may have applied the change
+ * before osascript lost the response; retrying can create duplicates or report
+ * a successful delete/move as a failure on the second attempt.
+ */
+function executeMutationAppleScript(script: string) {
+  return executeAppleScript(script, { maxRetries: 1 });
+}
 
 // =============================================================================
 // Text Processing Utilities
@@ -328,6 +340,12 @@ export function buildAppleScriptDateVar(date: Date, varName: string = "threshold
 
   return [
     `set ${varName} to current date`,
+    // Reset day to 1 BEFORE assigning month: AppleScript date components roll
+    // over, so setting month to (say) June while the variable still holds the
+    // 31st inherited from `current date` produces July 1 (June 31 doesn't
+    // exist), and the day assignment below then lands in the wrong month.
+    // Day 1 exists in every month, so year/month can never roll over. (#86)
+    `set day of ${varName} to 1`,
     `set year of ${varName} to ${year}`,
     `set month of ${varName} to ${month}`,
     `set day of ${varName} to ${day}`,
@@ -528,6 +546,56 @@ function buildAppLevelScript(command: string): string {
   `;
 }
 
+/**
+ * Queries the local Notes SQLite database for the sync identifier of a note,
+ * then returns the notes://showNote?identifier=<uuid> deep-link URL.
+ *
+ * The Notes SDEF on macOS 26+ does not expose a `note link` AppleScript
+ * property, so we fall back to reading ZIDENTIFIER from the CoreData store
+ * directly. ZIDENTIFIER has been stable in ZICCLOUDSYNCINGOBJECT since
+ * macOS 10.11 and is the same UUID that the `notes://` URL scheme uses.
+ *
+ * The CoreData URL encodes the SQLite primary key as the numeric suffix after
+ * `p` (e.g. `x-coredata://uuid/ICNote/p50338` → Z_PK = 50338).
+ *
+ * @param coreDataId - CoreData URL from getNoteById (e.g. x-coredata://…/p123)
+ * @returns notes://showNote?identifier=<uuid> or null on any failure
+ */
+function getNoteLinkFromDB(coreDataId: string): string | null {
+  const match = coreDataId.match(/\/p(\d+)$/);
+  if (!match) return null;
+  const pk = parseInt(match[1], 10);
+
+  const dbPath = join(homedir(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+  if (!existsSync(dbPath)) return null;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { DatabaseSync } = require("node:sqlite") as {
+      DatabaseSync: new (
+        path: string,
+        options?: { readOnly?: boolean }
+      ) => {
+        prepare(sql: string): { get(...args: unknown[]): Record<string, unknown> | undefined };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db
+        .prepare("SELECT ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ?")
+        .get(pk);
+      const identifier = row?.ZIDENTIFIER as string | undefined;
+      return identifier ? `notes://showNote?identifier=${identifier}` : null;
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    console.error("getNoteLinkFromDB: failed to query Notes database:", err);
+    return null;
+  }
+}
+
 // =============================================================================
 // Result Parsing Utilities
 // =============================================================================
@@ -710,7 +778,7 @@ export class AppleNotesManager {
 
     // Execute the script
     const script = buildAccountScopedScript({ account: targetAccount }, createCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(`Failed to create note "${title}":`, result.error);
@@ -817,7 +885,7 @@ export class AppleNotesManager {
           if (count of resultList) >= ${safeLimit} then exit repeat`
         : "";
 
-    // Get names, IDs, and folder for each matching note.
+    // Get names, IDs, folder, and real timestamps for each matching note.
     // Notes.app can return the same CoreData note more than once when asking
     // an account for all notes, so dedupe on note ID before adding results.
     const searchCommand = `
@@ -831,11 +899,24 @@ export class AppleNotesManager {
           if seenIds does not contain noteId then
             set end of seenIds to noteId
             try
-              set noteFolder to name of container of n
+              set noteCreated to creation date of n
+              set createdParts to ${asDatePartsExpr("noteCreated")}
+            on error
+              set createdParts to ""
+            end try
+            try
+              set noteModified to modification date of n
+              set modifiedParts to ${asDatePartsExpr("noteModified")}
+            on error
+              set modifiedParts to ""
+            end try
+            try
+              set noteContainer to container of n
+              set noteFolder to name of noteContainer
             on error
               set noteFolder to "Notes"
             end try
-            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId & ${AS_FIELD_SEP} & noteFolder${limitCheck}
+            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId & ${AS_FIELD_SEP} & noteFolder & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts${limitCheck}
           end if
         end try
       end repeat
@@ -861,7 +942,7 @@ export class AppleNotesManager {
     const notes: Note[] = [];
     const seenIds = new Set<string>();
     for (const item of items) {
-      const [title, id, folder] = item.split(FIELD_SEP);
+      const [title, id, folder, created, modified] = item.split(FIELD_SEP);
       if (!title?.trim()) continue;
       const noteId = id?.trim() || generateFallbackId();
       if (seenIds.has(noteId)) continue;
@@ -871,8 +952,8 @@ export class AppleNotesManager {
         title: title.trim(),
         content: "", // Not fetched in search
         tags: [] as string[],
-        created: new Date(),
-        modified: new Date(),
+        created: parseAppleScriptDate(created ?? ""),
+        modified: parseAppleScriptDate(modified ?? ""),
         folder: folder?.trim(),
         account: targetAccount,
       });
@@ -1112,7 +1193,7 @@ export class AppleNotesManager {
 
     const deleteCommand = `delete note "${safeTitle}"`;
     const script = buildAccountScopedScript({ account: targetAccount }, deleteCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(`Failed to delete note "${title}":`, result.error);
@@ -1135,7 +1216,7 @@ export class AppleNotesManager {
     const safeId = sanitizeId(id);
     const deleteCommand = `delete note id "${safeId}"`;
     const script = buildAppLevelScript(deleteCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(`Failed to delete note with ID "${id}":`, result.error);
@@ -1192,7 +1273,7 @@ export class AppleNotesManager {
 
     const updateCommand = `set body of note "${safeCurrentTitle}" to "${fullBody}"`;
     const script = buildAccountScopedScript({ account: targetAccount }, updateCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(`Failed to update note "${title}":`, result.error);
@@ -1254,7 +1335,7 @@ export class AppleNotesManager {
     const safeId = sanitizeId(id);
     const updateCommand = `set body of note id "${safeId}" to "${fullBody}"`;
     const script = buildAppLevelScript(updateCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(`Failed to update note with ID "${id}":`, result.error);
@@ -1262,6 +1343,125 @@ export class AppleNotesManager {
     }
 
     return true;
+  }
+
+  /**
+   * Builds the AppleScript body for a bulk note listing.
+   *
+   * Names, ids, and (when date-filtering) modification dates are fetched as
+   * whole-list Apple Events instead of two events per note; per-note round
+   * trips scale linearly and push large libraries past client tool timeouts
+   * (#86). The lists are separate snapshots of a live, syncing collection, so
+   * every script guards that they are the same length before zipping them by
+   * index — a mid-listing mutation would otherwise silently mispair names and
+   * ids (grow) or read past the end of a list (shrink). On mismatch the
+   * script raises BULK_LIST_MUTATION_ERROR, which executeAppleScript treats
+   * as retryable, re-running the whole script on a fresh snapshot. A length
+   * check cannot see an exactly-offsetting delete+create landing in the
+   * milliseconds between two fetches; that residual window is accepted —
+   * closing it would cost an extra whole-list fetch per listing.
+   *
+   * @param folderRef - Optional AppleScript folder reference to scope to
+   * @param dateSetup - AppleScript defining thresholdDate; enables date filtering
+   * @param sliceLimit - Fetch only the first N notes (mutually exclusive with
+   *   dateSetup: a date filter must scan every note's date). The script then
+   *   returns the total note count as a leading record so the caller can
+   *   detect a dedup shortfall and fall back to a full fetch.
+   */
+  private buildBulkListCommand(opts: {
+    folderRef?: string;
+    dateSetup?: string;
+    sliceLimit?: number;
+  }): string {
+    const { folderRef, dateSetup, sliceLimit } = opts;
+    const fullSource = folderRef ? `notes of ${folderRef}` : "notes";
+    const countGuard = (listVar: string) =>
+      `if (count of ${listVar}) is not (count of noteNames) then error "${BULK_LIST_MUTATION_ERROR}"`;
+
+    if (sliceLimit !== undefined) {
+      // Bounded, unfiltered listing: fetch only the first sliceLimit notes so
+      // small limits stay O(limit) instead of O(library). The slice range is
+      // clamped to the live count, but the collection can still shrink between
+      // the count and the fetch — Notes then raises -1719 "Invalid index"
+      // (empirically; -1728 "no such object" guards the same class), which is
+      // remapped to the retryable mutation error. Every other error number
+      // (AppleEvent timeout -1712, lost connection, permissions) is rethrown
+      // unchanged so its honest message and mapping survive. (#86)
+      const slicedSource = folderRef
+        ? `(notes 1 thru fetchCount of ${folderRef})`
+        : `(notes 1 thru fetchCount)`;
+      return `
+        set totalCount to count of ${fullSource}
+        set fetchCount to ${sliceLimit}
+        if fetchCount > totalCount then set fetchCount to totalCount
+        set resultList to {}
+        if fetchCount > 0 then
+          try
+            set noteNames to name of ${slicedSource}
+            set noteIds to id of ${slicedSource}
+          on error errMsg number errNum
+            if errNum is -1719 or errNum is -1728 then
+              error "${BULK_LIST_MUTATION_ERROR}"
+            else
+              error errMsg number errNum
+            end if
+          end try
+          ${countGuard("noteIds")}
+          repeat with i from 1 to count of noteNames
+            set end of resultList to (item i of noteNames) & ${AS_FIELD_SEP} & (item i of noteIds)
+          end repeat
+        end if
+        set AppleScript's text item delimiters to ${AS_RECORD_SEP}
+        return (totalCount as text) & ${AS_RECORD_SEP} & (resultList as text)
+      `;
+    }
+
+    // Full fetch, optionally date-filtered. The date comparison happens in a
+    // local AppleScript loop over bulk-fetched modification dates instead of
+    // a whose clause: Notes evaluates whose filters per-note server-side,
+    // which is as slow as per-note Apple Events. Comparing dates as dates
+    // also sidesteps locale issues text coercion would introduce. (#86)
+    const dateFetch = dateSetup
+      ? `set noteDates to modification date of ${fullSource}\n        `
+      : "";
+    const dateCountGuard = dateSetup ? `${countGuard("noteDates")}\n        ` : "";
+    const dateGuardOpen = dateSetup
+      ? `if (item i of noteDates) >= thresholdDate then\n            `
+      : "";
+    const dateGuardClose = dateSetup ? `\n          end if` : "";
+    return `
+        ${dateSetup ?? ""}set noteNames to name of ${fullSource}
+        set noteIds to id of ${fullSource}
+        ${dateFetch}${countGuard("noteIds")}
+        ${dateCountGuard}set resultList to {}
+        repeat with i from 1 to count of noteNames
+          ${dateGuardOpen}set end of resultList to (item i of noteNames) & ${AS_FIELD_SEP} & (item i of noteIds)${dateGuardClose}
+        end repeat
+        set AppleScript's text item delimiters to ${AS_RECORD_SEP}
+        return resultList as text
+      `;
+  }
+
+  /**
+   * Parses bulk listing output into deduplicated note titles.
+   *
+   * Duplicate CoreData references are deduped by id; the limit is applied
+   * after dedup so duplicates never count against it.
+   */
+  private parseBulkListOutput(output: string, safeLimit?: number): string[] {
+    if (!output.trim()) return [];
+    const seenIds = new Set<string>();
+    const titles: string[] = [];
+    for (const item of output.split(RECORD_SEP)) {
+      const [title, id] = item.split(FIELD_SEP);
+      if (!title?.trim()) continue;
+      const noteId = id?.trim() || generateFallbackId();
+      if (seenIds.has(noteId)) continue;
+      seenIds.add(noteId);
+      titles.push(title.trim());
+      if (safeLimit !== undefined && titles.length >= safeLimit) break;
+    }
+    return titles;
   }
 
   /**
@@ -1276,110 +1476,49 @@ export class AppleNotesManager {
   listNotes(account?: string, folder?: string, modifiedSince?: string, limit?: number): string[] {
     const targetAccount = this.resolveAccount(account);
     const safeLimit = limit !== undefined && limit > 0 ? Math.floor(limit) : undefined;
+    const folderRef = folder ? buildFolderReference(folder) : undefined;
 
-    // When date or limit filters are needed, use a repeat loop for fine-grained control
-    if (modifiedSince || safeLimit !== undefined) {
-      const baseNotesSource = folder ? `notes of ${buildFolderReference(folder)}` : "notes";
-
-      // Use whose clause for date filtering (locale-safe, no sort order assumption)
-      let dateSetup = "";
-      let notesSource = baseNotesSource;
-      if (modifiedSince) {
-        const date = new Date(modifiedSince);
-        if (!isNaN(date.getTime())) {
-          dateSetup = buildAppleScriptDateVar(date) + "\n";
-          notesSource = `(${baseNotesSource} whose modification date >= thresholdDate)`;
-        }
+    let dateSetup: string | undefined;
+    if (modifiedSince) {
+      const date = new Date(modifiedSince);
+      if (!isNaN(date.getTime())) {
+        dateSetup = buildAppleScriptDateVar(date) + "\n";
       }
+    }
 
-      // Build the limit check. Check after appending so deduped results,
-      // rather than duplicate AppleScript references, determine the limit.
-      const limitCheck =
-        safeLimit !== undefined
-          ? `
-            if (count of resultList) >= ${safeLimit} then exit repeat`
-          : "";
-
-      const listCommand = `
-        ${dateSetup}set resultList to {}
-        set seenIds to {}
-        repeat with n in ${notesSource}
-          try
-            set noteName to name of n
-            set noteId to id of n
-            if seenIds does not contain noteId then
-              set end of seenIds to noteId
-              set end of resultList to noteName & ${AS_FIELD_SEP} & noteId${limitCheck}
-            end if
-          end try
-        end repeat
-        set AppleScript's text item delimiters to ${AS_RECORD_SEP}
-        return resultList as text
-      `;
-
-      const script = buildAccountScopedScript({ account: targetAccount }, listCommand);
+    // Bounded, unfiltered listings fetch only the first safeLimit notes. If
+    // dedup dropped duplicate references from the slice (leaving fewer than
+    // safeLimit titles while more notes exist), fall back to the full fetch
+    // below so the limit semantics match the unsliced path exactly. (#86)
+    if (safeLimit !== undefined && !dateSetup) {
+      const script = buildAccountScopedScript(
+        { account: targetAccount },
+        this.buildBulkListCommand({ folderRef, sliceLimit: safeLimit })
+      );
       const result = executeAppleScript(script);
-
       if (!result.success) {
         throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
       }
-
-      if (!result.output.trim()) {
-        return [];
+      const sepIdx = result.output.indexOf(RECORD_SEP);
+      const header = sepIdx === -1 ? result.output : result.output.slice(0, sepIdx);
+      const totalCount = Number.parseInt(header.trim(), 10);
+      const records = sepIdx === -1 ? "" : result.output.slice(sepIdx + 1);
+      const titles = this.parseBulkListOutput(records, safeLimit);
+      // A malformed header (NaN) also falls through to the full fetch.
+      if (!Number.isNaN(totalCount) && (titles.length >= safeLimit || totalCount <= safeLimit)) {
+        return titles;
       }
-
-      const seenIds = new Set<string>();
-      const titles: string[] = [];
-      for (const item of result.output.split(RECORD_SEP)) {
-        const [title, id] = item.split(FIELD_SEP);
-        if (!title?.trim()) continue;
-        const noteId = id?.trim() || generateFallbackId();
-        if (seenIds.has(noteId)) continue;
-        seenIds.add(noteId);
-        titles.push(title.trim());
-      }
-      return titles;
     }
 
-    // Simple path: no date or limit filters. Use a repeat loop so duplicate
-    // CoreData note references can be deduped by ID before returning titles.
-    const notesRef = folder ? `notes of ${buildFolderReference(folder)}` : `notes`;
-    const listCommand = `
-      set resultList to {}
-      set seenIds to {}
-      repeat with n in ${notesRef}
-        try
-          set noteName to name of n
-          set noteId to id of n
-          if seenIds does not contain noteId then
-            set end of seenIds to noteId
-            set end of resultList to noteName & ${AS_FIELD_SEP} & noteId
-          end if
-        end try
-      end repeat
-      set AppleScript's text item delimiters to ${AS_RECORD_SEP}
-      return resultList as text
-    `;
-
-    const script = buildAccountScopedScript({ account: targetAccount }, listCommand);
+    const script = buildAccountScopedScript(
+      { account: targetAccount },
+      this.buildBulkListCommand({ folderRef, dateSetup })
+    );
     const result = executeAppleScript(script);
-
     if (!result.success) {
       throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
     }
-    if (!result.output.trim()) return [];
-
-    const seenIds = new Set<string>();
-    const titles: string[] = [];
-    for (const item of result.output.split(RECORD_SEP)) {
-      const [title, id] = item.split(FIELD_SEP);
-      if (!title?.trim()) continue;
-      const noteId = id?.trim() || generateFallbackId();
-      if (seenIds.has(noteId)) continue;
-      seenIds.add(noteId);
-      titles.push(title.trim());
-    }
-    return titles;
+    return this.parseBulkListOutput(result.output, safeLimit);
   }
 
   /**
@@ -1598,7 +1737,7 @@ export class AppleNotesManager {
       }
 
       const script = buildAccountScopedScript({ account: targetAccount }, createCommand);
-      const result = executeAppleScript(script);
+      const result = executeMutationAppleScript(script);
 
       if (!result.success) {
         console.error(`Failed to create folder "${name}":`, result.error);
@@ -1636,7 +1775,7 @@ export class AppleNotesManager {
 
     const deleteCommand = `delete ${buildFolderReference(name)}`;
     const script = buildAccountScopedScript({ account: targetAccount }, deleteCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(`Failed to delete folder "${name}":`, result.error);
@@ -1706,7 +1845,7 @@ export class AppleNotesManager {
       move noteRef to destFolder
     `;
     const script = buildAppLevelScript(moveCommand);
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       console.error(
@@ -1885,7 +2024,7 @@ export class AppleNotesManager {
   showNoteById(id: string, separately: boolean = false): boolean {
     const safeId = sanitizeId(id);
     const separatelyClause = separately ? " separately true" : "";
-    const result = executeAppleScript(
+    const result = executeMutationAppleScript(
       buildAppLevelScript(`show note id "${safeId}"${separatelyClause}`)
     );
 
@@ -1895,6 +2034,54 @@ export class AppleNotesManager {
     }
 
     return true;
+  }
+
+  /**
+   * Returns the notes:// deep-link URL for a note by its CoreData ID.
+   *
+   * Primary path: queries the Notes SQLite database for ZIDENTIFIER, which
+   * is the UUID used in the notes://showNote?identifier= URL scheme. This
+   * is more reliable than the AppleScript `note link` property, which is
+   * absent from the Notes SDEF on macOS 26+.
+   *
+   * Fallback: AppleScript `note link` property (macOS 12–15).
+   *
+   * @param id - CoreData URL identifier for the note
+   * @returns notes://showNote?identifier=<uuid> string, or null on failure
+   */
+  getNoteLinkById(id: string): string | null {
+    const note = this.getNoteById(id);
+    if (!note) return null;
+    if (note.passwordProtected) return null;
+
+    // Primary: SQLite lookup — works on all macOS versions
+    const sqliteLink = getNoteLinkFromDB(id);
+    if (sqliteLink) return sqliteLink;
+
+    // Fallback: AppleScript 'note link' (present on macOS 12–15)
+    const safeId = sanitizeId(id);
+    const result = executeAppleScript(
+      buildAppLevelScript(`return note link of (note id "${safeId}")`)
+    );
+    if (result.success && result.output.trim()) {
+      return result.output.trim();
+    }
+
+    console.error(`Failed to get note link for ID "${id}":`, result.error);
+    return null;
+  }
+
+  /**
+   * Returns the notes:// deep-link URL for a note by title.
+   *
+   * @param title - Exact note title
+   * @param account - Account to search in (defaults to iCloud)
+   * @returns notes://showNote?identifier=<uuid> string, or null on failure
+   */
+  getNoteLink(title: string, account?: string): string | null {
+    const note = this.getNoteDetails(title, account);
+    if (!note) return null;
+    return this.getNoteLinkById(note.id);
   }
 
   /**
@@ -1910,7 +2097,7 @@ export class AppleNotesManager {
   showFolderById(id: string, separately: boolean = false): boolean {
     const safeId = sanitizeId(id);
     const separatelyClause = separately ? " separately true" : "";
-    const result = executeAppleScript(
+    const result = executeMutationAppleScript(
       buildAppLevelScript(`show folder id "${safeId}"${separatelyClause}`)
     );
 
@@ -1935,7 +2122,7 @@ export class AppleNotesManager {
   showAccountById(id: string, separately: boolean = false): boolean {
     const safeId = sanitizeId(id);
     const separatelyClause = separately ? " separately true" : "";
-    const result = executeAppleScript(
+    const result = executeMutationAppleScript(
       buildAppLevelScript(`show account id "${safeId}"${separatelyClause}`)
     );
 
@@ -1969,12 +2156,9 @@ export class AppleNotesManager {
       tell application "Notes"
         set theNote to note id "${safeNoteId}"
         set theAttachment to missing value
-        repeat with a in attachments of theNote
-          if (id of a as text) is "${safeAttId}" then
-            set theAttachment to a
-            exit repeat
-          end if
-        end repeat
+        try
+          set theAttachment to attachment id "${safeAttId}" of theNote
+        end try
         if theAttachment is missing value then
           return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
@@ -1983,7 +2167,7 @@ export class AppleNotesManager {
       end tell
     `;
 
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
     if (!result.success) {
       console.error(
         `Failed to show attachment "${attachmentId}" on note "${noteId}":`,
@@ -2271,7 +2455,9 @@ export class AppleNotesManager {
    * Note: The position within the note cannot be determined via AppleScript.
    *
    * @param id - CoreData URL identifier for the note
-   * @returns Array of Attachment objects, or empty array if none found
+   * @returns Array of Attachment objects, or empty array if the note genuinely has none
+   * @throws If the AppleScript call fails, so a lookup failure is never mistaken for
+   *   an attachment-free note (callers gate destructive full-body updates on this)
    *
    * @example
    * ```typescript
@@ -2286,19 +2472,34 @@ export class AppleNotesManager {
       tell application "Notes"
         set theNote to note id "${safeId}"
         set attachmentList to {}
-        repeat with a in attachments of theNote
-          set attachId to id of a
-          set attachName to name of a
-          set attachContentId to content identifier of a
-          set attachUrl to ""
-          try
-            set attachUrl to URL of a as text
-          end try
-          set createdDate to creation date of a
-          set modifiedDate to modification date of a
+        set attachmentIds to id of every attachment of theNote
+        set attachmentNames to name of every attachment of theNote
+        set attachmentContentIds to content identifier of every attachment of theNote
+        set attachmentUrls to URL of every attachment of theNote
+        set attachmentCreatedDates to creation date of every attachment of theNote
+        set attachmentModifiedDates to modification date of every attachment of theNote
+        set attachmentSharedFlags to shared of every attachment of theNote
+        set attachmentIdsAfter to id of every attachment of theNote
+        if (count of attachmentNames) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentContentIds) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentUrls) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentCreatedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentModifiedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentSharedFlags) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentIdsAfter) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        repeat with i from 1 to count of attachmentIds
+          if (item i of attachmentIdsAfter) is not (item i of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        end repeat
+        repeat with i from 1 to count of attachmentIds
+          set attachId to item i of attachmentIds
+          set attachName to item i of attachmentNames
+          set attachContentId to item i of attachmentContentIds
+          set attachUrl to item i of attachmentUrls as text
+          set createdDate to item i of attachmentCreatedDates
+          set modifiedDate to item i of attachmentModifiedDates
           set createdParts to ${asDatePartsExpr("createdDate")}
           set modifiedParts to ${asDatePartsExpr("modifiedDate")}
-          set sharedFlag to shared of a as text
+          set sharedFlag to item i of attachmentSharedFlags as text
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
         set output to ""
@@ -2310,10 +2511,16 @@ export class AppleNotesManager {
     `;
 
     const result = executeAppleScript(script);
-    if (!result.success || !result.output) {
-      if (result.error) {
-        console.error(`Failed to list attachments for note ID "${id}":`, result.error);
-      }
+    // A hard AppleScript failure must not be reported as "no attachments": callers
+    // use this list to decide whether a full-body update is safe, so a false empty
+    // is the exact hazard the bulk fetch exists to prevent. Only a successful run
+    // with no output means the note genuinely has none.
+    if (!result.success) {
+      throw new Error(
+        `Failed to list attachments for note ID "${id}": ${result.error ?? "unknown AppleScript error"}`
+      );
+    }
+    if (!result.output) {
       return [];
     }
 
@@ -2326,7 +2533,10 @@ export class AppleNotesManager {
       if (parts.length >= 3) {
         attachments.push({
           id: parts[0].trim(),
-          name: parts[1].trim(),
+          // Unnamed attachments render `name` as the AppleScript sentinel; surfacing
+          // the literal "missing value" as a filename is worse than saying nothing,
+          // and `name` is a required string, so fall back to the content identifier.
+          name: normalizeAppleScriptText(parts[1]) ?? normalizeAppleScriptText(parts[2]) ?? "",
           contentType: parts[2].trim(),
           contentId: parts[2].trim() || undefined,
           url: normalizeAppleScriptText(parts[3]),
@@ -2345,7 +2555,9 @@ export class AppleNotesManager {
    *
    * @param title - Title of the note
    * @param account - Account containing the note (defaults to iCloud)
-   * @returns Array of Attachment objects, or empty array if none found
+   * @returns Array of Attachment objects, or empty array if the note genuinely has none
+   * @throws If the AppleScript call fails, so a lookup failure is never mistaken for
+   *   an attachment-free note (callers gate destructive full-body updates on this)
    */
   listAttachments(title: string, account?: string): Attachment[] {
     const targetAccount = this.resolveAccount(account);
@@ -2357,19 +2569,34 @@ export class AppleNotesManager {
         tell account "${safeAccount}"
           set theNote to note "${safeTitle}"
         set attachmentList to {}
-        repeat with a in attachments of theNote
-          set attachId to id of a
-          set attachName to name of a
-          set attachContentId to content identifier of a
-          set attachUrl to ""
-          try
-            set attachUrl to URL of a as text
-          end try
-          set createdDate to creation date of a
-          set modifiedDate to modification date of a
+        set attachmentIds to id of every attachment of theNote
+        set attachmentNames to name of every attachment of theNote
+        set attachmentContentIds to content identifier of every attachment of theNote
+        set attachmentUrls to URL of every attachment of theNote
+        set attachmentCreatedDates to creation date of every attachment of theNote
+        set attachmentModifiedDates to modification date of every attachment of theNote
+        set attachmentSharedFlags to shared of every attachment of theNote
+        set attachmentIdsAfter to id of every attachment of theNote
+        if (count of attachmentNames) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentContentIds) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentUrls) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentCreatedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentModifiedDates) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentSharedFlags) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        if (count of attachmentIdsAfter) is not (count of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        repeat with i from 1 to count of attachmentIds
+          if (item i of attachmentIdsAfter) is not (item i of attachmentIds) then error "${BULK_LIST_MUTATION_ERROR}"
+        end repeat
+        repeat with i from 1 to count of attachmentIds
+          set attachId to item i of attachmentIds
+          set attachName to item i of attachmentNames
+          set attachContentId to item i of attachmentContentIds
+          set attachUrl to item i of attachmentUrls as text
+          set createdDate to item i of attachmentCreatedDates
+          set modifiedDate to item i of attachmentModifiedDates
           set createdParts to ${asDatePartsExpr("createdDate")}
           set modifiedParts to ${asDatePartsExpr("modifiedDate")}
-          set sharedFlag to shared of a as text
+          set sharedFlag to item i of attachmentSharedFlags as text
           set end of attachmentList to attachId & ${AS_FIELD_SEP} & attachName & ${AS_FIELD_SEP} & attachContentId & ${AS_FIELD_SEP} & attachUrl & ${AS_FIELD_SEP} & createdParts & ${AS_FIELD_SEP} & modifiedParts & ${AS_FIELD_SEP} & sharedFlag
         end repeat
           set output to ""
@@ -2382,10 +2609,13 @@ export class AppleNotesManager {
     `;
 
     const result = executeAppleScript(script);
-    if (!result.success || !result.output) {
-      if (result.error) {
-        console.error(`Failed to list attachments for note "${title}":`, result.error);
-      }
+    // See listAttachmentsById: a hard failure must never masquerade as an empty note.
+    if (!result.success) {
+      throw new Error(
+        `Failed to list attachments for note "${title}": ${result.error ?? "unknown AppleScript error"}`
+      );
+    }
+    if (!result.output) {
       return [];
     }
 
@@ -2398,7 +2628,10 @@ export class AppleNotesManager {
       if (parts.length >= 3) {
         attachments.push({
           id: parts[0].trim(),
-          name: parts[1].trim(),
+          // Unnamed attachments render `name` as the AppleScript sentinel; surfacing
+          // the literal "missing value" as a filename is worse than saying nothing,
+          // and `name` is a required string, so fall back to the content identifier.
+          name: normalizeAppleScriptText(parts[1]) ?? normalizeAppleScriptText(parts[2]) ?? "",
           contentType: parts[2].trim(),
           contentId: parts[2].trim() || undefined,
           url: normalizeAppleScriptText(parts[3]),
@@ -2444,12 +2677,9 @@ export class AppleNotesManager {
       tell application "Notes"
         set theNote to note id "${safeNoteId}"
         set theAttachment to missing value
-        repeat with a in attachments of theNote
-          if (id of a as text) is "${safeAttId}" then
-            set theAttachment to a
-            exit repeat
-          end if
-        end repeat
+        try
+          set theAttachment to attachment id "${safeAttId}" of theNote
+        end try
         if theAttachment is missing value then
           return "ERR" & ${AS_FIELD_SEP} & "attachment not found"
         end if
@@ -2466,7 +2696,7 @@ export class AppleNotesManager {
       end tell
     `;
 
-    const result = executeAppleScript(script);
+    const result = executeMutationAppleScript(script);
     if (!result.success) {
       return { success: false, error: result.error ?? "unknown error" };
     }
@@ -2494,8 +2724,11 @@ export class AppleNotesManager {
     return {
       success: true,
       savedPath: abs,
-      name: parts[1]?.trim(),
-      contentType: parts[2]?.trim(),
+      // Unnamed attachments render as the AppleScript sentinel here too; leaving it
+      // undefined lets save-attachment/fetch-attachment fall back to "attachment"
+      // rather than reporting `Saved "missing value"`.
+      name: normalizeAppleScriptText(parts[1]),
+      contentType: normalizeAppleScriptText(parts[2]),
     };
   }
 
@@ -2634,7 +2867,7 @@ export class AppleNotesManager {
         end repeat
         return out
       `);
-      const res = executeAppleScript(script);
+      const res = executeMutationAppleScript(script);
 
       if (!res.success) {
         // Whole-batch failure (e.g. Notes.app not responding): can't isolate,
@@ -2772,7 +3005,7 @@ export class AppleNotesManager {
         end repeat
         return out
       `);
-      const res = executeAppleScript(script);
+      const res = executeMutationAppleScript(script);
 
       if (!res.success) {
         // Whole-batch failure (e.g. destination folder unresolved, Notes not

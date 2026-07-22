@@ -362,6 +362,8 @@ Updates an existing note's content and/or title.
 
 **Note:** Either `id` or `title` must be provided. Using `id` is recommended.
 
+**Returns:** Confirmation with the note's visible title and, for ID-based updates, its ID. For HTML updates, the title comes from the first rendered line of `newContent`, matching Notes.app. The response also warns if the note is shared.
+
 **Example - Using ID (recommended):**
 ```json
 {
@@ -466,6 +468,71 @@ Moves a note to a different folder. The note is relocated in place via Notes.app
 ```
 
 **Returns:** Confirmation message, or error if note or folder not found.
+
+---
+
+#### `append-to-note`
+
+Appends or prepends content to an existing note without replacing it. Always reads and writes as HTML, preserving all existing rich formatting.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | No | Note ID (preferred - more reliable than title) |
+| `title` | string | No | Note title (use `id` instead when available) |
+| `content` | string | Yes | Text to append to the note body |
+| `position` | string | No | `"after"` (default) appends to the end; `"before"` prepends to the start |
+| `separator` | string | No | String placed between existing content and new content (default: two newlines → `<div><br></div>` in HTML) |
+| `format` | string | No | Format of the content being appended: `"plaintext"` (default) or `"html"` |
+| `account` | string | No | Account containing the note (defaults to iCloud, ignored if `id` is provided) |
+
+**Note:** Either `id` or `title` must be provided. Using `id` is recommended.
+
+**Example - Append plaintext:**
+```json
+{
+  "id": "x-coredata://ABC123/ICNote/p456",
+  "content": "New item added today"
+}
+```
+
+**Example - Prepend HTML:**
+```json
+{
+  "id": "x-coredata://ABC123/ICNote/p456",
+  "content": "<div><b>Status:</b> done</div>",
+  "format": "html",
+  "position": "before"
+}
+```
+
+**Returns:** Confirmation with note id and title. Warns when the note is shared with collaborators.
+
+**⚠️ Safety:** Reads the existing body first, concatenates, then writes back. Run `list-attachments` first if the note may hold embedded files — a full-body rewrite can drop attachments.
+
+---
+
+#### `get-note-link`
+
+Returns the `notes://showNote?identifier=<uuid>` deep-link URL for a note. The URL opens the note in Notes.app on iOS and macOS and can be stored in Reminders tasks or shared links.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | No | Note ID (preferred - more reliable than title) |
+| `title` | string | No | Note title (use `id` instead when available) |
+| `account` | string | No | Account containing the note (defaults to iCloud, ignored if `id` is provided) |
+
+**Note:** Either `id` or `title` must be provided. Using `id` is recommended. Password-protected notes cannot be linked.
+
+**Example:**
+```json
+{
+  "id": "x-coredata://ABC123/ICNote/p456"
+}
+```
+
+**Returns:** `notes://showNote?identifier=<uuid>` URL string, plus the note id and title.
+
+**Note:** Requires Full Disk Access for the app that launches the server so the Notes SQLite database is readable. On macOS 12–15 the tool also falls back to the AppleScript `note link` property. Run the `doctor` tool to verify access.
 
 ---
 
@@ -740,6 +807,8 @@ Lists attachments in a note.
 
 **Returns:** List of attachments with IDs, names, content identifiers, URLs when available, created/modified dates, and shared state.
 
+**⚠️ Safety:** A lookup failure is reported as an error, never as an empty list — so an empty result reliably means the note has no attachments and is safe to replace wholesale. Treat an error as "unknown", not "none".
+
 ---
 
 #### `save-attachment`
@@ -952,8 +1021,8 @@ All configuration is optional — the server works out of the box. Override beha
 | `APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES` | `26214400` (25 MB) | Max size of an attachment that [`fetch-attachment`](#fetch-attachment) will base64-encode inline. Larger attachments are rejected with an error pointing at [`save-attachment`](#save-attachment) (which streams to disk and has no such limit). Raise it to fetch bigger attachments inline; lower it to cap memory. |
 | `APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES` | `262144` (256 KB) | Per-image cap on the base64 payload kept inline in a [`get-note-content`](#get-note-content) response. Inline images over the cap are replaced with placeholders (with a warning appended) so an image-heavy note cannot exceed the MCP client's message limit and drop the connection; export the real files with [`save-attachment`](#save-attachment) or [`fetch-attachment`](#fetch-attachment). Raise it to keep bigger images inline. |
 | `APPLE_NOTES_MCP_CONFIG_FILE` | `~/Library/Application Support/apple-notes-mcp/config.json` | Path to the JSON config file (see below). |
-| `APPLE_NOTES_MCP_TIMEOUT_MS` | `30000` (30 s) | Per-call AppleScript timeout. Raise it if full-library operations (large searches, exports) time out on a big Notes library. Per-call `timeoutMs` options still win. |
-| `APPLE_NOTES_MCP_MAX_RETRIES` | `2` | Total attempts for an AppleScript call that fails with a **transient** error (Notes.app busy / not responding / lost connection / timeout). `2` means one retry; set `1` to fail fast with no retries. Non-transient errors (e.g. "note not found") never retry. |
+| `APPLE_NOTES_MCP_TIMEOUT_MS` | `30000` (30 s) | Total AppleScript operation timeout, including retry attempts and delays. Raise it if full-library operations (large searches, exports) time out on a big Notes library. Per-call `timeoutMs` options still win. |
+| `APPLE_NOTES_MCP_MAX_RETRIES` | `2` | Maximum attempts for a read-only AppleScript call that fails with a **transient** error (Notes.app busy / not responding / lost connection). `2` means one retry; set `1` to fail fast with no retries. Retries share the single `APPLE_NOTES_MCP_TIMEOUT_MS` budget rather than each getting a fresh one, and a retry is skipped when under a second of that budget remains — so this is a ceiling, not a guarantee. In particular a call that exhausts the budget with a **timeout** has no time left to retry by construction. Mutating operations run once because a timeout can occur after Notes.app applied the change. Non-transient errors (e.g. "note not found") never retry. |
 | `APPLE_NOTES_MCP_RETRY_DELAY_MS` | `1000` (1 s) | Base delay before the first retry; subsequent retries back off exponentially (1s, 2s, 4s, ...). |
 | `DEBUG` / `VERBOSE` | unset | Set either to enable verbose diagnostic logging to stderr. |
 
