@@ -1,6 +1,6 @@
 {
   "name": "apple-notes-mcp",
-  "version": "2.6.10",
+  "version": "2.6.14",
   "packageManager": "pnpm@11.9.0",
   "description": "MCP server for Apple Notes - create, search, update, and manage notes via Claude and other AI assistants",
   "type": "module",
@@ -31,7 +31,7 @@
     "format:check": "prettier --check src",
     "typecheck": "tsc --noEmit",
     "sync:skills": "node scripts/sync-skills.mjs",
-    "version": "node scripts/sync-plugin-version.mjs && git add .claude-plugin .agents/plugins codex .hermes-plugin .antigravity-plugin",
+    "version": "node scripts/sync-plugin-version.mjs && git add .claude-plugin .agents/plugins codex .antigravity-plugin",
     "prepublishOnly": "pnpm run lint && pnpm test && pnpm run build",
     "prepare": "husky; pnpm run build"
   },
