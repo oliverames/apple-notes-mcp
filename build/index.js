@@ -32119,7 +32119,7 @@ function object(shape, params) {
   return new ZodMiniObject(def);
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -32203,16 +32203,32 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
+function getDotPath(path4) {
+  if (path4.length === 0) {
+    return "object root";
+  }
+  return path4.reduce((acc, seg, index) => {
+    if (index === 0) {
+      return String(seg);
+    }
+    if (typeof seg === "number") {
+      return `${acc}[${seg}]`;
+    }
+    return `${acc}.${seg}`;
+  }, "");
+}
 function getParseErrorMessage(error2) {
   if (error2 && typeof error2 === "object") {
+    if ("issues" in error2 && Array.isArray(error2.issues) && error2.issues.length > 0) {
+      return error2.issues.map((i) => {
+        if (!i.path?.length) {
+          return i.message;
+        }
+        return `${i.message} at ${getDotPath(i.path)}`;
+      }).join("\n");
+    }
     if ("message" in error2 && typeof error2.message === "string") {
       return error2.message;
-    }
-    if ("issues" in error2 && Array.isArray(error2.issues) && error2.issues.length > 0) {
-      const firstIssue = error2.issues[0];
-      if (firstIssue && typeof firstIssue === "object" && "message" in firstIssue) {
-        return String(firstIssue.message);
-      }
     }
     try {
       return JSON.stringify(error2);
@@ -32958,7 +32974,7 @@ function preprocess(fn, schema) {
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/external.js
 config(en_default2());
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION = "2025-11-25";
 var SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
 var RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
@@ -34489,7 +34505,7 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -35778,7 +35794,7 @@ var zodToJsonSchema = (schema, options) => {
   return combined;
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function mapMiniTarget(t) {
   if (!t)
     return "draft-7";
@@ -35820,7 +35836,7 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -36774,7 +36790,7 @@ function mergeCapabilities(base, additional) {
   return result;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -36842,7 +36858,7 @@ var AjvJsonSchemaValidator = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks = class {
   constructor(_server) {
     this._server = _server;
@@ -37055,7 +37071,7 @@ var ExperimentalServerTasks = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -37090,7 +37106,7 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server = class extends Protocol {
   /**
    * Initializes this server with the given name and version information.
@@ -37156,16 +37172,7 @@ var Server = class extends Protocol {
     if (!methodSchema) {
       throw new Error("Schema is missing a method literal");
     }
-    let methodValue;
-    if (isZ4Schema(methodSchema)) {
-      const v4Schema = methodSchema;
-      const v4Def = v4Schema._zod?.def;
-      methodValue = v4Def?.value ?? v4Schema.value;
-    } else {
-      const v3Schema = methodSchema;
-      const legacyDef = v3Schema._def;
-      methodValue = legacyDef?.value ?? v3Schema.value;
-    }
+    const methodValue = getLiteralValue(methodSchema);
     if (typeof methodValue !== "string") {
       throw new Error("Schema method literal must be a string");
     }
@@ -37470,7 +37477,7 @@ var Server = class extends Protocol {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
 var COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
@@ -37484,7 +37491,7 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
 var MAX_TEMPLATE_LENGTH = 1e6;
 var MAX_VARIABLE_LENGTH = 1e6;
 var MAX_TEMPLATE_EXPRESSIONS = 1e4;
@@ -37706,7 +37713,7 @@ var UriTemplate = class _UriTemplate {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name) {
   const warnings = [];
@@ -37764,7 +37771,7 @@ function validateAndWarnToolName(name) {
   return result.isValid;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
 var ExperimentalMcpServerTasks = class {
   constructor(_mcpServer) {
     this._mcpServer = _mcpServer;
@@ -37779,7 +37786,7 @@ var ExperimentalMcpServerTasks = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -38595,12 +38602,21 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
+  constructor(options) {
+    this._maxBufferSize = options?.maxBufferSize ?? STDIO_DEFAULT_MAX_BUFFER_SIZE;
+  }
   append(chunk) {
+    const newSize = (this._buffer?.length ?? 0) + chunk.length;
+    if (newSize > this._maxBufferSize) {
+      this.clear();
+      throw new Error(`ReadBuffer exceeded maximum size of ${this._maxBufferSize} bytes`);
+    }
     this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
   }
   readMessage() {
@@ -38626,20 +38642,26 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
-  constructor(_stdin = process2.stdin, _stdout = process2.stdout) {
+  constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
     this._stdout = _stdout;
-    this._readBuffer = new ReadBuffer();
     this._started = false;
     this._ondata = (chunk) => {
-      this._readBuffer.append(chunk);
-      this.processReadBuffer();
+      try {
+        this._readBuffer.append(chunk);
+        this.processReadBuffer();
+      } catch (error2) {
+        this.onerror?.(error2);
+        this.close().catch(() => {
+        });
+      }
     };
     this._onerror = (error2) => {
       this.onerror?.(error2);
     };
+    this._readBuffer = new ReadBuffer({ maxBufferSize: options?.maxBufferSize });
   }
   /**
    * Starts listening for messages on stdin.
@@ -40078,29 +40100,12 @@ var AppleNotesManager = class {
     return refs;
   }
   /**
-   * Lists all notes in an account/folder as (title, id) pairs, unfiltered
-   * and unlimited. Used internally where the id is needed to avoid
-   * re-resolving identity by (possibly duplicated) title — see exportNotesAsJson.
+   * Core listing path shared by `listNotes()` and `listNoteRefs()`: lists
+   * notes in an account, optionally filtered by folder, date, and limit,
+   * returning (title, id) pairs. Kept private because both public callers
+   * need to apply their own return shape.
    */
-  listNoteRefs(account, folder) {
-    const folderRef = folder ? buildFolderReference(folder) : void 0;
-    const script = buildAccountScopedScript({ account }, this.buildBulkListCommand({ folderRef }));
-    const result = executeAppleScript(script);
-    if (!result.success) {
-      throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
-    }
-    return this.parseBulkListOutput(result.output);
-  }
-  /**
-   * Lists all notes in an account, optionally filtered by folder, date, and limit.
-   *
-   * @param account - Account to list notes from (defaults to iCloud)
-   * @param folder - Optional folder to filter by
-   * @param modifiedSince - Optional ISO 8601 date string to filter notes modified on or after this date
-   * @param limit - Optional maximum number of results to return (default: no limit)
-   * @returns Array of note titles
-   */
-  listNotes(account, folder, modifiedSince, limit) {
+  listNotesCore(account, folder, modifiedSince, limit) {
     const targetAccount = this.resolveAccount(account);
     const safeLimit = limit !== void 0 && limit > 0 ? Math.floor(limit) : void 0;
     const folderRef = folder ? buildFolderReference(folder) : void 0;
@@ -40126,7 +40131,7 @@ var AppleNotesManager = class {
       const records = sepIdx === -1 ? "" : result2.output.slice(sepIdx + 1);
       const refs = this.parseBulkListOutput(records, safeLimit);
       if (!Number.isNaN(totalCount) && (refs.length >= safeLimit || totalCount <= safeLimit)) {
-        return refs.map((ref) => ref.title);
+        return refs;
       }
     }
     const script = buildAccountScopedScript(
@@ -40137,7 +40142,33 @@ var AppleNotesManager = class {
     if (!result.success) {
       throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
     }
-    return this.parseBulkListOutput(result.output, safeLimit).map((ref) => ref.title);
+    return this.parseBulkListOutput(result.output, safeLimit);
+  }
+  /**
+   * Lists all notes in an account, optionally filtered by folder, date, and limit.
+   *
+   * @param account - Account to list notes from (defaults to iCloud)
+   * @param folder - Optional folder to filter by
+   * @param modifiedSince - Optional ISO 8601 date string to filter notes modified on or after this date
+   * @param limit - Optional maximum number of results to return (default: no limit)
+   * @returns Array of note titles
+   */
+  listNotes(account, folder, modifiedSince, limit) {
+    return this.listNotesCore(account, folder, modifiedSince, limit).map((ref) => ref.title);
+  }
+  /**
+   * Lists all notes in an account, optionally filtered by folder, date, and
+   * limit — same filtering semantics as `listNotes()`, but returns each
+   * note's id alongside its title. Prefer this over `listNotes()` when the
+   * caller needs to resolve notes by identity afterward: re-resolving by
+   * title is unsafe when titles are duplicated (AppleScript's `note "<name>"`
+   * specifier resolves ambiguously to the same one note every time — see
+   * the fix in exportNotesAsJson for the failure mode this avoids).
+   *
+   * @returns Array of { title, id } pairs, deduplicated by id
+   */
+  listNoteRefs(account, folder, modifiedSince, limit) {
+    return this.listNotesCore(account, folder, modifiedSince, limit);
   }
   /**
    * Lists all shared (collaborative) notes across all accounts.
@@ -42146,7 +42177,15 @@ var folderNameSchema = {
   name: external_exports.string().min(1, "Folder name is required").max(MAX.FOLDER),
   account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account name (defaults to iCloud)")
 };
-server.registerTool(
+function registerTool(name, config2, cb) {
+  const { outputSchema, ...rest } = config2;
+  return server.registerTool(
+    name,
+    outputSchema ? { ...rest, outputSchema: external_exports.object(outputSchema).passthrough() } : rest,
+    cb
+  );
+}
+registerTool(
   "create-note",
   {
     description: "Use when: the user wants to create a brand-new Apple Note.\nReturns: the new note's title and id \u2014 reuse the id for follow-up reads/edits.\nDo not use when: editing an existing note (use update-note).\nNote: the title is prepended as an <h1>; true Apple Notes checklists cannot be created via AppleScript (see the content field). A 'folder' must already exist \u2014 create-folder first (it is idempotent), since this tool does not create it.",
@@ -42192,7 +42231,7 @@ server.registerTool(
     });
   }, "Error creating note")
 );
-server.registerTool(
+registerTool(
   "search-notes",
   {
     description: "Use when: finding notes by a keyword in the title (or body with searchContent=true) and you need their ids.\nReturns: matching notes with title, folder, and id.\nDo not use when: you already have a note id (use get-note-content) or want every note (use list-notes).\nPrefer this first to obtain ids for subsequent read/update/delete/move calls.",
@@ -42265,7 +42304,7 @@ ${noteList}${truncationNote}${syncNote}`,
     );
   }, "Error searching notes")
 );
-server.registerTool(
+registerTool(
   "get-note-content",
   {
     description: "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the note's content plus parsed hashtags, and strippedImages/truncated when the body was capped.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true \u2014 do NOT write it back with update-note or the real images are replaced by that text. Use append-to-note to add content, or export the images with save-attachment / fetch-attachment first.",
@@ -42340,7 +42379,7 @@ server.registerTool(
     });
   }, "Error retrieving note content")
 );
-server.registerTool(
+registerTool(
   "get-note-plaintext",
   {
     description: "Use when: reading one note's body as plain text with no HTML, by id (preferred) or title.\nReturns: the note's plaintext exactly as Notes exposes it.\nDo not use when: you need the HTML body (get-note-content) or Markdown with checklist state (get-note-markdown).\nNote: this reads the note's native plaintext property, so it skips the HTML-to-text conversion; password-protected notes must be unlocked in Notes.app first.",
@@ -42390,7 +42429,7 @@ server.registerTool(
     return successResponse(plaintext, { title, plaintext });
   }, "Error retrieving note plaintext")
 );
-server.registerTool(
+registerTool(
   "get-note-by-id",
   {
     description: "Use when: you have a note id and need its metadata only.\nReturns: id, title, created, modified, shared, passwordProtected.\nDo not use when: you need the body text (get-note-content) or only have a title (get-note-details).",
@@ -42422,7 +42461,7 @@ server.registerTool(
     return successResponse(JSON.stringify(metadata, null, 2), metadata);
   }, "Error retrieving note")
 );
-server.registerTool(
+registerTool(
   "get-note-details",
   {
     description: "Use when: you have a note title (not an id) and need its metadata.\nReturns: id, title, created, modified, shared, passwordProtected, account.\nDo not use when: you have an id (get-note-by-id) or need the body text (get-note-content).\nUse the returned id for reliable follow-up operations.",
@@ -42454,7 +42493,7 @@ server.registerTool(
     return successResponse(JSON.stringify(metadata, null, 2), metadata);
   }, "Error retrieving note details")
 );
-server.registerTool(
+registerTool(
   "show-note",
   {
     description: "Use when: the user wants to reveal a known note in Notes.app by id.\nReturns: confirmation that Notes.app accepted the show command.\nDo not use when: you only need note content (get-note-content) or metadata (get-note-by-id).\nNote: this opens or focuses the Notes UI.",
@@ -42475,7 +42514,7 @@ server.registerTool(
     return successResponse(`Shown note with ID "${id}" in Notes.app`, { id, separately });
   }, "Error showing note")
 );
-server.registerTool(
+registerTool(
   "get-note-link",
   {
     description: "Use when: you need the notes:// deep-link URL for a note so it can be stored in a Reminders task, shared, or opened directly.\nReturns: a notes://showNote?identifier=<uuid> URL that opens the note in Notes.app on iOS and macOS.\nDo not use when: you only need the note's CoreData id (get-note-by-id) or want to reveal the note on screen (show-note).\nNote: the primary path reads the note's identifier from the Notes database, so it needs Full Disk Access for the app that launches this server; macOS 12-15 can fall back to the AppleScript 'note link' property, which macOS 26+ no longer exposes. Password-protected notes cannot be linked.",
@@ -42530,7 +42569,7 @@ server.registerTool(
     return successResponse(`Note link: ${url}`, { title, url });
   }, "Error getting note link")
 );
-server.registerTool(
+registerTool(
   "show-folder",
   {
     description: "Use when: the user wants to reveal a known folder in Notes.app by id.\nReturns: confirmation that Notes.app accepted the show command.\nDo not use when: you only need the folder list (list-folders).\nNote: this opens or focuses the Notes UI. Get the id from list-folders.",
@@ -42551,7 +42590,7 @@ server.registerTool(
     return successResponse(`Shown folder with ID "${id}" in Notes.app`, { id, separately });
   }, "Error showing folder")
 );
-server.registerTool(
+registerTool(
   "show-account",
   {
     description: "Use when: the user wants to reveal a known account in Notes.app by id.\nReturns: confirmation that Notes.app accepted the show command.\nDo not use when: you only need the account list (list-accounts).\nNote: this opens or focuses the Notes UI. Get the id from list-accounts.",
@@ -42572,7 +42611,7 @@ server.registerTool(
     return successResponse(`Shown account with ID "${id}" in Notes.app`, { id, separately });
   }, "Error showing account")
 );
-server.registerTool(
+registerTool(
   "update-note",
   {
     description: "Use when: changing the title and/or replacing the body of an existing note, by id (preferred) or title.\nReturns: confirmation; warns when the note is shared.\nDo not use when: creating a new note (create-note).\nSafety: newContent REPLACES the entire body \u2014 it does not append. Read the note first if you need to preserve existing text, and run list-attachments first when the note may hold files, images, scans, PDFs, or audio, since a full-body replace can drop embedded attachments. Edits to shared notes are immediately visible to all collaborators.",
@@ -42648,7 +42687,7 @@ server.registerTool(
     });
   }, "Error updating note")
 );
-server.registerTool(
+registerTool(
   "append-to-note",
   {
     description: "Use when: adding content to an existing note without replacing it, by id (preferred) or title.\nReturns: confirmation with the note id and title.\nDo not use when: creating a new note (create-note) or replacing the entire body (update-note).\nSafety: reads the existing body first, concatenates, then writes back. Run list-attachments first if the note may hold embedded files \u2014 a full-body rewrite can drop attachments.",
@@ -42763,7 +42802,7 @@ server.registerTool(
     "Error appending to note"
   )
 );
-server.registerTool(
+registerTool(
   "delete-note",
   {
     description: "Use when: permanently deleting a single note, by id (preferred) or title.\nReturns: confirmation; warns when the note was shared.\nDo not use when: deleting many notes (batch-delete-notes) or just relocating one (move-note).\nSafety: requires explicit user confirmation before deleting. Prefer search-notes/list-notes first to show the affected note id and title. Deleting a shared note removes collaborator access.",
@@ -42818,7 +42857,7 @@ server.registerTool(
     });
   }, "Error deleting note")
 );
-server.registerTool(
+registerTool(
   "move-note",
   {
     description: "Use when: moving one note to a different folder, by id (preferred) or title.\nReturns: confirmation of the note and destination folder.\nDo not use when: moving many notes (batch-move-notes).\nNote: the note is relocated in place via Notes.app's native move, preserving its id, creation date, and all attachments. The destination folder must already exist (create-folder).",
@@ -42876,10 +42915,10 @@ server.registerTool(
     });
   }, "Error moving note")
 );
-server.registerTool(
+registerTool(
   "list-notes",
   {
-    description: "Use when: enumerating notes in an account or folder; supports modifiedSince and limit for large collections.\nReturns: note titles only (no content or ids).\nDo not use when: you need content (get-note-content) or ids for follow-up edits (use search-notes).\nNote: warns if iCloud sync is active and results may be partial.",
+    description: "Use when: enumerating notes in an account or folder; supports modifiedSince and limit for large collections.\nReturns: each note's title and id (ids are safe to use for follow-up reads/edits even when titles are duplicated \u2014 see search-notes for keyword-based lookup instead).\nDo not use when: you need content (get-note-content).\nNote: warns if iCloud sync is active and results may be partial.",
     inputSchema: {
       account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account to list notes from"),
       folder: external_exports.string().max(MAX.FOLDER).optional().describe("Filter to specific folder"),
@@ -42889,7 +42928,7 @@ server.registerTool(
       limit: external_exports.number().int().positive().optional().describe("Maximum number of notes to return")
     },
     outputSchema: {
-      notes: external_exports.array(external_exports.string()).optional(),
+      notes: external_exports.array(external_exports.object({ title: external_exports.string(), id: external_exports.string() })).optional(),
       count: external_exports.number().optional()
     }
   },
@@ -42900,7 +42939,7 @@ server.registerTool(
       syncInterference
     } = withSyncAwarenessSync(
       "list-notes",
-      () => notesManager.listNotes(account, folder, modifiedSince, limit)
+      () => notesManager.listNoteRefs(account, folder, modifiedSince, limit)
     );
     const location = folder ? ` in folder "${folder}"` : "";
     const acct = account ? ` (${account})` : "";
@@ -42922,7 +42961,7 @@ ${syncWarnings.join(" ")}` : "";
         count: 0
       });
     }
-    const noteList = notes.map((t) => `  - ${t}`).join("\n");
+    const noteList = notes.map((n) => `  - ${n.title} [id: ${n.id}]`).join("\n");
     return successResponse(
       `Found ${notes.length} notes${location}${acct}${dateInfo}${limitInfo}:
 ${noteList}${syncNote}`,
@@ -42930,7 +42969,7 @@ ${noteList}${syncNote}`,
     );
   }, "Error listing notes")
 );
-server.registerTool(
+registerTool(
   "get-selected-notes",
   {
     description: "Use when: the user asks what note(s) are currently selected in Notes.app.\nReturns: selected note metadata with ids for follow-up operations.\nDo not use when: searching all notes (search-notes) or listing a folder (list-notes).\nNote: reads Notes.app UI selection; it may be empty if Notes is closed or no note is selected.",
@@ -42953,7 +42992,7 @@ server.registerTool(
 ${noteList}`, { notes, count: notes.length });
   }, "Error getting selected notes")
 );
-server.registerTool(
+registerTool(
   "list-folders",
   {
     description: "Use when: listing all folders, with full nested paths, for an account.\nReturns: folder names/paths.\nDo not use when: listing notes (list-notes).\nNote: warns if iCloud sync is active.",
@@ -42993,7 +43032,7 @@ ${folderList}${syncNote}`, {
     });
   }, "Error listing folders")
 );
-server.registerTool(
+registerTool(
   "create-folder",
   {
     description: "Use when: creating a folder, including nested paths like 'Work/Clients' (intermediate folders are created, existing ones skipped).\nReturns: confirmation.\nDo not use when: creating a note (create-note).",
@@ -43019,7 +43058,7 @@ server.registerTool(
     });
   }, "Error creating folder")
 );
-server.registerTool(
+registerTool(
   "delete-folder",
   {
     description: "Use when: deleting an existing folder by name or nested path.\nReturns: confirmation.\nDo not use when: deleting a note (delete-note).\nSafety: requires explicit user confirmation. Deletion fails if the folder still contains notes \u2014 list or move those notes first.",
@@ -43039,7 +43078,7 @@ server.registerTool(
     return successResponse(`Folder deleted: "${name}"`, { ok: true, folder: name });
   }, "Error deleting folder")
 );
-server.registerTool(
+registerTool(
   "list-accounts",
   {
     description: "Use when: discovering which Notes accounts exist (iCloud, Gmail, Exchange, etc.) before targeting one.\nReturns: account names.\nDo not use when: you already know the account, or are working by note id (ids are account-independent).",
@@ -43066,7 +43105,7 @@ ${accountList}`, {
     });
   }, "Error listing accounts")
 );
-server.registerTool(
+registerTool(
   "get-default-location",
   {
     description: "Use when: discovering where Notes.app will create new notes by default.\nReturns: default account and default folder metadata.\nDo not use when: you already have an explicit account/folder target.",
@@ -43083,7 +43122,7 @@ Default folder: ${location.folder.name} [id: ${location.folder.id}]`;
     return successResponse(message, { ...location });
   }, "Error getting default Notes location")
 );
-server.registerTool(
+registerTool(
   "list-shared-notes",
   {
     description: "Use when: finding notes shared with collaborators.\nReturns: shared notes with title, account, and id.\nDo not use when: searching all notes (search-notes).\nNote: edits or deletes to these notes affect all collaborators.",
@@ -43114,7 +43153,7 @@ ${noteList}
     );
   }, "Error listing shared notes")
 );
-server.registerTool(
+registerTool(
   "get-sync-status",
   {
     description: "Use when: checking whether iCloud sync is in progress before trusting read results.\nReturns: sync active/idle, pending upload count, and seconds since last change.\nDo not use when: you need note data \u2014 this is a read-only diagnostics tool.",
@@ -43153,7 +43192,7 @@ server.registerTool(
     return successResponse(lines.join("\n"), { ...status });
   }, "Error checking sync status")
 );
-server.registerTool(
+registerTool(
   "health-check",
   {
     description: "Use when: a quick check that Notes.app is reachable and (optionally) Full Disk Access is granted for checklist features.\nReturns: pass/fail per check.\nDo not use when: you need detailed, actionable setup diagnostics (use doctor).\nRead-only.",
@@ -43184,7 +43223,7 @@ ${fdaLine}`, {
     });
   }, "Error running health check")
 );
-server.registerTool(
+registerTool(
   "doctor",
   {
     description: "Use when: diagnosing setup problems (Notes.app automation permission, account state, Full Disk Access) with actionable guidance.\nReturns: a detailed report plus structured fields.\nDo not use when: you just need a quick pass/fail (health-check).\nRead-only.",
@@ -43199,7 +43238,7 @@ server.registerTool(
     return successResponse(formatDoctorReport(report), { ...report });
   }, "Error running doctor")
 );
-server.registerTool(
+registerTool(
   "get-notes-stats",
   {
     description: "Use when: summarizing the library \u2014 total notes, per-account/folder counts, and recent activity.\nReturns: aggregate statistics; flags partial coverage when some scopes were unreadable.\nDo not use when: you need individual notes (list-notes/search-notes).\nRead-only.",
@@ -43244,7 +43283,7 @@ server.registerTool(
     return successResponse(lines.join("\n"), { ...stats });
   }, "Error getting notes statistics")
 );
-server.registerTool(
+registerTool(
   "list-attachments",
   {
     description: "Use when: listing the attachments of one note, by id (preferred) or title.\nReturns: each attachment's name, content type, and id (use with save-attachment/fetch-attachment).\nDo not use when: you want the attachment bytes (fetch-attachment) or a file on disk (save-attachment).",
@@ -43299,7 +43338,7 @@ ${attachmentList}`,
     );
   }, "Error listing attachments")
 );
-server.registerTool(
+registerTool(
   "batch-delete-notes",
   {
     description: "Use when: permanently deleting multiple notes by id in one call.\nReturns: per-id success/failure counts.\nDo not use when: deleting a single note (delete-note).\nSafety: requires explicit user confirmation; this is destructive and not undoable. Prefer search-notes/list-notes first to confirm the exact ids being deleted.",
@@ -43335,7 +43374,7 @@ server.registerTool(
     }) : errorResponse(lines.join("\n"));
   }, "Error performing batch delete")
 );
-server.registerTool(
+registerTool(
   "batch-move-notes",
   {
     description: "Use when: moving multiple notes by id into one destination folder.\nReturns: per-id success/failure counts.\nDo not use when: moving a single note (move-note).\nNote: the destination folder must already exist (create-folder).",
@@ -43377,7 +43416,7 @@ server.registerTool(
     }) : errorResponse(lines.join("\n"));
   }, "Error performing batch move")
 );
-server.registerTool(
+registerTool(
   "save-attachment",
   {
     description: "Use when: writing one note attachment to a file on disk.\nReturns: the saved path.\nDo not use when: you want the bytes in-memory as base64 (fetch-attachment).\nSafety: writes a file; savePath must be absolute and under the home directory, a temp dir, or /Volumes. Get the ids from list-attachments first.",
@@ -43404,7 +43443,7 @@ server.registerTool(
     });
   }, "Error saving attachment")
 );
-server.registerTool(
+registerTool(
   "fetch-attachment",
   {
     description: "Use when: retrieving one note attachment's bytes inline as base64 (no file written).\nReturns: name, content type, byte count, and base64 data.\nDo not use when: you want it saved to disk (save-attachment).\nNote: get the ids from list-attachments first.",
@@ -43430,7 +43469,7 @@ server.registerTool(
     );
   }, "Error fetching attachment")
 );
-server.registerTool(
+registerTool(
   "show-attachment",
   {
     description: "Use when: the user wants to reveal one note attachment in Notes.app.\nReturns: confirmation that Notes.app revealed the attachment.\nDo not use when: you want the bytes (fetch-attachment) or a file on disk (save-attachment).\nNote: this opens or focuses the Notes UI. Get the ids from list-attachments first.",
@@ -43457,7 +43496,7 @@ server.registerTool(
     });
   }, "Error showing attachment")
 );
-server.registerTool(
+registerTool(
   "export-notes-json",
   {
     description: "Use when: exporting the entire notes library as structured JSON for backup or bulk processing.\nReturns: a summary plus the full JSON of all notes, folders, and accounts.\nDo not use when: you need a single note (get-note-content) \u2014 this reads everything and can be large.\nRead-only.",
@@ -43489,7 +43528,7 @@ Full JSON export:`
     };
   }, "Error exporting notes")
 );
-server.registerTool(
+registerTool(
   "get-note-markdown",
   {
     description: "Use when: reading a note as Markdown, with checklist items annotated [x]/[ ] when Full Disk Access is granted.\nReturns: the note's Markdown.\nDo not use when: you need the raw HTML/plaintext body (get-note-content) or only metadata (get-note-details).\nNote: falls back to plain lists (no checkmarks) without Full Disk Access.",
@@ -43522,7 +43561,7 @@ server.registerTool(
     return successResponse(markdown, { markdown });
   }, "Error getting note as markdown")
 );
-server.registerTool(
+registerTool(
   "get-checklist-state",
   {
     description: "Use when: reading the checked/unchecked state of a note's checklist items, by id.\nReturns: each item's text and done state plus checked/total counts.\nDo not use when: you only have a title (get the id via search-notes first) or want the full body text (get-note-content).\nNote: requires Full Disk Access; reads the NoteStore database directly.",
@@ -43558,7 +43597,7 @@ ${summary}`,
     );
   }, "Error reading checklist state")
 );
-server.registerTool(
+registerTool(
   "get-note-metadata",
   {
     description: "[BETA] Use when: reading note metadata AppleScript cannot expose \u2014 pinned state, checklist flags, trash/recovery state, preview snippet, password hint \u2014 by id.\nReturns: a metadata object; fields vary by macOS version and are omitted when unavailable.\nDo not use when: you need the body (get-note-content) or per-item checklist state (get-checklist-state).\nNote: reads the NoteStore SQLite database read-only and requires Full Disk Access. BETA \u2014 the database schema changes between macOS releases, so some fields may be absent. Works on trashed notes that AppleScript can no longer resolve.",
