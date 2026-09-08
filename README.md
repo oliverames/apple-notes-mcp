@@ -47,6 +47,8 @@ claude mcp add apple-notes -s user -- npx -y apple-notes-mcp
 
 ### Using the Plugin Marketplace
 
+The commands below target the published upstream marketplace. This checkout keeps plugin packages but omits root Claude and Codex catalogs so it does not appear as a local marketplace.
+
 Install as a Claude Code plugin for automatic configuration and enhanced AI behavior:
 
 ```bash

@@ -20,22 +20,6 @@ updateJson("codex/.codex-plugin/plugin.json", (data) => {
   data.version = version;
 });
 
-updateJson(".claude-plugin/marketplace.json", (data) => {
-  for (const plugin of data.plugins ?? []) {
-    if (plugin.name === "apple-notes") {
-      plugin.version = version;
-    }
-  }
-});
-
-updateJson(".agents/plugins/marketplace.json", (data) => {
-  for (const plugin of data.plugins ?? []) {
-    if (plugin.name === "apple-notes") {
-      plugin.version = version;
-    }
-  }
-});
-
 updateJson(".antigravity-plugin/plugin.json", (data) => {
   data.version = version;
 });
