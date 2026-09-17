@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppleNotesManager } from "./appleNotesManager.js";
+import { AppleNotesManager, buildFolderReference, splitFolderPath } from "./appleNotesManager.js";
 import { nativeTagsStatus, normalizeNativeTags, runNativeTagsShortcut } from "./nativeTags.js";
 import { shortcutConsentHint } from "./shortcutConsent.js";
 import {
@@ -24,6 +24,10 @@ export const backgroundStatus = () =>
   nativeTagsStatus(process.env.APPLE_NOTES_MCP_BACKGROUND_SHORTCUT || BACKGROUND_SHORTCUT);
 /** Report whether the dedicated native-tag bridge is installed uniquely. */
 export const nativeTagBridgeStatus = () => nativeTagsStatus();
+export const MARKDOWN_NOTE_SHORTCUT = "Apple Notes MCP - Create Markdown Note";
+/** Report whether the create-from-Markdown bridge is installed uniquely. */
+export const markdownNoteStatus = () =>
+  nativeTagsStatus(process.env.APPLE_NOTES_MCP_MARKDOWN_SHORTCUT || MARKDOWN_NOTE_SHORTCUT);
 export type BackgroundOperation =
   | "append-text"
   | "append-markdown"
@@ -122,6 +126,25 @@ export const NATIVE_APPEND_HTML_SUBSET =
   `with href on <a> and a font-size style on <span> as the only attributes; ` +
   `everything else needs update-note.`;
 
+/**
+ * Markdown that `appendMarkdownHtml` passes through as literal text but Notes'
+ * importer consumes, so an appended or created note could never match the
+ * expected readback. Verified against Notes on macOS 27: `_x_`/`__x__` emphasis,
+ * backslash escapes, entity references, setext underlines, indented block
+ * markers, `1)` lists, closing `#`s, and formatting inside link labels.
+ */
+const UNDERSCORES_OUTSIDE_A_WORD = "underscores outside a word";
+const UNMODELED_MARKDOWN: Array<[RegExp, string]> = [
+  [/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/mu, UNDERSCORES_OUTSIDE_A_WORD],
+  [/\\[!-/:-@[-`{-~]/m, "backslash escapes"],
+  [/&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/im, "character references"],
+  [/^ {0,3}(?:=+|-+|(?:\*[ \t]*){3,})[ \t]*$/m, "underline or rule lines"],
+  [/^ {1,3}(?:#|[-+*][ \t]|\d+[.)][ \t])/m, "indented headings or list items"],
+  [/^\d+\)[ \t]/m, "`1)` lists"],
+  [/^#{1,3}[ \t].*[ \t]#+[ \t]*$/m, "closing # sequences"],
+  [/\[[^\]\n]*[*_][^\]\n]*\]\(/m, "formatting inside link labels"],
+];
+
 /** Validate imported rich text conservatively. No external image fetching or embedded code. */
 export function validateAppendContent(content: string, format: "plaintext" | "html" | "markdown") {
   if (!content || content.length > 1024 * 1024 || content.includes("\0"))
@@ -156,13 +179,27 @@ export function validateAppendContent(content: string, format: "plaintext" | "ht
     }
     if (/<!--|<!|<\?|<[^>]*$/u.test(content)) throw new Error("Unsupported HTML markup");
   }
-  if (format === "markdown" && /!\[|<\/?[a-z]|\]\(\s*(?:javascript|data|file):/i.test(content))
-    throw new Error("Markdown images, raw HTML and local/executable links are unsupported");
+  if (format === "markdown") {
+    if (/!\[|<\/?[a-z]|\]\(\s*(?:javascript|data|file):/i.test(content))
+      throw new Error("Markdown images, raw HTML and local/executable links are unsupported");
+    // CommonMark never forms emphasis inside an inline link destination, so a
+    // URL such as https://example.com/_next/static is kept literal. Strip the
+    // destinations of the links appendMarkdownHtml recognizes before the
+    // underscore test only; every other pattern still sees the full content.
+    const withoutLinkDestinations = content.replace(/(\[[^\]\n]+\])\([^()\s]+\)/g, "$1()");
+    for (const [pattern, name] of UNMODELED_MARKDOWN)
+      if (pattern.test(name === UNDERSCORES_OUTSIDE_A_WORD ? withoutLinkDestinations : content))
+        throw new Error(
+          `Markdown cannot use ${name}; Notes would change that text, so the result could not be verified`
+        );
+  }
 }
 
-/** Invoke the installed background bridge with a private temporary JSON request. */
-export function runBackgroundShortcut(input: Record<string, string>) {
-  const status = backgroundStatus();
+/** Invoke an installed bridge (by default Background Operations) with a private temporary JSON request. */
+export function runBackgroundShortcut(
+  input: Record<string, string>,
+  status: ReturnType<typeof nativeTagsStatus> = backgroundStatus()
+) {
   if (!status.installed)
     throw new Error(
       `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
@@ -311,6 +348,26 @@ export function assertPreserved(
   }
 }
 
+/** Describe a failed or stalled bridge run for an uncertain-outcome message. */
+function describeTransportFailure(error: unknown): string {
+  const detail = error as {
+    code?: string;
+    stderr?: string | Buffer;
+    message?: string;
+    shortcut?: string;
+  };
+  // Name the bridge, so an unapproved or missing Shortcut is identified by the
+  // exact string Shortcuts.app shows rather than guessed at (#164).
+  const named = detail?.shortcut ? `the "${detail.shortcut}" Shortcut` : "the background Shortcut";
+  // A timeout is how an unanswered first-run consent prompt presents: the
+  // headless run cannot show it, so it waits out the transport timeout (#172).
+  return detail?.code === "ETIMEDOUT"
+    ? `Shortcuts timed out waiting for ${named}. ${shortcutConsentHint(detail.shortcut)}`
+    : `${named} failed: ${String(detail?.stderr || detail?.message || "no output")
+        .trim()
+        .slice(0, 400)}`;
+}
+
 /** Run one guarded native mutation and verify its outcome by exact-ID readback. */
 export function mutateBackground(
   request: BackgroundInput,
@@ -341,25 +398,7 @@ export function mutateBackground(
     deps.run({ ...data, operation, title: before.title, scopeText: request.scopeText });
   } catch (error) {
     transportUncertain = true;
-    const detail = error as {
-      code?: string;
-      stderr?: string | Buffer;
-      message?: string;
-      shortcut?: string;
-    };
-    // Name the bridge, so an unapproved or missing Shortcut is identified by the
-    // exact string Shortcuts.app shows rather than guessed at (#164).
-    const named = detail?.shortcut
-      ? `the "${detail.shortcut}" Shortcut`
-      : "the background Shortcut";
-    // A timeout is how an unanswered first-run consent prompt presents: the
-    // headless run cannot show it, so it waits out the transport timeout (#172).
-    transportMessage =
-      detail?.code === "ETIMEDOUT"
-        ? `Shortcuts timed out waiting for ${named}. ${shortcutConsentHint(detail.shortcut)}`
-        : `${named} failed: ${String(detail?.stderr || detail?.message || "no output")
-            .trim()
-            .slice(0, 400)}`;
+    transportMessage = describeTransportFailure(error);
   }
   const after = deps.read(request.id);
   try {
@@ -489,4 +528,165 @@ export function setNativeTag(
     },
     deps
   );
+}
+
+/** Backslash-escape ASCII punctuation so Notes' Markdown importer keeps the text literal. */
+const literalMarkdown = (text: string) => text.replace(/[!-/:-@[-`{-~]/g, "\\$&");
+
+/** Non-empty heading levels in document order. Notes follows each heading with an empty one. */
+export function headingLevels(html: string): number[] {
+  return [...html.matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)]
+    .filter((match) => comparableVisibleText(match[2]))
+    .map((match) => Number(match[1]));
+}
+
+export interface MarkdownNoteRequest {
+  title: string;
+  content: string;
+  folder?: string;
+}
+
+/**
+ * Create a note from bounded Markdown with Notes' own importer, so `#`/`##`/`###`
+ * become real Title/Heading/Subheading styles with no seed line (#172).
+ *
+ * The bridge always creates in the iCloud account's default folder, the only
+ * place Notes interprets Markdown, and returns no usable identity. The new note
+ * is the one note added to the accounts' default folders during the run whose
+ * exact-ID readback verifies; only then is it moved to the requested folder.
+ */
+export function createMarkdownNote(
+  manager: AppleNotesManager,
+  request: MarkdownNoteRequest,
+  run: (
+    input: Record<string, string>,
+    status: ReturnType<typeof nativeTagsStatus>
+  ) => void = runBackgroundShortcut
+) {
+  if (/[\r\n\0]/u.test(request.title)) throw new Error("A Markdown note title must be one line");
+  validateAppendContent(request.content, "markdown");
+  const bodyHtml = appendMarkdownHtml(request.content);
+  if (request.folder) buildFolderReference(request.folder);
+  const expectedText = `${request.title} ${comparableVisibleText(bodyHtml)}`
+    .replace(/\s+/gu, " ")
+    .trim();
+  const expectedLevels = [1, ...headingLevels(bodyHtml)].join();
+  const status = markdownNoteStatus();
+  if (!status.installed)
+    throw new Error(
+      `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
+    );
+  // Compare parsed folder segments case-insensitively, as AppleScript does.
+  const segments = (path: string) =>
+    JSON.stringify(splitFolderPath(path).map((part) => part.toLocaleLowerCase()));
+  if (request.folder) {
+    // moveNoteById needs an existing folder, so check before the bridge creates
+    // anything.
+    const wanted = segments(request.folder);
+    if (
+      !manager
+        .listAccounts()
+        .some(
+          (account) =>
+            account.defaultFolder &&
+            manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
+        )
+    )
+      throw new Error(
+        `Folder "${request.folder}" does not exist; create it with create-folder first. Nothing was created`
+      );
+  }
+  const defaultFolderNotes = () =>
+    new Map(
+      manager
+        .listAccounts()
+        .flatMap((account) =>
+          account.defaultFolder
+            ? manager
+                .listNoteRefs(account.name, account.defaultFolder)
+                .map((note) => [note.id, account.name] as const)
+            : []
+        )
+    );
+  const before = defaultFolderNotes();
+  let transportMessage = "";
+  try {
+    run(
+      {
+        operation: "create-markdown",
+        text: `# ${literalMarkdown(request.title)}\n\n${request.content}`,
+      },
+      status
+    );
+  } catch (error) {
+    transportMessage = describeTransportFailure(error);
+  }
+  const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
+  // From here a note may exist, so every failure names the candidates (or says
+  // to search) instead of surfacing a bare error that invites a duplicate retry.
+  let candidates: string[] = [];
+  try {
+    const created = [...defaultFolderNotes()].filter(([noteId]) => !before.has(noteId));
+    candidates = created.map(([noteId]) => noteId);
+    const failures: string[] = [];
+    const verified = created.flatMap(([noteId, account]) => {
+      try {
+        const note = readBackgroundSnapshot(manager, noteId);
+        if (note.rich.text.replace(/[\s\ufffc]+/gu, " ").trim() !== expectedText)
+          throw new Error("Note text not verified");
+        if (headingLevels(note.html).join() !== expectedLevels)
+          throw new Error("Heading styles not verified");
+        assertAppendedHtmlLinks(0, note.rich.links, bodyHtml);
+        return [{ id: noteId, account, note }];
+      } catch (error) {
+        failures.push(`${noteId}: ${reason(error)}`);
+        return [];
+      }
+    });
+    if (verified.length !== 1)
+      throw new Error(
+        verified.length
+          ? `${verified.length} matching notes appeared (${verified.map((v) => v.id).join(", ")})`
+          : created.length
+            ? `no new note verified (${failures.join("; ")})`
+            : "no new note was found in the default folder"
+      );
+    const { id, account } = verified[0];
+    candidates = [id];
+    let { note } = verified[0];
+    if (request.folder) {
+      // The pre-check accepts a folder from any account, but the note always
+      // lands in one account and moves within it, so name that mismatch rather
+      // than reporting a generic move failure.
+      const wanted = segments(request.folder);
+      if (!manager.listFolders(account).some((folder) => segments(folder.name) === wanted))
+        throw new Error(
+          `created and verified in the ${account} default folder, but folder "${request.folder}" does not exist in ${account}; create it there, then use move-note with id ${id} instead of creating the note again`
+        );
+      if (!manager.moveNoteById(id, request.folder, account))
+        throw new Error(
+          `created and verified in the ${account} default folder, but not moved to "${request.folder}"; use move-note instead of creating it again`
+        );
+      note = readBackgroundSnapshot(manager, id);
+    }
+    return {
+      ok: true,
+      id,
+      title: request.title,
+      folder: request.folder,
+      account,
+      contentHash: note.hash,
+      verified: true,
+      ...(transportMessage
+        ? {
+            transportWarning:
+              "Transport was uncertain; exact-ID readback verified the requested result",
+          }
+        : {}),
+    };
+  } catch (error) {
+    throw new Error(
+      `Operation outcome uncertain; ${candidates.length ? `read ${candidates.length === 1 ? "note" : "notes"} ${candidates.join(", ")}` : "search for the title"} before any retry: ${reason(error)}${transportMessage ? `; ${transportMessage}` : ""}`
+    );
+  }
 }

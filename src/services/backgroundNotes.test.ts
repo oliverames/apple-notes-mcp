@@ -3,6 +3,7 @@ import {
   assertPreserved,
   assertAppendedHtmlLinks,
   assertAppendedVisibleText,
+  headingLevels,
   mutateBackground,
   validateAppendContent,
   type BackgroundSnapshot,
@@ -254,6 +255,17 @@ describe("background note mutation boundaries", () => {
     }
   });
 });
+describe("heading readback", () => {
+  it("lists non-empty heading levels in order, skipping the empty heading Notes appends", () => {
+    expect(
+      headingLevels(
+        '<div><b><h1>Plan</h1></b><font face=".AppleSystemUIFont"><span style="font-size: 13px"><h1><br></h1></span></font></div>' +
+          "<div><br></div><div><b><h2>Goals</h2></b><h2><br></h2></div><div><b><h3>Detail</h3></b></div><div>text</div>"
+      )
+    ).toEqual([1, 2, 3]);
+  });
+});
+
 describe("preservation verification", () => {
   it("allows Notes to normalize formatting of an object placeholder without changing visible text styles", () => {
     const before = snapshot(),
@@ -369,6 +381,55 @@ describe("rich append input", () => {
     expect(() => validateAppendContent('<tt class="x">y</tt>', "html")).toThrow(
       /Unsupported HTML attributes on <tt>/
     ));
+  it("refuses Markdown that Notes' importer rewrites, and allows what it keeps literal", () => {
+    for (const content of [
+      "_note_ this",
+      "Call __init__ first",
+      "Deploy to /_next",
+      "1\\. not a list",
+      "AT&amp;T",
+      "Goals\n---",
+      " ## Goals",
+      "1) first",
+      "## Goals ##",
+      "[**x**](https://example.com)",
+    ])
+      expect(() => validateAppendContent(content, "markdown"), content).toThrow(
+        /Notes would change that text/
+      );
+    expect(() =>
+      validateAppendContent("snake_case_name, #decision and 1. first", "markdown")
+    ).not.toThrow();
+    expect(() => validateAppendContent("_note_ this", "plaintext")).not.toThrow();
+  });
+  it("exempts link destinations from the underscore refusal, where CommonMark forms no emphasis", () => {
+    for (const content of [
+      "[docs](https://example.com/_next/static)",
+      "[x](https://e.com/a_b/_c)",
+      "## Links\n\n- [build output](https://example.com/_next/static) and [x](https://e.com/a_b/_c)",
+    ])
+      expect(() => validateAppendContent(content, "markdown"), content).not.toThrow();
+  });
+  it("still refuses underscores outside a word in text, labels and bare URLs", () => {
+    for (const content of [
+      "_x_",
+      "__init__.py",
+      "https://example.com/_next/_x_",
+      "See https://example.com/_next/_x_ and [docs](https://example.com/_next/static)",
+      "_x_ [docs](https://example.com/a)",
+      "[docs](https://example.com/a) __init__.py",
+    ])
+      expect(() => validateAppendContent(content, "markdown"), content).toThrow(
+        /underscores outside a word; Notes would change that text/
+      );
+    // Other patterns still see the destination.
+    expect(() => validateAppendContent("[x](https://e.com/a\\_b)", "markdown")).toThrow(
+      /backslash escapes/
+    );
+    expect(() => validateAppendContent("[_x_](https://e.com/a)", "markdown")).toThrow(
+      /Notes would change that text/
+    );
+  });
   it("does not permit silent rich-content truncation", () =>
     expect(() => validateAppendContent("x".repeat(1024 * 1024 + 1), "plaintext")).toThrow());
   it.each(["![image](https://example.com/x)", '<img src="file:///x">', "[x](javascript:bad)"])(

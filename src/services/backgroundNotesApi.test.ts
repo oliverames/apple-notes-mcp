@@ -38,6 +38,7 @@ vi.mock("../utils/checklistParser.js", () => ({ getChecklistItems: mock.checklis
 import {
   appendNative,
   backgroundDependencies,
+  createMarkdownNote,
   nativeTagBridgeStatus,
   readBackgroundSnapshot,
   setNativeTag,
@@ -221,6 +222,15 @@ describe("native append and tags", () => {
     expect(written.text).not.toContain("<h3>");
   });
 
+  it("refuses Markdown that Notes would rewrite before reading or writing the note", () => {
+    const manager = managerFor([snapshot()]);
+    expect(() =>
+      appendNative(manager, { ...request, content: "An _emphasised_ word", format: "markdown" })
+    ).toThrow(/underscores outside a word; Notes would change that text/);
+    expect(manager.getNoteById).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
   it("returns an idempotent tag result without invoking a workflow", () => {
     expect(
       setNativeTag(managerFor([snapshot()]), { ...request, tag: "old", present: false })
@@ -288,5 +298,312 @@ describe("native append and tags", () => {
       scopeText,
       tags: ["new"],
     });
+  });
+});
+
+describe("create-note Markdown bridge (#172)", () => {
+  const existing = "x-coredata://ABCDEF/ICNote/p1";
+  const created = "x-coredata://ABCDEF/ICNote/p2";
+  // Notes' own serialization of an imported Title, Heading, Subheading and list.
+  const importedHtml =
+    '<div><b><h1>Plan</h1></b><font face=".AppleSystemUIFont"><h1><br></h1></font></div>' +
+    "<div><br></div><div><b><h2>Goals</h2></b></div><div><b><h3>Detail</h3></b></div>" +
+    '<ul class="Apple-dash-list"><li>one</li></ul>';
+
+  function markdownManager(
+    listings: string[][],
+    html = importedHtml,
+    text = "Plan\n\nGoals\nDetail\none",
+    readbacks: Record<string, { html: string; text: string }> = {}
+  ) {
+    let listing = 0;
+    const read = (noteId: string) => readbacks[noteId] ?? { html, text };
+    const manager = {
+      listAccounts: vi.fn(() => [{ name: "iCloud", defaultFolder: "Notes" }, { name: "Local" }]),
+      listNoteRefs: vi.fn(() =>
+        listings[Math.min(listing++, listings.length - 1)].map((noteId) => ({
+          id: noteId,
+          title: "Plan",
+        }))
+      ),
+      getNoteById: vi.fn(() => ({ title: "Plan", passwordProtected: false })),
+      getNoteContentById: vi.fn((noteId: string) => read(noteId).html),
+      listFolders: vi.fn(() => [
+        { id: "folder-1", name: "Work", account: "iCloud" },
+        { id: "folder-2", name: "Work/Clients\\/Partners", account: "iCloud" },
+      ]),
+      moveNoteById: vi.fn(() => true),
+    };
+    mock.enrich.mockReturnValue({ revision: "r1" });
+    mock.readRich.mockImplementation((noteId: string) => ({
+      ...snapshot().rich,
+      text: read(noteId).text,
+      revision: "r1",
+    }));
+    mock.hash.mockReturnValue("h-created");
+    return manager;
+  }
+
+  it("sends the title and Markdown to the Create Markdown Note bridge and verifies the new note", () => {
+    const manager = markdownManager([[existing], [existing, created]]);
+    expect(
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+        folder: "Work",
+      })
+    ).toEqual({
+      ok: true,
+      id: created,
+      title: "Plan",
+      folder: "Work",
+      account: "iCloud",
+      contentHash: "h-created",
+      verified: true,
+    });
+    expect(mock.status).toHaveBeenCalledWith("Apple Notes MCP - Create Markdown Note");
+    expect(vi.mocked(execFileSync).mock.calls[0][1]).toEqual(
+      expect.arrayContaining(["run", "11111111-1111-4111-8111-111111111111"])
+    );
+    const written = JSON.parse(String(vi.mocked(writeFileSync).mock.calls.at(-1)?.[1]));
+    expect(written).toMatchObject({
+      operation: "create-markdown",
+      text: "# Plan\n\n## Goals\n### Detail\n- one",
+    });
+    expect(manager.listNoteRefs).toHaveBeenCalledWith("iCloud", "Notes");
+    expect(manager.moveNoteById).toHaveBeenCalledWith(created, "Work", "iCloud");
+  });
+
+  it("escapes Markdown punctuation so the title stays literal", () => {
+    const title = "1. Q4 *plan* #work";
+    const manager = markdownManager(
+      [[existing], [existing, created]],
+      `<div><b><h1>${title}</h1></b></div><div>Body</div>`,
+      `${title}\nBody`
+    );
+    expect(
+      createMarkdownNote(manager as unknown as AppleNotesManager, { title, content: "Body" })
+    ).toMatchObject({ ok: true, id: created });
+    const written = JSON.parse(String(vi.mocked(writeFileSync).mock.calls.at(-1)?.[1]));
+    expect(written.text).toBe("# 1\\. Q4 \\*plan\\* \\#work\n\nBody");
+    expect(manager.moveNoteById).not.toHaveBeenCalled();
+  });
+
+  it("reports a flattened heading as unverified and does not move the note", () => {
+    const flattened = importedHtml.replace("<h3>Detail</h3>", "<h2>Detail</h2>");
+    const manager = markdownManager([[existing], [existing, created]], flattened);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+        folder: "Work",
+      })
+    ).toThrow(
+      /read note x-coredata:\/\/ABCDEF\/ICNote\/p2 before any retry: no new note verified \(.*Heading styles not verified\)/
+    );
+    expect(manager.moveNoteById).not.toHaveBeenCalled();
+  });
+
+  it("reports text Notes did not keep, such as a leading seed line", () => {
+    const manager = markdownManager(
+      [[existing], [existing, created]],
+      importedHtml,
+      "New note\nPlan\n\nGoals\nDetail\none"
+    );
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+      })
+    ).toThrow(/Note text not verified/);
+  });
+
+  it("refuses to pick a note when none or several appear", () => {
+    const content = "## Goals\n### Detail\n- one";
+    mock.status.mockReturnValue({
+      installed: true,
+      identifier: "11111111-1111-4111-8111-111111111111",
+      shortcut: "Apple Notes MCP - Create Markdown Note",
+    } as never);
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+    });
+    expect(() =>
+      createMarkdownNote(markdownManager([[existing]]) as unknown as AppleNotesManager, {
+        title: "Plan",
+        content,
+      })
+    ).toThrow(
+      /search for the title before any retry: no new note was found in the default folder; Shortcuts timed out waiting for the "Apple Notes MCP - Create Markdown Note" Shortcut\. This may be an unanswered first-run Shortcuts consent prompt.*run "Apple Notes MCP - Create Markdown Note" once in the foreground in Shortcuts\.app and choose Always Allow/
+    );
+    vi.mocked(execFileSync).mockReturnValue("");
+    const other = "x-coredata://ABCDEF/ICNote/p3";
+    expect(() =>
+      createMarkdownNote(
+        markdownManager([[existing], [existing, created, other]]) as unknown as AppleNotesManager,
+        { title: "Plan", content }
+      )
+    ).toThrow(
+      "Operation outcome uncertain; read notes x-coredata://ABCDEF/ICNote/p2, x-coredata://ABCDEF/ICNote/p3 before any retry: 2 matching notes appeared"
+    );
+  });
+
+  it("names every candidate when several notes appear and none verifies", () => {
+    const synced = "x-coredata://ABCDEF/ICNote/p3";
+    const manager = markdownManager(
+      [[existing], [existing, created, synced]],
+      "<div>Other</div>",
+      "Other"
+    );
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals",
+      })
+    ).toThrow(
+      /^Operation outcome uncertain; read notes x-coredata:\/\/ABCDEF\/ICNote\/p2, x-coredata:\/\/ABCDEF\/ICNote\/p3 before any retry: no new note verified \(x-coredata:\/\/ABCDEF\/ICNote\/p2: Note text not verified; x-coredata:\/\/ABCDEF\/ICNote\/p3: Note text not verified\)$/
+    );
+  });
+
+  it("picks the one verified note when an unrelated note lands in the default folder", () => {
+    const synced = "x-coredata://ABCDEF/ICNote/p3";
+    const manager = markdownManager([[existing], [existing, synced, created]], importedHtml, "", {
+      [synced]: { html: "<div>Groceries</div>", text: "Groceries" },
+      [created]: { html: importedHtml, text: "Plan\n\nGoals\nDetail\none" },
+    });
+    expect(
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+      })
+    ).toMatchObject({ ok: true, id: created });
+  });
+
+  it("names the note when its readback fails after the bridge created it", () => {
+    const manager = markdownManager([[existing], [existing, created]]);
+    mock.readRich.mockImplementation(() => {
+      throw new Error("No Notes document data");
+    });
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals",
+      })
+    ).toThrow(
+      /Operation outcome uncertain; read note x-coredata:\/\/ABCDEF\/ICNote\/p2 before any retry: .*No Notes document data/
+    );
+  });
+
+  it("names the created note when the move to its folder fails", () => {
+    const manager = markdownManager([[existing], [existing, created]]);
+    manager.moveNoteById.mockReturnValue(false);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+        folder: "Work",
+      })
+    ).toThrow(
+      /read note x-coredata:\/\/ABCDEF\/ICNote\/p2 before any retry: created and verified .* not moved to "Work"; use move-note/
+    );
+  });
+
+  it("names the landing account when the folder exists only in another account", () => {
+    const gmail = "x-coredata://ABCDEF/ICNote/p9";
+    const manager = markdownManager([[existing], [existing, created]]);
+    manager.listAccounts.mockReturnValue([
+      { name: "iCloud", defaultFolder: "Notes" },
+      { name: "Gmail", defaultFolder: "Notes" },
+    ] as never);
+    let iCloudListing = 0;
+    const listings = [[existing], [existing, created]];
+    manager.listNoteRefs.mockImplementation(((account: string) =>
+      (account === "iCloud"
+        ? listings[Math.min(iCloudListing++, listings.length - 1)]
+        : [gmail]
+      ).map((noteId) => ({ id: noteId, title: "Plan" }))) as never);
+    manager.listFolders.mockImplementation(((account: string) =>
+      account === "Gmail"
+        ? [{ id: "folder-9", name: "Archive", account: "Gmail" }]
+        : [{ id: "folder-1", name: "Work", account: "iCloud" }]) as never);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+        folder: "archive",
+      })
+    ).toThrow(
+      'Operation outcome uncertain; read note x-coredata://ABCDEF/ICNote/p2 before any retry: created and verified in the iCloud default folder, but folder "archive" does not exist in iCloud; create it there, then use move-note with id x-coredata://ABCDEF/ICNote/p2 instead of creating the note again'
+    );
+    expect(execFileSync).toHaveBeenCalledTimes(1);
+    expect(manager.listFolders).toHaveBeenLastCalledWith("iCloud");
+    expect(manager.moveNoteById).not.toHaveBeenCalled();
+  });
+
+  it("refuses a folder that does not exist before the bridge creates anything", () => {
+    const manager = markdownManager([[existing], [existing, created]]);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals",
+        folder: "Typo",
+      })
+    ).toThrow(
+      'Folder "Typo" does not exist; create it with create-folder first. Nothing was created'
+    );
+    expect(manager.listNoteRefs).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(manager.moveNoteById).not.toHaveBeenCalled();
+  });
+
+  it("matches an existing nested folder the way the move resolves it", () => {
+    const manager = markdownManager([[existing], [existing, created]]);
+    expect(
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "## Goals\n### Detail\n- one",
+        folder: "work/clients\\/partners/",
+      })
+    ).toMatchObject({ ok: true, id: created, folder: "work/clients\\/partners/" });
+    expect(manager.moveNoteById).toHaveBeenCalledWith(
+      created,
+      "work/clients\\/partners/",
+      "iCloud"
+    );
+  });
+
+  it("refuses before listing or running anything when the bridge is missing or input is invalid", () => {
+    const manager = markdownManager([[existing]]);
+    mock.status.mockReturnValue({ installed: false, identifier: undefined } as never);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, { title: "Plan", content: "x" })
+    ).toThrow(/Install the supplied/);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Two\nlines",
+        content: "x",
+      })
+    ).toThrow(/one line/);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "| a | b |",
+      })
+    ).toThrow(/Markdown append supports/);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "_note_ this",
+      })
+    ).toThrow(/Notes would change that text/);
+    expect(() =>
+      createMarkdownNote(manager as unknown as AppleNotesManager, {
+        title: "Plan",
+        content: "snake_case_name and #decision stay literal",
+        folder: "/",
+      })
+    ).toThrow(/folder/i);
+    expect(manager.listNoteRefs).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalled();
   });
 });

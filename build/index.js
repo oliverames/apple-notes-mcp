@@ -42923,6 +42923,8 @@ function comparableVisibleText(html) {
 var BACKGROUND_SHORTCUT = "Apple Notes MCP - Background Operations v5";
 var backgroundStatus = () => nativeTagsStatus(process.env.APPLE_NOTES_MCP_BACKGROUND_SHORTCUT || BACKGROUND_SHORTCUT);
 var nativeTagBridgeStatus = () => nativeTagsStatus();
+var MARKDOWN_NOTE_SHORTCUT = "Apple Notes MCP - Create Markdown Note";
+var markdownNoteStatus = () => nativeTagsStatus(process.env.APPLE_NOTES_MCP_MARKDOWN_SHORTCUT || MARKDOWN_NOTE_SHORTCUT);
 function readBackgroundSnapshot(manager, id2) {
   if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id2))
     throw new Error("Exact note ID required");
@@ -42974,6 +42976,17 @@ var NATIVE_APPEND_ELEMENTS = [
 ];
 var NATIVE_APPEND_SPAN_STYLE = /^font-size\s*:\s*\d{1,3}(?:\.\d+)?(?:px|pt)\s*;?$/i;
 var NATIVE_APPEND_HTML_SUBSET = `Native append accepts ${NATIVE_APPEND_ELEMENTS.map((e) => `<${e}>`).join(" ")}, with href on <a> and a font-size style on <span> as the only attributes; everything else needs update-note.`;
+var UNDERSCORES_OUTSIDE_A_WORD = "underscores outside a word";
+var UNMODELED_MARKDOWN = [
+  [/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/mu, UNDERSCORES_OUTSIDE_A_WORD],
+  [/\\[!-/:-@[-`{-~]/m, "backslash escapes"],
+  [/&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/im, "character references"],
+  [/^ {0,3}(?:=+|-+|(?:\*[ \t]*){3,})[ \t]*$/m, "underline or rule lines"],
+  [/^ {1,3}(?:#|[-+*][ \t]|\d+[.)][ \t])/m, "indented headings or list items"],
+  [/^\d+\)[ \t]/m, "`1)` lists"],
+  [/^#{1,3}[ \t].*[ \t]#+[ \t]*$/m, "closing # sequences"],
+  [/\[[^\]\n]*[*_][^\]\n]*\]\(/m, "formatting inside link labels"]
+];
 function validateAppendContent(content, format) {
   if (!content || content.length > 1024 * 1024 || content.includes("\0"))
     throw new Error("Invalid append content (limit 1 MiB)");
@@ -43003,11 +43016,18 @@ function validateAppendContent(content, format) {
     }
     if (/<!--|<!|<\?|<[^>]*$/u.test(content)) throw new Error("Unsupported HTML markup");
   }
-  if (format === "markdown" && /!\[|<\/?[a-z]|\]\(\s*(?:javascript|data|file):/i.test(content))
-    throw new Error("Markdown images, raw HTML and local/executable links are unsupported");
+  if (format === "markdown") {
+    if (/!\[|<\/?[a-z]|\]\(\s*(?:javascript|data|file):/i.test(content))
+      throw new Error("Markdown images, raw HTML and local/executable links are unsupported");
+    const withoutLinkDestinations = content.replace(/(\[[^\]\n]+\])\([^()\s]+\)/g, "$1()");
+    for (const [pattern, name] of UNMODELED_MARKDOWN)
+      if (pattern.test(name === UNDERSCORES_OUTSIDE_A_WORD ? withoutLinkDestinations : content))
+        throw new Error(
+          `Markdown cannot use ${name}; Notes would change that text, so the result could not be verified`
+        );
+  }
 }
-function runBackgroundShortcut(input) {
-  const status = backgroundStatus();
+function runBackgroundShortcut(input, status = backgroundStatus()) {
   if (!status.installed)
     throw new Error(
       `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
@@ -43109,6 +43129,11 @@ function assertPreserved(before, after, options = {}) {
       }
   }
 }
+function describeTransportFailure(error2) {
+  const detail = error2;
+  const named = detail?.shortcut ? `the "${detail.shortcut}" Shortcut` : "the background Shortcut";
+  return detail?.code === "ETIMEDOUT" ? `Shortcuts timed out waiting for ${named}. ${shortcutConsentHint(detail.shortcut)}` : `${named} failed: ${String(detail?.stderr || detail?.message || "no output").trim().slice(0, 400)}`;
+}
 function mutateBackground(request, operation, data, verify, deps) {
   if (request.scopeText.length < 12 || request.scopeText.length > 500 || /[\r\n\0]/u.test(request.scopeText))
     throw new Error("Use a distinctive existing single-line scope of 12\u2013500 characters");
@@ -43128,9 +43153,7 @@ function mutateBackground(request, operation, data, verify, deps) {
     deps.run({ ...data, operation, title: before.title, scopeText: request.scopeText });
   } catch (error2) {
     transportUncertain = true;
-    const detail = error2;
-    const named = detail?.shortcut ? `the "${detail.shortcut}" Shortcut` : "the background Shortcut";
-    transportMessage = detail?.code === "ETIMEDOUT" ? `Shortcuts timed out waiting for ${named}. ${shortcutConsentHint(detail.shortcut)}` : `${named} failed: ${String(detail?.stderr || detail?.message || "no output").trim().slice(0, 400)}`;
+    transportMessage = describeTransportFailure(error2);
   }
   const after = deps.read(request.id);
   try {
@@ -43218,6 +43241,109 @@ function setNativeTag(manager, request) {
     deps
   );
 }
+var literalMarkdown = (text) => text.replace(/[!-/:-@[-`{-~]/g, "\\$&");
+function headingLevels(html) {
+  return [...html.matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)].filter((match) => comparableVisibleText(match[2])).map((match) => Number(match[1]));
+}
+function createMarkdownNote(manager, request, run = runBackgroundShortcut) {
+  if (/[\r\n\0]/u.test(request.title)) throw new Error("A Markdown note title must be one line");
+  validateAppendContent(request.content, "markdown");
+  const bodyHtml = appendMarkdownHtml(request.content);
+  if (request.folder) buildFolderReference(request.folder);
+  const expectedText = `${request.title} ${comparableVisibleText(bodyHtml)}`.replace(/\s+/gu, " ").trim();
+  const expectedLevels = [1, ...headingLevels(bodyHtml)].join();
+  const status = markdownNoteStatus();
+  if (!status.installed)
+    throw new Error(
+      `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
+    );
+  const segments = (path4) => JSON.stringify(splitFolderPath(path4).map((part) => part.toLocaleLowerCase()));
+  if (request.folder) {
+    const wanted = segments(request.folder);
+    if (!manager.listAccounts().some(
+      (account) => account.defaultFolder && manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
+    ))
+      throw new Error(
+        `Folder "${request.folder}" does not exist; create it with create-folder first. Nothing was created`
+      );
+  }
+  const defaultFolderNotes = () => new Map(
+    manager.listAccounts().flatMap(
+      (account) => account.defaultFolder ? manager.listNoteRefs(account.name, account.defaultFolder).map((note) => [note.id, account.name]) : []
+    )
+  );
+  const before = defaultFolderNotes();
+  let transportMessage = "";
+  try {
+    run(
+      {
+        operation: "create-markdown",
+        text: `# ${literalMarkdown(request.title)}
+
+${request.content}`
+      },
+      status
+    );
+  } catch (error2) {
+    transportMessage = describeTransportFailure(error2);
+  }
+  const reason = (error2) => error2 instanceof Error ? error2.message : String(error2);
+  let candidates = [];
+  try {
+    const created = [...defaultFolderNotes()].filter(([noteId3]) => !before.has(noteId3));
+    candidates = created.map(([noteId3]) => noteId3);
+    const failures = [];
+    const verified = created.flatMap(([noteId3, account2]) => {
+      try {
+        const note2 = readBackgroundSnapshot(manager, noteId3);
+        if (note2.rich.text.replace(/[\s\ufffc]+/gu, " ").trim() !== expectedText)
+          throw new Error("Note text not verified");
+        if (headingLevels(note2.html).join() !== expectedLevels)
+          throw new Error("Heading styles not verified");
+        assertAppendedHtmlLinks(0, note2.rich.links, bodyHtml);
+        return [{ id: noteId3, account: account2, note: note2 }];
+      } catch (error2) {
+        failures.push(`${noteId3}: ${reason(error2)}`);
+        return [];
+      }
+    });
+    if (verified.length !== 1)
+      throw new Error(
+        verified.length ? `${verified.length} matching notes appeared (${verified.map((v) => v.id).join(", ")})` : created.length ? `no new note verified (${failures.join("; ")})` : "no new note was found in the default folder"
+      );
+    const { id: id2, account } = verified[0];
+    candidates = [id2];
+    let { note } = verified[0];
+    if (request.folder) {
+      const wanted = segments(request.folder);
+      if (!manager.listFolders(account).some((folder) => segments(folder.name) === wanted))
+        throw new Error(
+          `created and verified in the ${account} default folder, but folder "${request.folder}" does not exist in ${account}; create it there, then use move-note with id ${id2} instead of creating the note again`
+        );
+      if (!manager.moveNoteById(id2, request.folder, account))
+        throw new Error(
+          `created and verified in the ${account} default folder, but not moved to "${request.folder}"; use move-note instead of creating it again`
+        );
+      note = readBackgroundSnapshot(manager, id2);
+    }
+    return {
+      ok: true,
+      id: id2,
+      title: request.title,
+      folder: request.folder,
+      account,
+      contentHash: note.hash,
+      verified: true,
+      ...transportMessage ? {
+        transportWarning: "Transport was uncertain; exact-ID readback verified the requested result"
+      } : {}
+    };
+  } catch (error2) {
+    throw new Error(
+      `Operation outcome uncertain; ${candidates.length ? `read ${candidates.length === 1 ? "note" : "notes"} ${candidates.join(", ")}` : "search for the title"} before any retry: ${reason(error2)}${transportMessage ? `; ${transportMessage}` : ""}`
+    );
+  }
+}
 
 // src/tools/doctor.ts
 function runDoctor(manager) {
@@ -43256,10 +43382,11 @@ function runDoctor(manager) {
       (name) => nativeTagsStatus(name)
     );
     const missing = bridgeStatuses.filter((status) => !status.installed);
+    const markdown = markdownBridgeDetail();
     checks.push({
       name: "Native write Shortcuts",
       status: missing.length ? "warn" : "ok",
-      detail: missing.length ? `missing: ${missing.map((status) => status.shortcut).join(", ")}. Run apple-notes-mcp setup and approve Add Shortcut in macOS. ${consentReminder}` : `both native-write bridges are installed. ${consentReminder}`
+      detail: missing.length ? `missing: ${missing.map((status) => status.shortcut).join(", ")}. Run apple-notes-mcp setup and approve Add Shortcut in macOS. ${markdown} ${consentReminder}` : `both native-write bridges are installed. ${markdown} ${consentReminder}`
     });
   } catch (error2) {
     checks.push({
@@ -43271,6 +43398,14 @@ function runDoctor(manager) {
   checks.push(checkNodeRuntimeSignature());
   const healthy = !checks.some((c) => c.status === "fail");
   return { healthy, checks };
+}
+function markdownBridgeDetail() {
+  const purpose = 'needed only for create-note format: "markdown" on macOS 26+';
+  try {
+    return nativeTagsStatus(MARKDOWN_NOTE_SHORTCUT).installed ? `Optional ${MARKDOWN_NOTE_SHORTCUT} bridge: installed (${purpose}).` : `Optional ${MARKDOWN_NOTE_SHORTCUT} bridge: not installed (${purpose}; apple-notes-mcp setup offers it).`;
+  } catch (error2) {
+    return `Optional ${MARKDOWN_NOTE_SHORTCUT} bridge: could not inspect (${purpose}): ${String(error2)}.`;
+  }
 }
 function checkNodeRuntimeSignature() {
   const name = "Node runtime signature";
@@ -43894,7 +44029,8 @@ var VERIFIED_BACKGROUND = /* @__PURE__ */ new Set([
   "insert-note-link",
   "set-note-pinned",
   "remove-native-tags",
-  "replace-native-tag"
+  "replace-native-tag",
+  "create-note-markdown"
 ]);
 var LIVE_VALIDATION_BLOCKERS = {};
 var signingRefusal = "Installed Shortcuts refuses to sign this Notes action (unsupported features); no background fallback is enabled";
@@ -43982,16 +44118,24 @@ function registerNativeOperations(server2, manager) {
         "set-note-pinned",
         "remove-native-tags",
         "replace-native-tag",
-        "insert-note-link"
+        "insert-note-link",
+        "create-note-markdown"
       ];
       let tagBridgeInstalled = false;
       try {
         tagBridgeInstalled = nativeTagBridgeStatus().installed;
       } catch {
       }
+      let markdownBridgeInstalled = false;
+      try {
+        markdownBridgeInstalled = markdownNoteStatus().installed;
+      } catch {
+      }
+      const installed = (name) => name === "create-note-markdown" ? markdownBridgeInstalled : bridge.installed;
       return {
         bridge,
         nativeTagBridgeInstalled: tagBridgeInstalled,
+        markdownNoteBridgeInstalled: markdownBridgeInstalled,
         mode: "background-only",
         operations: Object.fromEntries(
           native.map((name) => [
@@ -43999,8 +44143,8 @@ function registerNativeOperations(server2, manager) {
             {
               implemented: true,
               verified: VERIFIED_BACKGROUND.has(name),
-              available: VERIFIED_BACKGROUND.has(name) && (!native.includes(name) || bridge.installed) && (name !== "replace-native-tag" || tagBridgeInstalled),
-              reason: !VERIFIED_BACKGROUND.has(name) ? UNAVAILABLE[name] || LIVE_VALIDATION_BLOCKERS[name] || "Live validation pending; install the shortcut and complete the isolated acceptance tests" : native.includes(name) && !bridge.installed ? "Run apple-notes-mcp setup and approve Add Shortcut in macOS" : name === "replace-native-tag" && !tagBridgeInstalled ? "Run apple-notes-mcp setup to install the Native Tags bridge for the addition phase" : void 0
+              available: VERIFIED_BACKGROUND.has(name) && installed(name) && (name !== "replace-native-tag" || tagBridgeInstalled),
+              reason: !VERIFIED_BACKGROUND.has(name) ? UNAVAILABLE[name] || LIVE_VALIDATION_BLOCKERS[name] || "Live validation pending; install the shortcut and complete the isolated acceptance tests" : !installed(name) ? "Run apple-notes-mcp setup and approve Add Shortcut in macOS" : name === "replace-native-tag" && !tagBridgeInstalled ? "Run apple-notes-mcp setup to install the Native Tags bridge for the addition phase" : void 0
             }
           ])
         ),
@@ -44217,13 +44361,21 @@ function registerNativeOperations(server2, manager) {
 // src/setupShortcuts.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { existsSync as existsSync7 } from "node:fs";
+import { release } from "node:os";
 import { dirname as dirname2, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
+var OPTIONAL_BRIDGE_NOTE = "(optional \u2014 needed only for create-note format: markdown, macOS 26+)";
+var MARKDOWN_MIN_DARWIN_MAJOR = 25;
 var shortcutFiles = [
   { name: NATIVE_TAGS_SHORTCUT, file: "Apple Notes MCP - Native Tags.shortcut" },
   {
     name: BACKGROUND_SHORTCUT,
     file: "Apple Notes MCP - Background Operations v5.shortcut"
+  },
+  {
+    name: MARKDOWN_NOTE_SHORTCUT,
+    file: "Apple Notes MCP - Create Markdown Note.shortcut",
+    optional: true
   }
 ];
 function setupShortcuts(checkOnly, dependencies = {}) {
@@ -44234,7 +44386,9 @@ function setupShortcuts(checkOnly, dependencies = {}) {
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
   const baseDirectory = dependencies.baseDirectory || resolve2(dirname2(fileURLToPath(import.meta.url)), "../shortcuts");
-  const items = shortcutFiles.map(({ name, file }) => {
+  const osRelease = (dependencies.osRelease || release)();
+  const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
+  const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
     const path4 = resolve2(baseDirectory, file);
     let installed = false;
     let identifier;
@@ -44247,27 +44401,41 @@ function setupShortcuts(checkOnly, dependencies = {}) {
       error2 = cause instanceof Error ? cause.message : String(cause);
     }
     let opened = false;
+    let skipped;
     if (!installed && !checkOnly) {
-      if (!exists(path4)) error2 = `Packaged Shortcut is missing: ${path4}`;
+      if (optional2 && !(darwinMajor >= MARKDOWN_MIN_DARWIN_MAJOR))
+        skipped = `requires macOS 26 or later (this Mac reports Darwin ${osRelease})`;
+      else if (!exists(path4)) error2 = `Packaged Shortcut is missing: ${path4}`;
       else {
         const result = open(path4);
         opened = result.ok;
         if (!result.ok) error2 = result.error || `Could not open ${file}`;
       }
     }
-    return { name, installed, identifier, file: path4, opened, ...error2 ? { error: error2 } : {} };
+    return {
+      name,
+      installed,
+      identifier,
+      file: path4,
+      opened,
+      ...optional2 ? { optional: optional2 } : {},
+      ...skipped ? { skipped } : {},
+      ...error2 ? { error: error2 } : {}
+    };
   });
-  return { ready: items.every((item) => item.installed), checkOnly, items };
+  return { ready: items.every((item) => item.optional || item.installed), checkOnly, items };
 }
 function formatShortcutSetup(report) {
   const lines = ["Apple Notes MCP Shortcut setup", ""];
   for (const item of report.items) {
-    if (item.installed) lines.push(`\u2713 ${item.name} (${item.identifier})`);
-    else if (item.opened) lines.push(`\u2192 ${item.name}: confirm \u201CAdd Shortcut\u201D in macOS`);
-    else lines.push(`\u2717 ${item.name}: ${item.error || "not installed"}`);
+    const note = item.optional ? ` ${OPTIONAL_BRIDGE_NOTE}` : "";
+    if (item.installed) lines.push(`\u2713 ${item.name} (${item.identifier})${note}`);
+    else if (item.opened) lines.push(`\u2192 ${item.name}: confirm \u201CAdd Shortcut\u201D in macOS${note}`);
+    else if (item.skipped) lines.push(`\u2013 ${item.name}: skipped, ${item.skipped}${note}`);
+    else lines.push(`\u2717 ${item.name}: ${item.error || "not installed"}${note}`);
   }
   lines.push("");
-  if (report.ready) lines.push("Both Shortcut bridges are installed.");
+  if (report.ready) lines.push("Both required Shortcut bridges are installed.");
   else if (report.checkOnly) lines.push("Run `apple-notes-mcp setup` to open missing workflows.");
   else
     lines.push(
@@ -44383,9 +44551,11 @@ registerTool(
       content: external_exports.string().min(1, "Content is required").max(MAX.CONTENT).describe(
         'Note body. AppleScript cannot create true Apple Notes checklists \u2014 `<input type="checkbox">`, checklist CSS classes, and markdown `- [ ]` lines do not render as checkable items. To produce a checklist, create the note with a plain `<ul>` or `- ` list and convert it in Notes.app with \u21E7\u2318L.'
       ),
-      format: external_exports.enum(["plaintext", "html"]).optional().default("plaintext").describe("Content format: 'plaintext' (default) or 'html' for rich formatting"),
+      format: external_exports.enum(["plaintext", "html", "markdown"]).optional().default("plaintext").describe(
+        "Content format: 'plaintext' (default), 'html' for rich formatting, or 'markdown' for real Title/Heading/Subheading styles through the Create Markdown Note Shortcut (iCloud only; see get-capabilities)"
+      ),
       tags: external_exports.array(external_exports.string().max(MAX.TAG)).max(MAX.TAGS).optional().describe(
-        "Returned-only metadata \u2014 NOT written to Notes.app. Apple Notes tags can't be set via AppleScript, so any values passed here are echoed back in the response but do not appear on the created note. Use #hashtags in the body for searchable text; this does not create native tag objects. Native tags need the Notes Shortcuts action."
+        "Returned-only metadata \u2014 NOT written to Notes.app. Apple Notes tags can't be set via AppleScript, so any values passed here are echoed back in the response but do not appear on the created note. Use #hashtags in the body for searchable text; this does not create native tag objects. Native tags need the Notes Shortcuts action. Refused with format 'markdown': add tags afterwards with add-native-tags."
       ),
       folder: external_exports.string().max(MAX.FOLDER).optional().describe(
         "Folder to create the note in (supports nested paths like 'Work/Clients'). The folder must already exist \u2014 this tool does not create it; call create-folder first, which is idempotent and creates intermediate segments."
@@ -44405,6 +44575,19 @@ registerTool(
     }
   },
   withErrorHandling(({ title, content, format = "plaintext", tags = [], folder, account }) => {
+    if (format === "markdown") {
+      if (account)
+        return errorResponse(
+          "Markdown notes are created in the iCloud account, the only one where Notes interprets Markdown; omit account"
+        );
+      if (tags.length)
+        return errorResponse(
+          'tags are not supported with format "markdown"; create the note without tags, then add them with add-native-tags using the returned id'
+        );
+      requireValidated("create-note-markdown");
+      const result = createMarkdownNote(notesManager, { title, content, folder });
+      return successResponse(`Note created from Markdown: "${title}" [id: ${result.id}]`, result);
+    }
     const note = notesManager.createNote(title, content, tags, folder, account, format);
     if (!note) {
       const target = folder ? ` Most often the folder "${folder}" does not exist: run list-folders to check, then create-folder to create it (it is idempotent and creates intermediate segments).` : account ? ` Most often the account "${account}" is not configured in Notes.app: run list-accounts to check the exact name.` : "";
