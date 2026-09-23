@@ -3268,8 +3268,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path6) {
-      let input = path6;
+    function removeDotSegments(path7) {
+      let input = path7;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3674,8 +3674,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path6 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
+        const path7 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7181,12 +7181,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs6, exportName) {
+    function addFormats(ajv, list, fs7, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs6[f]);
+        ajv.addFormat(f, fs7[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -12238,32 +12238,32 @@ var require_URL = __commonJS({
           else
             return basepath.substring(0, lastslash + 1) + refpath;
         }
-        function remove_dot_segments(path6) {
-          if (!path6) return path6;
+        function remove_dot_segments(path7) {
+          if (!path7) return path7;
           var output = "";
-          while (path6.length > 0) {
-            if (path6 === "." || path6 === "..") {
-              path6 = "";
+          while (path7.length > 0) {
+            if (path7 === "." || path7 === "..") {
+              path7 = "";
               break;
             }
-            var twochars = path6.substring(0, 2);
-            var threechars = path6.substring(0, 3);
-            var fourchars = path6.substring(0, 4);
+            var twochars = path7.substring(0, 2);
+            var threechars = path7.substring(0, 3);
+            var fourchars = path7.substring(0, 4);
             if (threechars === "../") {
-              path6 = path6.substring(3);
+              path7 = path7.substring(3);
             } else if (twochars === "./") {
-              path6 = path6.substring(2);
+              path7 = path7.substring(2);
             } else if (threechars === "/./") {
-              path6 = "/" + path6.substring(3);
-            } else if (twochars === "/." && path6.length === 2) {
-              path6 = "/";
-            } else if (fourchars === "/../" || threechars === "/.." && path6.length === 3) {
-              path6 = "/" + path6.substring(4);
+              path7 = "/" + path7.substring(3);
+            } else if (twochars === "/." && path7.length === 2) {
+              path7 = "/";
+            } else if (fourchars === "/../" || threechars === "/.." && path7.length === 3) {
+              path7 = "/" + path7.substring(4);
               output = output.replace(/\/?[^\/]*$/, "");
             } else {
-              var segment = path6.match(/(\/?([^\/]*))/)[0];
+              var segment = path7.match(/(\/?([^\/]*))/)[0];
               output += segment;
-              path6 = path6.substring(segment.length);
+              path7 = path7.substring(segment.length);
             }
           }
           return output;
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join13(output, replacement);
+        return join14(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join13(output, rule.append(self.options));
+          output = join14(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join13(output, replacement) {
+    function join14(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -24979,8 +24979,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path6, errorMaps, issueData } = params;
-  const fullPath = [...path6, ...issueData.path || []];
+  const { data, path: path7, errorMaps, issueData } = params;
+  const fullPath = [...path7, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -25096,11 +25096,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path6, key) {
+  constructor(parent, value, path7, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path6;
+    this._path = path7;
     this._key = key;
   }
   get path() {
@@ -28737,10 +28737,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path6) {
-  if (!path6)
+function getElementAtPath(obj, path7) {
+  if (!path7)
     return obj;
-  return path6.reduce((acc, key) => acc?.[key], obj);
+  return path7.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -29060,11 +29060,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path6, issues) {
+function prefixIssues(path7, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path6);
+    iss.path.unshift(path7);
     return iss;
   });
 }
@@ -32475,11 +32475,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path6) {
-  if (path6.length === 0) {
+function getDotPath(path7) {
+  if (path7.length === 0) {
     return "object root";
   }
-  return path6.reduce((acc, seg, index) => {
+  return path7.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -39839,9 +39839,392 @@ function assertLinkedWrite(rich, content, format, allowLinkChanges = false) {
   }
 }
 
+// src/utils/smartFolders.ts
+import { execFileSync as execFileSync4 } from "child_process";
+import * as fs2 from "fs";
+import * as os2 from "os";
+import * as path2 from "path";
+var NOTES_DB_PATH2 = path2.join(
+  os2.homedir(),
+  "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+);
+var FDA_MESSAGE = `Full Disk Access is required to read smart folders. In System Settings > Privacy & Security > Full Disk Access, grant access to the app that launches this server (Claude Desktop / Terminal / iTerm2), then fully quit and relaunch it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL} \u2014 run the doctor tool to verify.`;
+var COCOA_EPOCH_OFFSET = 978307200;
+var MAX_DEPTH = 32;
+var RELATIVE_RANGES = {
+  0: "today",
+  1: "yesterday",
+  2: "in the last 7 days",
+  3: "in the last 30 days",
+  4: "in the last 3 months",
+  5: "in the last 12 months"
+};
+var CUSTOM_UNITS = {
+  0: "hours",
+  1: "days",
+  2: "weeks",
+  3: "months",
+  4: "years"
+};
+var ATTACHMENT_SECTIONS = {
+  1: "Photos & Videos",
+  2: "Drawings",
+  3: "Maps",
+  4: "Websites",
+  5: "Audio",
+  6: "Documents",
+  7: "Scans"
+};
+var isClause = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var isDeletedWrapper = (value) => isClause(value) && Object.keys(value).length === 1 && typeof value.deleted === "boolean";
+function cocoaDate(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const date3 = new Date((value + COCOA_EPOCH_OFFSET) * 1e3);
+  return Number.isNaN(date3.getTime()) ? null : date3.toISOString();
+}
+var Decoder = class {
+  constructor(context) {
+    this.context = context;
+  }
+  context;
+  fullyDecoded = true;
+  unknown(key, value, excluded) {
+    this.fullyDecoded = false;
+    return {
+      type: "unknown",
+      ...key === null ? {} : { key },
+      value,
+      ...excluded ? { excluded: true } : {},
+      description: "Unrecognized clause (see value)"
+    };
+  }
+  /** Decode a list of sibling clauses, dropping inner `deleted` wrappers. */
+  list(clauses, excluded, depth) {
+    if (!Array.isArray(clauses)) return [this.clause(clauses, excluded, depth)];
+    return clauses.filter((clause) => !isDeletedWrapper(clause)).map((clause) => this.clause(clause, excluded, depth));
+  }
+  group(match, clauses, excluded, depth) {
+    const items = Array.isArray(clauses) ? clauses.filter((clause) => !isDeletedWrapper(clause)) : [clauses];
+    if (items.length === 1) return this.clause(items[0], excluded, depth + 1);
+    const filters = this.list(items, false, depth + 1);
+    const joiner = match === "all" ? "all of" : "any of";
+    return {
+      type: "group",
+      match,
+      ...excluded ? { excluded: true } : {},
+      filters,
+      description: `${excluded ? "not " : ""}${joiner}: ${filters.map((f) => f.description).join("; ")}`
+    };
+  }
+  /** Mark a positively described leaf as an Exclude rule. */
+  negate(filter) {
+    const text = filter.description;
+    const negated = text.startsWith("has ") ? text.replace(/^has /, "does not have ") : text.startsWith("is ") ? text.replace(/^is /, "is not ") : text.startsWith("mentions ") ? text.replace(/^mentions /, "does not mention ") : `not ${text}`;
+    return { ...filter, excluded: true, description: negated };
+  }
+  clause(clause, excluded, depth) {
+    if (depth > MAX_DEPTH || !isClause(clause)) return this.unknown(null, clause, excluded);
+    const keys = Object.keys(clause);
+    if (keys.length !== 1) {
+      return this.group(
+        "all",
+        keys.map((key2) => ({ [key2]: clause[key2] })),
+        excluded,
+        depth
+      );
+    }
+    const [key] = keys;
+    const value = clause[key];
+    if (key === "and" || key === "or") {
+      if (!Array.isArray(value)) return this.unknown(key, value, excluded);
+      return this.group(key === "and" ? "all" : "any", value, excluded, depth);
+    }
+    if (key === "not") return this.clause(value, !excluded, depth + 1);
+    const leaf = this.leaf(key, value, excluded);
+    if (!leaf) return this.unknown(key, value, excluded);
+    return excluded && !leaf.excluded ? this.negate(leaf) : leaf;
+  }
+  /**
+   * Decode one leaf clause. Boolean flags describe their own negation (an
+   * excluded `pinned: true` reads "is not pinned"); other leaves are described
+   * positively and negated by the caller.
+   */
+  leaf(key, value, excluded) {
+    const flag = (description, negative) => typeof value === "boolean" ? {
+      type: key,
+      value,
+      ...excluded ? { excluded: true } : {},
+      description: value !== excluded ? description : negative
+    } : null;
+    switch (key) {
+      case "checklist":
+        return flag("has a checklist", "has no checklist");
+      case "checklistInProgress":
+        return flag("has an unfinished checklist", "has no unfinished checklist");
+      case "checklistCompleted":
+        return flag("has a completed checklist", "has no completed checklist");
+      case "attachment":
+        return flag("has attachments", "has no attachments");
+      case "pinned":
+        return flag("is pinned", "is not pinned");
+      case "systemPaper":
+        return flag("is a Quick Note", "is not a Quick Note");
+      case "passwordProtected":
+        return flag("is locked", "is not locked");
+      case "shared":
+        return flag("is shared", "is not shared");
+      case "mention":
+        return flag("mentions anyone", "mentions no one");
+      case "tagged":
+        return flag("has any tag", "has no tags");
+      case "attachmentSection": {
+        if (typeof value !== "number" || !ATTACHMENT_SECTIONS[value]) return null;
+        return {
+          type: key,
+          value,
+          name: ATTACHMENT_SECTIONS[value],
+          description: `has ${ATTACHMENT_SECTIONS[value]} attachments`
+        };
+      }
+      case "tag": {
+        if (typeof value !== "string") return null;
+        const names = this.context.tags?.[value] ?? [];
+        const name = names.length === 1 ? names[0] : void 0;
+        return {
+          type: key,
+          value,
+          ...name ? { name } : {},
+          description: `has tag #${name ?? value}`
+        };
+      }
+      case "folder": {
+        if (typeof value !== "string") return null;
+        const folder = this.context.folders?.[value];
+        return {
+          type: key,
+          value,
+          ...folder ? { folderId: folder.id } : {},
+          ...folder?.title ? { name: folder.title } : {},
+          description: folder?.title ? `is in folder "${folder.title}"` : `is in folder ${value}${folder ? "" : " (not found)"}`
+        };
+      }
+      case "sharedParticipant":
+      case "mentionParticipant":
+        return typeof value === "string" ? {
+          type: key,
+          value,
+          description: key === "sharedParticipant" ? `is shared with participant ${value}` : `mentions participant ${value}`
+        } : null;
+      case "creationDateRelativeRange":
+      case "modificationDateRelativeRange": {
+        if (!isClause(value) || typeof value.type !== "number") return null;
+        const verb = key.startsWith("creation") ? "created" : "edited";
+        if (value.type === 6) {
+          const amount = value.customAmount;
+          const unit = typeof value.customUnit === "number" ? CUSTOM_UNITS[value.customUnit] : null;
+          if (typeof amount !== "number" || !unit) return null;
+          return {
+            type: key,
+            value,
+            description: `${verb} in the last ${amount} ${unit}`
+          };
+        }
+        const range = RELATIVE_RANGES[value.type];
+        return range ? { type: key, value, description: `${verb} ${range}` } : null;
+      }
+      case "creationDateRange":
+      case "modificationDateRange": {
+        if (!isClause(value)) return null;
+        const from = cocoaDate(value.fromDate);
+        const to = cocoaDate(value.toDate);
+        if (!from || !to) return null;
+        const verb = key.startsWith("creation") ? "created" : "edited";
+        return {
+          type: key,
+          value,
+          from,
+          to,
+          description: `${verb} between ${from} and ${to}`
+        };
+      }
+      default:
+        return null;
+    }
+  }
+};
+function decodeSmartFolderQuery(raw, context = {}) {
+  if (raw === null || raw.trim() === "") {
+    return { match: null, filters: [], query: null, fullyDecoded: false };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { match: null, filters: [], query: raw, fullyDecoded: false };
+  }
+  const decoder = new Decoder(context);
+  const type = isClause(parsed) ? parsed.type : void 0;
+  if (!isClause(type)) {
+    return {
+      match: null,
+      filters: [decoder.unknown(null, parsed, false)],
+      query: parsed,
+      fullyDecoded: false
+    };
+  }
+  let includesRecentlyDeleted;
+  let inner = [type];
+  if (Object.keys(type).length === 1 && Array.isArray(type.and)) {
+    const wrapper = type.and.find(isDeletedWrapper);
+    if (wrapper) {
+      includesRecentlyDeleted = wrapper.deleted;
+      inner = type.and.filter((clause) => !isDeletedWrapper(clause));
+    }
+  }
+  const query = inner.length === 1 ? inner[0] : { and: inner };
+  let match = "all";
+  let filters;
+  const only = inner.length === 1 && isClause(inner[0]) ? inner[0] : void 0;
+  const onlyKey = only && Object.keys(only).length === 1 ? Object.keys(only)[0] : void 0;
+  if (only && onlyKey === "and" && Array.isArray(only.and)) {
+    filters = decoder.list(only.and, false, 1);
+  } else if (only && onlyKey === "or" && Array.isArray(only.or)) {
+    match = "any";
+    filters = decoder.list(only.or, false, 1);
+  } else if (only && onlyKey === "not" && isClause(only.not) && Object.keys(only.not).length === 1 && Array.isArray(only.not.or)) {
+    match = "none";
+    filters = decoder.list(only.not.or, false, 1);
+  } else {
+    filters = decoder.list(inner, false, 1);
+  }
+  return {
+    match,
+    filters,
+    query,
+    ...includesRecentlyDeleted === void 0 ? {} : { includesRecentlyDeleted },
+    fullyDecoded: decoder.fullyDecoded
+  };
+}
+var SMART_FOLDERS_SQL = `BEGIN;
+SELECT Z_UUID FROM Z_METADATA;
+SELECT json_group_array(json_object(
+  'pk', f.Z_PK,
+  'identifier', f.ZIDENTIFIER,
+  'title', f.ZTITLE2,
+  'folderType', f.ZFOLDERTYPE,
+  'query', f.ZSMARTFOLDERQUERYJSON,
+  'parentPk', p.Z_PK,
+  'parentIdentifier', p.ZIDENTIFIER,
+  'parentTitle', p.ZTITLE2,
+  'accountPk', a.Z_PK,
+  'accountIdentifier', a.ZIDENTIFIER,
+  'accountName', a.ZNAME))
+FROM ZICCLOUDSYNCINGOBJECT f
+LEFT JOIN ZICCLOUDSYNCINGOBJECT p ON p.Z_PK = f.ZPARENT
+LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = f.ZOWNER
+WHERE f.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICFolder')
+  AND (f.ZFOLDERTYPE = 2 OR f.ZSMARTFOLDERQUERYJSON IS NOT NULL)
+  AND COALESCE(f.ZMARKEDFORDELETION, 0) = 0;
+SELECT json_group_object(ZIDENTIFIER, json_object('pk', Z_PK, 'title', ZTITLE2))
+FROM ZICCLOUDSYNCINGOBJECT
+WHERE Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICFolder')
+  AND ZIDENTIFIER IS NOT NULL;
+SELECT json_group_array(json_object('standardized', ZSTANDARDIZEDCONTENT, 'display', ZDISPLAYTEXT))
+FROM ZICCLOUDSYNCINGOBJECT
+WHERE Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICHashtag')
+  AND ZSTANDARDIZEDCONTENT IS NOT NULL
+  AND COALESCE(ZMARKEDFORDELETION, 0) = 0;
+COMMIT;`;
+var REQUIRED_COLUMNS = [
+  "ZIDENTIFIER",
+  "ZTITLE2",
+  "ZFOLDERTYPE",
+  "ZSMARTFOLDERQUERYJSON",
+  "ZPARENT",
+  "ZOWNER",
+  "ZNAME",
+  "ZMARKEDFORDELETION",
+  "ZSTANDARDIZEDCONTENT",
+  "ZDISPLAYTEXT"
+];
+function buildSmartFolders(output) {
+  const lines = output.trim().split("\n");
+  if (lines.length < 4) throw new Error("Unexpected smart folder query output");
+  const [storeUuid, rowsJson, foldersJson, tagsJson] = lines;
+  if (!/^[0-9A-F-]+$/i.test(storeUuid)) throw new Error("Unexpected Notes store identifier");
+  const coreDataId2 = (entity2, pk) => `x-coredata://${storeUuid}/${entity2}/p${pk}`;
+  const rows = JSON.parse(rowsJson);
+  const folderRows = JSON.parse(foldersJson || "{}");
+  const tagRows = JSON.parse(tagsJson || "[]");
+  const folders = {};
+  for (const [identifier, row] of Object.entries(folderRows)) {
+    folders[identifier] = { id: coreDataId2("ICFolder", row.pk), title: row.title };
+  }
+  const tags = {};
+  for (const tag of tagRows) {
+    if (!tag.display) continue;
+    const names = tags[tag.standardized] ||= [];
+    if (!names.includes(tag.display)) names.push(tag.display);
+  }
+  return rows.map((row) => {
+    const decoded = decodeSmartFolderQuery(row.query, { folders, tags });
+    return {
+      id: coreDataId2("ICFolder", row.pk),
+      identifier: row.identifier,
+      name: row.title,
+      account: row.accountName,
+      accountId: row.accountPk === null ? null : coreDataId2("ICAccount", row.accountPk),
+      accountIdentifier: row.accountIdentifier,
+      parent: row.parentTitle,
+      parentId: row.parentPk === null ? null : coreDataId2("ICFolder", row.parentPk),
+      parentIdentifier: row.parentIdentifier,
+      match: decoded.match,
+      filters: decoded.filters,
+      ...decoded.includesRecentlyDeleted === void 0 ? {} : { includesRecentlyDeleted: decoded.includesRecentlyDeleted },
+      fullyDecoded: decoded.fullyDecoded,
+      query: decoded.query,
+      rawQuery: row.query
+    };
+  }).sort(
+    (a, b) => (a.account ?? "").localeCompare(b.account ?? "") || (a.name ?? "").localeCompare(b.name ?? "") || a.id.localeCompare(b.id)
+  );
+}
+function runSqlite(dbPath2, sql) {
+  return execFileSync4("sqlite3", ["-readonly", dbPath2, sql], {
+    encoding: "utf8",
+    timeout: 5e3,
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+}
+function readSmartFolders(dbPath2 = NOTES_DB_PATH2) {
+  if (!fs2.existsSync(dbPath2)) return { folders: null, error: "no_fda", message: FDA_MESSAGE };
+  try {
+    const columns = new Set(
+      runSqlite(dbPath2, "SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');").trim().split("\n")
+    );
+    const missing = REQUIRED_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length) {
+      return {
+        folders: null,
+        error: "unsupported_schema",
+        message: `This Notes database does not have the columns smart folders need (${missing.join(", ")}).`
+      };
+    }
+    return { folders: buildSmartFolders(runSqlite(dbPath2, SMART_FOLDERS_SQL)) };
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    if (message.includes("authorization denied") || message.includes("unable to open database")) {
+      return { folders: null, error: "no_fda", message: FDA_MESSAGE };
+    }
+    console.error(`Failed to read smart folders: ${message}`);
+    return { folders: null, error: "query_error", message: "Failed to read smart folders." };
+  }
+}
+
 // src/utils/attachmentFs.ts
 import {
-  existsSync as existsSync2,
+  existsSync as existsSync3,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -39850,11 +40233,11 @@ import {
   rmSync,
   statSync
 } from "fs";
-import { dirname, isAbsolute, join as join3, relative, resolve, sep } from "path";
-import { homedir as homedir3, tmpdir } from "os";
+import { dirname, isAbsolute, join as join4, relative, resolve, sep } from "path";
+import { homedir as homedir4, tmpdir } from "os";
 function allowedSaveRoots() {
   return [
-    resolve(homedir3()),
+    resolve(homedir4()),
     resolve(tmpdir()),
     "/Volumes",
     "/private/var/folders",
@@ -39862,8 +40245,8 @@ function allowedSaveRoots() {
     "/private/tmp"
   ];
 }
-function canonicalize(path6) {
-  return realpathSync.native(path6);
+function canonicalize(path7) {
+  return realpathSync.native(path7);
 }
 function isWithinRoots(candidate, roots) {
   return roots.some((root) => {
@@ -39885,9 +40268,9 @@ function canonicalRoots(roots) {
   }
   return canonical;
 }
-function entryExists(path6) {
+function entryExists(path7) {
   try {
-    lstatSync(path6);
+    lstatSync(path7);
     return true;
   } catch (e) {
     const code = e.code;
@@ -39928,7 +40311,7 @@ function assertSafeSavePath(p, roots = allowedSaveRoots()) {
   if (suffix.split(sep).includes("..")) {
     throw new Error(`Refusing to write outside allowed locations (home, temp, /Volumes): "${abs}"`);
   }
-  const canonicalDest = suffix ? join3(canonicalAncestor, suffix) : canonicalAncestor;
+  const canonicalDest = suffix ? join4(canonicalAncestor, suffix) : canonicalAncestor;
   const allowed = canonicalRoots(roots);
   if (!isWithinRoots(canonicalAncestor, allowed) || !isWithinRoots(canonicalDest, allowed)) {
     throw new Error(
@@ -39970,16 +40353,16 @@ function makeTempDir() {
 }
 function cleanupTempDir(dir) {
   try {
-    if (existsSync2(dir)) rmSync(dir, { recursive: true, force: true });
+    if (existsSync3(dir)) rmSync(dir, { recursive: true, force: true });
   } catch {
   }
 }
 
 // src/services/appleNotesManager.ts
 var import_turndown = __toESM(require_turndown_cjs(), 1);
-import { existsSync as existsSync3 } from "fs";
-import { homedir as homedir4 } from "os";
-import { join as join4 } from "path";
+import { existsSync as existsSync4 } from "fs";
+import { homedir as homedir5 } from "os";
+import { join as join5 } from "path";
 var FIELD_SEP = "";
 var RECORD_SEP = "";
 var AS_FIELD_SEP = "(character id 31)";
@@ -40207,8 +40590,8 @@ function getNoteLinkFromDB(coreDataId2) {
   const match = coreDataId2.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
-  const dbPath2 = join4(homedir4(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
-  if (!existsSync3(dbPath2)) return null;
+  const dbPath2 = join5(homedir5(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+  if (!existsSync4(dbPath2)) return null;
   try {
     const { DatabaseSync } = __require("node:sqlite");
     const db = new DatabaseSync(dbPath2, { readOnly: true });
@@ -40848,6 +41231,58 @@ var AppleNotesManager = class {
         set AppleScript's text item delimiters to ${AS_RECORD_SEP}
         return resultList as text
       `;
+  }
+  /**
+   * Lists every smart folder with its decoded query, read-only.
+   *
+   * Folder metadata and queries come from the NoteStore database (Full Disk
+   * Access). With `includeMatchingNotes`, Notes.app itself is asked which notes
+   * each smart folder currently shows, so membership reflects Notes' own
+   * evaluation of the query rather than a reimplementation of it.
+   *
+   * @param options.includeMatchingNotes - Also list the notes each folder shows
+   * @param options.limit - Maximum matching notes per folder (default 50)
+   * @throws Error when the database cannot be read (message says why)
+   */
+  listSmartFolders(options = {}) {
+    const result = readSmartFolders();
+    if (!result.folders) throw new Error(result.message || "Failed to read smart folders.");
+    if (!options.includeMatchingNotes) return result.folders;
+    const limit = options.limit ?? 50;
+    return result.folders.map((folder) => {
+      try {
+        const { total, notes } = this.listSmartFolderNoteRefs(folder.id, limit);
+        return { ...folder, matchingNoteCount: total, matchingNotes: notes };
+      } catch (error2) {
+        return {
+          ...folder,
+          matchingNotesError: error2 instanceof Error ? error2.message : String(error2)
+        };
+      }
+    });
+  }
+  /**
+   * Asks Notes.app for the notes one smart folder currently shows.
+   *
+   * @returns The folder's total note count and up to `limit` (title, id) pairs
+   */
+  listSmartFolderNoteRefs(folderId2, limit) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(folderId2))
+      throw new Error("An exact folder ID is required");
+    const safeLimit = Math.max(1, Math.floor(limit));
+    const script = buildAppLevelScript(
+      this.buildBulkListCommand({ folderRef: `folder id "${folderId2}"`, sliceLimit: safeLimit })
+    );
+    const result = executeAppleScript(script);
+    if (!result.success) {
+      throw new Error(`Failed to list smart folder notes: ${result.error ?? "unknown error"}`);
+    }
+    const sepIdx = result.output.indexOf(RECORD_SEP);
+    const header = sepIdx === -1 ? result.output : result.output.slice(0, sepIdx);
+    const total = Number.parseInt(header.trim(), 10);
+    if (Number.isNaN(total)) throw new Error("Unexpected smart folder listing output");
+    const records = sepIdx === -1 ? "" : result.output.slice(sepIdx + 1);
+    return { total, notes: this.parseBulkListOutput(records, safeLimit) };
   }
   /**
    * Parses bulk listing output into deduplicated (title, id) pairs.
@@ -42009,7 +42444,7 @@ var AppleNotesManager = class {
     if (parts[0] !== "OK") {
       return { success: false, error: parts[1]?.trim() || "attachment not found" };
     }
-    if (!existsSync3(abs) || fileSize(abs) === 0) {
+    if (!existsSync4(abs) || fileSize(abs) === 0) {
       return { success: false, error: `Notes reported success but no file was written to ${abs}` };
     }
     return {
@@ -42452,15 +42887,15 @@ var AppleNotesManager = class {
 };
 
 // src/utils/syncDetection.ts
-import { execFileSync as execFileSync4 } from "child_process";
-import * as fs2 from "fs";
-import * as path2 from "path";
-import * as os2 from "os";
-var NOTES_DB_PATH2 = path2.join(
-  os2.homedir(),
+import { execFileSync as execFileSync5 } from "child_process";
+import * as fs3 from "fs";
+import * as path3 from "path";
+import * as os3 from "os";
+var NOTES_DB_PATH3 = path3.join(
+  os3.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
-var WAL_PATH = `${NOTES_DB_PATH2}-wal`;
+var WAL_PATH = `${NOTES_DB_PATH3}-wal`;
 var RECENT_ACTIVITY_THRESHOLD_SECONDS = 5;
 var SYNC_STATUS_CACHE_TTL_MS = 2e3;
 var cachedSyncStatus = null;
@@ -42476,14 +42911,14 @@ function getSyncStatus(useCache = true) {
     recentActivity: false
   };
   try {
-    if (!fs2.existsSync(NOTES_DB_PATH2)) {
+    if (!fs3.existsSync(NOTES_DB_PATH3)) {
       status.error = "Notes database not found";
       cachedSyncStatus = status;
       cacheTimestamp = Date.now();
       return status;
     }
-    if (fs2.existsSync(WAL_PATH)) {
-      const walStats = fs2.statSync(WAL_PATH);
+    if (fs3.existsSync(WAL_PATH)) {
+      const walStats = fs3.statSync(WAL_PATH);
       const secondsAgo = (Date.now() - walStats.mtimeMs) / 1e3;
       status.secondsSinceLastChange = Math.round(secondsAgo);
       status.recentActivity = secondsAgo < RECENT_ACTIVITY_THRESHOLD_SECONDS;
@@ -42497,9 +42932,9 @@ function getSyncStatus(useCache = true) {
         WHERE object.ZCLOUDSTATE = state.Z_PK
       );
     `;
-    const result = execFileSync4(
+    const result = execFileSync5(
       "sqlite3",
-      ["-readonly", NOTES_DB_PATH2, query.replace(/\n/g, " ")],
+      ["-readonly", NOTES_DB_PATH3, query.replace(/\n/g, " ")],
       {
         encoding: "utf8",
         timeout: 5e3,
@@ -42556,15 +42991,15 @@ function withSyncAwarenessSync(operation, fn) {
 }
 
 // src/utils/noteMetadata.ts
-import { execFileSync as execFileSync5 } from "child_process";
-import * as fs3 from "fs";
-import * as path3 from "path";
-import * as os3 from "os";
-var NOTES_DB_PATH3 = path3.join(
-  os3.homedir(),
+import { execFileSync as execFileSync6 } from "child_process";
+import * as fs4 from "fs";
+import * as path4 from "path";
+import * as os4 from "os";
+var NOTES_DB_PATH4 = path4.join(
+  os4.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
-var FDA_MESSAGE = `Full Disk Access is required to read note metadata. In System Settings > Privacy & Security > Full Disk Access, grant access to the app that launches this server (Claude Desktop / Terminal / iTerm2), then fully quit and relaunch it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL} \u2014 run the doctor tool to verify.`;
+var FDA_MESSAGE2 = `Full Disk Access is required to read note metadata. In System Settings > Privacy & Security > Full Disk Access, grant access to the app that launches this server (Claude Desktop / Terminal / iTerm2), then fully quit and relaunch it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL} \u2014 run the doctor tool to verify.`;
 var COLUMN_MAP = [
   { key: "pinned", column: "ZISPINNED", type: "bool" },
   { key: "hasChecklist", column: "ZHASCHECKLIST", type: "bool" },
@@ -42576,15 +43011,15 @@ var COLUMN_MAP = [
   { key: "widgetSnippet", column: "ZWIDGETSNIPPET", type: "text" },
   { key: "smartFolderQuery", column: "ZSMARTFOLDERQUERYJSON", type: "text" }
 ];
-function runSqlite(query) {
-  return execFileSync5("sqlite3", ["-readonly", NOTES_DB_PATH3, query], {
+function runSqlite2(query) {
+  return execFileSync6("sqlite3", ["-readonly", NOTES_DB_PATH4, query], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
   }).trim();
 }
 function presentColumns() {
-  const out = runSqlite("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);");
+  const out = runSqlite2("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);");
   const cols = /* @__PURE__ */ new Set();
   for (const line of out.split("\n")) {
     const name = line.split("|")[1];
@@ -42602,8 +43037,8 @@ function getNoteMetadata(noteId3) {
     };
   }
   const pk = pkMatch[1];
-  if (!fs3.existsSync(NOTES_DB_PATH3)) {
-    return { metadata: null, error: "no_fda", message: FDA_MESSAGE };
+  if (!fs4.existsSync(NOTES_DB_PATH4)) {
+    return { metadata: null, error: "no_fda", message: FDA_MESSAGE2 };
   }
   try {
     const available = presentColumns();
@@ -42612,7 +43047,7 @@ function getNoteMetadata(noteId3) {
       return { metadata: {} };
     }
     const pairs = selected.map((c) => `'${c.key}', ${c.column}`).join(", ");
-    const row = runSqlite(
+    const row = runSqlite2(
       `SELECT json_object(${pairs}) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ${pk};`
     );
     if (!row) {
@@ -42637,7 +43072,7 @@ function getNoteMetadata(noteId3) {
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
     if (message.includes("authorization denied") || message.includes("unable to open database")) {
-      return { metadata: null, error: "no_fda", message: FDA_MESSAGE };
+      return { metadata: null, error: "no_fda", message: FDA_MESSAGE2 };
     }
     console.error(`Failed to read note metadata: ${message}`);
     return { metadata: null, error: "query_error", message: "Failed to read note metadata." };
@@ -42645,12 +43080,12 @@ function getNoteMetadata(noteId3) {
 }
 
 // src/utils/noteIdentifiers.ts
-import { execFileSync as execFileSync6 } from "child_process";
-import * as fs4 from "fs";
-import * as os4 from "os";
-import * as path4 from "path";
-var NOTES_DB_PATH4 = path4.join(
-  os4.homedir(),
+import { execFileSync as execFileSync7 } from "child_process";
+import * as fs5 from "fs";
+import * as os5 from "os";
+import * as path5 from "path";
+var NOTES_DB_PATH5 = path5.join(
+  os5.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var UUID_PATTERN = /^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$/;
@@ -42724,10 +43159,10 @@ function buildLookupSql(entity2, keys) {
   return `SELECT json_object('store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'rows', (SELECT json_group_array(json_object(${fields})) FROM ZICCLOUDSYNCINGOBJECT o ${joins}WHERE o.Z_ENT = ${entityClause(entity2)} AND o.Z_PK IN (${inList})));`;
 }
 function runJsonQuery(sql, dbPath2) {
-  if (!fs4.existsSync(dbPath2)) throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
+  if (!fs5.existsSync(dbPath2)) throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
   let out;
   try {
-    out = execFileSync6("sqlite3", ["-readonly", dbPath2, sql], {
+    out = execFileSync7("sqlite3", ["-readonly", dbPath2, sql], {
       encoding: "utf8",
       timeout: 5e3,
       stdio: ["pipe", "pipe", "pipe"]
@@ -42747,7 +43182,7 @@ function runJsonQuery(sql, dbPath2) {
 function coreDataId(store, entity2, pk) {
   return `x-coredata://${store}/${entity2}/p${pk}`;
 }
-function resolveIdentifiers(values, entity2, dbPath2 = NOTES_DB_PATH4) {
+function resolveIdentifiers(values, entity2, dbPath2 = NOTES_DB_PATH5) {
   const resolved = /* @__PURE__ */ new Map();
   const keys = [];
   const uuids = [];
@@ -42793,7 +43228,7 @@ function resolveIdentifiers(values, entity2, dbPath2 = NOTES_DB_PATH4) {
   return resolved;
 }
 var COREDATA_PARTS = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/(ICNote|ICFolder|ICAccount)\/p(\d{1,18})$/;
-function lookupStableIdentifiers(ids, entity2, dbPath2 = NOTES_DB_PATH4) {
+function lookupStableIdentifiers(ids, entity2, dbPath2 = NOTES_DB_PATH5) {
   const result = /* @__PURE__ */ new Map();
   const wanted = /* @__PURE__ */ new Map();
   for (const id2 of ids) {
@@ -42829,7 +43264,7 @@ function lookupStableIdentifiers(ids, entity2, dbPath2 = NOTES_DB_PATH4) {
   }
   return result;
 }
-function withStableIdentifiers(items, entity2, dbPath2 = NOTES_DB_PATH4) {
+function withStableIdentifiers(items, entity2, dbPath2 = NOTES_DB_PATH5) {
   const ids = items.map((item) => item.id).filter((id2) => typeof id2 === "string");
   if (ids.length === 0) return items;
   const found = lookupStableIdentifiers(ids, entity2, dbPath2);
@@ -43417,13 +43852,13 @@ function positiveTextTerms(node, negated = false) {
 }
 
 // src/utils/noteQueryStore.ts
-import { execFileSync as execFileSync7 } from "child_process";
-import * as fs5 from "fs";
-import * as os5 from "os";
-import * as path5 from "path";
+import { execFileSync as execFileSync8 } from "child_process";
+import * as fs6 from "fs";
+import * as os6 from "os";
+import * as path6 from "path";
 import { gunzipSync as gunzipSync3 } from "zlib";
-var NOTES_DB_PATH5 = path5.join(
-  os5.homedir(),
+var NOTES_DB_PATH6 = path6.join(
+  os6.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var QUERY_SCAN = { DEFAULT: 500, MAX: 5e3 };
@@ -43510,13 +43945,13 @@ function countWords(text) {
   }
   return count;
 }
-var REQUIRED_COLUMNS = ["Z_PK", "Z_ENT", "ZTITLE1", "ZFOLDER", "ZMODIFICATIONDATE1"];
+var REQUIRED_COLUMNS2 = ["Z_PK", "Z_ENT", "ZTITLE1", "ZFOLDER", "ZMODIFICATIONDATE1"];
 function col(available, alias, name) {
   return available.has(name) ? `${alias}.${name}` : "NULL";
 }
 var entity = (name) => `(SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME='${name}')`;
 function buildScanSql(available, options) {
-  const missing = REQUIRED_COLUMNS.filter((c) => !available.has(c));
+  const missing = REQUIRED_COLUMNS2.filter((c) => !available.has(c));
   if (missing.length) {
     throw new NoteQueryStoreError(
       `This macOS version's Notes database lacks columns query-notes needs (${missing.join(", ")}).`,
@@ -43557,8 +43992,8 @@ function buildScanSql(available, options) {
     "COMMIT;"
   ].join(" ");
 }
-function runSqlite2(dbPath2, query) {
-  return execFileSync7("sqlite3", ["-readonly", dbPath2, query], {
+function runSqlite3(dbPath2, query) {
+  return execFileSync8("sqlite3", ["-readonly", dbPath2, query], {
     encoding: "utf8",
     timeout: 3e4,
     maxBuffer: 512 * 1024 * 1024,
@@ -43567,7 +44002,7 @@ function runSqlite2(dbPath2, query) {
 }
 function presentColumns2(dbPath2) {
   const cols = /* @__PURE__ */ new Set();
-  for (const line of runSqlite2(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n")) {
+  for (const line of runSqlite3(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n")) {
     const name = line.split("|")[1];
     if (name) cols.add(name);
   }
@@ -43585,12 +44020,12 @@ function resolveFolders(rows) {
     seen.add(pk);
     const parent = row.parent !== null ? resolve3(row.parent, seen) : void 0;
     const name = row.name ?? "";
-    const path6 = parent ? `${parent.path}/${escapeSegment(name)}` : escapeSegment(name);
+    const path7 = parent ? `${parent.path}/${escapeSegment(name)}` : escapeSegment(name);
     const plainPath = parent ? `${parent.plainPath}/${name}` : name;
     const info = {
-      path: path6,
+      path: path7,
       plainPath,
-      keys: [...new Set([name, plainPath, path6].map(normalizeForMatch))],
+      keys: [...new Set([name, plainPath, path7].map(normalizeForMatch))],
       accountPk: row.owner ?? parent?.accountPk ?? null,
       shared: Boolean(row.shared) || Boolean(parent?.shared)
     };
@@ -43622,12 +44057,12 @@ function queryNotes(expression, options = {}) {
   const includeDeleted = options.includeDeleted ?? false;
   const withBodies = needsContent(ast);
   const withTags = needsTags(ast);
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH5;
-  if (!fs5.existsSync(dbPath2)) throw new NoteQueryStoreError(QUERY_FDA_MESSAGE, "no_fda");
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH6;
+  if (!fs6.existsSync(dbPath2)) throw new NoteQueryStoreError(QUERY_FDA_MESSAGE, "no_fda");
   let output;
   try {
     const available = presentColumns2(dbPath2);
-    output = runSqlite2(
+    output = runSqlite3(
       dbPath2,
       buildScanSql(available, { scanLimit, includeDeleted, withBodies, withTags })
     );
@@ -43758,10 +44193,10 @@ function queryNotes(expression, options = {}) {
 import { spawnSync } from "child_process";
 
 // src/services/nativeTags.ts
-import { execFileSync as execFileSync8 } from "node:child_process";
+import { execFileSync as execFileSync9 } from "node:child_process";
 import { mkdtempSync as mkdtempSync2, writeFileSync, rmSync as rmSync2 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // src/services/shortcutConsent.ts
 function shortcutConsentHint(shortcut) {
@@ -43837,7 +44272,7 @@ function addNativeTags(request, deps) {
   };
 }
 function listInstalledShortcuts() {
-  return execFileSync8("/usr/bin/shortcuts", ["list", "--show-identifiers"], {
+  return execFileSync9("/usr/bin/shortcuts", ["list", "--show-identifiers"], {
     encoding: "utf8",
     timeout: 15e3,
     maxBuffer: 1024 * 1024,
@@ -43863,11 +44298,11 @@ function runNativeTagsShortcut(input) {
   const status = nativeTagsStatus();
   if (!status.installed)
     throw new Error(`Import the supplied ${status.shortcut}.shortcut in Shortcuts first`);
-  const directory = mkdtempSync2(join9(tmpdir2(), "apple-notes-native-tags-"));
+  const directory = mkdtempSync2(join10(tmpdir2(), "apple-notes-native-tags-"));
   try {
-    const path6 = join9(directory, "request.json");
-    writeFileSync(path6, JSON.stringify(input), { mode: 384 });
-    execFileSync8("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path6], {
+    const path7 = join10(directory, "request.json");
+    writeFileSync(path7, JSON.stringify(input), { mode: 384 });
+    execFileSync9("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path7], {
       encoding: "utf8",
       timeout: 6e4,
       maxBuffer: 1024 * 1024,
@@ -43886,10 +44321,10 @@ function runNativeTagsShortcut(input) {
 }
 
 // src/services/backgroundNotes.ts
-import { execFileSync as execFileSync9 } from "node:child_process";
+import { execFileSync as execFileSync10 } from "node:child_process";
 import { mkdtempSync as mkdtempSync3, writeFileSync as writeFileSync2, rmSync as rmSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/utils/appendMarkdown.ts
 var escape2 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -44078,9 +44513,9 @@ function runBackgroundShortcut(input, status = backgroundStatus()) {
     throw new Error(
       `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
     );
-  const directory = mkdtempSync3(join10(tmpdir3(), "apple-notes-background-"));
+  const directory = mkdtempSync3(join11(tmpdir3(), "apple-notes-background-"));
   try {
-    const file = join10(directory, "request.json");
+    const file = join11(directory, "request.json");
     writeFileSync2(
       file,
       JSON.stringify({
@@ -44100,7 +44535,7 @@ function runBackgroundShortcut(input, status = backgroundStatus()) {
       { mode: 384 }
     );
     try {
-      execFileSync9("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", file], {
+      execFileSync10("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", file], {
         encoding: "utf8",
         timeout: 6e4,
         maxBuffer: 1024 * 1024,
@@ -44303,7 +44738,7 @@ function createMarkdownNote(manager, request, run = runBackgroundShortcut) {
     throw new Error(
       `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
     );
-  const segments = (path6) => JSON.stringify(splitFolderPath(path6).map((part) => part.toLocaleLowerCase()));
+  const segments = (path7) => JSON.stringify(splitFolderPath(path7).map((part) => part.toLocaleLowerCase()));
   if (request.folder) {
     const wanted = segments(request.folder);
     if (!manager.listAccounts().some(
@@ -44392,7 +44827,7 @@ ${request.content}`
 }
 
 // src/services/capabilityMatrix.ts
-import { execFileSync as execFileSync10 } from "node:child_process";
+import { execFileSync as execFileSync11 } from "node:child_process";
 import { release } from "node:os";
 var MACOS_SHORTCUTS_CLI = "12.0";
 var MACOS_MARKDOWN_IMPORT = "26.0";
@@ -44599,7 +45034,7 @@ function evaluateFeatures(env, features = FEATURES) {
 function readMacOSVersion() {
   if (process.platform !== "darwin") return null;
   try {
-    const out = execFileSync10("/usr/bin/sw_vers", ["-productVersion"], {
+    const out = execFileSync11("/usr/bin/sw_vers", ["-productVersion"], {
       encoding: "utf8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "ignore"]
@@ -44632,9 +45067,9 @@ function getCapabilityMatrix(probe = probeCapabilityEnvironment) {
   return evaluateFeatures(probe());
 }
 function formatCapabilityMatrix(matrix) {
-  const os6 = matrix.runtimeOS;
+  const os7 = matrix.runtimeOS;
   const lines = [
-    `Feature matrix (macOS ${os6.macOSVersion ?? "unknown"}, Darwin ${os6.darwinRelease}):`
+    `Feature matrix (macOS ${os7.macOSVersion ?? "unknown"}, Darwin ${os7.darwinRelease}):`
   ];
   for (const [name, status] of Object.entries(matrix.features)) {
     lines.push(
@@ -44752,19 +45187,19 @@ function formatDoctorReport(r) {
 }
 
 // src/services/fileConfig.ts
-import { existsSync as existsSync8, readFileSync as readFileSync2 } from "fs";
-import { join as join11 } from "path";
-import { homedir as homedir9 } from "os";
+import { existsSync as existsSync9, readFileSync as readFileSync2 } from "fs";
+import { join as join12 } from "path";
+import { homedir as homedir10 } from "os";
 function fileConfigPath(env = process.env) {
   const override = env.APPLE_NOTES_MCP_CONFIG_FILE;
   if (override && override.trim()) return override.trim();
-  return join11(homedir9(), "Library", "Application Support", "apple-notes-mcp", "config.json");
+  return join12(homedir10(), "Library", "Application Support", "apple-notes-mcp", "config.json");
 }
-function loadFileConfig(env = process.env, path6 = fileConfigPath(env)) {
+function loadFileConfig(env = process.env, path7 = fileConfigPath(env)) {
   const applied = [];
   try {
-    if (!existsSync8(path6)) return applied;
-    const parsed = JSON.parse(readFileSync2(path6, "utf8"));
+    if (!existsSync9(path7)) return applied;
+    const parsed = JSON.parse(readFileSync2(path7, "utf8"));
     if (!parsed || typeof parsed !== "object") return applied;
     for (const [k, v] of Object.entries(parsed)) {
       if (typeof v !== "string") continue;
@@ -44774,7 +45209,7 @@ function loadFileConfig(env = process.env, path6 = fileConfigPath(env)) {
       }
     }
   } catch (e) {
-    console.error(`Failed to load apple-notes-mcp config file ${path6}: ${String(e)}`);
+    console.error(`Failed to load apple-notes-mcp config file ${path7}: ${String(e)}`);
   }
   return applied;
 }
@@ -45285,7 +45720,7 @@ import {
   writeFileSync as writeFileSync3
 } from "node:fs";
 import { tmpdir as tmpdir4 } from "node:os";
-import { basename, isAbsolute as isAbsolute2, join as join12 } from "node:path";
+import { basename, isAbsolute as isAbsolute2, join as join13 } from "node:path";
 var noteId = exactIdInput(
   "ICNote",
   /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i,
@@ -45328,9 +45763,9 @@ function assertExistingContentPreserved(before, after) {
       throw new Error("Existing native object content or presentation changed");
   }
 }
-function localAttachment(path6) {
-  if (!isAbsolute2(path6)) throw new Error("An absolute local file path is required");
-  const descriptor = openSync(path6, constants.O_RDONLY | constants.O_NOFOLLOW);
+function localAttachment(path7) {
+  if (!isAbsolute2(path7)) throw new Error("An absolute local file path is required");
+  const descriptor = openSync(path7, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
@@ -45394,13 +45829,13 @@ function registerDirectOperations(server2, manager) {
     "add-attachment",
     "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes.",
     { id: noteId, expectedContentHash: revision, path: external_exports.string().min(1).max(4096) },
-    ({ id: id2, expectedContentHash, path: path6 }) => {
+    ({ id: id2, expectedContentHash, path: path7 }) => {
       const before = readSnapshot(manager, id2);
       if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
-      const bytes = localAttachment(path6);
+      const bytes = localAttachment(path7);
       const beforeAttachments = manager.listAttachmentsById(id2);
-      const directory = mkdtempSync4(join12(tmpdir4(), "notes-attachment-add-"));
-      const temporaryFile = join12(directory, basename(path6));
+      const directory = mkdtempSync4(join13(tmpdir4(), "notes-attachment-add-"));
+      const temporaryFile = join13(directory, basename(path7));
       try {
         writeFileSync3(temporaryFile, bytes, { mode: 384 });
         if (readSnapshot(manager, id2).hash !== before.hash)
@@ -45946,7 +46381,7 @@ function registerNativeOperations(server2, manager) {
 
 // src/setupShortcuts.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync9 } from "node:fs";
+import { existsSync as existsSync10 } from "node:fs";
 import { release as release2 } from "node:os";
 import { dirname as dirname2, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45966,16 +46401,16 @@ var shortcutFiles = [
 ];
 function setupShortcuts(checkOnly, dependencies = {}) {
   const status = dependencies.status || nativeTagsStatus;
-  const exists = dependencies.exists || existsSync9;
-  const open = dependencies.open || ((path6) => {
-    const result = spawnSync2("/usr/bin/open", [path6], { encoding: "utf8" });
+  const exists = dependencies.exists || existsSync10;
+  const open = dependencies.open || ((path7) => {
+    const result = spawnSync2("/usr/bin/open", [path7], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
   const baseDirectory = dependencies.baseDirectory || resolve2(dirname2(fileURLToPath(import.meta.url)), "../shortcuts");
   const osRelease = (dependencies.osRelease || release2)();
   const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
   const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
-    const path6 = resolve2(baseDirectory, file);
+    const path7 = resolve2(baseDirectory, file);
     let installed = false;
     let identifier;
     let error2;
@@ -45991,9 +46426,9 @@ function setupShortcuts(checkOnly, dependencies = {}) {
     if (!installed && !checkOnly) {
       if (optional2 && !(darwinMajor >= MARKDOWN_MIN_DARWIN_MAJOR))
         skipped = `requires macOS 26 or later (this Mac reports Darwin ${osRelease})`;
-      else if (!exists(path6)) error2 = `Packaged Shortcut is missing: ${path6}`;
+      else if (!exists(path7)) error2 = `Packaged Shortcut is missing: ${path7}`;
       else {
-        const result = open(path6);
+        const result = open(path7);
         opened = result.ok;
         if (!result.ok) error2 = result.error || `Could not open ${file}`;
       }
@@ -46002,7 +46437,7 @@ function setupShortcuts(checkOnly, dependencies = {}) {
       name,
       installed,
       identifier,
-      file: path6,
+      file: path7,
       opened,
       ...optional2 ? { optional: optional2 } : {},
       ...skipped ? { skipped } : {},
@@ -47345,6 +47780,55 @@ ${folderList}${syncNote}`,
       }
     );
   }, "Error listing folders")
+);
+registerTool(
+  "list-smart-folders",
+  {
+    description: `Use when: listing Smart Folders and the rules that define them.
+Returns: each smart folder's name, ids, account, and parent, its rules decoded as match ("all"/"any"/"none") plus filters (each with a readable description), the stored query with the outer deleted wrapper removed, and the raw stored query JSON. With includeMatchingNotes, also the notes Notes.app currently shows in each folder.
+Do not use when: listing ordinary folders (list-folders) or searching notes (search-notes).
+Safety: read-only; reads the NoteStore database and requires Full Disk Access. includeMatchingNotes asks Notes.app (Automation permission) for each folder's current contents rather than re-evaluating the rules. Unrecognized rules are kept as "unknown" filters and set fullyDecoded false.`,
+    inputSchema: {
+      includeMatchingNotes: external_exports.boolean().optional().describe(
+        "Also list the notes Notes.app currently shows in each smart folder (default false)"
+      ),
+      limit: external_exports.number().int().min(1).max(500).optional().describe("Maximum matching notes returned per folder (default 50; count is always total)")
+    },
+    outputSchema: {
+      smartFolders: external_exports.array(external_exports.object({}).passthrough()).optional(),
+      count: external_exports.number().optional(),
+      fullyDecoded: external_exports.boolean().optional()
+    },
+    annotations: { readOnlyHint: true }
+  },
+  withErrorHandling(({ includeMatchingNotes = false, limit }) => {
+    const folders = notesManager.listSmartFolders({ includeMatchingNotes, limit });
+    const fullyDecoded = folders.every((folder) => folder.fullyDecoded);
+    if (folders.length === 0) {
+      return successResponse("No smart folders found.", {
+        smartFolders: [],
+        count: 0,
+        fullyDecoded
+      });
+    }
+    const lines = folders.map((folder) => {
+      const joiner = folder.match === "any" ? " OR " : " AND ";
+      const rules = folder.filters.map((filter) => filter.description).join(joiner);
+      const prefix = folder.match === "none" ? "none of: " : "";
+      const where = [folder.account, folder.parent].filter(Boolean).join(" / ");
+      const matches = folder.matchingNoteCount !== void 0 ? ` [${folder.matchingNoteCount} note(s)]` : folder.matchingNotesError ? ` [notes unavailable: ${folder.matchingNotesError}]` : "";
+      return `  - ${folder.name ?? "(untitled)"}${where ? ` (${where})` : ""}: ${prefix}${rules || "(no rules)"}${matches}`;
+    });
+    return successResponse(
+      `Found ${folders.length} smart folder(s):
+${lines.join("\n")}${fullyDecoded ? "" : '\n\nSome rules were not recognized; see filters of type "unknown".'}`,
+      {
+        smartFolders: folders,
+        count: folders.length,
+        fullyDecoded
+      }
+    );
+  }, "Error listing smart folders")
 );
 registerTool(
   "create-folder",

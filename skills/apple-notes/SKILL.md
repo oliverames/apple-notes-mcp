@@ -49,12 +49,13 @@ Use this skill when the user:
 
 ### Folder Operations
 
-| Tool            | Purpose                                   |
-| --------------- | ----------------------------------------- |
-| `list-folders`  | List all folders in an account            |
-| `create-folder` | Create a new folder                       |
-| `delete-folder` | Delete an empty folder                    |
-| `show-folder`   | Reveal a folder in the Notes.app UI by ID |
+| Tool                 | Purpose                                                                          |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `list-folders`       | List all folders in an account                                                   |
+| `list-smart-folders` | List Smart Folders with their decoded rules; optionally the notes each one shows |
+| `create-folder`      | Create a new folder                                                              |
+| `delete-folder`      | Delete an empty folder                                                           |
+| `show-folder`        | Reveal a folder in the Notes.app UI by ID                                        |
 
 ### Account Operations
 
