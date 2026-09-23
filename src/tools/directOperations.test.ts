@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,13 @@ vi.mock("../utils/noteRichText.js", async (original) => ({
   readRichNote: rich.read,
   richContentHash: rich.hash,
 }));
-import { registerDirectOperations } from "./directOperations.js";
+const store = vi.hoisted(() => ({ snapshot: vi.fn(), verify: vi.fn() }));
+vi.mock("../utils/attachmentInsertVerify.js", async (original) => ({
+  ...(await original<typeof import("../utils/attachmentInsertVerify.js")>()),
+  snapshotStoreAttachments: store.snapshot,
+  verifyAttachmentInStore: store.verify,
+}));
+import { attachmentIdInError, registerDirectOperations } from "./directOperations.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -193,7 +200,9 @@ describe("attachment filename override and create-then-attach", () => {
       attachmentId,
       name: "Renamed Report.txt",
       filenameVerified: true,
+      verifiedVia: "applescript",
     });
+    expect(store.verify).not.toHaveBeenCalled();
   });
 
   it("attaches to a note whose rich read is not writable because it holds native objects", async () => {
@@ -297,5 +306,155 @@ describe("attachment filename override and create-then-attach", () => {
     expect(result.content[0].text).toMatch(
       new RegExp(`Note ${id} was created; attach to it with add-attachment`)
     );
+  });
+});
+
+describe("database fallback when AppleScript never lists the new attachment (#236)", () => {
+  const id = "x-coredata://ABC-123/ICNote/p1";
+  const bytes = Buffer.from("%PDF-1.4 synthetic");
+  const richBase = {
+    text: "existing",
+    links: [],
+    nativeTags: [],
+    nativeObjectIds: [],
+    hasNativeObjects: false,
+    hasChecklist: false,
+    revision: "rich",
+    objects: [],
+    checklistItems: [],
+    styleRuns: [],
+    objectData: [],
+  };
+  const snapshot = { notePk: 1, attachmentPks: [], takenAt: 1 };
+  const source = () => {
+    const directory = mkdtempSync(join(tmpdir(), "direct-operation-pdf-test-"));
+    directories.push(directory);
+    const path = join(directory, "report.pdf");
+    writeFileSync(path, bytes);
+    return path;
+  };
+  const setup = () => {
+    rich.enrich.mockReturnValue({ complete: true, revision: "rich" });
+    rich.read.mockReturnValue(richBase);
+    rich.hash.mockReturnValue("revision");
+    const manager = {
+      getNoteById: vi.fn(() => ({ id, title: "New", passwordProtected: false })),
+      getNoteContentById: vi.fn(() => "existing"),
+      listAttachmentsById: vi.fn(() => []),
+      addAttachmentById: vi.fn(() => {
+        throw new Error(
+          'Notes got an error: Can\u2019t get attachment id "x-coredata://ABC-123/ICAttachment/p5".'
+        );
+      }),
+      getAttachmentBase64ById: vi.fn(),
+    };
+    const registerTool = vi.fn();
+    registerDirectOperations(
+      { registerTool } as unknown as McpServer,
+      manager as unknown as AppleNotesManager
+    );
+    const handler = registerTool.mock.calls.find((call) => call[0] === "add-attachment")![2] as (
+      args: unknown
+    ) => Promise<{
+      structuredContent?: Record<string, unknown>;
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    }>;
+    return { manager, handler };
+  };
+
+  it("verifies through the database and reports verifiedVia database", async () => {
+    const { manager, handler } = setup();
+    store.snapshot.mockReturnValue(snapshot);
+    store.verify.mockReturnValue({
+      status: "verified",
+      candidate: { pk: 5, filename: null, mediaFilename: "Renamed.pdf" },
+      media: { path: "/m", size: bytes.length, sha256: "x" },
+    });
+    const result = await handler({
+      id,
+      expectedContentHash: "revision",
+      path: source(),
+      filename: "Renamed.pdf",
+    });
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      attachmentId: "x-coredata://ABC-123/ICAttachment/p5",
+      bytes: bytes.length,
+      name: "Renamed.pdf",
+      filenameVerified: true,
+      verifiedVia: "database",
+      transportWarning: expect.any(String),
+    });
+    expect(store.snapshot).toHaveBeenCalledWith(id);
+    expect(store.verify).toHaveBeenCalledWith(
+      id,
+      snapshot,
+      {
+        uti: "com.adobe.pdf",
+        size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      { returnedId: "x-coredata://ABC-123/ICAttachment/p5" }
+    );
+    // AppleScript cannot fetch bytes it cannot see; the media digest stands in.
+    expect(manager.getAttachmentBase64ById).not.toHaveBeenCalled();
+    expect(manager.addAttachmentById).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns when the stored name differs from the requested one", async () => {
+    const { handler } = setup();
+    store.snapshot.mockReturnValue(snapshot);
+    store.verify.mockReturnValue({
+      status: "verified",
+      candidate: { pk: 5, filename: "Other.pdf", mediaFilename: "Renamed.pdf" },
+      media: { path: "/m", size: bytes.length, sha256: "x" },
+    });
+    const result = await handler({
+      id,
+      expectedContentHash: "revision",
+      path: source(),
+      filename: "Renamed.pdf",
+    });
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      name: "Other.pdf",
+      filenameVerified: false,
+      verifiedVia: "database",
+    });
+  });
+
+  it("stays uncertain and names the reason when the database cannot confirm", async () => {
+    const { handler } = setup();
+    store.snapshot.mockReturnValue(snapshot);
+    store.verify.mockReturnValue({ status: "ambiguous", reason: "2 new attachment rows appeared" });
+    const result = await handler({ id, expectedContentHash: "revision", path: source() });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ indeterminate: true });
+    expect(result.content[0].text).toMatch(
+      /outcome uncertain \(2 new attachment rows appeared\); read the exact note/
+    );
+  });
+
+  it("stays uncertain without a pre-write snapshot", async () => {
+    const { handler } = setup();
+    store.snapshot.mockReturnValue(null);
+    const result = await handler({ id, expectedContentHash: "revision", path: source() });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/outcome uncertain; read the exact note/);
+    expect(store.verify).not.toHaveBeenCalled();
+  });
+
+  it("extracts only an attachment id from the note's own store", () => {
+    const named = new Error('Can\u2019t get attachment id "x-coredata://abc-123/ICAttachment/p9".');
+    expect(attachmentIdInError(id, named)).toBe("x-coredata://abc-123/ICAttachment/p9");
+    expect(
+      attachmentIdInError(
+        id,
+        new Error('Can\u2019t get attachment id "x-coredata://OTHER/ICAttachment/p9"')
+      )
+    ).toBeUndefined();
+    expect(attachmentIdInError(id, "timed out")).toBeUndefined();
+    expect(attachmentIdInError("bad", named)).toBeUndefined();
   });
 });

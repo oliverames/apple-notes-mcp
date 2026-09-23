@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants6) {
+      optimizeNames(names, constants7) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants6);
+          this.rhs = optimizeExpr(this.rhs, names, constants7);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants6) {
+      optimizeNames(names, constants7) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants6);
+        this.rhs = optimizeExpr(this.rhs, names, constants7);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants6) {
-        this.code = optimizeExpr(this.code, names, constants6);
+      optimizeNames(names, constants7) {
+        this.code = optimizeExpr(this.code, names, constants7);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants6) {
+      optimizeNames(names, constants7) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants6))
+          if (n.optimizeNames(names, constants7))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants6) {
+      optimizeNames(names, constants7) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants6);
-        if (!(super.optimizeNames(names, constants6) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants7);
+        if (!(super.optimizeNames(names, constants7) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants6);
+        this.condition = optimizeExpr(this.condition, names, constants7);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants6) {
-        if (!super.optimizeNames(names, constants6))
+      optimizeNames(names, constants7) {
+        if (!super.optimizeNames(names, constants7))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants6);
+        this.iteration = optimizeExpr(this.iteration, names, constants7);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants6) {
-        if (!super.optimizeNames(names, constants6))
+      optimizeNames(names, constants7) {
+        if (!super.optimizeNames(names, constants7))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants6);
+        this.iterable = optimizeExpr(this.iterable, names, constants7);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants6) {
+      optimizeNames(names, constants7) {
         var _a, _b;
-        super.optimizeNames(names, constants6);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants6);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants6);
+        super.optimizeNames(names, constants7);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants7);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants7);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants6) {
+    function optimizeExpr(expr, names, constants7) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants6[n.str];
+        const c = constants7[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants6[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants7[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -4620,7 +4620,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text3, msg) => text3 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants6 = {
+    var constants7 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants6) {
-      v = { value: constants6[c] };
+    for (c in constants7) {
+      v = { value: constants7[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -9621,8 +9621,8 @@ var require_select = __commonJS({
       // Non-standard, for compatibility purposes.
       ":contains": function(param) {
         return function(el) {
-          var text2 = el.innerText || el.textContent || el.value || "";
-          return text2.indexOf(param) !== -1;
+          var text3 = el.innerText || el.textContent || el.value || "";
+          return text3.indexOf(param) !== -1;
         };
       },
       ":has": function(param) {
@@ -10289,9 +10289,9 @@ var require_Element = __commonJS({
         position = utils.toASCIILowerCase(String(position));
         this._insertAdjacent(position, textNode);
       } },
-      insertAdjacentHTML: { value: function insertAdjacentHTML(position, text2) {
+      insertAdjacentHTML: { value: function insertAdjacentHTML(position, text3) {
         position = utils.toASCIILowerCase(String(position));
-        text2 = String(text2);
+        text3 = String(text3);
         var context;
         switch (position) {
           case "beforebegin":
@@ -10315,7 +10315,7 @@ var require_Element = __commonJS({
           this.ownerDocument._address,
           context
         );
-        parser.parse(text2, true);
+        parser.parse(text3, true);
         this._insertAdjacent(position, parser._asDocumentFragment());
       } },
       children: { get: function() {
@@ -12434,9 +12434,9 @@ var require_CSSStyleDeclaration = __commonJS({
       // Note that the styles don't get parsed until they're actually needed
       _parsed: { get: function() {
         if (!this._parsedStyles || this.cssText !== this._lastParsedText) {
-          var text2 = this.cssText;
-          this._parsedStyles = parseStyles(text2);
-          this._lastParsedText = text2;
+          var text3 = this.cssText;
+          this._parsedStyles = parseStyles(text3);
+          this._lastParsedText = text3;
           delete this._names;
         }
         return this._parsedStyles;
@@ -24181,15 +24181,15 @@ var require_turndown_cjs = __commonJS({
       var node = next(prev, element, isPre);
       while (node !== element) {
         if (node.nodeType === 3 || node.nodeType === 4) {
-          var text2 = node.data.replace(/[ \r\n\t]+/g, " ");
-          if ((!prevText || / $/.test(prevText.data)) && !keepLeadingWs && text2[0] === " ") {
-            text2 = text2.substr(1);
+          var text3 = node.data.replace(/[ \r\n\t]+/g, " ");
+          if ((!prevText || / $/.test(prevText.data)) && !keepLeadingWs && text3[0] === " ") {
+            text3 = text3.substr(1);
           }
-          if (!text2) {
+          if (!text3) {
             node = remove(node);
             continue;
           }
-          node.data = text2;
+          node.data = text3;
           prevText = node;
         } else if (node.nodeType === 1) {
           if (isBlock2(node) || node.nodeName === "BR") {
@@ -39410,12 +39410,12 @@ function fixed32Float(field) {
 }
 
 // src/utils/checklistRuns.ts
-function checklistRunLineStart(text2, position, length) {
+function checklistRunLineStart(text3, position, length) {
   const end = position + length;
   let anchor = position;
-  while (anchor < end && text2[anchor] === "\n") anchor++;
+  while (anchor < end && text3[anchor] === "\n") anchor++;
   if (anchor === end) anchor = position;
-  return anchor === 0 ? 0 : text2.lastIndexOf("\n", anchor - 1) + 1;
+  return anchor === 0 ? 0 : text3.lastIndexOf("\n", anchor - 1) + 1;
 }
 
 // src/utils/checklistParser.ts
@@ -39639,8 +39639,8 @@ var HTML_LOSSY_ORDER = [
 ];
 var dbPath = join2(homedir2(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
 var safeUrl = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
-var escapeAttribute = (text2) => text2.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-var normalized = (text2) => text2.replace(/[\s\ufffc]/gu, "");
+var escapeAttribute = (text3) => text3.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+var normalized = (text3) => text3.replace(/[\s\ufffc]/gu, "");
 function styleValue(field) {
   if (!(field.value instanceof Uint8Array)) return field.value;
   if (field.fieldNumber === 2) {
@@ -39674,8 +39674,8 @@ function parseRichNote(data, nativeTags = []) {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
   const body = wrapper && embeddedMessage(getField(wrapper, 3));
-  const text2 = body && stringValue(getField(body, 2));
-  if (!body || text2 === void 0) throw new Error("Unsupported Notes document structure");
+  const text3 = body && stringValue(getField(body, 2));
+  if (!body || text3 === void 0) throw new Error("Unsupported Notes document structure");
   const links = [];
   const nativeObjectIds = [];
   const objects = [];
@@ -39689,7 +39689,7 @@ function parseRichNote(data, nativeTags = []) {
     const fields = embeddedMessage(run);
     if (!fields) throw new Error("Invalid Notes attribute run");
     const length = varintValue(getField(fields, 1));
-    if (length === void 0 || length < 0 || position + length > text2.length)
+    if (length === void 0 || length < 0 || position + length > text3.length)
       throw new Error("Invalid Notes run length");
     const paragraph = embeddedMessage(getField(fields, 2));
     styleRuns.push({
@@ -39702,7 +39702,7 @@ function parseRichNote(data, nativeTags = []) {
         fields.filter((f) => f.fieldNumber >= 2 && f.fieldNumber <= 12 || f.fieldNumber === 14).map((f) => [f.fieldNumber, styleValue(f)])
       )
     });
-    if (/[^\s\ufffc]/u.test(text2.slice(position, position + length))) {
+    if (/[^\s\ufffc]/u.test(text3.slice(position, position + length))) {
       const baseline = varintValue(getField(fields, 8)) ?? 0;
       if (baseline > 0) lossy.add("superscript");
       if (baseline < 0) lossy.add("subscript");
@@ -39715,9 +39715,9 @@ function parseRichNote(data, nativeTags = []) {
       const previous = links.at(-1);
       if (previous?.url === url && previous.start + previous.length === position) {
         previous.length += length;
-        previous.text += text2.slice(position, position + length);
+        previous.text += text3.slice(position, position + length);
       } else
-        links.push({ start: position, length, text: text2.slice(position, position + length), url });
+        links.push({ start: position, length, text: text3.slice(position, position + length), url });
     }
     hasNativeObjects ||= Boolean(getField(fields, 12));
     const attachment = embeddedMessage(getField(fields, 12));
@@ -39736,23 +39736,23 @@ function parseRichNote(data, nativeTags = []) {
       const checklist = embeddedMessage(getField(paragraph, 5));
       const rawId = checklist && getField(checklist, 1)?.value;
       const itemId = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : "";
-      const start = checklistRunLineStart(text2, position, length);
+      const start = checklistRunLineStart(text3, position, length);
       if (itemId && !checklistItems.some((item) => item.id === itemId))
         checklistItems.push({
           id: itemId,
           start,
-          text: text2.slice(
+          text: text3.slice(
             start,
-            text2.indexOf("\n", start) === -1 ? text2.length : text2.indexOf("\n", start)
+            text3.indexOf("\n", start) === -1 ? text3.length : text3.indexOf("\n", start)
           ),
           done: checklist ? varintValue(getField(checklist, 2)) === 1 : false
         });
     }
     position += length;
   }
-  if (position !== text2.length) throw new Error("Incomplete Notes attribute runs");
+  if (position !== text3.length) throw new Error("Incomplete Notes attribute runs");
   return {
-    text: text2,
+    text: text3,
     links,
     nativeTags: hasNativeObjects ? nativeTags : [],
     nativeObjectIds,
@@ -40043,15 +40043,15 @@ function parseAudioRecording(data) {
     if (self) return stringValue(getField(self, 4));
     const double = map.values.get("doubleValue");
     if (double) return fixed64Double(getField(double, 3));
-    const integer2 = map.values.get("integerValue");
-    if (integer2) return varintValue(getField(integer2, 2));
+    const integer3 = map.values.get("integerValue");
+    if (integer3) return varintValue(getField(integer3, 2));
     return void 0;
   };
   const registerNoteText = (id2) => {
     const target = registerTarget(id2);
     const note = target && sub(target, 10);
-    const text2 = note && stringValue(getField(note, 2));
-    return text2?.replace(/\n+$/u, "") || void 0;
+    const text3 = note && stringValue(getField(note, 2));
+    return text3?.replace(/\n+$/u, "") || void 0;
   };
   const recordings = entries2.map((e) => customMap(e)).filter((m) => m?.type === "com.apple.notes.ICTTAudioRecording");
   if (recordings.length !== 1) throw new Error("Expected exactly one audio recording object");
@@ -40090,13 +40090,13 @@ function parseAudioRecording(data) {
           const segment = customMap(entry(segmentIndex));
           if (segment?.type !== "com.apple.notes.ICTTTranscriptSegment")
             throw new Error("Unexpected segment type");
-          const text2 = registerPrimitive(segment.values.get("text"));
-          if (typeof text2 !== "string") throw new Error("Segment without text");
+          const text3 = registerPrimitive(segment.values.get("text"));
+          if (typeof text3 !== "string") throw new Error("Segment without text");
           const start = registerPrimitive(segment.values.get("timestamp"));
           const duration3 = registerPrimitive(segment.values.get("duration"));
           const speaker = registerPrimitive(segment.values.get("speaker"));
           segments.push({
-            text: text2,
+            text: text3,
             ...typeof start === "number" ? { start } : {},
             ...typeof duration3 === "number" ? { duration: duration3 } : {},
             ...typeof speaker === "string" && speaker ? { speaker } : {}
@@ -40116,10 +40116,10 @@ function parseAudioRecording(data) {
 }
 function joinSegments(segments) {
   let out = "";
-  for (const { text: text2 } of segments) {
-    if (!text2) continue;
-    const glue = !out || /\s$/u.test(out) || /^\s/u.test(text2) || /^[.,!?;:%)\]}…'’]/u.test(text2) ? "" : " ";
-    out += glue + text2;
+  for (const { text: text3 } of segments) {
+    if (!text3) continue;
+    const glue = !out || /\s$/u.test(out) || /^\s/u.test(text3) || /^[.,!?;:%)\]}…'’]/u.test(text3) ? "" : " ";
+    out += glue + text3;
   }
   return out.trim();
 }
@@ -40253,14 +40253,14 @@ function describeRow(row, store, options, maxSegments) {
   const all = recording.fragments.flatMap(
     (fragment, i) => fragment.segments.map((s) => multi ? { ...s, fragment: i } : s)
   );
-  const text2 = recording.fragments.map((f) => joinSegments(f.segments)).filter(Boolean).join("\n\n");
+  const text3 = recording.fragments.map((f) => joinSegments(f.segments)).filter(Boolean).join("\n\n");
   const speakers = [...new Set(all.flatMap((s) => s.speaker ? [s.speaker] : []))];
   return {
     ...base,
     status: all.length ? "ok" : "none",
     fragmentCount: recording.fragments.length,
     wordCount: all.length,
-    ...text2 ? { text: text2 } : {},
+    ...text3 ? { text: text3 } : {},
     ...speakers.length ? { speakers } : {},
     ...recording.summary ? { summary: recording.summary } : {},
     ...recording.topLineSummary ? { topLineSummary: recording.topLineSummary } : {},
@@ -40414,18 +40414,18 @@ function decodeTable(compressed, strict) {
       const ri = rows.map.get(uuidIndex(num(sub2(row, 1), 6)));
       if (ri === void 0 || ci === void 0) continue;
       const note = sub2(entry(num(sub2(row, 2), 6)), 10);
-      const text2 = stringValue(getField(note, 2));
-      if (text2 === void 0 || text2.includes("\uFFFC")) {
+      const text3 = stringValue(getField(note, 2));
+      if (text3 === void 0 || text3.includes("\uFFFC")) {
         if (strict) throw new Error("Embedded or unsupported table cell");
         values[ri][ci] = null;
         incomplete.push({
           ri,
           ci,
-          reason: text2 === void 0 ? "Cell text is missing" : "Cell contains an embedded object"
+          reason: text3 === void 0 ? "Cell text is missing" : "Cell contains an embedded object"
         });
         continue;
       }
-      values[ri][ci] = text2.replace(/\n$/u, "");
+      values[ri][ci] = text3.replace(/\n$/u, "");
     }
   }
   const rtl = entries2.some((e) => {
@@ -40445,8 +40445,8 @@ function decodeTable(compressed, strict) {
 
 // src/utils/tableMarkdown.ts
 var UNDECODED_CELL_MARKER = "[undecoded cell]";
-function escapeMarkdownTableCell(text2) {
-  return text2.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n|[\r\n\u2028\u2029]/g, "<br>");
+function escapeMarkdownTableCell(text3) {
+  return text3.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n|[\r\n\u2028\u2029]/g, "<br>");
 }
 function renderMarkdownTable(rows) {
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -40586,8 +40586,8 @@ var Decoder = class {
   }
   /** Mark a positively described leaf as an Exclude rule. */
   negate(filter) {
-    const text2 = filter.description;
-    const negated = text2.startsWith("has ") ? text2.replace(/^has /, "does not have ") : text2.startsWith("is ") ? text2.replace(/^is /, "is not ") : text2.startsWith("mentions ") ? text2.replace(/^mentions /, "does not mention ") : `not ${text2}`;
+    const text3 = filter.description;
+    const negated = text3.startsWith("has ") ? text3.replace(/^has /, "does not have ") : text3.startsWith("is ") ? text3.replace(/^is /, "is not ") : text3.startsWith("mentions ") ? text3.replace(/^mentions /, "does not mention ") : `not ${text3}`;
     return { ...filter, excluded: true, description: negated };
   }
   clause(clause, excluded, depth) {
@@ -42197,11 +42197,11 @@ function fitExportNoteToBudget(note, maxBytes) {
 function executeMutationAppleScript(script) {
   return executeAppleScript(script, { maxRetries: 1 });
 }
-function escapeForAppleScript(text2) {
-  if (!text2) {
+function escapeForAppleScript(text3) {
+  if (!text3) {
     return "";
   }
-  let escaped = text2.replace(/&/g, "&amp;");
+  let escaped = text3.replace(/&/g, "&amp;");
   escaped = escaped.replace(/\\/g, "&#92;");
   escaped = escaped.replace(/"/g, '\\"');
   escaped = escaped.replace(/\n/g, "<br>");
@@ -42214,9 +42214,9 @@ function escapeHtmlForAppleScript(htmlContent) {
   }
   return htmlContent.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
-function escapePlainStringForAppleScript(text2) {
-  if (!text2) return "";
-  return text2.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function escapePlainStringForAppleScript(text3) {
+  if (!text3) return "";
+  return text3.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 var MAX_TITLE_LENGTH = 2e3;
 var MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
@@ -44850,13 +44850,13 @@ var AppleNotesManager = class {
    * Simple HTML to plaintext conversion for export.
    */
   htmlToPlaintext(html) {
-    let text2 = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/p>/gi, "\n");
+    let text3 = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/p>/gi, "\n");
     let prev;
     do {
-      prev = text2;
-      text2 = text2.replace(/<[^>]*>/g, "");
-    } while (text2 !== prev);
-    return text2.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#92;/g, "\\").replace(/&amp;/g, "&").replace(/\n{3,}/g, "\n\n").trim();
+      prev = text3;
+      text3 = text3.replace(/<[^>]*>/g, "");
+    } while (text3 !== prev);
+    return text3.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#92;/g, "\\").replace(/&amp;/g, "&").replace(/\n{3,}/g, "\n\n").trim();
   }
   /**
    * Exports notes as a JSON structure for backup/migration, one page at a time.
@@ -45032,11 +45032,11 @@ var AppleNotesManager = class {
     const enriched = lines.map((line) => {
       const listMatch = line.match(/^(\s*[-*])\s+(.+)$/);
       if (!listMatch) return line;
-      const [, prefix, text2] = listMatch;
-      const done = checklistMap.get(text2.trim());
+      const [, prefix, text3] = listMatch;
+      const done = checklistMap.get(text3.trim());
       if (done === void 0) return line;
-      checklistMap.delete(text2.trim());
-      return `${prefix} ${done ? "[x]" : "[ ]"} ${text2}`;
+      checklistMap.delete(text3.trim());
+      return `${prefix} ${done ? "[x]" : "[ ]"} ${text3}`;
     });
     return enriched.join("\n");
   }
@@ -45643,7 +45643,7 @@ function buildTagInventorySql(columns, scoped) {
     "COMMIT;"
   ].join(" ");
 }
-var bareTag = (text2) => text2.replace(/^#/, "").trim();
+var bareTag = (text3) => text3.replace(/^#/, "").trim();
 function referencedObjects(hex3) {
   if (!hex3 || !/^[0-9a-f]+$/i.test(hex3)) return null;
   try {
@@ -45681,11 +45681,11 @@ function assembleInventory(rows, accounts, scope2) {
   const bodies = /* @__PURE__ */ new Map();
   for (const row of rows) if (row.k === "body") bodies.set(row.note, referencedObjects(row.data));
   const groups = /* @__PURE__ */ new Map();
-  const group = (text2, weight) => {
-    const key = text2.toLocaleLowerCase();
+  const group = (text3, weight) => {
+    const key = text3.toLocaleLowerCase();
     let found = groups.get(key);
     if (!found) groups.set(key, found = { spellings: /* @__PURE__ */ new Map(), notes: /* @__PURE__ */ new Map() });
-    found.spellings.set(text2, (found.spellings.get(text2) ?? 0) + weight);
+    found.spellings.set(text3, (found.spellings.get(text3) ?? 0) + weight);
     return found;
   };
   const unverified = /* @__PURE__ */ new Set();
@@ -45711,7 +45711,7 @@ function assembleInventory(rows, accounts, scope2) {
       noteCount: entry.notes.size,
       accounts: perAccount
     };
-    if (spellings.length > 1) result.spellings = spellings.slice(1).map(([text2]) => text2);
+    if (spellings.length > 1) result.spellings = spellings.slice(1).map(([text3]) => text3);
     return result;
   });
   inventory.sort((a, b) => b.noteCount - a.noteCount || a.tag.localeCompare(b.tag));
@@ -45876,7 +45876,7 @@ function decodeNoteBlocks(data) {
   const textBytes = note && bytesOf(note, 2);
   if (!note || !textBytes)
     throw new NoteBlocksError("unsupported-structure", "Unsupported Notes document structure");
-  const text2 = utf8.decode(textBytes);
+  const text3 = utf8.decode(textBytes);
   const runTally = /* @__PURE__ */ new Map();
   const paragraphTally = /* @__PURE__ */ new Map();
   const runs = [];
@@ -45887,7 +45887,7 @@ function decodeNoteBlocks(data) {
         throw new NoteBlocksError("invalid-runs", "Invalid Notes attribute run");
       const fields = decodeWireFields(field.bytes);
       const length = varintOf(fields, 1);
-      if (length === void 0 || length < 0 || position + length > text2.length)
+      if (length === void 0 || length < 0 || position + length > text3.length)
         throw new NoteBlocksError("invalid-runs", "Invalid Notes run length");
       for (const n of new Set(fields.map((f) => f.fieldNumber)))
         if (!KNOWN_RUN_FIELDS.has(n)) runTally.set(n, (runTally.get(n) || 0) + 1);
@@ -45902,15 +45902,15 @@ function decodeNoteBlocks(data) {
   } catch (error2) {
     wrap(error2);
   }
-  if (position !== text2.length)
+  if (position !== text3.length)
     throw new NoteBlocksError("invalid-runs", "Incomplete Notes attribute runs");
   const blocks = [];
   const attachments = [];
   let runIndex = 0;
   let paragraphStart = 0;
-  while (paragraphStart < text2.length) {
-    const newline = text2.indexOf("\n", paragraphStart);
-    const end = newline === -1 ? text2.length : newline;
+  while (paragraphStart < text3.length) {
+    const newline = text3.indexOf("\n", paragraphStart);
+    const end = newline === -1 ? text3.length : newline;
     while (runIndex < runs.length - 1 && runs[runIndex].start + runs[runIndex].length <= paragraphStart)
       runIndex++;
     const attrs = runs[runIndex]?.paragraph ?? DEFAULT_PARAGRAPH;
@@ -45920,7 +45920,7 @@ function decodeNoteBlocks(data) {
       index: blocks.length,
       start: paragraphStart,
       length: end - paragraphStart,
-      text: text2.slice(paragraphStart, end),
+      text: text3.slice(paragraphStart, end),
       style,
       styleType: attrs.styleType,
       indent: attrs.indent,
@@ -45940,11 +45940,11 @@ function decodeNoteBlocks(data) {
       block.runs.push({
         start,
         length: stop - start,
-        text: text2.slice(start, stop),
+        text: text3.slice(start, stop),
         ...run.inline
       });
       if (run.inline.attachment)
-        for (let at = text2.indexOf("\uFFFC", start); at !== -1 && at < stop; at = text2.indexOf("\uFFFC", at + 1)) {
+        for (let at = text3.indexOf("\uFFFC", start); at !== -1 && at < stop; at = text3.indexOf("\uFFFC", at + 1)) {
           const marker = { ...run.inline.attachment, start: at, blockIndex: block.index };
           block.attachments.push(marker);
           attachments.push(marker);
@@ -45954,8 +45954,8 @@ function decodeNoteBlocks(data) {
     paragraphStart = end + 1;
   }
   return {
-    text: text2,
-    textLength: text2.length,
+    text: text3,
+    textLength: text3.length,
     blocks,
     attachments,
     undecodedFields: {
@@ -46151,18 +46151,18 @@ function parseCursorBody(body, input) {
 var DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 var DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i;
 function parseSince(input) {
-  const text2 = input.trim();
-  if (text2.startsWith(CHECKPOINT_PREFIX)) {
-    return parseCursorBody(text2.slice(CHECKPOINT_PREFIX.length), input);
+  const text3 = input.trim();
+  if (text3.startsWith(CHECKPOINT_PREFIX)) {
+    return parseCursorBody(text3.slice(CHECKPOINT_PREFIX.length), input);
   }
   let ms = Number.NaN;
-  const dateOnly = DATE_ONLY.exec(text2);
+  const dateOnly = DATE_ONLY.exec(text3);
   if (dateOnly) {
     const [year, month, day] = dateOnly.slice(1).map(Number);
     const local = new Date(year, month - 1, day);
     if (local.getMonth() === month - 1 && local.getDate() === day) ms = local.getTime();
-  } else if (DATE_TIME.test(text2)) {
-    ms = Date.parse(text2.replace(/(\.\d{3})\d+/, "$1"));
+  } else if (DATE_TIME.test(text3)) {
+    ms = Date.parse(text3.replace(/(\.\d{3})\d+/, "$1"));
   }
   if (!Number.isFinite(ms)) {
     throw new NoteStoreError(
@@ -46172,14 +46172,14 @@ function parseSince(input) {
   }
   return { modified: (ms - CORE_DATA_EPOCH_MS) / 1e3 };
 }
-function textStats(text2) {
-  const visible2 = text2.replace(OBJECT_REPLACEMENT, "");
+function textStats(text3) {
+  const visible2 = text3.replace(OBJECT_REPLACEMENT, "");
   let wordCount2 = 0;
   for (const token of visible2.split(/\s+/u)) if (/[\p{L}\p{N}]/u.test(token)) wordCount2++;
   return { wordCount: wordCount2, charCount: [...visible2].length };
 }
-function previewText(text2) {
-  const flat = text2.replace(OBJECT_REPLACEMENT, " ").replace(/\s+/gu, " ").trim();
+function previewText(text3) {
+  const flat = text3.replace(OBJECT_REPLACEMENT, " ").replace(/\s+/gu, " ").trim();
   return [...flat].slice(0, PREVIEW_LENGTH).join("");
 }
 function decodeBodyText(hex3) {
@@ -46295,15 +46295,15 @@ function toRecentRow(row, context, paths, accountNames, options) {
     inRecentlyDeleted: Boolean(row.trash),
     markedForDeletion: Boolean(row.tombstoned)
   };
-  const text2 = row.locked || row.cloud ? null : decodeBodyText(row.data);
+  const text3 = row.locked || row.cloud ? null : decodeBodyText(row.data);
   if (options.wordCounts) {
-    const stats = text2 === null ? null : textStats(text2);
+    const stats = text3 === null ? null : textStats(text3);
     note.wordCount = stats?.wordCount ?? null;
     note.charCount = stats?.charCount ?? null;
   }
   if (options.bodyPreview) {
-    note.textDecoded = text2 !== null;
-    note.bodyPreview = text2 !== null ? previewText(text2) : row.snippet ? previewText(row.snippet) : null;
+    note.textDecoded = text3 !== null;
+    note.bodyPreview = text3 !== null ? previewText(text3) : row.snippet ? previewText(row.snippet) : null;
   }
   return note;
 }
@@ -46648,10 +46648,10 @@ function htmlToText(html) {
 var HASHTAG_RE = new RegExp("(?<![\\p{L}\\p{N}_])#([\\p{L}\\p{N}_]*\\p{L}[\\p{L}\\p{N}_]*)", "gu");
 function parseHashtags(body) {
   if (!body) return [];
-  const text2 = htmlToText(body);
+  const text3 = htmlToText(body);
   const seen = /* @__PURE__ */ new Set();
   const result = [];
-  for (const match of text2.matchAll(HASHTAG_RE)) {
+  for (const match of text3.matchAll(HASHTAG_RE)) {
     const tag = match[1];
     const key = tag.toLowerCase();
     if (!seen.has(key)) {
@@ -46667,7 +46667,7 @@ var BLOCK_END_RE = /<\/(?:div|h[1-6]|p|li)>/gi;
 var BREAK_RE = /<br\s*\/?\s*>/gi;
 var TAG_RE = /<[^>]*>/g;
 var NON_RENDERED_BLOCK_RE = /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi;
-function decodeHtmlEntities(text2) {
+function decodeHtmlEntities(text3) {
   const decodeCodePoint = (match, value, radix) => {
     const codePoint = Number.parseInt(value, radix);
     if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 1114111 || codePoint >= 55296 && codePoint <= 57343) {
@@ -46675,21 +46675,21 @@ function decodeHtmlEntities(text2) {
     }
     return String.fromCodePoint(codePoint);
   };
-  return text2.replace(/&#x([0-9a-f]+);?/gi, (match, hex3) => decodeCodePoint(match, hex3, 16)).replace(/&#([0-9]+);?/g, (match, decimal) => decodeCodePoint(match, decimal, 10)).replace(/&nbsp(?:;|(?![0-9a-z]))/gi, " ").replace(/&quot(?:;|(?![0-9a-z]))/gi, '"').replace(/&apos(?:;|(?![0-9a-z]))/gi, "'").replace(/&lt(?:;|(?![0-9a-z]))/gi, "<").replace(/&gt(?:;|(?![0-9a-z]))/gi, ">").replace(/&amp(?:;|(?![0-9a-z]))/gi, "&");
+  return text3.replace(/&#x([0-9a-f]+);?/gi, (match, hex3) => decodeCodePoint(match, hex3, 16)).replace(/&#([0-9]+);?/g, (match, decimal) => decodeCodePoint(match, decimal, 10)).replace(/&nbsp(?:;|(?![0-9a-z]))/gi, " ").replace(/&quot(?:;|(?![0-9a-z]))/gi, '"').replace(/&apos(?:;|(?![0-9a-z]))/gi, "'").replace(/&lt(?:;|(?![0-9a-z]))/gi, "<").replace(/&gt(?:;|(?![0-9a-z]))/gi, ">").replace(/&amp(?:;|(?![0-9a-z]))/gi, "&");
 }
 function firstVisibleHtmlLine(html) {
-  let text2 = html;
+  let text3 = html;
   let previous;
   do {
-    previous = text2;
-    text2 = text2.replace(NON_RENDERED_BLOCK_RE, "");
-  } while (text2 !== previous);
-  text2 = text2.replace(BREAK_RE, "\n").replace(BLOCK_END_RE, "\n");
+    previous = text3;
+    text3 = text3.replace(NON_RENDERED_BLOCK_RE, "");
+  } while (text3 !== previous);
+  text3 = text3.replace(BREAK_RE, "\n").replace(BLOCK_END_RE, "\n");
   do {
-    previous = text2;
-    text2 = text2.replace(TAG_RE, "");
-  } while (text2 !== previous);
-  return decodeHtmlEntities(text2).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
+    previous = text3;
+    text3 = text3.replace(TAG_RE, "");
+  } while (text3 !== previous);
+  return decodeHtmlEntities(text3).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
 }
 function resolveUpdateResponseTitle(currentTitle, newTitle, format, newContent) {
   if (format === "html") return firstVisibleHtmlLine(newContent) ?? currentTitle;
@@ -46861,15 +46861,15 @@ function splitComparison(value) {
   const match = COMPARE_RE.exec(value);
   return [match[1] ?? "=", match[2]];
 }
-function parseLocalDate(text2, pos) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text2);
+function parseLocalDate(text3, pos) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text3);
   if (!match) {
-    throw new NoteQueryError(`Expected a date as YYYY-MM-DD, got "${text2}"`, pos);
+    throw new NoteQueryError(`Expected a date as YYYY-MM-DD, got "${text3}"`, pos);
   }
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
   const start = new Date(year, month - 1, day);
   if (start.getFullYear() !== year || start.getMonth() !== month - 1 || start.getDate() !== day) {
-    throw new NoteQueryError(`"${text2}" is not a valid calendar date`, pos);
+    throw new NoteQueryError(`"${text3}" is not a valid calendar date`, pos);
   }
   return { start: start.getTime(), end: new Date(year, month - 1, day + 1).getTime() };
 }
@@ -47043,8 +47043,8 @@ var Parser = class {
 function parseNoteQuery(input) {
   return new Parser(tokenize(input), input.length).parse();
 }
-function normalizeForMatch(text2) {
-  return text2.normalize("NFC").replace(/[\ufffc\u00a0]/gu, " ").toLowerCase();
+function normalizeForMatch(text3) {
+  return text3.normalize("NFC").replace(/[\ufffc\u00a0]/gu, " ").toLowerCase();
 }
 function needsContent(node) {
   switch (node.type) {
@@ -47218,8 +47218,8 @@ var CHECKLIST_STYLE = 103;
 function decodeNoteBody(data) {
   const wrapper = embeddedMessage(getField(decodeMessage(data), 2));
   const body = wrapper && embeddedMessage(getField(wrapper, 3));
-  const text2 = body && stringValue(getField(body, 2));
-  if (!body || text2 === void 0) return null;
+  const text3 = body && stringValue(getField(body, 2));
+  if (!body || text3 === void 0) return null;
   const facets = /* @__PURE__ */ new Set();
   const objectIds = /* @__PURE__ */ new Set();
   const checklist = /* @__PURE__ */ new Map();
@@ -47240,7 +47240,7 @@ function decodeNoteBody(data) {
     if (paragraph && varintValue(getField(paragraph, 1)) === CHECKLIST_STYLE) {
       const item = embeddedMessage(getField(paragraph, 5));
       const rawId = item && getField(item, 1)?.value;
-      const key = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : `line:${text2.lastIndexOf("\n", position - 1) + 1}`;
+      const key = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : `line:${text3.lastIndexOf("\n", position - 1) + 1}`;
       checklist.set(key, (item && varintValue(getField(item, 2))) === 1);
     }
     position += length;
@@ -47248,15 +47248,15 @@ function decodeNoteBody(data) {
   if (checklist.size > 0) facets.add("checklist");
   const done = [...checklist.values()].filter(Boolean).length;
   return {
-    text: text2,
+    text: text3,
     facets,
     checklist: { total: checklist.size, open: checklist.size - done },
     objectIds
   };
 }
-function countWords(text2) {
+function countWords(text3) {
   let count = 0;
-  for (const word of text2.replace(/\ufffc/gu, " ").split(/\s+/u)) {
+  for (const word of text3.replace(/\ufffc/gu, " ").split(/\s+/u)) {
     if (/[\p{L}\p{N}]/u.test(word)) count++;
   }
   return count;
@@ -47352,8 +47352,8 @@ function resolveFolders(rows) {
   return resolved;
 }
 var coreDataMs = (seconds) => seconds === null || !Number.isFinite(seconds) ? void 0 : CORE_DATA_EPOCH_MS2 + seconds * 1e3;
-function buildSnippet(text2, terms) {
-  const clean = text2.replace(/\ufffc/gu, " ");
+function buildSnippet(text3, terms) {
+  const clean = text3.replace(/\ufffc/gu, " ");
   const firstBreak = clean.indexOf("\n");
   const body = firstBreak === -1 ? clean : clean.slice(firstBreak + 1);
   const lower = normalizeForMatch(body);
@@ -47462,8 +47462,8 @@ function runNoteQuery(ast, options = {}) {
         if (content !== void 0) return content;
         const body2 = decode2();
         if (!body2) return content = null;
-        const text2 = body2.text;
-        const firstBreak = text2.indexOf("\n");
+        const text3 = body2.text;
+        const firstBreak = text3.indexOf("\n");
         const tags = /* @__PURE__ */ new Set();
         for (const [id2, alt] of row.tags ?? []) {
           if (id2 && alt && body2.objectIds.has(id2))
@@ -47472,9 +47472,9 @@ function runNoteQuery(ast, options = {}) {
         const facets = new Set(body2.facets);
         if (tags.size) facets.add("tag");
         content = {
-          textLower: normalizeForMatch(text2),
-          bodyLower: normalizeForMatch(firstBreak === -1 ? "" : text2.slice(firstBreak + 1)),
-          words: countWords(text2),
+          textLower: normalizeForMatch(text3),
+          bodyLower: normalizeForMatch(firstBreak === -1 ? "" : text3.slice(firstBreak + 1)),
+          words: countWords(text3),
           facets,
           checklist: body2.checklist,
           tags: [...tags]
@@ -47632,12 +47632,12 @@ function addNativeTags(request, deps) {
   }
   const after = deps.read(request.id);
   const allTags = [.../* @__PURE__ */ new Set([...before.rich.nativeTags, ...tags])];
-  const textWithoutTags = (text2) => {
+  const textWithoutTags = (text3) => {
     for (const tag of [...allTags].sort((a, b) => b.length - a.length)) {
       const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      text2 = text2.replace(new RegExp(`#${escaped}(?![\\p{L}\\p{N}_-])`, "gu"), "");
+      text3 = text3.replace(new RegExp(`#${escaped}(?![\\p{L}\\p{N}_-])`, "gu"), "");
     }
-    return text2.replace(/[\s\ufffc]/gu, "");
+    return text3.replace(/[\s\ufffc]/gu, "");
   };
   if (after.title !== before.title || allTags.some((tag) => !after.rich.nativeTags.includes(tag)) || textWithoutTags(before.rich.text) !== textWithoutTags(after.rich.text) || linkSignature(before.rich.links) !== linkSignature(after.rich.links) || before.rich.nativeObjectIds.some((id2) => !after.rich.nativeObjectIds.includes(id2)) || before.rich.hasChecklist !== after.rich.hasChecklist) {
     throw new Error(
@@ -47758,9 +47758,9 @@ function renderMarkdown(markdown, options = {}) {
     dividers: 0,
     highlights: []
   };
-  const inline = (text2) => {
+  const inline = (text3) => {
     const spans = [];
-    let value = text2;
+    let value = text3;
     if (blocks)
       value = value.replace(/`([^`\n]+)`/g, (_s, code2) => {
         if (/^\s|\s$/.test(code2)) throw new Error("Inline code cannot start or end with a space");
@@ -47782,13 +47782,13 @@ function renderMarkdown(markdown, options = {}) {
     return value.replace(/(\d+)/g, (_s, i) => links[Number(i)]).replace(/(\d+)/g, (_s, i) => spans[Number(i)]);
   };
   const withoutTags = (html2) => {
-    let text2 = "", inTag = false;
+    let text3 = "", inTag = false;
     for (const ch of html2) {
       if (ch === "<") inTag = true;
       else if (ch === ">" && inTag) inTag = false;
-      else if (!inTag) text2 += ch;
+      else if (!inTag) text3 += ch;
     }
-    return text2;
+    return text3;
   };
   const visible2 = (html2) => withoutTags(html2).replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   let html = "", list, quote = false, code, previousBlank = true;
@@ -47825,9 +47825,9 @@ function renderMarkdown(markdown, options = {}) {
         continue;
       }
       if (line.startsWith(">")) {
-        const text2 = line.replace(/^> ?/, "");
-        if (!text2.trim()) throw new Error("Empty block quote lines are unsupported");
-        if (/^(?:#|[-+*][ \t]|\d+[.)][ \t]|>|```)/.test(text2))
+        const text3 = line.replace(/^> ?/, "");
+        if (!text3.trim()) throw new Error("Empty block quote lines are unsupported");
+        if (/^(?:#|[-+*][ \t]|\d+[.)][ \t]|>|```)/.test(text3))
           throw new Error("Block quotes support text and inline formatting only");
         if (!quote) {
           close();
@@ -47835,7 +47835,7 @@ function renderMarkdown(markdown, options = {}) {
           quote = true;
           expect.quotes.push("");
         }
-        const rendered = inline(text2);
+        const rendered = inline(text3);
         html += `<div>${rendered}</div>`;
         expect.quotes[expect.quotes.length - 1] += ` ${visible2(rendered)}`;
         previousBlank = false;
@@ -48196,11 +48196,11 @@ function appendNative(manager, request) {
     throw new Error("Use create-table for verified native table insertion");
   const markdownHtml = request.format === "markdown" ? appendMarkdownHtml(request.content) : null;
   const op = request.format === "plaintext" ? "append-text" : request.format === "markdown" ? "append-markdown" : "append-html";
-  const text2 = request.format === "html" ? "<div><br></div>" + request.content : "\n\n" + request.content;
+  const text3 = request.format === "html" ? "<div><br></div>" + request.content : "\n\n" + request.content;
   return mutateBackground(
     request,
     op,
-    { text: text2 },
+    { text: text3 },
     (before, after) => {
       assertPreserved(before, after, { append: true });
       const verifyHtml = markdownHtml ?? request.content;
@@ -48240,7 +48240,7 @@ function setNativeTag(manager, request) {
     deps
   );
 }
-var literalMarkdown = (text2) => text2.replace(/[!-/:-@[-`{-~]/g, "\\$&");
+var literalMarkdown = (text3) => text3.replace(/[!-/:-@[-`{-~]/g, "\\$&");
 function headingLevels(html) {
   return [...html.matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)].filter((match) => comparableVisibleText(match[2])).map((match) => Number(match[1]));
 }
@@ -49003,18 +49003,18 @@ var NOTHING_WRITTEN = /nothing (?:was )?(?:changed|created|written)|no replaceme
 var WRITE_ACCEPTED = /\baccepted (?:the|an) \w+, but/i;
 function classifyError(message, cause) {
   if (cause instanceof CodedError) return { ...cause.envelope };
-  const text2 = cause instanceof Error && cause.message && !message.includes(cause.message) ? `${message}
+  const text3 = cause instanceof Error && cause.message && !message.includes(cause.message) ? `${message}
 ${cause.message}` : message;
   const timeoutCause = typeof cause === "object" && cause !== null && cause.code === "ETIMEDOUT";
   let code = "operation_failed";
   if (timeoutCause) code = "timeout_indeterminate";
-  else if (isPermissionDenied(text2)) code = "permission_denied";
-  else code = RULES.find((rule) => rule.pattern.test(text2))?.code ?? "operation_failed";
+  else if (isPermissionDenied(text3)) code = "permission_denied";
+  else code = RULES.find((rule) => rule.pattern.test(text3))?.code ?? "operation_failed";
   const envelope = { code };
   if (code === "timeout_indeterminate" || code === "verification_failed") {
     envelope.indeterminate = true;
-    if (WRITE_ACCEPTED.test(text2)) envelope.committed = true;
-  } else if (code === "revision_conflict" || NOTHING_WRITTEN.test(text2)) {
+    if (WRITE_ACCEPTED.test(text3)) envelope.committed = true;
+  } else if (code === "revision_conflict" || NOTHING_WRITTEN.test(text3)) {
     envelope.committed = false;
     envelope.indeterminate = false;
   }
@@ -49075,7 +49075,7 @@ var ParagraphLinkError = class extends CodedError {
   }
 };
 var paragraphUrl = (noteIdentifier, paragraphId) => `applenotes://showNote?identifier=${noteIdentifier.toUpperCase()}&paragraphID=${paragraphId.toUpperCase()}`;
-var normalizeParagraphText = (text2) => text2.normalize("NFKC").replace(/\ufffc/g, "").split(/\s+/u).filter(Boolean).join(" ").toLowerCase();
+var normalizeParagraphText = (text3) => text3.normalize("NFKC").replace(/\ufffc/g, "").split(/\s+/u).filter(Boolean).join(" ").toLowerCase();
 var bytesField = (fields, n) => fields.find((f) => f.fieldNumber === n && f.wireType === 2)?.bytes;
 var uuidOf = (bytes) => {
   if (bytes?.length !== 16) return void 0;
@@ -49395,9 +49395,9 @@ function lastViewedOf(raw, columnPresent = true, now = Date.now()) {
     return { lastViewed: null, lastViewedStatus: "malformed" };
   return { lastViewed: new Date(ms).toISOString(), lastViewedStatus: "viewed" };
 }
-var visible = (text2) => text2.replace(/\ufffc/g, "");
-var wordCount = (text2) => visible(text2).split(/\s+/u).filter((word) => word !== "").length;
-var charCount = (text2) => Array.from(visible(text2)).length;
+var visible = (text3) => text3.replace(/\ufffc/g, "");
+var wordCount = (text3) => visible(text3).split(/\s+/u).filter((word) => word !== "").length;
+var charCount = (text3) => Array.from(visible(text3)).length;
 function noteStructureSql(columns) {
   const c = (alias, name) => col(columns, alias, name);
   const sharedExpr = columns.has("ZSERVERSHAREDATA") ? `(n.ZSERVERSHAREDATA IS NOT NULL OR EXISTS (
@@ -49538,10 +49538,10 @@ function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH7, includeText 
   }
   links.sort((a, b) => (a.start ?? Number.MAX_SAFE_INTEGER) - (b.start ?? Number.MAX_SAFE_INTEGER));
   const tags = [...new Set(tagOrder.sort((a, b) => a.start - b.start).map((entry) => entry.tag))];
-  let text2;
+  let text3;
   let textOmitted;
   if (doc && includeText) {
-    if (Buffer.byteLength(doc.text) <= maxTextBytes) text2 = doc.text;
+    if (Buffer.byteLength(doc.text) <= maxTextBytes) text3 = doc.text;
     else textOmitted = true;
   }
   const linkCounts = { inline: 0, card: 0, note: 0, section: 0 };
@@ -49562,7 +49562,7 @@ function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH7, includeText 
     ...lastViewed,
     bodyDecoded: doc !== void 0,
     ...bodyError ? { bodyError } : {},
-    ...text2 !== void 0 ? { text: text2 } : {},
+    ...text3 !== void 0 ? { text: text3 } : {},
     ...textOmitted ? { textOmitted } : {},
     textLength: doc ? doc.textLength : null,
     wordCount: doc ? wordCount(doc.text) : null,
@@ -49813,7 +49813,7 @@ function validateLinkLabel(label) {
     throw new Error("Hyperlink label must be one line without control characters");
   return label;
 }
-var escapeText = (text2) => text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+var escapeText = (text3) => text3.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 var escapeHref = (url) => escapeText(url).replace(/"/g, "&quot;");
 function buildLinkInsertion(request) {
   const url = validateLinkUrl(request.url);
@@ -50371,11 +50371,11 @@ function fmtOf(run) {
 var sameFmt = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function blockPieces(block, plan) {
   const pieces = [];
-  const pushText = (text2, fmt) => {
-    if (!text2) return;
+  const pushText = (text3, fmt) => {
+    if (!text3) return;
     const last = pieces[pieces.length - 1];
-    if (last?.type === "text" && sameFmt(last.fmt, fmt)) last.text += text2;
-    else pieces.push({ type: "text", text: text2, fmt });
+    if (last?.type === "text" && sameFmt(last.fmt, fmt)) last.text += text3;
+    else pieces.push({ type: "text", text: text3, fmt });
   };
   for (const run of block.runs) {
     const fmt = fmtOf(run);
@@ -50494,8 +50494,8 @@ function unreferencedAttachments(note) {
 }
 
 // src/utils/htmlExport.ts
-function escapeHtml(text2) {
-  return text2.replace(
+function escapeHtml(text3) {
+  return text3.replace(
     /[&<>"']/g,
     (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]
   );
@@ -50507,8 +50507,8 @@ var REASONS = {
   unreadable: " (unreadable)",
   undecodable: " (could not be decoded)"
 };
-function wrapText(text2, fmt) {
-  let out = escapeHtml(text2).replace(/\n/g, "<br>");
+function wrapText(text3, fmt) {
+  let out = escapeHtml(text3).replace(/\n/g, "<br>");
   if (fmt.subscript) out = `<sub>${out}</sub>`;
   if (fmt.superscript) out = `<sup>${out}</sup>`;
   if (fmt.highlight)
@@ -50571,8 +50571,8 @@ function blockPlanHtml(plan) {
       return `<div class="attachment-gallery">${plan.items.map((item) => isHtmlBlockPlan(item) ? blockPlanHtml(item) : inlinePlanHtml(item)).join("")}</div>`;
     case "card": {
       const image = plan.previewUrl ? `<img src="${escapeHtml(plan.previewUrl)}" alt="" loading="lazy">` : "";
-      const text2 = `<span class="link-card-text"><span class="link-card-title">${escapeHtml(plan.title)}</span><span class="link-card-domain">${escapeHtml(domainOf(plan.displayUrl))}</span></span>`;
-      return plan.url ? `<a class="link-card" href="${escapeHtml(plan.url)}">${image}${text2}</a>` : `<div class="link-card">${image}${text2}</div>`;
+      const text3 = `<span class="link-card-text"><span class="link-card-title">${escapeHtml(plan.title)}</span><span class="link-card-domain">${escapeHtml(domainOf(plan.displayUrl))}</span></span>`;
+      return plan.url ? `<a class="link-card" href="${escapeHtml(plan.url)}">${image}${text3}</a>` : `<div class="link-card">${image}${text3}</div>`;
     }
     case "asset": {
       const name = escapeHtml(plan.name ?? plan.label);
@@ -50778,8 +50778,8 @@ ${CSS}
 
 // src/utils/markdownExport.ts
 var NOTE_SEPARATOR = "\n\n---\n\n";
-function escapeMarkdown(text2) {
-  return text2.replace(/[\\`*_[\]<>~|]/g, (char) => `\\${char}`).replace(/&(?=#?[A-Za-z0-9]+;)/g, "&amp;").replace(/==/g, "\\=\\=");
+function escapeMarkdown(text3) {
+  return text3.replace(/[\\`*_[\]<>~|]/g, (char) => `\\${char}`).replace(/&(?=#?[A-Za-z0-9]+;)/g, "&amp;").replace(/==/g, "\\=\\=");
 }
 function escapeLineStart(line) {
   if (/^\s*(?:-[ \t]*){3,}$/.test(line)) return line.replace("-", "\\-");
@@ -50795,9 +50795,9 @@ function linkDestination(url) {
     (char) => char === " " ? "%20" : `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`
   );
 }
-function delimit(text2, open, close = open) {
-  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text2);
-  return match[2] ? `${match[1]}${open}${match[2]}${close}${match[3]}` : text2;
+function delimit(text3, open, close = open) {
+  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text3);
+  return match[2] ? `${match[1]}${open}${match[2]}${close}${match[3]}` : text3;
 }
 var LAYERS = [
   ["italic", "*", "*"],
@@ -50840,9 +50840,9 @@ function planMarkdown(plan) {
     case "unavailable":
       return bracket2(`${plan.label} unavailable`, plan.name);
     case "asset": {
-      const text2 = escapeMarkdown(plan.name ?? plan.label);
-      if (plan.display === "image") return `![${text2}](${linkDestination(plan.url)})`;
-      const inner = plan.previewUrl ? `![${text2}](${linkDestination(plan.previewUrl)})` : text2;
+      const text3 = escapeMarkdown(plan.name ?? plan.label);
+      if (plan.display === "image") return `![${text3}](${linkDestination(plan.url)})`;
+      const inner = plan.previewUrl ? `![${text3}](${linkDestination(plan.previewUrl)})` : text3;
       return `[${inner}](${linkDestination(plan.url)})`;
     }
     case "card":
@@ -50966,12 +50966,12 @@ function joinLines(lines) {
   let out = "";
   let previous;
   for (const line of lines) {
-    const text2 = line.quote ? line.text.split("\n").map((l) => l ? `> ${l}` : ">").join("\n") : line.text;
+    const text3 = line.quote ? line.text.split("\n").map((l) => l ? `> ${l}` : ">").join("\n") : line.text;
     if (previous) {
       const tight = previous.group === "list" && line.group === "list" && previous.quote === line.quote;
       out += tight ? "\n" : previous.quote && line.quote ? "\n>\n" : "\n\n";
     }
-    out += text2;
+    out += text3;
     previous = line;
   }
   return out;
@@ -51327,19 +51327,238 @@ function exportNotesHtml(request, deps) {
 }
 
 // src/tools/directOperations.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import {
-  closeSync as closeSync5,
-  constants as constants5,
-  fstatSync as fstatSync5,
+  closeSync as closeSync6,
+  constants as constants6,
+  fstatSync as fstatSync6,
   mkdtempSync as mkdtempSync4,
-  openSync as openSync5,
-  readFileSync as readFileSync3,
+  openSync as openSync6,
+  readFileSync as readFileSync4,
   rmSync as rmSync4,
   writeFileSync as writeFileSync3
 } from "node:fs";
 import { tmpdir as tmpdir4 } from "node:os";
-import { basename as basename5, extname as extname5, isAbsolute as isAbsolute3, join as join22 } from "node:path";
+import { basename as basename5, extname as extname6, isAbsolute as isAbsolute3, join as join22 } from "node:path";
+
+// src/utils/attachmentInsertVerify.ts
+import { createHash as createHash2 } from "node:crypto";
+import { closeSync as closeSync5, constants as constants5, fstatSync as fstatSync5, openSync as openSync5, readFileSync as readFileSync3 } from "node:fs";
+import { extname as extname5, sep as sep4 } from "node:path";
+var CREATION_SKEW_SECONDS = 2;
+var STORE_VERIFY_TIMEOUT_MS = 6e3;
+var STORE_VERIFY_INTERVAL_MS = 300;
+var UTI_BY_EXTENSION = {
+  ".pdf": "com.adobe.pdf",
+  ".png": "public.png",
+  ".jpg": "public.jpeg",
+  ".jpeg": "public.jpeg",
+  ".heic": "public.heic",
+  ".tif": "public.tiff",
+  ".tiff": "public.tiff",
+  ".gif": "com.compuserve.gif",
+  ".txt": "public.plain-text"
+};
+function expectedUtiForName(name) {
+  return UTI_BY_EXTENSION[extname5(name).toLowerCase()] ?? null;
+}
+function coreDataNow(now = Date.now()) {
+  return (now - CORE_DATA_EPOCH_MS) / 1e3;
+}
+function notePkOf(noteId3) {
+  const match = /^x-coredata:\/\/[0-9A-Fa-f-]+\/ICNote\/p(\d{1,15})$/.exec(noteId3);
+  if (!match) throw new Error("An exact note ID is required");
+  return Number(match[1]);
+}
+function buildStoreAttachmentSql(columns) {
+  const firstOf = (alias, names) => {
+    const present = names.filter((name) => columns.has(name)).map((name) => `${alias}.${name}`);
+    if (!present.length) return "NULL";
+    return present.length === 1 ? present[0] : `COALESCE(${present.join(", ")})`;
+  };
+  const accountColumns = [...columns].filter((name) => /^ZACCOUNT\d*$/.test(name)).sort();
+  const account = accountColumns.length ? `(SELECT acc.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT acc WHERE acc.Z_ENT = ${entity("ICAccount")} AND acc.Z_PK IN (${[...accountColumns.map((c) => `a.${c}`), ...accountColumns.map((c) => `n.${c}`)].join(", ")}) LIMIT 1)` : "NULL";
+  const media = columns.has("ZMEDIA") ? "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON m.Z_PK = a.ZMEDIA" : "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON 0";
+  const fields = [
+    `'k', 'attachment'`,
+    `'pk', a.Z_PK`,
+    `'identifier', ${col(columns, "a", "ZIDENTIFIER")}`,
+    `'uti', ${col(columns, "a", "ZTYPEUTI")}`,
+    `'parentPk', ${col(columns, "a", "ZPARENTATTACHMENT")}`,
+    `'filename', ${col(columns, "a", "ZFILENAME")}`,
+    `'created', ${firstOf("a", ["ZCREATIONDATE", "ZCREATIONDATE1", "ZCREATIONDATE3"])}`,
+    `'mediaIdentifier', ${col(columns, "m", "ZIDENTIFIER")}`,
+    `'mediaFilename', ${col(columns, "m", "ZFILENAME")}`,
+    `'mediaGeneration', ${firstOf("m", ["ZGENERATION1", "ZGENERATION"])}`,
+    `'accountIdentifier', ${account}`
+  ].join(", ");
+  return [
+    "BEGIN;",
+    `SELECT json_object('k', 'note', 'exists', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = @note AND Z_ENT = ${entity("ICNote")}), 'data', (SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE = @note LIMIT 1));`,
+    `SELECT json_object(${fields}) FROM ZICCLOUDSYNCINGOBJECT a ${media} LEFT JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = a.ZNOTE WHERE a.Z_ENT = ${entity("ICAttachment")} AND a.ZNOTE = @note AND ${notTombstonedSql(columns, "a")} ORDER BY a.Z_PK;`,
+    "COMMIT;"
+  ].join(" ");
+}
+var text2 = (value) => typeof value === "string" && value ? value : null;
+var integer2 = (value) => typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+function readStoreAttachments(noteId3, dbPath2 = NOTES_DB_PATH7) {
+  const notePk = notePkOf(noteId3);
+  const columns = readColumns(dbPath2);
+  if (!columns.has("ZNOTE") || !columns.has("ZIDENTIFIER"))
+    throw new Error("This Notes database lacks the attachment columns verification needs");
+  const rows = parseJsonLines(
+    runReadOnlySql(dbPath2, buildStoreAttachmentSql(columns), { note: { int: notePk } })
+  );
+  const note = rows.find((row) => row.k === "note");
+  if (!note?.exists) throw new Error("The note is not in the Notes database");
+  const candidates = [];
+  for (const row of rows) {
+    if (row.k !== "attachment") continue;
+    const pk = integer2(row.pk);
+    const identifier = text2(row.identifier);
+    if (pk === null || identifier === null) continue;
+    candidates.push({
+      pk,
+      identifier,
+      uti: text2(row.uti),
+      parentPk: integer2(row.parentPk),
+      filename: text2(row.filename),
+      created: typeof row.created === "number" && Number.isFinite(row.created) ? row.created : null,
+      mediaIdentifier: text2(row.mediaIdentifier),
+      mediaFilename: text2(row.mediaFilename),
+      mediaGeneration: text2(row.mediaGeneration),
+      fallbackImageGeneration: null,
+      fallbackPdfGeneration: null,
+      accountIdentifier: text2(row.accountIdentifier)
+    });
+  }
+  let bodyAttachmentIds = null;
+  const data = text2(note.data);
+  if (data && /^[0-9a-f]+$/i.test(data)) {
+    try {
+      bodyAttachmentIds = decodeCompressedNoteBlocks(Buffer.from(data, "hex")).attachments.map(
+        (marker) => marker.id
+      );
+    } catch {
+      bodyAttachmentIds = null;
+    }
+  }
+  return { candidates, bodyAttachmentIds };
+}
+function snapshotStoreAttachments(noteId3, dbPath2 = NOTES_DB_PATH7, now = Date.now()) {
+  try {
+    const { candidates } = readStoreAttachments(noteId3, dbPath2);
+    return {
+      notePk: notePkOf(noteId3),
+      attachmentPks: candidates.map((candidate) => candidate.pk),
+      takenAt: coreDataNow(now)
+    };
+  } catch {
+    return null;
+  }
+}
+function digestFile(path10, maxBytes = 64 * 1024 * 1024) {
+  let descriptor;
+  try {
+    descriptor = openSync5(path10, constants5.O_RDONLY | constants5.O_NOFOLLOW);
+    const stat = fstatSync5(descriptor);
+    if (!stat.isFile() || stat.size > maxBytes) return null;
+    const bytes = readFileSync3(descriptor);
+    return { path: path10, size: bytes.length, sha256: createHash2("sha256").update(bytes).digest("hex") };
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== void 0) closeSync5(descriptor);
+  }
+}
+function matchingMedia(candidate, expected, containerDir = NOTES_CONTAINER_DIR) {
+  const accountDir = resolveAccountDir(containerDir, candidate.accountIdentifier);
+  if (!accountDir) return null;
+  const mediaRoot = `${accountDir}${sep4}Media${sep4}`;
+  for (const path10 of assetPathsFor(accountDir, candidate)) {
+    if (!path10.startsWith(mediaRoot)) continue;
+    const evidence = digestFile(path10);
+    if (evidence && evidence.size === expected.size && evidence.sha256 === expected.sha256)
+      return evidence;
+  }
+  return null;
+}
+var INTERNAL_KINDS = /* @__PURE__ */ new Set(["table", "url", "drawing", "scan"]);
+function typeMatches(uti, expected) {
+  if (!uti) return false;
+  if (expected) return uti.toLowerCase() === expected.toLowerCase();
+  return !INTERNAL_KINDS.has(classifyAttachmentKind(uti));
+}
+function decideStoreVerification(read, snapshot, expected, media, returnedId) {
+  const before = new Set(snapshot.attachmentPks);
+  const fresh = read.candidates.filter(
+    (candidate2) => !before.has(candidate2.pk) && candidate2.parentPk === null && candidate2.created !== null && candidate2.created >= snapshot.takenAt - CREATION_SKEW_SECONDS
+  );
+  if (fresh.length === 0)
+    return { status: "absent", reason: "No new attachment row for this note in the database" };
+  if (fresh.length > 1)
+    return {
+      status: "ambiguous",
+      reason: `${fresh.length} new attachment rows appeared for this note; cannot tell which is this file`
+    };
+  const candidate = fresh[0];
+  if (returnedId && !returnedId.endsWith(`/ICAttachment/p${candidate.pk}`))
+    return {
+      status: "id-mismatch",
+      reason: "Notes returned a different attachment id than the database row"
+    };
+  if (!typeMatches(candidate.uti, expected.uti))
+    return {
+      status: "type-mismatch",
+      reason: "The new attachment row's type does not match the file"
+    };
+  if (read.bodyAttachmentIds !== null && !read.bodyAttachmentIds.some((id2) => id2.toLowerCase() === candidate.identifier.toLowerCase()))
+    return {
+      status: "not-in-body",
+      reason: "The note body does not reference the new attachment yet"
+    };
+  const evidence = media(candidate);
+  if (!evidence)
+    return {
+      status: "media-missing",
+      reason: "No media file with the source's size and digest was found for the new attachment"
+    };
+  return { status: "verified", candidate, media: evidence };
+}
+var blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function verifyAttachmentInStore(noteId3, snapshot, expected, options = {}) {
+  const {
+    dbPath: dbPath2 = NOTES_DB_PATH7,
+    containerDir = NOTES_CONTAINER_DIR,
+    timeoutMs = STORE_VERIFY_TIMEOUT_MS,
+    intervalMs = STORE_VERIFY_INTERVAL_MS,
+    sleep: sleep2 = blockingSleep,
+    now = Date.now
+  } = options;
+  const deadline = now() + timeoutMs;
+  const lagging = /* @__PURE__ */ new Set(["absent", "not-in-body", "media-missing"]);
+  for (; ; ) {
+    let outcome;
+    try {
+      outcome = decideStoreVerification(
+        readStoreAttachments(noteId3, dbPath2),
+        snapshot,
+        expected,
+        (candidate) => matchingMedia(candidate, expected, containerDir),
+        options.returnedId
+      );
+    } catch (error2) {
+      return {
+        status: "absent",
+        reason: `The Notes database could not be read: ${error2 instanceof Error ? error2.message : String(error2)}`
+      };
+    }
+    if (!lagging.has(outcome.status) || now() >= deadline) return outcome;
+    sleep2(intervalMs);
+  }
+}
+
+// src/tools/directOperations.ts
 var noteId = exactIdInput(
   "ICNote",
   /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i,
@@ -51362,7 +51581,7 @@ function readSnapshot(manager, id2) {
 function assertExistingContentPreserved(before, after) {
   if (before.id !== after.id || before.title !== after.title)
     throw new Error("Note identity changed");
-  const tidy = (text2) => text2.replace(/\r\n/g, "\n").replace(/[\s\ufffc]+$/gu, "");
+  const tidy = (text3) => text3.replace(/\r\n/g, "\n").replace(/[\s\ufffc]+$/gu, "");
   if (!tidy(after.rich.text).startsWith(tidy(before.rich.text)))
     throw new Error("Existing note text was not preserved");
   if (linkSignature(before.rich.links) !== linkSignature(after.rich.links.slice(0, before.rich.links.length)))
@@ -51384,17 +51603,17 @@ function assertExistingContentPreserved(before, after) {
 }
 function localAttachment(path10) {
   if (!isAbsolute3(path10)) throw new Error("An absolute local file path is required");
-  const descriptor = openSync5(path10, constants5.O_RDONLY | constants5.O_NOFOLLOW);
+  const descriptor = openSync6(path10, constants6.O_RDONLY | constants6.O_NOFOLLOW);
   try {
-    const stat = fstatSync5(descriptor);
+    const stat = fstatSync6(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
       throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
-    const bytes = readFileSync3(descriptor);
+    const bytes = readFileSync4(descriptor);
     if (bytes.length !== stat.size)
       throw new Error("Attachment changed while it was being read; try again");
     return bytes;
   } finally {
-    closeSync5(descriptor);
+    closeSync6(descriptor);
   }
 }
 function registerDirectOperations(server2, manager) {
@@ -51452,7 +51671,7 @@ function registerDirectOperations(server2, manager) {
   };
   tool(
     "add-attachment",
-    "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, attachment name, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes.",
+    "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, attachment name, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes; when AppleScript cannot list the new attachment, it confirms exactly one byte-identical new attachment in the Notes database instead (verifiedVia says which).",
     { id: noteId, expectedContentHash: revision, ...attachmentInput },
     (args) => attachFile(manager, args)
   );
@@ -51515,11 +51734,26 @@ function attachmentName(path10, filename) {
     throw new Error(
       "filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces"
     );
-  if (extname5(filename).toLowerCase() !== extname5(source).toLowerCase())
+  if (extname6(filename).toLowerCase() !== extname6(source).toLowerCase())
     throw new Error(
-      `filename must keep the source file's extension (${extname5(source) || "none"})`
+      `filename must keep the source file's extension (${extname6(source) || "none"})`
     );
   return filename;
+}
+function attachmentIdInError(noteId3, error2) {
+  const store = /^x-coredata:\/\/([0-9A-Fa-f-]+)\//.exec(noteId3)?.[1];
+  const message = error2 instanceof Error ? error2.message : String(error2);
+  const found = /x-coredata:\/\/([0-9A-Fa-f-]+)\/ICAttachment\/p\d+/.exec(message);
+  return found && store && found[1].toLowerCase() === store.toLowerCase() ? found[0] : void 0;
+}
+function filenameCheck(filename, nameVerified) {
+  if (filename === void 0) return {};
+  return {
+    filenameVerified: nameVerified,
+    ...nameVerified ? {} : {
+      filenameWarning: "The attachment and its bytes were verified, but Notes reports a different name"
+    }
+  };
 }
 function attachFile(manager, args) {
   const { id: id2, expectedContentHash, path: path10 } = args;
@@ -51528,6 +51762,7 @@ function attachFile(manager, args) {
   if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
   const bytes = localAttachment(path10);
   const beforeAttachments = manager.listAttachmentsById(id2);
+  const storeBefore = snapshotStoreAttachments(id2);
   const directory = mkdtempSync4(join22(tmpdir4(), "notes-attachment-add-"));
   const temporaryFile = join22(directory, name);
   try {
@@ -51535,10 +51770,12 @@ function attachFile(manager, args) {
     if (readSnapshot(manager, id2).hash !== before.hash) throw new Error("Note revision changed");
     let returnedId;
     let transportUncertain = false;
+    let namedId;
     try {
       returnedId = manager.addAttachmentById(id2, before.body, temporaryFile);
-    } catch {
+    } catch (error2) {
       transportUncertain = true;
+      namedId = attachmentIdInError(id2, error2);
     }
     const after = readSnapshot(manager, id2);
     assertExistingContentPreserved(before, after);
@@ -51551,6 +51788,37 @@ function attachFile(manager, args) {
       inserted = readInserted();
     }
     const persistentReturnedId = returnedId && /\/ICAttachment\/p\d+$/.test(returnedId);
+    const transportWarning = transportUncertain ? { transportWarning: "Transport was uncertain; exact bytes and prior content were verified" } : {};
+    if (inserted.length === 0 && storeBefore) {
+      const store = verifyAttachmentInStore(
+        id2,
+        storeBefore,
+        {
+          uti: expectedUtiForName(name),
+          size: bytes.length,
+          sha256: createHash3("sha256").update(bytes).digest("hex")
+        },
+        { returnedId: persistentReturnedId ? returnedId : namedId }
+      );
+      if (store.status !== "verified")
+        throw new Error(
+          `Attachment insertion outcome uncertain (${store.reason}); read the exact note before retrying`
+        );
+      const final = readSnapshot(manager, id2);
+      assertExistingContentPreserved(before, final);
+      const storedName = store.candidate.filename ?? store.candidate.mediaFilename ?? name;
+      return {
+        ok: true,
+        id: id2,
+        attachmentId: attachmentCoreDataId(id2, store.candidate.pk),
+        contentHash: final.hash,
+        bytes: bytes.length,
+        name: storedName,
+        verifiedVia: "database",
+        ...filenameCheck(args.filename, storedName === name),
+        ...transportWarning
+      };
+    }
     if (inserted.length !== 1 || persistentReturnedId && returnedId !== inserted[0].id)
       throw new Error(
         "Attachment insertion outcome uncertain; read the exact note before retrying"
@@ -51558,9 +51826,8 @@ function attachFile(manager, args) {
     const attachmentId = inserted[0].id;
     const fetched = manager.getAttachmentBase64ById(id2, attachmentId);
     const actual = typeof fetched.base64 === "string" ? Buffer.from(fetched.base64, "base64") : null;
-    if (!actual || createHash2("sha256").update(actual).digest("hex") !== createHash2("sha256").update(bytes).digest("hex"))
+    if (!actual || createHash3("sha256").update(actual).digest("hex") !== createHash3("sha256").update(bytes).digest("hex"))
       throw new Error("Attachment bytes were not verified; read the exact note before retrying");
-    const nameVerified = inserted[0].name === name;
     return {
       ok: true,
       id: id2,
@@ -51568,15 +51835,9 @@ function attachFile(manager, args) {
       contentHash: after.hash,
       bytes: bytes.length,
       name: inserted[0].name,
-      ...args.filename === void 0 ? {} : {
-        filenameVerified: nameVerified,
-        ...nameVerified ? {} : {
-          filenameWarning: "The attachment and its bytes were verified, but Notes reports a different name"
-        }
-      },
-      ...transportUncertain ? {
-        transportWarning: "Transport was uncertain; exact bytes and prior content were verified"
-      } : {}
+      verifiedVia: "applescript",
+      ...filenameCheck(args.filename, inserted[0].name === name),
+      ...transportWarning
     };
   } finally {
     rmSync4(directory, { recursive: true, force: true });
@@ -51584,7 +51845,7 @@ function attachFile(manager, args) {
 }
 
 // src/tools/folderDelete.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 
 // src/utils/folderStore.ts
 import { execFileSync as execFileSync19 } from "child_process";
@@ -51771,7 +52032,7 @@ function folderDeleteRevision(app, store) {
     store.childFolderCount,
     store.noteCount
   ];
-  return `sha256:${createHash3("sha256").update(JSON.stringify(state)).digest("hex")}`;
+  return `sha256:${createHash4("sha256").update(JSON.stringify(state)).digest("hex")}`;
 }
 function checkFolder(manager, args, deps) {
   const app = manager.readFolderForDelete(args.id);
@@ -52044,18 +52305,18 @@ function appendChecklistItems(args, deps, readRich) {
   const existing = new Set(byPosition(readRich(args.id).checklistItems).map((item) => item.id));
   const landed = [];
   let contentHash = args.expectedContentHash;
-  for (const [index, text2] of args.items.entries()) {
+  for (const [index, text3] of args.items.entries()) {
     let wrote = false;
     try {
       const result = mutateBackground(
         { ...args, expectedContentHash: contentHash },
         "create-checklist-item",
-        { text: text2 },
+        { text: text3 },
         (before, after) => {
           wrote = true;
           assertPreserved(before, after, { append: true });
           const added = after.checklist.slice(before.checklist.length);
-          if (added.length !== 1 || added[0].text !== text2 || added[0].done)
+          if (added.length !== 1 || added[0].text !== text3 || added[0].done)
             throw new Error("Native checklist item not verified");
         },
         deps
@@ -52064,14 +52325,14 @@ function appendChecklistItems(args, deps, readRich) {
       const fresh = items.filter(
         (item) => !existing.has(item.id) && !landed.some((done) => done.id === item.id)
       );
-      if (fresh.length !== 1 || fresh[0].text !== text2 || fresh[0].done)
+      if (fresh.length !== 1 || fresh[0].text !== text3 || fresh[0].done)
         throw new Error("Native checklist identity not verified");
       for (const done of landed) {
         const current = items.find((item) => item.id === done.id);
         if (!current || current.text !== done.text || current.done)
           throw new Error("An earlier appended item changed identity or text");
       }
-      landed.push({ index, id: fresh[0].id, text: text2 });
+      landed.push({ index, id: fresh[0].id, text: text3 });
       contentHash = result.contentHash;
     } catch (error2) {
       return {
@@ -52080,7 +52341,7 @@ function appendChecklistItems(args, deps, readRich) {
         landed,
         stoppedAt: {
           index,
-          text: text2,
+          text: text3,
           outcome: wrote ? "uncertain" : "not-written",
           error: error2 instanceof Error ? error2.message : String(error2)
         },
@@ -52499,13 +52760,13 @@ function formatShortcutSetup(report) {
 
 // src/services/publicHelper.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import {
   chmodSync,
   existsSync as existsSync14,
   mkdirSync as mkdirSync6,
   mkdtempSync as mkdtempSync5,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   renameSync,
   rmSync as rmSync5,
   writeFileSync as writeFileSync4
@@ -52538,7 +52799,7 @@ function packageRoot(fromDir = dirname8(fileURLToPath2(import.meta.url))) {
     const candidate = join24(dir, "package.json");
     if (existsSync14(candidate)) {
       try {
-        if (JSON.parse(readFileSync4(candidate, "utf8")).name === "apple-notes-mcp")
+        if (JSON.parse(readFileSync5(candidate, "utf8")).name === "apple-notes-mcp")
           return dir;
       } catch {
       }
@@ -52554,7 +52815,7 @@ function defaultPublicHelperDeps(overrides = {}) {
     platform: process.platform,
     sourcePath: join24(packageRoot(), PUBLIC_HELPER_SOURCE),
     exists: existsSync14,
-    readFile: (path10) => readFileSync4(path10),
+    readFile: (path10) => readFileSync5(path10),
     spawn: spawnSync3,
     ...overrides
   };
@@ -52565,7 +52826,7 @@ function publicHelperInstallDir(env = process.env) {
   return join24(homedir19(), "Library", "Application Support", "apple-notes-mcp", "public-helper");
 }
 function sha256Hex(data) {
-  return createHash4("sha256").update(data).digest("hex");
+  return createHash5("sha256").update(data).digest("hex");
 }
 function inspectPublicHelper(deps = defaultPublicHelperDeps()) {
   const installDir = publicHelperInstallDir(deps.env);
@@ -53113,8 +53374,8 @@ import { join as join26 } from "node:path";
 
 // src/services/privateHelper.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
-import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync15, readFileSync as readFileSync5 } from "node:fs";
+import { createHash as createHash6 } from "node:crypto";
+import { existsSync as existsSync15, readFileSync as readFileSync6 } from "node:fs";
 import { homedir as homedir20 } from "node:os";
 import { dirname as dirname9, join as join25, resolve as resolve6 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -53147,7 +53408,7 @@ function packageRoot2(fromDir = dirname9(fileURLToPath3(import.meta.url))) {
     const candidate = join25(dir, "package.json");
     if (existsSync15(candidate)) {
       try {
-        const pkg = JSON.parse(readFileSync5(candidate, "utf8"));
+        const pkg = JSON.parse(readFileSync6(candidate, "utf8"));
         if (pkg.name === "apple-notes-mcp") return dir;
       } catch {
       }
@@ -53163,7 +53424,7 @@ function defaultDeps2(overrides = {}) {
     platform: process.platform,
     sourcePath: join25(packageRoot2(), HELPER_SOURCE_RELATIVE),
     exists: existsSync15,
-    readFile: (path10) => readFileSync5(path10),
+    readFile: (path10) => readFileSync6(path10),
     spawn: spawnSync4,
     ...overrides
   };
@@ -53177,7 +53438,7 @@ function helperInstallDir(env = process.env) {
   return join25(homedir20(), "Library", "Application Support", "apple-notes-mcp", "private-helper");
 }
 function sha256Hex2(data) {
-  return createHash5("sha256").update(data).digest("hex");
+  return createHash6("sha256").update(data).digest("hex");
 }
 function inspectInstallation(deps = defaultDeps2()) {
   const installDir = helperInstallDir(deps.env);
@@ -55135,17 +55396,17 @@ function guardedAppend({
   htmlSeparator,
   ...scopeArgs
 }, onRoute) {
-  const contentToHtml = (text2) => {
-    if (format === "html") return text2;
-    return text2.split("\n").map((line) => {
+  const contentToHtml = (text3) => {
+    if (format === "html") return text3;
+    return text3.split("\n").map((line) => {
       const escaped = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       return `<div>${escaped || "<br>"}</div>`;
     }).join("");
   };
-  const separatorToHtml = (sep4) => {
-    if (format === "html") return sep4;
-    if (sep4 === "\n\n") return "<div><br></div>";
-    const escaped = sep4.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const separatorToHtml = (sep5) => {
+    if (format === "html") return sep5;
+    if (sep5 === "\n\n") return "<div><br></div>";
+    const escaped = sep5.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return `<div>${escaped}</div>`;
   };
   const snapshot = readExactNoteSnapshot(id2);
@@ -55990,8 +56251,8 @@ registerTool(
     if (firstImage && id2) {
       const assets = notesManager.getAttachmentAssetsById(id2);
       const first2 = firstImageView(id2, selectFirstImage(assets));
-      const text2 = first2 ? `Lead visual: ${first2.kind} attachment ${first2.attachmentId} (${first2.path ? "asset on disk" : first2.previewPath ? "preview only" : "not downloaded"}; order from ${assets.orderSource}).` : "This note has no image, scan, or drawing attachment.";
-      return successResponse(text2, { firstImage: first2, orderSource: assets.orderSource });
+      const text3 = first2 ? `Lead visual: ${first2.kind} attachment ${first2.attachmentId} (${first2.path ? "asset on disk" : first2.previewPath ? "preview only" : "not downloaded"}; order from ${assets.orderSource}).` : "This note has no image, scan, or drawing attachment.";
+      return successResponse(text3, { firstImage: first2, orderSource: assets.orderSource });
     }
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
@@ -56801,8 +57062,8 @@ registerTool(
       result = getNoteDrawings(id2, { format, includePoints: false });
       pointsOmitted = true;
     }
-    const text2 = formatNoteDrawings(result) + (pointsOmitted ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "");
-    return successResponse(text2, {
+    const text3 = formatNoteDrawings(result) + (pointsOmitted ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "");
+    return successResponse(text3, {
       ...result,
       ...pointsOmitted ? { pointsOmitted } : {}
     });

@@ -20,6 +20,12 @@ import {
   NOTE_ID_MESSAGE,
 } from "../utils/noteIdentifiers.js";
 import { errorResult } from "../utils/errorCodes.js";
+import { attachmentCoreDataId } from "../utils/attachmentAssets.js";
+import {
+  expectedUtiForName,
+  snapshotStoreAttachments,
+  verifyAttachmentInStore,
+} from "../utils/attachmentInsertVerify.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import {
   enrichNoteRead,
@@ -180,7 +186,7 @@ export function registerDirectOperations(server: McpServer, manager: AppleNotesM
 
   tool(
     "add-attachment",
-    "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, attachment name, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes.",
+    "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, attachment name, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes; when AppleScript cannot list the new attachment, it confirms exactly one byte-identical new attachment in the Notes database instead (verifiedVia says which).",
     { id: noteId, expectedContentHash: revision, ...attachmentInput },
     (args) => attachFile(manager, args)
   );
@@ -277,6 +283,32 @@ export function attachmentName(path: string, filename?: string): string {
   return filename;
 }
 
+/**
+ * On macOS 27.2, `make new attachment` inserts a PDF but reading `id of` the
+ * new object fails with "Can't get attachment id \"x-coredata://.../pN\"".
+ * That id, when it belongs to the note's store, must match the database row.
+ */
+export function attachmentIdInError(noteId: string, error: unknown): string | undefined {
+  const store = /^x-coredata:\/\/([0-9A-Fa-f-]+)\//.exec(noteId)?.[1];
+  const message = error instanceof Error ? error.message : String(error);
+  const found = /x-coredata:\/\/([0-9A-Fa-f-]+)\/ICAttachment\/p\d+/.exec(message);
+  return found && store && found[1].toLowerCase() === store.toLowerCase() ? found[0] : undefined;
+}
+
+/** The filename fields of an attach result; empty when no override was requested. */
+function filenameCheck(filename: string | undefined, nameVerified: boolean) {
+  if (filename === undefined) return {};
+  return {
+    filenameVerified: nameVerified,
+    ...(nameVerified
+      ? {}
+      : {
+          filenameWarning:
+            "The attachment and its bytes were verified, but Notes reports a different name",
+        }),
+  };
+}
+
 /** Insert one verified local file into an exact, unchanged note. */
 function attachFile(
   manager: AppleNotesManager,
@@ -288,6 +320,9 @@ function attachFile(
   if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
   const bytes = localAttachment(path);
   const beforeAttachments = manager.listAttachmentsById(id);
+  // Taken before the write so the database fallback can tell a new row from
+  // an existing one; null when the store is unreadable (no fallback then).
+  const storeBefore = snapshotStoreAttachments(id);
   const directory = mkdtempSync(join(tmpdir(), "notes-attachment-add-"));
   const temporaryFile = join(directory, name);
   try {
@@ -295,10 +330,13 @@ function attachFile(
     if (readSnapshot(manager, id).hash !== before.hash) throw new Error("Note revision changed");
     let returnedId: string | undefined;
     let transportUncertain = false;
+    // The attachment id named by a failed `id of a` read-back, if any.
+    let namedId: string | undefined;
     try {
       returnedId = manager.addAttachmentById(id, before.body, temporaryFile);
-    } catch {
+    } catch (error) {
       transportUncertain = true;
+      namedId = attachmentIdInError(id, error);
     }
     const after = readSnapshot(manager, id);
     assertExistingContentPreserved(before, after);
@@ -316,6 +354,42 @@ function attachFile(
       inserted = readInserted();
     }
     const persistentReturnedId = returnedId && /\/ICAttachment\/p\d+$/.test(returnedId);
+    const transportWarning = transportUncertain
+      ? { transportWarning: "Transport was uncertain; exact bytes and prior content were verified" }
+      : {};
+    if (inserted.length === 0 && storeBefore) {
+      // AppleScript lists nothing new (macOS 27.2 never lists a new PDF,
+      // #236). Confirm the insertion from the NoteStore instead; anything
+      // short of one unambiguous, byte-identical new attachment stays uncertain.
+      const store = verifyAttachmentInStore(
+        id,
+        storeBefore,
+        {
+          uti: expectedUtiForName(name),
+          size: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+        { returnedId: persistentReturnedId ? returnedId : namedId }
+      );
+      if (store.status !== "verified")
+        throw new Error(
+          `Attachment insertion outcome uncertain (${store.reason}); read the exact note before retrying`
+        );
+      const final = readSnapshot(manager, id);
+      assertExistingContentPreserved(before, final);
+      const storedName = store.candidate.filename ?? store.candidate.mediaFilename ?? name;
+      return {
+        ok: true,
+        id,
+        attachmentId: attachmentCoreDataId(id, store.candidate.pk),
+        contentHash: final.hash,
+        bytes: bytes.length,
+        name: storedName,
+        verifiedVia: "database",
+        ...filenameCheck(args.filename, storedName === name),
+        ...transportWarning,
+      };
+    }
     if (inserted.length !== 1 || (persistentReturnedId && returnedId !== inserted[0].id))
       throw new Error(
         "Attachment insertion outcome uncertain; read the exact note before retrying"
@@ -330,7 +404,6 @@ function attachFile(
         createHash("sha256").update(bytes).digest("hex")
     )
       throw new Error("Attachment bytes were not verified; read the exact note before retrying");
-    const nameVerified = inserted[0].name === name;
     return {
       ok: true,
       id,
@@ -338,23 +411,9 @@ function attachFile(
       contentHash: after.hash,
       bytes: bytes.length,
       name: inserted[0].name,
-      ...(args.filename === undefined
-        ? {}
-        : {
-            filenameVerified: nameVerified,
-            ...(nameVerified
-              ? {}
-              : {
-                  filenameWarning:
-                    "The attachment and its bytes were verified, but Notes reports a different name",
-                }),
-          }),
-      ...(transportUncertain
-        ? {
-            transportWarning:
-              "Transport was uncertain; exact bytes and prior content were verified",
-          }
-        : {}),
+      verifiedVia: "applescript",
+      ...filenameCheck(args.filename, inserted[0].name === name),
+      ...transportWarning,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });

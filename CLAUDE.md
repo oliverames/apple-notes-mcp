@@ -241,6 +241,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### add-attachment / create-note-with-attachment
 - `filename` sets the name the attachment shows in Notes. It must keep the source file's extension and be a single path component.
 - `create-note-with-attachment` creates the note, then attaches. If the attach step fails, the error names the new note's id: call `add-attachment` on that id rather than repeating the tool, which would create a second note.
+- Verification is AppleScript first. When AppleScript lists no new attachment (macOS 27.2 never lists a new PDF, #236), `src/utils/attachmentInsertVerify.ts` confirms it read-only from the NoteStore: exactly one new row owned by the note since the pre-write snapshot, matching type, a body attachment run, and a `Media` file with the source's size and SHA-256. It polls up to about 6 s. Anything else stays uncertain. The result's `verifiedVia` says which path verified.
 
 ### create-table
 - Omit `rows` for an empty 2 × 2 table (the size Notes inserts from Format > Table).

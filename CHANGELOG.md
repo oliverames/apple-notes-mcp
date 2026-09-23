@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+## [2.9.8] - 2026-09-23
+
+### Fixed
+
+- `add-attachment` and `create-note-with-attachment` no longer report an
+  uncertain outcome for a PDF on macOS 27.2. Notes inserts the PDF, but its
+  AppleScript never lists the new attachment (reading back `id of` it fails),
+  so every attach ended "insertion outcome uncertain" and a caller that retried
+  created duplicates. When AppleScript lists nothing new, the tool now confirms
+  the insertion read-only from the NoteStore: exactly one new attachment row
+  owned by the note and created after the pre-write snapshot, with the file's
+  type, an attachment run in the decoded body, and a media file under the
+  account's `Media` folder with the source's size and SHA-256. It polls
+  briefly for database lag and stays uncertain on anything less, such as two
+  new rows or a byte mismatch, naming the reason. Results now carry
+  `verifiedVia` (`applescript` or `database`). Reported by @oliverames (#236).
+
 ## [2.9.7] - 2026-09-23
 
 ### Fixed

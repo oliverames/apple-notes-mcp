@@ -1861,6 +1861,16 @@ latest `expectedContentHash`, and an absolute `path`. The server never retries
 the insertion. It verifies that existing rich content survived and compares the
 fetched attachment bytes with the source before reporting success.
 
+Verification goes through AppleScript first. When AppleScript does not list the
+new attachment (Notes on macOS 27.2 inserts a PDF but never lists it), the
+server confirms the insertion from the Notes database instead, read-only: it
+needs exactly one new attachment row for the note created after the write
+began, with the file's type, a reference in the note body, and a media file
+whose size and SHA-256 match the source. It waits a few seconds for the
+database to catch up. Anything less stays an uncertain outcome; read the note
+before retrying. This fallback needs Full Disk Access; without it the outcome
+stays uncertain.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | Yes | Exact CoreData note ID |
@@ -1868,8 +1878,8 @@ fetched attachment bytes with the source before reporting success.
 | `path` | string | Yes | Absolute path of the local file; symbolic links are refused |
 | `filename` | string | No | Name the attachment gets in Notes instead of the source file's name. One path component that keeps the source file's extension, with no slash, colon, backslash, control character, leading dot or surrounding spaces. Notes names a file attachment after the file it receives, so the server gives its private temporary copy this name |
 
-**Returns:** `attachmentId`, `bytes`, the `name` Notes reports, and the new
-`contentHash`. With `filename`, `filenameVerified` says whether Notes reports
+**Returns:** `attachmentId`, `bytes`, the `name` Notes reports, the new
+`contentHash`, and `verifiedVia` (`applescript` or `database`). With `filename`, `filenameVerified` says whether Notes reports
 that exact name. A mismatch is a warning (`filenameWarning`), not a failure,
 because the attachment and its bytes are already verified.
 
