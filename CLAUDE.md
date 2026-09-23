@@ -282,6 +282,15 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `link` is the stored URL; check `linkSafe` before emitting it into HTML
 - Read-only view: do not build a full-body update from it
 
+### list-note-paragraphs / get-paragraph-link
+- Paragraph links have the form `applenotes://showNote?identifier=<note>&paragraphID=<paragraph>` and open Notes at that paragraph
+- A link is given only when the paragraph's stored ID is `unique` in the note. Notes copies IDs when a paragraph is split, so body paragraphs often share one; `reason: "paragraph-id-shared"` is an expected answer, not a failure. Headings and titles usually link
+- Do not build a paragraph link yourself from `get-note-blocks` `paragraphUuid`: it skips the uniqueness check and can open the wrong paragraph
+- To link a paragraph, call `list-note-paragraphs` (optionally `linkableOnly: true`) and pick one with a `url`, or call `get-paragraph-link` with `contains`; on `reason: "ambiguous-paragraph"` pass `occurrence` or a longer snippet
+- Select the note by `id` (a Notes UUID works too) or exact `title`; `folder` narrows a title using list-folders paths. Title lookups never match a note in Recently Deleted
+- Neither tool creates or changes a paragraph ID. A later edit in Notes can replace the ID and break a link
+- Requires Full Disk Access; password-protected notes are refused
+
 ### get-note-structure
 - One read-only call for a note's overview by exact id: text, block summary, links with `kind` (`inline`, `card`, `note`, `section`), tags, attachments, and metadata (`deepLink`, `isShared`, `isLocked`, `inRecentlyDeleted`, `lastViewed`, word/char counts, `attachmentCount`, checklist counts, `hasDrawing`, `firstImage`)
 - Attachments use the same `kind`, body order, `previewPath` and `firstImage` as `list-attachments`, so the two tools agree about the same attachment
