@@ -1,5 +1,42 @@
 ## [Unreleased]
 
+## [2.9.2] - 2026-09-23
+
+### Added
+
+- `list-recent-notes` lists notes from NoteStore (read-only) by stored
+  modification time, for incremental sync. With `since`, rows come oldest
+  first after that point and `nextSince` is the last row's cursor, so every
+  call advances, including one that fills its `limit`. `saturated` (count
+  equals limit) means more changes may follow; call again with `nextSince`
+  until it is `false`. `since` takes a `modifiedCheckpoint` cursor, an ISO
+  8601 date (local midnight), or an ISO date-time (local unless it carries an
+  offset). Each row's `modifiedCheckpoint` is an opaque
+  `cdts1:<bits>:<key>` cursor: the stored timestamp's exact IEEE-754 bits,
+  read and bound through sqlite3's `ieee754` functions so they never pass
+  through a JavaScript `Date` or a rounded decimal, plus the note's database
+  key, which orders notes that share one timestamp so paging never skips or
+  repeats them. A first full sync starts from `since: "1970-01-01"` and
+  reaches a library of any size. Without `since`, rows come newest first and
+  `nextSince` is set only when every match was returned. Options: `account`,
+  `folder`, `limit` (default 50, max 1000), `includeDeleted` (Recently
+  Deleted, notes awaiting deletion, and folderless rows), `wordCounts`
+  (`wordCount`/`charCount` from the shared body decoder; `null` for locked or
+  unavailable bodies, `0` for known-empty ones), and `bodyPreview` (180
+  characters plus `textDecoded`). The docs note two limits of a
+  modification-date cursor: an edit iCloud delivers later from another device
+  with an older timestamp can be missed, and deletions are invisible unless
+  `includeDeleted` is set.
+- `list-folder-tree` returns each account's folder hierarchy with direct
+  (`noteCount`) and cumulative (`totalNoteCount`) note counts, folder kind
+  (regular, smart, Recently Deleted), ids, and paths in one read.
+  `includeDeleted` adds folders marked for deletion.
+
+### Changed
+
+- `list-notes`' description now points to `list-recent-notes` for date
+  order, sync cursors, or word counts. Its behavior is unchanged.
+
 ## [2.9.1] - 2026-09-23
 
 ### Added

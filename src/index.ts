@@ -44,7 +44,8 @@ import {
   SPECIAL_LIMIT,
 } from "@/utils/noteListings.js";
 import { NoteStoreError } from "@/utils/noteStoreSql.js";
-import type { DeleteGuardNote, SpecialNoteKind } from "@/types.js";
+import type { DeleteGuardNote, FolderTreeNode, SpecialNoteKind } from "@/types.js";
+import { folderTree, listRecentNotes, RECENT_LIMIT } from "@/utils/noteRecentList.js";
 import {
   exactIdArrayInput,
   exactIdInput,
@@ -2432,7 +2433,7 @@ registerTool(
   "list-notes",
   {
     description:
-      "Use when: enumerating notes in an account or folder; supports modifiedSince and limit for large collections.\nReturns: each note's title and id (ids are safe to use for follow-up reads/edits even when titles are duplicated — see search-notes for keyword-based lookup instead).\nDo not use when: you need content (get-note-content).\nNote: excludes notes in Recently Deleted unless includeRecentlyDeleted is true, which flags them inRecentlyDeleted. Warns if iCloud sync is active and results may be partial.",
+      "Use when: enumerating notes in an account or folder; supports modifiedSince and limit for large collections.\nReturns: each note's title and id (ids are safe to use for follow-up reads/edits even when titles are duplicated — see search-notes for keyword-based lookup instead).\nDo not use when: you need content (get-note-content), or date order, incremental sync cursors, or word counts (list-recent-notes).\nNote: excludes notes in Recently Deleted unless includeRecentlyDeleted is true, which flags them inRecentlyDeleted. Warns if iCloud sync is active and results may be partial.",
     inputSchema: {
       account: z.string().max(MAX.ACCOUNT).optional().describe("Account to list notes from"),
       folder: z.string().max(MAX.FOLDER).optional().describe("Filter to specific folder"),
@@ -4150,6 +4151,153 @@ registerTool(
       structured
     );
   }, "Error listing notes")
+);
+
+// --- list-recent-notes ---
+
+registerTool(
+  "list-recent-notes",
+  {
+    description:
+      "Use when: syncing notes incrementally from the Notes database, or listing notes by modification date. Pass since (a modifiedCheckpoint cursor or ISO 8601) to page through changes oldest first; omit it for the newest notes first.\nReturns: metadata rows (id, identifier, title, folder path, account, created, modified, modifiedCheckpoint, pinned, locked, inRecentlyDeleted, markedForDeletion), plus optional wordCount/charCount (wordCounts) and bodyPreview/textDecoded (bodyPreview); order, saturated, and nextSince drive sync.\nDo not use when: you need full content (get-note-content) or keyword search (search-notes).\nNote: read-only NoteStore access; requires Full Disk Access. Sync rule: store nextSince and pass it as the next since; every since call advances, and saturated true means more changes may follow, so call again. For a first full sync start from since 1970-01-01. The cursor can miss edits iCloud delivers later with an older timestamp from another device, and deletions are invisible unless includeDeleted is true.",
+    inputSchema: {
+      account: z
+        .string()
+        .min(1)
+        .max(MAX.ACCOUNT)
+        .optional()
+        .describe("Only this account (exact or unique-prefix name). Omit for every account."),
+      folder: z
+        .string()
+        .min(1)
+        .max(MAX.FOLDER)
+        .optional()
+        .describe(
+          "Only notes directly in this folder: full path (list-folders syntax) or a unique name"
+        ),
+      since: z
+        .string()
+        .min(1)
+        .max(64)
+        .optional()
+        .describe(
+          "Return notes after this point, oldest first: a modifiedCheckpoint cursor from a row or nextSince, or an ISO 8601 date (local midnight) or date-time (local unless it has an offset), meaning modified strictly after it"
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(RECENT_LIMIT.MAX)
+        .optional()
+        .describe(`Maximum notes to return (default ${RECENT_LIMIT.DEFAULT})`),
+      includeDeleted: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also return notes in Recently Deleted, notes awaiting deletion, and folderless notes (default false)"
+        ),
+      wordCounts: z
+        .boolean()
+        .optional()
+        .describe(
+          "Decode each body for wordCount and charCount; null when the body is locked or not available (default false)"
+        ),
+      bodyPreview: z
+        .boolean()
+        .optional()
+        .describe(
+          "Add bodyPreview (180 characters: decoded body with wordCounts, else the stored snippet) and textDecoded"
+        ),
+    },
+    outputSchema: {
+      notes: z.array(z.object({}).passthrough()).optional(),
+      count: z.number().optional(),
+      limit: z.number().optional(),
+      order: z.string().optional(),
+      saturated: z.boolean().optional(),
+      nextSince: z.string().nullable().optional(),
+      account: z.string().optional(),
+      folder: z.string().optional(),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  withErrorHandling((params) => {
+    const result = listRecentNotes(params);
+    const syncing = result.order === "oldest-first";
+    const scope = [
+      result.folder ? ` in folder "${result.folder}"` : "",
+      result.account ? ` (${result.account})` : "",
+      params.since ? ` modified after ${params.since}` : "",
+    ].join("");
+    const lines = result.notes.map(
+      (row) => `  - ${row.title ?? "(untitled)"} — ${row.modified ?? "no date"} [id: ${row.id}]`
+    );
+    let tail = "";
+    if (syncing && result.nextSince) {
+      tail = result.saturated
+        ? `\n\nMore changes may follow: call again with since ${result.nextSince}.`
+        : `\n\nCaught up. Next since: ${result.nextSince}`;
+    } else if (result.saturated) {
+      tail = `\n\nLimit reached: older notes were not listed. Page with since to reach them.`;
+    } else if (result.nextSince) {
+      tail = `\n\nNext since: ${result.nextSince}`;
+    }
+    return successResponse(
+      (result.count
+        ? `${result.count} notes${scope}, ${syncing ? "oldest" : "newest"} first:\n${lines.join("\n")}`
+        : `No notes${scope}.`) + tail,
+      result as unknown as Record<string, unknown>
+    );
+  }, "Error listing recent notes")
+);
+
+// --- list-folder-tree ---
+
+registerTool(
+  "list-folder-tree",
+  {
+    description:
+      "Use when: you need the folder hierarchy with note counts, per account, in one read.\nReturns: accounts, each with nested folders (id, identifier, name, path, kind folder/smart/trash, noteCount direct, totalNoteCount including subfolders, children) and the account's noteCount.\nDo not use when: you only need folder paths (list-folders) or notes (list-notes, list-recent-notes).\nNote: read-only NoteStore access; requires Full Disk Access. includeDeleted adds folders awaiting deletion (markedForDeletion) and folders whose account is gone.",
+    inputSchema: {
+      account: z
+        .string()
+        .min(1)
+        .max(MAX.ACCOUNT)
+        .optional()
+        .describe("Only this account (exact or unique-prefix name). Omit for every account."),
+      includeDeleted: z
+        .boolean()
+        .optional()
+        .describe("Include folders marked for deletion (default false)"),
+    },
+    outputSchema: {
+      accounts: z.array(z.object({}).passthrough()).optional(),
+      folderCount: z.number().optional(),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  withErrorHandling(({ account, includeDeleted }) => {
+    const result = folderTree({ account, includeDeleted });
+    const lines: string[] = [];
+    const walk = (nodes: FolderTreeNode[], depth: number) => {
+      for (const node of nodes) {
+        const counts =
+          node.totalNoteCount === node.noteCount
+            ? `${node.noteCount}`
+            : `${node.noteCount}, ${node.totalNoteCount} with subfolders`;
+        lines.push(`${"  ".repeat(depth + 1)}- ${node.name} (${counts})`);
+        walk(node.children, depth + 1);
+      }
+    };
+    for (const entry of result.accounts) {
+      lines.push(`${entry.account}: ${entry.noteCount} notes`);
+      walk(entry.folders, 0);
+    }
+    return successResponse(
+      `${result.folderCount} folders:\n${lines.join("\n")}`,
+      result as unknown as Record<string, unknown>
+    );
+  }, "Error listing folder tree")
 );
 
 // =============================================================================
