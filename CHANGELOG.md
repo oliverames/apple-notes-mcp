@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-23
+
+### Added
+
+- Opt-in native private helper (#181). A small Objective-C program, shipped as
+  source in `native/private-helper/` and built on the user's Mac with
+  `apple-notes-mcp setup --native-helper`, opens the Notes store through
+  Apple's private NotesShared model and speaks a versioned JSON protocol with
+  a fixed action list. It is off unless `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`,
+  and the server checks the helper's source and binary SHA-256 before every
+  call. Three tools:
+  - `native-helper-status`: build and opt-in state plus a live probe of the
+    framework, required selectors, model properties, and store access, with
+    a reason code per feature.
+  - `native-note-state`: a note's native title, dates, flags, iCloud version
+    counters, and a revision token (read-only).
+  - `native-append-plain-text`: appends plain paragraphs guarded by
+    `ifRevision`, verified by a fresh read-back. It reports
+    `pushScheduled: false`; on macOS 27.2 the change appeared in the running
+    Notes.app at once but was not uploaded to iCloud in the 13 minutes observed.
+    Until it passes a live validation that includes sync, it also requires
+    `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+- `privateHelperCapabilities()` for a future capability matrix, and
+  `scripts/test-private-helper-copy-store.sh`, which exercises the write path
+  against a copy of the Notes store. See TECHNICAL_NOTES.md "Private helper".
+
 ## [2.8.18] - 2026-09-23
 
 ### Fixed

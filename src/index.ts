@@ -73,6 +73,8 @@ import {
   NATIVE_APPEND_HTML_SUBSET,
 } from "@/services/backgroundNotes.js";
 import { formatShortcutSetup, setupShortcuts } from "@/setupShortcuts.js";
+import { buildPrivateHelper, formatHelperBuild } from "@/services/privateHelperBuild.js";
+import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -82,6 +84,12 @@ loadFileConfig();
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
 
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-helper")) {
+  // Opt-in private helper: compiled locally from the packaged source (#181).
+  const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatHelperBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
@@ -108,6 +116,7 @@ const notesManager = new AppleNotesManager();
 registerDirectOperations(server, notesManager);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
+registerPrivateHelperTools(server, notesManager);
 
 // =============================================================================
 // Response Helpers

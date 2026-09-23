@@ -2991,7 +2991,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3018,7 +3018,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3843,7 +3843,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve4(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4205,7 +4205,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve4,
       resolveComponent,
       equal,
       serialize,
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join11(output, replacement);
+        return join13(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join11(output, rule.append(self.options));
+          output = join13(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join11(output, replacement) {
+    function join13(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -36608,7 +36608,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+        await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -36625,7 +36625,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -36703,7 +36703,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve3(parseResult.data);
+            resolve4(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -36964,12 +36964,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve3, interval);
+      const timeoutId = setTimeout(resolve4, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38282,7 +38282,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+      await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -38970,12 +38970,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve3) => {
+    return new Promise((resolve4) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve3();
+        resolve4();
       } else {
-        this._stdout.once("drain", resolve3);
+        this._stdout.once("drain", resolve4);
       }
     });
   }
@@ -40196,8 +40196,8 @@ function buildAppLevelScript(command) {
     end tell
   `;
 }
-function getNoteLinkFromDB(coreDataId) {
-  const match = coreDataId.match(/\/p(\d+)$/);
+function getNoteLinkFromDB(coreDataId2) {
+  const match = coreDataId2.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
   const dbPath2 = join4(homedir4(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
@@ -44469,10 +44469,709 @@ function formatShortcutSetup(report) {
   return lines.join("\n");
 }
 
+// src/services/privateHelperBuild.ts
+import { spawnSync as spawnSync4 } from "node:child_process";
+import {
+  chmodSync,
+  existsSync as existsSync9,
+  mkdirSync as mkdirSync2,
+  mkdtempSync as mkdtempSync5,
+  renameSync,
+  rmSync as rmSync5,
+  writeFileSync as writeFileSync4
+} from "node:fs";
+import { release as release2 } from "node:os";
+import { join as join12 } from "node:path";
+
+// src/services/privateHelper.ts
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync8, readFileSync as readFileSync4 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { dirname as dirname3, join as join11, resolve as resolve3 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var PRIVATE_HELPER_PROTOCOL = 1;
+var ENABLE_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE";
+var HELPER_DIR_ENV = "APPLE_NOTES_MCP_PRIVATE_HELPER_DIR";
+var TIMEOUT_ENV = "APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS";
+var APPEND_LIVE_VALIDATED = false;
+var HELPER_BINARY_NAME = "apple-notes-private-helper";
+var HELPER_SOURCE_RELATIVE = "native/private-helper/apple-notes-private-helper.m";
+var MANIFEST_NAME = "manifest.json";
+var DEFAULT_TIMEOUT_MS2 = 2e4;
+var MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+var manifestSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  binarySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  builtAt: external_exports.string(),
+  osVersion: external_exports.string(),
+  compiler: external_exports.string()
+});
+function packageRoot(fromDir = dirname3(fileURLToPath2(import.meta.url))) {
+  let dir = fromDir;
+  for (; ; ) {
+    const candidate = join11(dir, "package.json");
+    if (existsSync8(candidate)) {
+      try {
+        const pkg = JSON.parse(readFileSync4(candidate, "utf8"));
+        if (pkg.name === "apple-notes-mcp") return dir;
+      } catch {
+      }
+    }
+    const parent = dirname3(dir);
+    if (parent === dir) return resolve3(fromDir, "..");
+    dir = parent;
+  }
+}
+function defaultDeps(overrides = {}) {
+  return {
+    env: process.env,
+    platform: process.platform,
+    sourcePath: join11(packageRoot(), HELPER_SOURCE_RELATIVE),
+    exists: existsSync8,
+    readFile: (path4) => readFileSync4(path4),
+    spawn: spawnSync3,
+    ...overrides
+  };
+}
+function privateHelperEnabled(env = process.env) {
+  return env[ENABLE_ENV] === "1";
+}
+function helperInstallDir(env = process.env) {
+  const override = env[HELPER_DIR_ENV]?.trim();
+  if (override) return override;
+  return join11(homedir8(), "Library", "Application Support", "apple-notes-mcp", "private-helper");
+}
+function sha256Hex(data) {
+  return createHash3("sha256").update(data).digest("hex");
+}
+function inspectInstallation(deps = defaultDeps()) {
+  const installDir = helperInstallDir(deps.env);
+  const binaryPath = join11(installDir, HELPER_BINARY_NAME);
+  const base = {
+    installDir,
+    binaryPath,
+    sourcePath: deps.sourcePath,
+    expectedSourceSha256: null,
+    manifest: null
+  };
+  const fail = (reason, detail) => ({
+    ...base,
+    ready: false,
+    reason,
+    detail
+  });
+  if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
+  if (!deps.exists(deps.sourcePath))
+    return fail("helper_not_installed", `Packaged helper source is missing: ${deps.sourcePath}`);
+  base.expectedSourceSha256 = sha256Hex(deps.readFile(deps.sourcePath));
+  const manifestPath = join11(installDir, MANIFEST_NAME);
+  if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
+    return fail(
+      "helper_not_installed",
+      "The private helper is not built. Run `apple-notes-mcp setup --native-helper`."
+    );
+  let manifest;
+  try {
+    manifest = manifestSchema.parse(JSON.parse(deps.readFile(manifestPath).toString("utf8")));
+  } catch (error2) {
+    return fail(
+      "helper_manifest_invalid",
+      `Unreadable helper manifest (${error2 instanceof Error ? error2.message : String(error2)}). Run \`apple-notes-mcp setup --native-helper\`.`
+    );
+  }
+  base.manifest = manifest;
+  if (manifest.sourceSha256 !== base.expectedSourceSha256 || manifest.protocolVersion !== PRIVATE_HELPER_PROTOCOL)
+    return fail(
+      "helper_stale",
+      "The installed helper was built from a different helper source or protocol than this apple-notes-mcp version ships. Run `apple-notes-mcp setup --native-helper` again."
+    );
+  if (sha256Hex(deps.readFile(binaryPath)) !== manifest.binarySha256)
+    return fail(
+      "helper_modified",
+      "The helper binary does not match the checksum recorded when it was built. Run `apple-notes-mcp setup --native-helper` to rebuild it."
+    );
+  return { ...base, ready: true, reason: null, detail: null };
+}
+var PrivateHelperError = class extends Error {
+  constructor(code, message, committed, details = {}) {
+    super(message);
+    this.code = code;
+    this.committed = committed;
+    this.details = details;
+    this.name = "PrivateHelperError";
+  }
+  code;
+  committed;
+  details;
+};
+var errorSchema = external_exports.object({
+  status: external_exports.literal("error"),
+  code: external_exports.string(),
+  message: external_exports.string(),
+  committed: external_exports.boolean().optional()
+}).passthrough();
+var featureSchema = external_exports.object({
+  available: external_exports.boolean(),
+  reason: external_exports.string().nullable(),
+  missing: external_exports.array(external_exports.string())
+});
+var helloSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string(),
+  actions: external_exports.array(external_exports.string())
+}).passthrough();
+var probeSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  protocolVersion: external_exports.number().int(),
+  os: external_exports.object({ version: external_exports.string(), notesAppVersion: external_exports.string().nullable() }).passthrough(),
+  framework: external_exports.object({ loaded: external_exports.boolean(), error: external_exports.string().nullable() }).passthrough(),
+  store: external_exports.object({
+    kind: external_exports.enum(["live", "copy"]).nullable(),
+    opened: external_exports.boolean(),
+    reason: external_exports.string().nullable(),
+    noteRows: external_exports.number().int().nullable()
+  }).passthrough(),
+  syncHostRunning: external_exports.boolean(),
+  features: external_exports.object({ readNoteState: featureSchema, appendPlainText: featureSchema }).passthrough()
+}).passthrough();
+var cloudSyncSchema = external_exports.object({
+  available: external_exports.boolean(),
+  inICloudAccount: external_exports.boolean(),
+  currentLocalVersion: external_exports.number().int().optional(),
+  latestVersionSyncedToCloud: external_exports.number().int().optional(),
+  uploadPending: external_exports.boolean().optional()
+}).passthrough();
+var noteStateSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  identifier: external_exports.string(),
+  objectURI: external_exports.string(),
+  title: external_exports.string().nullable(),
+  modificationDate: external_exports.string().nullable(),
+  folderIdentifier: external_exports.string().nullable(),
+  passwordProtected: external_exports.boolean(),
+  deletedOrInTrash: external_exports.boolean(),
+  sharedViaICloud: external_exports.boolean(),
+  editable: external_exports.boolean(),
+  revision: external_exports.string().regex(/^r1:[a-f0-9]{64}$/),
+  cloudSync: cloudSyncSchema,
+  syncHostRunning: external_exports.boolean()
+}).passthrough();
+var appendResultSchema = external_exports.object({
+  status: external_exports.literal("updated"),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  appendedUTF16: external_exports.number().int(),
+  revisionBefore: external_exports.string(),
+  revisionAfter: external_exports.string(),
+  modificationDate: external_exports.string().nullable(),
+  cloudSync: cloudSyncSchema,
+  pushScheduled: external_exports.boolean(),
+  pushState: external_exports.enum(["awaiting_notes_app", "queued_for_next_launch"]),
+  syncHostRunning: external_exports.boolean(),
+  storeKind: external_exports.enum(["live", "copy"])
+}).passthrough();
+var WRITE_ACTIONS = /* @__PURE__ */ new Set(["append_plain_text"]);
+function callPrivateHelper(action, fields = {}, deps = defaultDeps(), options = {}) {
+  const isWrite = WRITE_ACTIONS.has(action);
+  const notCommitted = isWrite ? false : void 0;
+  if (!options.allowDisabled && !privateHelperEnabled(deps.env))
+    throw new PrivateHelperError(
+      "disabled",
+      `The private helper is off. Set ${ENABLE_ENV}=1 to opt in.`,
+      notCommitted
+    );
+  let binaryPath = options.binaryPath;
+  if (!binaryPath) {
+    const install = inspectInstallation(deps);
+    if (!install.ready)
+      throw new PrivateHelperError(
+        install.reason || "helper_not_installed",
+        install.detail || "",
+        notCommitted
+      );
+    binaryPath = install.binaryPath;
+  }
+  const timeout = Number.parseInt(deps.env[TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS2;
+  const result = deps.spawn(binaryPath, [], {
+    input: JSON.stringify({ protocol: PRIVATE_HELPER_PROTOCOL, action, ...fields }),
+    encoding: "utf8",
+    timeout,
+    killSignal: "SIGKILL",
+    maxBuffer: MAX_OUTPUT_BYTES,
+    env: deps.env
+  });
+  const errno = result.error?.code;
+  if (errno === "ETIMEDOUT" || result.signal && result.status === null)
+    throw new PrivateHelperError(
+      "timeout",
+      isWrite ? `The helper did not answer within ${timeout} ms. The write is INDETERMINATE: it may have been saved. Read the note state again before retrying.` : `The helper did not answer within ${timeout} ms.`,
+      isWrite ? "unknown" : void 0
+    );
+  if (result.error)
+    throw new PrivateHelperError(
+      "helper_unreachable",
+      `Could not run the helper: ${result.error.message}`,
+      notCommitted
+    );
+  const stdout = String(result.stdout ?? "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new PrivateHelperError(
+      "invalid_response",
+      `The helper exited with status ${result.status} and no JSON response` + (isWrite ? ". The write is INDETERMINATE; read the note state before retrying." : "."),
+      isWrite ? "unknown" : void 0
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new PrivateHelperError(
+      "invalid_response",
+      "The helper response is not a JSON object",
+      isWrite ? "unknown" : void 0
+    );
+  const object3 = parsed;
+  if (result.status !== 0 || object3.status === "error") {
+    const error2 = errorSchema.safeParse(object3);
+    if (!error2.success)
+      throw new PrivateHelperError(
+        "invalid_response",
+        `The helper failed with an unrecognized error shape (exit ${result.status})`,
+        isWrite ? "unknown" : void 0
+      );
+    const { status: _status, code, message, committed, ...details } = error2.data;
+    void _status;
+    throw new PrivateHelperError(
+      code,
+      message,
+      isWrite ? committed ?? "unknown" : void 0,
+      details
+    );
+  }
+  return object3;
+}
+function parseOrThrow(schema, value, isWrite) {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success)
+    throw new PrivateHelperError(
+      "invalid_response",
+      `Unexpected helper response: ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`,
+      // A malformed success response after a write still means the helper
+      // reported success; treat it as indeterminate rather than failed.
+      isWrite ? "unknown" : void 0
+    );
+  return parsed.data;
+}
+var UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+function assertNoteIdentifier(identifier) {
+  if (!UUID.test(identifier))
+    throw new PrivateHelperError("invalid_request", "identifier must be a Notes UUID", void 0);
+}
+var FORBIDDEN_TEXT = /[\x00-\x08\x0B-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+function assertAppendText(text) {
+  if (!text.length) throw new PrivateHelperError("invalid_request", "text is required", false);
+  if (text.length > 5e4)
+    throw new PrivateHelperError("invalid_request", "text exceeds 50000 UTF-16 code units", false);
+  if (FORBIDDEN_TEXT.test(text))
+    throw new PrivateHelperError(
+      "invalid_request",
+      "text may contain only printable characters, tabs and \\n newlines",
+      false
+    );
+}
+function probePrivateHelper(deps = defaultDeps()) {
+  return parseOrThrow(probeSchema, callPrivateHelper("probe", {}, deps), false);
+}
+function readNoteState(identifier, deps = defaultDeps()) {
+  assertNoteIdentifier(identifier);
+  return parseOrThrow(
+    noteStateSchema,
+    callPrivateHelper("read_note_state", { identifier }, deps),
+    false
+  );
+}
+function appendPlainText(request, deps = defaultDeps()) {
+  assertNoteIdentifier(request.identifier);
+  assertAppendText(request.text);
+  if (!/^r1:[a-f0-9]{64}$/.test(request.ifRevision))
+    throw new PrivateHelperError(
+      "invalid_request",
+      "ifRevision must be a revision token from native-note-state",
+      false
+    );
+  if (!APPEND_LIVE_VALIDATED && deps.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED !== "1")
+    throw new PrivateHelperError(
+      "not_live_validated",
+      "native-append-plain-text has not passed live validation in this build. Set APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 to run it on a disposable note.",
+      false
+    );
+  return parseOrThrow(
+    appendResultSchema,
+    callPrivateHelper("append_plain_text", request, deps),
+    true
+  );
+}
+function featureFromProbe(feature) {
+  if (!feature) return { available: false, reason: "private_api_unavailable", detail: null };
+  if (feature.available) return { available: true, reason: null, detail: null };
+  const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
+  return {
+    available: false,
+    reason,
+    detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
+  };
+}
+function privateHelperCapabilities(deps = defaultDeps()) {
+  const enabled = privateHelperEnabled(deps.env);
+  const installation = inspectInstallation(deps);
+  const off = (reason, detail) => ({
+    available: false,
+    reason,
+    detail
+  });
+  const both = (status) => ({
+    readNoteState: status,
+    appendPlainText: status
+  });
+  if (installation.reason === "unsupported_platform")
+    return {
+      enabled,
+      installation,
+      probe: null,
+      features: both(off("unsupported_platform", null))
+    };
+  if (!enabled)
+    return {
+      enabled,
+      installation,
+      probe: null,
+      features: both(off("disabled", `Set ${ENABLE_ENV}=1 to opt in to the private helper.`))
+    };
+  if (!installation.ready)
+    return {
+      enabled,
+      installation,
+      probe: null,
+      features: both(off(installation.reason || "helper_not_installed", installation.detail))
+    };
+  let probe;
+  try {
+    probe = probePrivateHelper(deps);
+  } catch (error2) {
+    const detail = error2 instanceof Error ? error2.message : String(error2);
+    return {
+      enabled,
+      installation,
+      probe: null,
+      features: both(off("helper_unreachable", detail))
+    };
+  }
+  const read = featureFromProbe(probe.features.readNoteState);
+  let append = featureFromProbe(probe.features.appendPlainText);
+  if (append.available && !APPEND_LIVE_VALIDATED && deps.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED !== "1")
+    append = off(
+      "not_live_validated",
+      "The private append path has not passed live validation in this build; APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 enables it for testing."
+    );
+  return {
+    enabled,
+    installation,
+    probe,
+    features: { readNoteState: read, appendPlainText: append }
+  };
+}
+
+// src/services/privateHelperBuild.ts
+function defaultBuildDeps() {
+  return {
+    ...defaultDeps(),
+    osVersion: () => {
+      const r = spawnSync4("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" });
+      return r.status === 0 ? r.stdout.trim() : `Darwin ${release2()}`;
+    },
+    now: () => /* @__PURE__ */ new Date()
+  };
+}
+function compileArguments(sourcePath, outputPath, sourceSha) {
+  return [
+    "clang",
+    "-fobjc-arc",
+    "-O2",
+    "-Wall",
+    "-framework",
+    "Foundation",
+    "-framework",
+    "CoreData",
+    "-framework",
+    "AppKit",
+    // Embedded so `hello` can prove which source the binary came from.
+    `-DHELPER_SOURCE_SHA256="${sourceSha}"`,
+    "-o",
+    outputPath,
+    sourcePath
+  ];
+}
+function buildPrivateHelper(checkOnly, deps = defaultBuildDeps()) {
+  const steps = [];
+  const done = (ok) => ({
+    ok,
+    checkOnly,
+    steps,
+    installation: inspectInstallation(deps)
+  });
+  if (checkOnly) {
+    const installation2 = inspectInstallation(deps);
+    steps.push({
+      step: "inspect installed helper",
+      ok: installation2.ready,
+      detail: installation2.ready ? installation2.binaryPath : installation2.detail || void 0
+    });
+    return { ok: installation2.ready, checkOnly, steps, installation: installation2 };
+  }
+  if (deps.platform !== "darwin") {
+    steps.push({ step: "platform", ok: false, detail: "macOS only" });
+    return done(false);
+  }
+  if (!deps.exists(deps.sourcePath)) {
+    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
+    return done(false);
+  }
+  const source = deps.readFile(deps.sourcePath);
+  const sourceSha = sha256Hex(source);
+  steps.push({
+    step: "locate source",
+    ok: true,
+    detail: `${deps.sourcePath} (sha256 ${sourceSha})`
+  });
+  const clang = deps.spawn("/usr/bin/xcrun", ["--find", "clang"], { encoding: "utf8" });
+  if (clang.status !== 0) {
+    steps.push({
+      step: "find compiler",
+      ok: false,
+      detail: "No clang found. Install the Command Line Tools with `xcode-select --install`."
+    });
+    return done(false);
+  }
+  const clangVersion = deps.spawn("/usr/bin/xcrun", ["clang", "--version"], { encoding: "utf8" });
+  const compiler = String(clangVersion.stdout || "").split("\n")[0] || "clang";
+  steps.push({ step: "find compiler", ok: true, detail: compiler });
+  const installDir = helperInstallDir(deps.env);
+  mkdirSync2(installDir, { recursive: true, mode: 448 });
+  const staging = mkdtempSync5(join12(installDir, ".staging-"));
+  try {
+    const stagedBinary = join12(staging, HELPER_BINARY_NAME);
+    const compile = deps.spawn(
+      "/usr/bin/xcrun",
+      compileArguments(deps.sourcePath, stagedBinary, sourceSha),
+      {
+        encoding: "utf8",
+        timeout: 18e4
+      }
+    );
+    if (compile.status !== 0) {
+      steps.push({
+        step: "compile",
+        ok: false,
+        detail: String(compile.stderr || compile.error?.message || "clang failed").slice(0, 4e3)
+      });
+      return done(false);
+    }
+    steps.push({ step: "compile", ok: true });
+    const sign = deps.spawn(
+      "/usr/bin/codesign",
+      ["--force", "--sign", "-", "--identifier", "apple-notes-mcp.private-helper", stagedBinary],
+      { encoding: "utf8" }
+    );
+    if (sign.status !== 0) {
+      steps.push({
+        step: "ad-hoc sign",
+        ok: false,
+        detail: String(sign.stderr || "codesign failed")
+      });
+      return done(false);
+    }
+    steps.push({ step: "ad-hoc sign", ok: true });
+    let hello;
+    try {
+      hello = helloSchema.parse(
+        callPrivateHelper("hello", {}, deps, { allowDisabled: true, binaryPath: stagedBinary })
+      );
+    } catch (error2) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: error2 instanceof Error ? error2.message : String(error2)
+      });
+      return done(false);
+    }
+    if (hello.protocolVersion !== PRIVATE_HELPER_PROTOCOL || hello.sourceSha256 !== sourceSha) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: `helper reported protocol ${hello.protocolVersion}, source ${hello.sourceSha256}`
+      });
+      return done(false);
+    }
+    steps.push({ step: "handshake", ok: true, detail: `protocol ${hello.protocolVersion}` });
+    const manifest = {
+      schemaVersion: 1,
+      protocolVersion: hello.protocolVersion,
+      sourceSha256: sourceSha,
+      binarySha256: sha256Hex(deps.readFile(stagedBinary)),
+      builtAt: deps.now().toISOString(),
+      osVersion: deps.osVersion(),
+      compiler
+    };
+    chmodSync(stagedBinary, 448);
+    renameSync(stagedBinary, join12(installDir, HELPER_BINARY_NAME));
+    writeFileSync4(join12(installDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", {
+      mode: 384
+    });
+    steps.push({ step: "install", ok: true, detail: installDir });
+  } finally {
+    if (existsSync9(staging)) rmSync5(staging, { recursive: true, force: true });
+  }
+  const installation = inspectInstallation(deps);
+  steps.push({
+    step: "verify installation",
+    ok: installation.ready,
+    detail: installation.ready ? void 0 : installation.detail || void 0
+  });
+  return { ok: installation.ready, checkOnly, steps, installation };
+}
+function formatHelperBuild(report) {
+  const lines = ["Apple Notes MCP private helper", ""];
+  for (const step of report.steps)
+    lines.push(`${step.ok ? "\u2713" : "\u2717"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
+  lines.push("");
+  if (report.ok) {
+    lines.push(`Installed at ${report.installation.binaryPath}.`);
+    lines.push(
+      "The helper stays off until you set APPLE_NOTES_MCP_ENABLE_PRIVATE=1 for the MCP server, and it needs the same Full Disk Access grant as the server's database reads."
+    );
+  } else if (report.checkOnly) {
+    lines.push("Run `apple-notes-mcp setup --native-helper` to build it.");
+  } else {
+    lines.push("The helper was not installed. Fix the failed step above and run setup again.");
+  }
+  return lines.join("\n");
+}
+
+// src/tools/privateHelperTools.ts
+var coreDataId = external_exports.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
+var notesUuid = external_exports.string().regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i);
+function resolveIdentifier(manager, args) {
+  if (args.identifier && args.id)
+    throw new PrivateHelperError("invalid_request", "Pass identifier or id, not both");
+  if (args.identifier) return args.identifier;
+  if (!args.id) throw new PrivateHelperError("invalid_request", "identifier or id is required");
+  const link = manager.getNoteLinkById(args.id);
+  const match = link?.match(/identifier=([0-9A-F-]{36})$/i);
+  if (!match)
+    throw new PrivateHelperError(
+      "not_found",
+      "Could not resolve that id to a Notes UUID (needs Full Disk Access); pass identifier instead"
+    );
+  return match[1];
+}
+function errorResult(error2) {
+  const payload = error2 instanceof PrivateHelperError ? {
+    ok: false,
+    code: error2.code,
+    message: error2.message,
+    ...error2.committed !== void 0 ? { committed: error2.committed } : {},
+    ...error2.details
+  } : { ok: false, code: "internal_error", message: String(error2) };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    isError: true
+  };
+}
+function registerPrivateHelperTools(server2, manager, depsFactory = () => defaultDeps()) {
+  function tool(name, description, inputSchema, annotations, handler) {
+    server2.registerTool(
+      name,
+      {
+        description,
+        inputSchema,
+        annotations,
+        outputSchema: external_exports.object({ ok: external_exports.boolean() }).passthrough()
+      },
+      (async (args) => {
+        try {
+          const result = { ok: true, ...handler(args, depsFactory()) };
+          return {
+            content: [{ type: "text", text: JSON.stringify(result) }],
+            structuredContent: result
+          };
+        } catch (error2) {
+          return errorResult(error2);
+        }
+      })
+    );
+  }
+  tool(
+    "native-helper-status",
+    "Use when: checking whether the opt-in native private helper is enabled, built, current, and working on this macOS before calling native-note-state or native-append-plain-text.\nReturns: enabled flag, installation state (path, manifest, stale/modified checks), the live probe (macOS and Notes versions, framework, store access), and per-feature availability with a machine reason.\nDo not use when: checking the Shortcuts bridges (native-tags-status, get-capabilities).\nSafety: read-only. The probe opens the Notes store read-only and only when the helper is enabled and installed.",
+    {},
+    { readOnlyHint: true, openWorldHint: false },
+    (_args, deps) => {
+      const capabilities = privateHelperCapabilities(deps);
+      return {
+        ...capabilities,
+        ...capabilities.installation.ready ? {} : { setupCommand: "apple-notes-mcp setup --native-helper" }
+      };
+    }
+  );
+  tool(
+    "native-note-state",
+    "Use when: you need a note's native revision token before native-append-plain-text, or its native title, modification date, folder identifier, and iCloud upload state.\nReturns: identifier, title, modificationDate, folderIdentifier, lock/trash/shared/editable flags, `revision` (pass it as ifRevision), and cloudSync versions.\nDo not use when: reading note content (get-note-content, get-note-markdown).\nSafety: read-only; the helper opens the store with Core Data's read-only option. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and a built helper.",
+    {
+      identifier: notesUuid.optional().describe("Notes UUID (the notes://showNote identifier)"),
+      id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database")
+    },
+    { readOnlyHint: true, openWorldHint: false },
+    (args, deps) => ({ ...readNoteState(resolveIdentifier(manager, args), deps) })
+  );
+  tool(
+    "native-append-plain-text",
+    'Use when: appending plain text paragraphs to one exact note through Notes\' own data model, with a compare-and-swap guard. This is the private-helper path, distinct from append-native (Shortcuts) and append-to-note (AppleScript HTML rewrite).\nReturns: committed/verified flags, revisionBefore/revisionAfter, the new modification date, and sync state: pushScheduled (always false; the helper cannot upload), pushState, and cloudSync versions.\nDo not use when: the note is locked, shared, trashed, or still downloading, or you need formatting (text is appended as plain body paragraphs).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, a built helper, and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. Verifies by re-reading in a new Core Data stack. A timeout is indeterminate (committed: "unknown"): read native-note-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.',
+    {
+      identifier: notesUuid.optional().describe("Notes UUID"),
+      id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      text: external_exports.string().min(1).max(5e4).describe(
+        "Plain text to append. \\n starts a new paragraph; no \\r or control characters."
+      ),
+      ifRevision: external_exports.string().regex(/^r1:[a-f0-9]{64}$/).describe("The `revision` returned by native-note-state for this note")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    (args, deps) => ({
+      ...appendPlainText(
+        {
+          identifier: resolveIdentifier(manager, args),
+          text: args.text,
+          ifRevision: args.ifRevision
+        },
+        deps
+      )
+    })
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
 var { version: version2 } = require2("../package.json");
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-helper")) {
+  const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatHelperBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
@@ -44487,6 +45186,7 @@ var notesManager = new AppleNotesManager();
 registerDirectOperations(server, notesManager);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
+registerPrivateHelperTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

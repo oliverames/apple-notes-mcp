@@ -1195,6 +1195,63 @@ not changed.
 Retrieves another note's real deep link and appends it with a static label while
 preserving the target note's native objects.
 
+### Private helper (opt-in, unsupported Apple API)
+
+An optional native helper edits notes through Notes' own data model
+(Apple's private NotesShared framework) instead of AppleScript or Shortcuts.
+It is **off by default** and nothing in the rest of the server depends on it.
+Private API can break on any macOS update; see
+[TECHNICAL_NOTES.md](TECHNICAL_NOTES.md#private-helper-notesshared) for the
+API surface, risks, and safety contract.
+
+To use it:
+
+1. Build it on your Mac from the packaged source (needs the Command Line
+   Tools, `xcode-select --install`). No prebuilt binary ships with the package.
+
+   ```bash
+   apple-notes-mcp setup --native-helper          # build, ad-hoc sign, install
+   apple-notes-mcp setup --native-helper --check  # report only
+   ```
+
+2. Set `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` in the server's environment (or in
+   the [config file](#configuration-file-when-the-host-strips-env)).
+3. Give the app that launches the server Full Disk Access, the same grant the
+   database reads already need.
+
+The server checks the helper's recorded source and binary SHA-256 before every
+call and refuses a missing, stale, or modified helper with a machine-readable
+`code`. Rerun setup after upgrading apple-notes-mcp.
+
+#### `native-helper-status`
+
+Reports whether the helper is enabled, built, and current, and runs its live
+probe: macOS and Notes versions, whether NotesShared loads, whether every
+required class, selector, and model property exists, and whether the Notes
+store opens. Each feature reports `available` plus a `reason` code
+(`disabled`, `helper_not_installed`, `helper_stale`, `helper_modified`,
+`private_api_unavailable`, `store_unavailable`, `not_live_validated`, …).
+Read-only.
+
+#### `native-note-state`
+
+Reads one note's native state by Notes UUID (`identifier`) or x-coredata `id`:
+title, modification date, folder identifier, lock/trash/shared/editable
+flags, iCloud version counters, and a `revision` token. Opens the store with
+Core Data's read-only option.
+
+#### `native-append-plain-text`
+
+Appends plain-text paragraphs to one note, guarded by `ifRevision` (the
+`revision` from `native-note-state`). The helper refuses if anything persisted
+changed since, saves once with optimistic locking, and re-reads through a new
+Core Data stack before reporting `verified: true`. It refuses locked, shared,
+trashed, folderless, and still-downloading notes. The response reports
+`pushScheduled: false` and a `pushState`: the helper cannot upload to iCloud
+itself. A timeout returns `committed: "unknown"`; read the note state before
+retrying. Until this path passes live validation in a release it also requires
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+
 ## Usage Patterns
 
 ### Basic Workflow
@@ -1334,6 +1391,10 @@ All configuration is optional — the server works out of the box. Override beha
 | `APPLE_NOTES_MCP_EXPORT_MAX_BYTES` | `8388608` (8 MB) | Largest response `export-notes-json` sends; a page closes early to stay under it. The default sits below the 10 MB per-message limit of MCP SDK stdio clients, which drop the connection on anything larger. Raise it only if your MCP client accepts bigger messages. |
 | `APPLE_NOTES_MCP_MAX_RETRIES` | `2` | Maximum attempts for a read-only AppleScript call that fails with a **transient** error (Notes.app busy / not responding / lost connection). `2` means one retry; set `1` to fail fast with no retries. Retries share the single `APPLE_NOTES_MCP_TIMEOUT_MS` budget rather than each getting a fresh one, and a retry is skipped when under a second of that budget remains — so this is a ceiling, not a guarantee. In particular a call that exhausts the budget with a **timeout** has no time left to retry by construction. Mutating operations run once because a timeout can occur after Notes.app applied the change. Non-transient errors (e.g. "note not found") never retry. |
 | `APPLE_NOTES_MCP_RETRY_DELAY_MS` | `1000` (1 s) | Base delay before the first retry; subsequent retries back off exponentially (1s, 2s, 4s, ...). |
+| `APPLE_NOTES_MCP_ENABLE_PRIVATE` | unset | Set to `1` to allow the opt-in [private helper](#private-helper-opt-in-unsupported-apple-api). Any other value keeps it off. |
+| `APPLE_NOTES_MCP_PRIVATE_HELPER_DIR` | `~/Library/Application Support/apple-notes-mcp/private-helper` | Where `setup --native-helper` installs the helper and its checksum manifest. |
+| `APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS` | `20000` (20 s) | Per-call helper timeout. A timed-out write is indeterminate. |
+| `APPLE_NOTES_MCP_PRIVATE_STORE` | unset | Testing only: points the helper at a **copy** of `NoteStore.sqlite`. The helper refuses a path that resolves to the live store. |
 | `DEBUG` / `VERBOSE` | unset | Set either to enable verbose diagnostic logging to stderr. |
 
 ### Configuration file (when the host strips `env`)
