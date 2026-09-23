@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants5);
+          this.rhs = optimizeExpr(this.rhs, names, constants6);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants5);
+        this.rhs = optimizeExpr(this.rhs, names, constants6);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants5) {
-        this.code = optimizeExpr(this.code, names, constants5);
+      optimizeNames(names, constants6) {
+        this.code = optimizeExpr(this.code, names, constants6);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants5))
+          if (n.optimizeNames(names, constants6))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
-        if (!(super.optimizeNames(names, constants5) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants6);
+        if (!(super.optimizeNames(names, constants6) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants5);
+        this.condition = optimizeExpr(this.condition, names, constants6);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants5) {
-        if (!super.optimizeNames(names, constants5))
+      optimizeNames(names, constants6) {
+        if (!super.optimizeNames(names, constants6))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants5);
+        this.iteration = optimizeExpr(this.iteration, names, constants6);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants5) {
-        if (!super.optimizeNames(names, constants5))
+      optimizeNames(names, constants6) {
+        if (!super.optimizeNames(names, constants6))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants5);
+        this.iterable = optimizeExpr(this.iterable, names, constants6);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants5) {
+      optimizeNames(names, constants6) {
         var _a, _b;
-        super.optimizeNames(names, constants5);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants5);
+        super.optimizeNames(names, constants6);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants6);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants6);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants5) {
+    function optimizeExpr(expr, names, constants6) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants5[n.str];
+        const c = constants6[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants5[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants6[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -2991,7 +2991,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve4.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3018,7 +3018,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve4(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3843,7 +3843,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve4(baseURI, relativeURI, options) {
+    function resolve5(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3876,49 +3876,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative3, options, skipNormalization) {
+    function resolveComponent(base, relative4, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize(base, options), options);
-        relative3 = parse3(serialize(relative3, options), options);
+        relative4 = parse3(serialize(relative4, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative3.scheme) {
-        target.scheme = relative3.scheme;
-        target.userinfo = relative3.userinfo;
-        target.host = relative3.host;
-        target.port = relative3.port;
-        target.path = removeDotSegments(relative3.path || "");
-        target.query = relative3.query;
+      if (!options.tolerant && relative4.scheme) {
+        target.scheme = relative4.scheme;
+        target.userinfo = relative4.userinfo;
+        target.host = relative4.host;
+        target.port = relative4.port;
+        target.path = removeDotSegments(relative4.path || "");
+        target.query = relative4.query;
       } else {
-        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
-          target.userinfo = relative3.userinfo;
-          target.host = relative3.host;
-          target.port = relative3.port;
-          target.path = removeDotSegments(relative3.path || "");
-          target.query = relative3.query;
+        if (relative4.userinfo !== void 0 || relative4.host !== void 0 || relative4.port !== void 0) {
+          target.userinfo = relative4.userinfo;
+          target.host = relative4.host;
+          target.port = relative4.port;
+          target.path = removeDotSegments(relative4.path || "");
+          target.query = relative4.query;
         } else {
-          if (!relative3.path) {
+          if (!relative4.path) {
             target.path = base.path;
-            if (relative3.query !== void 0) {
-              target.query = relative3.query;
+            if (relative4.query !== void 0) {
+              target.query = relative4.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative3.path[0] === "/") {
-              target.path = removeDotSegments(relative3.path);
+            if (relative4.path[0] === "/") {
+              target.path = removeDotSegments(relative4.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative3.path;
+                target.path = "/" + relative4.path;
               } else if (!base.path) {
-                target.path = relative3.path;
+                target.path = relative4.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative4.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative3.query;
+            target.query = relative4.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3926,7 +3926,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative3.fragment;
+      target.fragment = relative4.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4205,7 +4205,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve4,
+      resolve: resolve5,
       resolveComponent,
       equal,
       serialize,
@@ -4620,7 +4620,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text, msg) => text + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants5 = {
+    var constants6 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants5) {
-      v = { value: constants5[c] };
+    for (c in constants6) {
+      v = { value: constants6[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -9621,8 +9621,8 @@ var require_select = __commonJS({
       // Non-standard, for compatibility purposes.
       ":contains": function(param) {
         return function(el) {
-          var text = el.innerText || el.textContent || el.value || "";
-          return text.indexOf(param) !== -1;
+          var text2 = el.innerText || el.textContent || el.value || "";
+          return text2.indexOf(param) !== -1;
         };
       },
       ":has": function(param) {
@@ -10289,9 +10289,9 @@ var require_Element = __commonJS({
         position = utils.toASCIILowerCase(String(position));
         this._insertAdjacent(position, textNode);
       } },
-      insertAdjacentHTML: { value: function insertAdjacentHTML(position, text) {
+      insertAdjacentHTML: { value: function insertAdjacentHTML(position, text2) {
         position = utils.toASCIILowerCase(String(position));
-        text = String(text);
+        text2 = String(text2);
         var context;
         switch (position) {
           case "beforebegin":
@@ -10315,7 +10315,7 @@ var require_Element = __commonJS({
           this.ownerDocument._address,
           context
         );
-        parser.parse(text, true);
+        parser.parse(text2, true);
         this._insertAdjacent(position, parser._asDocumentFragment());
       } },
       children: { get: function() {
@@ -12184,9 +12184,9 @@ var require_URL = __commonJS({
       },
       // See: http://tools.ietf.org/html/rfc3986#section-5.2
       // and https://url.spec.whatwg.org/#constructors
-      resolve: function(relative3) {
+      resolve: function(relative4) {
         var base = this;
-        var r = new URL2(relative3);
+        var r = new URL2(relative4);
         var t = new URL2();
         if (r.scheme !== void 0) {
           t.scheme = r.scheme;
@@ -12434,9 +12434,9 @@ var require_CSSStyleDeclaration = __commonJS({
       // Note that the styles don't get parsed until they're actually needed
       _parsed: { get: function() {
         if (!this._parsedStyles || this.cssText !== this._lastParsedText) {
-          var text = this.cssText;
-          this._parsedStyles = parseStyles(text);
-          this._lastParsedText = text;
+          var text2 = this.cssText;
+          this._parsedStyles = parseStyles(text2);
+          this._lastParsedText = text2;
           delete this._names;
         }
         return this._parsedStyles;
@@ -23907,7 +23907,7 @@ var require_turndown_cjs = __commonJS({
       });
     }
     var markdownEscapes = [[/\\/g, "\\\\"], [/\*/g, "\\*"], [/^-/g, "\\-"], [/^\+ /g, "\\+ "], [/^(=+)/g, "\\$1"], [/^(#{1,6}) /g, "\\$1 "], [/`/g, "\\`"], [/^~~~/g, "\\~~~"], [/\[/g, "\\["], [/\]/g, "\\]"], [/^>/g, "\\>"], [/_/g, "\\_"], [/^(\d+)\. /g, "$1\\. "]];
-    function escapeMarkdown(string3) {
+    function escapeMarkdown2(string3) {
       return markdownEscapes.reduce(function(accumulator, escape3) {
         return accumulator.replace(escape3[0], escape3[1]);
       }, string3);
@@ -24087,7 +24087,7 @@ var require_turndown_cjs = __commonJS({
     rules.image = {
       filter: "img",
       replacement: function(content, node) {
-        var alt = escapeMarkdown(cleanAttribute(node.getAttribute("alt")));
+        var alt = escapeMarkdown2(cleanAttribute(node.getAttribute("alt")));
         var src = escapeLinkDestination(node.getAttribute("src") || "");
         var title = cleanAttribute(node.getAttribute("title"));
         var titlePart = title ? ' "' + escapeLinkTitle(title) + '"' : "";
@@ -24181,15 +24181,15 @@ var require_turndown_cjs = __commonJS({
       var node = next(prev, element, isPre);
       while (node !== element) {
         if (node.nodeType === 3 || node.nodeType === 4) {
-          var text = node.data.replace(/[ \r\n\t]+/g, " ");
-          if ((!prevText || / $/.test(prevText.data)) && !keepLeadingWs && text[0] === " ") {
-            text = text.substr(1);
+          var text2 = node.data.replace(/[ \r\n\t]+/g, " ");
+          if ((!prevText || / $/.test(prevText.data)) && !keepLeadingWs && text2[0] === " ") {
+            text2 = text2.substr(1);
           }
-          if (!text) {
+          if (!text2) {
             node = remove(node);
             continue;
           }
-          node.data = text;
+          node.data = text2;
           prevText = node;
         } else if (node.nodeType === 1) {
           if (isBlock2(node) || node.nodeName === "BR") {
@@ -24452,7 +24452,7 @@ var require_turndown_cjs = __commonJS({
        * @type String
        */
       escape: function(string3) {
-        return escapeMarkdown(string3);
+        return escapeMarkdown2(string3);
       }
     };
     function process3(parentNode) {
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join19(output, replacement);
+        return join21(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join19(output, rule.append(self.options));
+          output = join21(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join19(output, replacement) {
+    function join21(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -36608,7 +36608,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
+        await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -36625,7 +36625,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -36703,7 +36703,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve4(parseResult.data);
+            resolve5(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -36964,12 +36964,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve4, interval);
+      const timeoutId = setTimeout(resolve5, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38282,7 +38282,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
+      await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -38970,12 +38970,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve4) => {
+    return new Promise((resolve5) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve4();
+        resolve5();
       } else {
-        this._stdout.once("drain", resolve4);
+        this._stdout.once("drain", resolve5);
       }
     });
   }
@@ -39418,12 +39418,12 @@ function fixed32Float(field) {
 }
 
 // src/utils/checklistRuns.ts
-function checklistRunLineStart(text, position, length) {
+function checklistRunLineStart(text2, position, length) {
   const end = position + length;
   let anchor = position;
-  while (anchor < end && text[anchor] === "\n") anchor++;
+  while (anchor < end && text2[anchor] === "\n") anchor++;
   if (anchor === end) anchor = position;
-  return anchor === 0 ? 0 : text.lastIndexOf("\n", anchor - 1) + 1;
+  return anchor === 0 ? 0 : text2.lastIndexOf("\n", anchor - 1) + 1;
 }
 
 // src/utils/checklistParser.ts
@@ -39625,8 +39625,8 @@ import { join as join2 } from "node:path";
 import { gunzipSync as gunzipSync2 } from "node:zlib";
 var dbPath = join2(homedir2(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
 var safeUrl = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
-var escapeAttribute = (text) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-var normalized = (text) => text.replace(/[\s\ufffc]/gu, "");
+var escapeAttribute = (text2) => text2.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+var normalized = (text2) => text2.replace(/[\s\ufffc]/gu, "");
 function styleValue(field) {
   if (!(field.value instanceof Uint8Array)) return field.value;
   if (field.fieldNumber === 2) {
@@ -39659,8 +39659,8 @@ function parseRichNote(data, nativeTags = []) {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
   const body = wrapper && embeddedMessage(getField(wrapper, 3));
-  const text = body && stringValue(getField(body, 2));
-  if (!body || text === void 0) throw new Error("Unsupported Notes document structure");
+  const text2 = body && stringValue(getField(body, 2));
+  if (!body || text2 === void 0) throw new Error("Unsupported Notes document structure");
   const links = [];
   const nativeObjectIds = [];
   const objects = [];
@@ -39673,7 +39673,7 @@ function parseRichNote(data, nativeTags = []) {
     const fields = embeddedMessage(run);
     if (!fields) throw new Error("Invalid Notes attribute run");
     const length = varintValue(getField(fields, 1));
-    if (length === void 0 || length < 0 || position + length > text.length)
+    if (length === void 0 || length < 0 || position + length > text2.length)
       throw new Error("Invalid Notes run length");
     const paragraph = embeddedMessage(getField(fields, 2));
     styleRuns.push({
@@ -39692,9 +39692,9 @@ function parseRichNote(data, nativeTags = []) {
       const previous = links.at(-1);
       if (previous?.url === url && previous.start + previous.length === position) {
         previous.length += length;
-        previous.text += text.slice(position, position + length);
+        previous.text += text2.slice(position, position + length);
       } else
-        links.push({ start: position, length, text: text.slice(position, position + length), url });
+        links.push({ start: position, length, text: text2.slice(position, position + length), url });
     }
     hasNativeObjects ||= Boolean(getField(fields, 12));
     const attachment = embeddedMessage(getField(fields, 12));
@@ -39712,23 +39712,23 @@ function parseRichNote(data, nativeTags = []) {
       const checklist = embeddedMessage(getField(paragraph, 5));
       const rawId = checklist && getField(checklist, 1)?.value;
       const itemId = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : "";
-      const start = checklistRunLineStart(text, position, length);
+      const start = checklistRunLineStart(text2, position, length);
       if (itemId && !checklistItems.some((item) => item.id === itemId))
         checklistItems.push({
           id: itemId,
           start,
-          text: text.slice(
+          text: text2.slice(
             start,
-            text.indexOf("\n", start) === -1 ? text.length : text.indexOf("\n", start)
+            text2.indexOf("\n", start) === -1 ? text2.length : text2.indexOf("\n", start)
           ),
           done: checklist ? varintValue(getField(checklist, 2)) === 1 : false
         });
     }
     position += length;
   }
-  if (position !== text.length) throw new Error("Incomplete Notes attribute runs");
+  if (position !== text2.length) throw new Error("Incomplete Notes attribute runs");
   return {
-    text,
+    text: text2,
     links,
     nativeTags: hasNativeObjects ? nativeTags : [],
     nativeObjectIds,
@@ -40014,8 +40014,8 @@ function parseAudioRecording(data) {
   const registerNoteText = (id2) => {
     const target = registerTarget(id2);
     const note = target && sub(target, 10);
-    const text = note && stringValue(getField(note, 2));
-    return text?.replace(/\n+$/u, "") || void 0;
+    const text2 = note && stringValue(getField(note, 2));
+    return text2?.replace(/\n+$/u, "") || void 0;
   };
   const recordings = entries2.map((e) => customMap(e)).filter((m) => m?.type === "com.apple.notes.ICTTAudioRecording");
   if (recordings.length !== 1) throw new Error("Expected exactly one audio recording object");
@@ -40054,13 +40054,13 @@ function parseAudioRecording(data) {
           const segment = customMap(entry(segmentIndex));
           if (segment?.type !== "com.apple.notes.ICTTTranscriptSegment")
             throw new Error("Unexpected segment type");
-          const text = registerPrimitive(segment.values.get("text"));
-          if (typeof text !== "string") throw new Error("Segment without text");
+          const text2 = registerPrimitive(segment.values.get("text"));
+          if (typeof text2 !== "string") throw new Error("Segment without text");
           const start = registerPrimitive(segment.values.get("timestamp"));
           const duration3 = registerPrimitive(segment.values.get("duration"));
           const speaker = registerPrimitive(segment.values.get("speaker"));
           segments.push({
-            text,
+            text: text2,
             ...typeof start === "number" ? { start } : {},
             ...typeof duration3 === "number" ? { duration: duration3 } : {},
             ...typeof speaker === "string" && speaker ? { speaker } : {}
@@ -40080,10 +40080,10 @@ function parseAudioRecording(data) {
 }
 function joinSegments(segments) {
   let out = "";
-  for (const { text } of segments) {
-    if (!text) continue;
-    const glue = !out || /\s$/u.test(out) || /^\s/u.test(text) || /^[.,!?;:%)\]}…'’]/u.test(text) ? "" : " ";
-    out += glue + text;
+  for (const { text: text2 } of segments) {
+    if (!text2) continue;
+    const glue = !out || /\s$/u.test(out) || /^\s/u.test(text2) || /^[.,!?;:%)\]}…'’]/u.test(text2) ? "" : " ";
+    out += glue + text2;
   }
   return out.trim();
 }
@@ -40217,14 +40217,14 @@ function describeRow(row, store, options, maxSegments) {
   const all = recording.fragments.flatMap(
     (fragment, i) => fragment.segments.map((s) => multi ? { ...s, fragment: i } : s)
   );
-  const text = recording.fragments.map((f) => joinSegments(f.segments)).filter(Boolean).join("\n\n");
+  const text2 = recording.fragments.map((f) => joinSegments(f.segments)).filter(Boolean).join("\n\n");
   const speakers = [...new Set(all.flatMap((s) => s.speaker ? [s.speaker] : []))];
   return {
     ...base,
     status: all.length ? "ok" : "none",
     fragmentCount: recording.fragments.length,
     wordCount: all.length,
-    ...text ? { text } : {},
+    ...text2 ? { text: text2 } : {},
     ...speakers.length ? { speakers } : {},
     ...recording.summary ? { summary: recording.summary } : {},
     ...recording.topLineSummary ? { topLineSummary: recording.topLineSummary } : {},
@@ -40378,18 +40378,18 @@ function decodeTable(compressed, strict) {
       const ri = rows.map.get(uuidIndex(num(sub2(row, 1), 6)));
       if (ri === void 0 || ci === void 0) continue;
       const note = sub2(entry(num(sub2(row, 2), 6)), 10);
-      const text = stringValue(getField(note, 2));
-      if (text === void 0 || text.includes("\uFFFC")) {
+      const text2 = stringValue(getField(note, 2));
+      if (text2 === void 0 || text2.includes("\uFFFC")) {
         if (strict) throw new Error("Embedded or unsupported table cell");
         values[ri][ci] = null;
         incomplete.push({
           ri,
           ci,
-          reason: text === void 0 ? "Cell text is missing" : "Cell contains an embedded object"
+          reason: text2 === void 0 ? "Cell text is missing" : "Cell contains an embedded object"
         });
         continue;
       }
-      values[ri][ci] = text.replace(/\n$/u, "");
+      values[ri][ci] = text2.replace(/\n$/u, "");
     }
   }
   const rtl = entries2.some((e) => {
@@ -40409,8 +40409,8 @@ function decodeTable(compressed, strict) {
 
 // src/utils/tableMarkdown.ts
 var UNDECODED_CELL_MARKER = "[undecoded cell]";
-function escapeMarkdownTableCell(text) {
-  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n|[\r\n\u2028\u2029]/g, "<br>");
+function escapeMarkdownTableCell(text2) {
+  return text2.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n|[\r\n\u2028\u2029]/g, "<br>");
 }
 function renderMarkdownTable(rows) {
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
@@ -40550,8 +40550,8 @@ var Decoder = class {
   }
   /** Mark a positively described leaf as an Exclude rule. */
   negate(filter) {
-    const text = filter.description;
-    const negated = text.startsWith("has ") ? text.replace(/^has /, "does not have ") : text.startsWith("is ") ? text.replace(/^is /, "is not ") : text.startsWith("mentions ") ? text.replace(/^mentions /, "does not mention ") : `not ${text}`;
+    const text2 = filter.description;
+    const negated = text2.startsWith("has ") ? text2.replace(/^has /, "does not have ") : text2.startsWith("is ") ? text2.replace(/^is /, "is not ") : text2.startsWith("mentions ") ? text2.replace(/^mentions /, "does not mention ") : `not ${text2}`;
     return { ...filter, excluded: true, description: negated };
   }
   clause(clause, excluded, depth) {
@@ -42003,11 +42003,11 @@ function fitExportNoteToBudget(note, maxBytes) {
 function executeMutationAppleScript(script) {
   return executeAppleScript(script, { maxRetries: 1 });
 }
-function escapeForAppleScript(text) {
-  if (!text) {
+function escapeForAppleScript(text2) {
+  if (!text2) {
     return "";
   }
-  let escaped = text.replace(/&/g, "&amp;");
+  let escaped = text2.replace(/&/g, "&amp;");
   escaped = escaped.replace(/\\/g, "&#92;");
   escaped = escaped.replace(/"/g, '\\"');
   escaped = escaped.replace(/\n/g, "<br>");
@@ -42020,9 +42020,9 @@ function escapeHtmlForAppleScript(htmlContent) {
   }
   return htmlContent.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
-function escapePlainStringForAppleScript(text) {
-  if (!text) return "";
-  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function escapePlainStringForAppleScript(text2) {
+  if (!text2) return "";
+  return text2.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 var MAX_TITLE_LENGTH = 2e3;
 var MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
@@ -44319,13 +44319,13 @@ var AppleNotesManager = class {
    * Simple HTML to plaintext conversion for export.
    */
   htmlToPlaintext(html) {
-    let text = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/p>/gi, "\n");
+    let text2 = html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/div>/gi, "\n").replace(/<\/p>/gi, "\n");
     let prev;
     do {
-      prev = text;
-      text = text.replace(/<[^>]*>/g, "");
-    } while (text !== prev);
-    return text.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#92;/g, "\\").replace(/&amp;/g, "&").replace(/\n{3,}/g, "\n\n").trim();
+      prev = text2;
+      text2 = text2.replace(/<[^>]*>/g, "");
+    } while (text2 !== prev);
+    return text2.replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#92;/g, "\\").replace(/&amp;/g, "&").replace(/\n{3,}/g, "\n\n").trim();
   }
   /**
    * Exports notes as a JSON structure for backup/migration, one page at a time.
@@ -44501,11 +44501,11 @@ var AppleNotesManager = class {
     const enriched = lines.map((line) => {
       const listMatch = line.match(/^(\s*[-*])\s+(.+)$/);
       if (!listMatch) return line;
-      const [, prefix, text] = listMatch;
-      const done = checklistMap.get(text.trim());
+      const [, prefix, text2] = listMatch;
+      const done = checklistMap.get(text2.trim());
       if (done === void 0) return line;
-      checklistMap.delete(text.trim());
-      return `${prefix} ${done ? "[x]" : "[ ]"} ${text}`;
+      checklistMap.delete(text2.trim());
+      return `${prefix} ${done ? "[x]" : "[ ]"} ${text2}`;
     });
     return enriched.join("\n");
   }
@@ -45095,7 +45095,7 @@ function buildTagInventorySql(columns, scoped) {
     "COMMIT;"
   ].join(" ");
 }
-var bareTag = (text) => text.replace(/^#/, "").trim();
+var bareTag = (text2) => text2.replace(/^#/, "").trim();
 function referencedObjects(hex3) {
   if (!hex3 || !/^[0-9a-f]+$/i.test(hex3)) return null;
   try {
@@ -45133,11 +45133,11 @@ function assembleInventory(rows, accounts, scope2) {
   const bodies = /* @__PURE__ */ new Map();
   for (const row of rows) if (row.k === "body") bodies.set(row.note, referencedObjects(row.data));
   const groups = /* @__PURE__ */ new Map();
-  const group = (text, weight) => {
-    const key = text.toLocaleLowerCase();
+  const group = (text2, weight) => {
+    const key = text2.toLocaleLowerCase();
     let found = groups.get(key);
     if (!found) groups.set(key, found = { spellings: /* @__PURE__ */ new Map(), notes: /* @__PURE__ */ new Map() });
-    found.spellings.set(text, (found.spellings.get(text) ?? 0) + weight);
+    found.spellings.set(text2, (found.spellings.get(text2) ?? 0) + weight);
     return found;
   };
   const unverified = /* @__PURE__ */ new Set();
@@ -45163,7 +45163,7 @@ function assembleInventory(rows, accounts, scope2) {
       noteCount: entry.notes.size,
       accounts: perAccount
     };
-    if (spellings.length > 1) result.spellings = spellings.slice(1).map(([text]) => text);
+    if (spellings.length > 1) result.spellings = spellings.slice(1).map(([text2]) => text2);
     return result;
   });
   inventory.sort((a, b) => b.noteCount - a.noteCount || a.tag.localeCompare(b.tag));
@@ -45431,10 +45431,10 @@ function htmlToText(html) {
 var HASHTAG_RE = new RegExp("(?<![\\p{L}\\p{N}_])#([\\p{L}\\p{N}_]*\\p{L}[\\p{L}\\p{N}_]*)", "gu");
 function parseHashtags(body) {
   if (!body) return [];
-  const text = htmlToText(body);
+  const text2 = htmlToText(body);
   const seen = /* @__PURE__ */ new Set();
   const result = [];
-  for (const match of text.matchAll(HASHTAG_RE)) {
+  for (const match of text2.matchAll(HASHTAG_RE)) {
     const tag = match[1];
     const key = tag.toLowerCase();
     if (!seen.has(key)) {
@@ -45450,7 +45450,7 @@ var BLOCK_END_RE = /<\/(?:div|h[1-6]|p|li)>/gi;
 var BREAK_RE = /<br\s*\/?\s*>/gi;
 var TAG_RE = /<[^>]*>/g;
 var NON_RENDERED_BLOCK_RE = /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi;
-function decodeHtmlEntities(text) {
+function decodeHtmlEntities(text2) {
   const decodeCodePoint = (match, value, radix) => {
     const codePoint = Number.parseInt(value, radix);
     if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 1114111 || codePoint >= 55296 && codePoint <= 57343) {
@@ -45458,21 +45458,21 @@ function decodeHtmlEntities(text) {
     }
     return String.fromCodePoint(codePoint);
   };
-  return text.replace(/&#x([0-9a-f]+);?/gi, (match, hex3) => decodeCodePoint(match, hex3, 16)).replace(/&#([0-9]+);?/g, (match, decimal) => decodeCodePoint(match, decimal, 10)).replace(/&nbsp(?:;|(?![0-9a-z]))/gi, " ").replace(/&quot(?:;|(?![0-9a-z]))/gi, '"').replace(/&apos(?:;|(?![0-9a-z]))/gi, "'").replace(/&lt(?:;|(?![0-9a-z]))/gi, "<").replace(/&gt(?:;|(?![0-9a-z]))/gi, ">").replace(/&amp(?:;|(?![0-9a-z]))/gi, "&");
+  return text2.replace(/&#x([0-9a-f]+);?/gi, (match, hex3) => decodeCodePoint(match, hex3, 16)).replace(/&#([0-9]+);?/g, (match, decimal) => decodeCodePoint(match, decimal, 10)).replace(/&nbsp(?:;|(?![0-9a-z]))/gi, " ").replace(/&quot(?:;|(?![0-9a-z]))/gi, '"').replace(/&apos(?:;|(?![0-9a-z]))/gi, "'").replace(/&lt(?:;|(?![0-9a-z]))/gi, "<").replace(/&gt(?:;|(?![0-9a-z]))/gi, ">").replace(/&amp(?:;|(?![0-9a-z]))/gi, "&");
 }
 function firstVisibleHtmlLine(html) {
-  let text = html;
+  let text2 = html;
   let previous;
   do {
-    previous = text;
-    text = text.replace(NON_RENDERED_BLOCK_RE, "");
-  } while (text !== previous);
-  text = text.replace(BREAK_RE, "\n").replace(BLOCK_END_RE, "\n");
+    previous = text2;
+    text2 = text2.replace(NON_RENDERED_BLOCK_RE, "");
+  } while (text2 !== previous);
+  text2 = text2.replace(BREAK_RE, "\n").replace(BLOCK_END_RE, "\n");
   do {
-    previous = text;
-    text = text.replace(TAG_RE, "");
-  } while (text !== previous);
-  return decodeHtmlEntities(text).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
+    previous = text2;
+    text2 = text2.replace(TAG_RE, "");
+  } while (text2 !== previous);
+  return decodeHtmlEntities(text2).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
 }
 function resolveUpdateResponseTitle(currentTitle, newTitle, format, newContent) {
   if (format === "html") return firstVisibleHtmlLine(newContent) ?? currentTitle;
@@ -45637,15 +45637,15 @@ function splitComparison(value) {
   const match = COMPARE_RE.exec(value);
   return [match[1] ?? "=", match[2]];
 }
-function parseLocalDate(text, pos) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+function parseLocalDate(text2, pos) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text2);
   if (!match) {
-    throw new NoteQueryError(`Expected a date as YYYY-MM-DD, got "${text}"`, pos);
+    throw new NoteQueryError(`Expected a date as YYYY-MM-DD, got "${text2}"`, pos);
   }
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
   const start = new Date(year, month - 1, day);
   if (start.getFullYear() !== year || start.getMonth() !== month - 1 || start.getDate() !== day) {
-    throw new NoteQueryError(`"${text}" is not a valid calendar date`, pos);
+    throw new NoteQueryError(`"${text2}" is not a valid calendar date`, pos);
   }
   return { start: start.getTime(), end: new Date(year, month - 1, day + 1).getTime() };
 }
@@ -45819,8 +45819,8 @@ var Parser = class {
 function parseNoteQuery(input) {
   return new Parser(tokenize(input), input.length).parse();
 }
-function normalizeForMatch(text) {
-  return text.normalize("NFC").replace(/[\ufffc\u00a0]/gu, " ").toLowerCase();
+function normalizeForMatch(text2) {
+  return text2.normalize("NFC").replace(/[\ufffc\u00a0]/gu, " ").toLowerCase();
 }
 function needsContent(node) {
   switch (node.type) {
@@ -45999,8 +45999,8 @@ var CHECKLIST_STYLE = 103;
 function decodeNoteBody(data) {
   const wrapper = embeddedMessage(getField(decodeMessage(data), 2));
   const body = wrapper && embeddedMessage(getField(wrapper, 3));
-  const text = body && stringValue(getField(body, 2));
-  if (!body || text === void 0) return null;
+  const text2 = body && stringValue(getField(body, 2));
+  if (!body || text2 === void 0) return null;
   const facets = /* @__PURE__ */ new Set();
   const objectIds = /* @__PURE__ */ new Set();
   const checklist = /* @__PURE__ */ new Map();
@@ -46021,7 +46021,7 @@ function decodeNoteBody(data) {
     if (paragraph && varintValue(getField(paragraph, 1)) === CHECKLIST_STYLE) {
       const item = embeddedMessage(getField(paragraph, 5));
       const rawId = item && getField(item, 1)?.value;
-      const key = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : `line:${text.lastIndexOf("\n", position - 1) + 1}`;
+      const key = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : `line:${text2.lastIndexOf("\n", position - 1) + 1}`;
       checklist.set(key, (item && varintValue(getField(item, 2))) === 1);
     }
     position += length;
@@ -46029,15 +46029,15 @@ function decodeNoteBody(data) {
   if (checklist.size > 0) facets.add("checklist");
   const done = [...checklist.values()].filter(Boolean).length;
   return {
-    text,
+    text: text2,
     facets,
     checklist: { total: checklist.size, open: checklist.size - done },
     objectIds
   };
 }
-function countWords(text) {
+function countWords(text2) {
   let count = 0;
-  for (const word of text.replace(/\ufffc/gu, " ").split(/\s+/u)) {
+  for (const word of text2.replace(/\ufffc/gu, " ").split(/\s+/u)) {
     if (/[\p{L}\p{N}]/u.test(word)) count++;
   }
   return count;
@@ -46109,13 +46109,13 @@ var escapeSegment = escapeFolderName;
 function resolveFolders(rows) {
   const byPk = new Map(rows.map((row) => [row.pk, row]));
   const resolved = /* @__PURE__ */ new Map();
-  const resolve4 = (pk, seen) => {
+  const resolve5 = (pk, seen) => {
     const cached2 = resolved.get(pk);
     if (cached2) return cached2;
     const row = byPk.get(pk);
     if (!row || seen.has(pk)) return void 0;
     seen.add(pk);
-    const parent = row.parent !== null ? resolve4(row.parent, seen) : void 0;
+    const parent = row.parent !== null ? resolve5(row.parent, seen) : void 0;
     const name = row.name ?? "";
     const path8 = parent ? `${parent.path}/${escapeSegment(name)}` : escapeSegment(name);
     const plainPath = parent ? `${parent.plainPath}/${name}` : name;
@@ -46129,12 +46129,12 @@ function resolveFolders(rows) {
     resolved.set(pk, info);
     return info;
   };
-  for (const row of rows) resolve4(row.pk, /* @__PURE__ */ new Set());
+  for (const row of rows) resolve5(row.pk, /* @__PURE__ */ new Set());
   return resolved;
 }
 var coreDataMs = (seconds) => seconds === null || !Number.isFinite(seconds) ? void 0 : CORE_DATA_EPOCH_MS2 + seconds * 1e3;
-function buildSnippet(text, terms) {
-  const clean = text.replace(/\ufffc/gu, " ");
+function buildSnippet(text2, terms) {
+  const clean = text2.replace(/\ufffc/gu, " ");
   const firstBreak = clean.indexOf("\n");
   const body = firstBreak === -1 ? clean : clean.slice(firstBreak + 1);
   const lower = normalizeForMatch(body);
@@ -46237,8 +46237,8 @@ function queryNotes(expression, options = {}) {
         if (content !== void 0) return content;
         const body2 = decode2();
         if (!body2) return content = null;
-        const text = body2.text;
-        const firstBreak = text.indexOf("\n");
+        const text2 = body2.text;
+        const firstBreak = text2.indexOf("\n");
         const tags = /* @__PURE__ */ new Set();
         for (const [id2, alt] of row.tags ?? []) {
           if (id2 && alt && body2.objectIds.has(id2))
@@ -46247,9 +46247,9 @@ function queryNotes(expression, options = {}) {
         const facets = new Set(body2.facets);
         if (tags.size) facets.add("tag");
         content = {
-          textLower: normalizeForMatch(text),
-          bodyLower: normalizeForMatch(firstBreak === -1 ? "" : text.slice(firstBreak + 1)),
-          words: countWords(text),
+          textLower: normalizeForMatch(text2),
+          bodyLower: normalizeForMatch(firstBreak === -1 ? "" : text2.slice(firstBreak + 1)),
+          words: countWords(text2),
           facets,
           checklist: body2.checklist,
           tags: [...tags]
@@ -46347,12 +46347,12 @@ function addNativeTags(request, deps) {
   }
   const after = deps.read(request.id);
   const allTags = [.../* @__PURE__ */ new Set([...before.rich.nativeTags, ...tags])];
-  const textWithoutTags = (text) => {
+  const textWithoutTags = (text2) => {
     for (const tag of [...allTags].sort((a, b) => b.length - a.length)) {
       const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      text = text.replace(new RegExp(`#${escaped}(?![\\p{L}\\p{N}_-])`, "gu"), "");
+      text2 = text2.replace(new RegExp(`#${escaped}(?![\\p{L}\\p{N}_-])`, "gu"), "");
     }
-    return text.replace(/[\s\ufffc]/gu, "");
+    return text2.replace(/[\s\ufffc]/gu, "");
   };
   if (after.title !== before.title || allTags.some((tag) => !after.rich.nativeTags.includes(tag)) || textWithoutTags(before.rich.text) !== textWithoutTags(after.rich.text) || linkSignature(before.rich.links) !== linkSignature(after.rich.links) || before.rich.nativeObjectIds.some((id2) => !after.rich.nativeObjectIds.includes(id2)) || before.rich.hasChecklist !== after.rich.hasChecklist) {
     throw new Error(
@@ -46473,9 +46473,9 @@ function renderMarkdown(markdown, options = {}) {
     dividers: 0,
     highlights: []
   };
-  const inline = (text) => {
+  const inline = (text2) => {
     const spans = [];
-    let value = text;
+    let value = text2;
     if (blocks)
       value = value.replace(/`([^`\n]+)`/g, (_s, code2) => {
         if (/^\s|\s$/.test(code2)) throw new Error("Inline code cannot start or end with a space");
@@ -46497,13 +46497,13 @@ function renderMarkdown(markdown, options = {}) {
     return value.replace(/(\d+)/g, (_s, i) => links[Number(i)]).replace(/(\d+)/g, (_s, i) => spans[Number(i)]);
   };
   const withoutTags = (html2) => {
-    let text = "", inTag = false;
+    let text2 = "", inTag = false;
     for (const ch of html2) {
       if (ch === "<") inTag = true;
       else if (ch === ">" && inTag) inTag = false;
-      else if (!inTag) text += ch;
+      else if (!inTag) text2 += ch;
     }
-    return text;
+    return text2;
   };
   const visible = (html2) => withoutTags(html2).replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   let html = "", list, quote = false, code, previousBlank = true;
@@ -46540,9 +46540,9 @@ function renderMarkdown(markdown, options = {}) {
         continue;
       }
       if (line.startsWith(">")) {
-        const text = line.replace(/^> ?/, "");
-        if (!text.trim()) throw new Error("Empty block quote lines are unsupported");
-        if (/^(?:#|[-+*][ \t]|\d+[.)][ \t]|>|```)/.test(text))
+        const text2 = line.replace(/^> ?/, "");
+        if (!text2.trim()) throw new Error("Empty block quote lines are unsupported");
+        if (/^(?:#|[-+*][ \t]|\d+[.)][ \t]|>|```)/.test(text2))
           throw new Error("Block quotes support text and inline formatting only");
         if (!quote) {
           close();
@@ -46550,7 +46550,7 @@ function renderMarkdown(markdown, options = {}) {
           quote = true;
           expect.quotes.push("");
         }
-        const rendered = inline(text);
+        const rendered = inline(text2);
         html += `<div>${rendered}</div>`;
         expect.quotes[expect.quotes.length - 1] += ` ${visible(rendered)}`;
         previousBlank = false;
@@ -46911,11 +46911,11 @@ function appendNative(manager, request) {
     throw new Error("Use create-table for verified native table insertion");
   const markdownHtml = request.format === "markdown" ? appendMarkdownHtml(request.content) : null;
   const op = request.format === "plaintext" ? "append-text" : request.format === "markdown" ? "append-markdown" : "append-html";
-  const text = request.format === "html" ? "<div><br></div>" + request.content : "\n\n" + request.content;
+  const text2 = request.format === "html" ? "<div><br></div>" + request.content : "\n\n" + request.content;
   return mutateBackground(
     request,
     op,
-    { text },
+    { text: text2 },
     (before, after) => {
       assertPreserved(before, after, { append: true });
       const verifyHtml = markdownHtml ?? request.content;
@@ -46955,7 +46955,7 @@ function setNativeTag(manager, request) {
     deps
   );
 }
-var literalMarkdown = (text) => text.replace(/[!-/:-@[-`{-~]/g, "\\$&");
+var literalMarkdown = (text2) => text2.replace(/[!-/:-@[-`{-~]/g, "\\$&");
 function headingLevels(html) {
   return [...html.matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)].filter((match) => comparableVisibleText(match[2])).map((match) => Number(match[1]));
 }
@@ -47712,18 +47712,18 @@ var NOTHING_WRITTEN = /nothing (?:was )?(?:changed|created|written)|no replaceme
 var WRITE_ACCEPTED = /\baccepted (?:the|an) \w+, but/i;
 function classifyError(message, cause) {
   if (cause instanceof CodedError) return { ...cause.envelope };
-  const text = cause instanceof Error && cause.message && !message.includes(cause.message) ? `${message}
+  const text2 = cause instanceof Error && cause.message && !message.includes(cause.message) ? `${message}
 ${cause.message}` : message;
   const timeoutCause = typeof cause === "object" && cause !== null && cause.code === "ETIMEDOUT";
   let code = "operation_failed";
   if (timeoutCause) code = "timeout_indeterminate";
-  else if (isPermissionDenied(text)) code = "permission_denied";
-  else code = RULES.find((rule) => rule.pattern.test(text))?.code ?? "operation_failed";
+  else if (isPermissionDenied(text2)) code = "permission_denied";
+  else code = RULES.find((rule) => rule.pattern.test(text2))?.code ?? "operation_failed";
   const envelope = { code };
   if (code === "timeout_indeterminate" || code === "verification_failed") {
     envelope.indeterminate = true;
-    if (WRITE_ACCEPTED.test(text)) envelope.committed = true;
-  } else if (code === "revision_conflict" || NOTHING_WRITTEN.test(text)) {
+    if (WRITE_ACCEPTED.test(text2)) envelope.committed = true;
+  } else if (code === "revision_conflict" || NOTHING_WRITTEN.test(text2)) {
     envelope.committed = false;
     envelope.indeterminate = false;
   }
@@ -47913,7 +47913,7 @@ function decodeNoteBlocks(data) {
   const textBytes = note && bytesOf(note, 2);
   if (!note || !textBytes)
     throw new NoteBlocksError("unsupported-structure", "Unsupported Notes document structure");
-  const text = utf8.decode(textBytes);
+  const text2 = utf8.decode(textBytes);
   const runTally = /* @__PURE__ */ new Map();
   const paragraphTally = /* @__PURE__ */ new Map();
   const runs = [];
@@ -47924,7 +47924,7 @@ function decodeNoteBlocks(data) {
         throw new NoteBlocksError("invalid-runs", "Invalid Notes attribute run");
       const fields = decodeWireFields(field.bytes);
       const length = varintOf(fields, 1);
-      if (length === void 0 || length < 0 || position + length > text.length)
+      if (length === void 0 || length < 0 || position + length > text2.length)
         throw new NoteBlocksError("invalid-runs", "Invalid Notes run length");
       for (const n of new Set(fields.map((f) => f.fieldNumber)))
         if (!KNOWN_RUN_FIELDS.has(n)) runTally.set(n, (runTally.get(n) || 0) + 1);
@@ -47939,15 +47939,15 @@ function decodeNoteBlocks(data) {
   } catch (error2) {
     wrap(error2);
   }
-  if (position !== text.length)
+  if (position !== text2.length)
     throw new NoteBlocksError("invalid-runs", "Incomplete Notes attribute runs");
   const blocks = [];
   const attachments = [];
   let runIndex = 0;
   let paragraphStart = 0;
-  while (paragraphStart < text.length) {
-    const newline = text.indexOf("\n", paragraphStart);
-    const end = newline === -1 ? text.length : newline;
+  while (paragraphStart < text2.length) {
+    const newline = text2.indexOf("\n", paragraphStart);
+    const end = newline === -1 ? text2.length : newline;
     while (runIndex < runs.length - 1 && runs[runIndex].start + runs[runIndex].length <= paragraphStart)
       runIndex++;
     const attrs = runs[runIndex]?.paragraph ?? DEFAULT_PARAGRAPH;
@@ -47957,7 +47957,7 @@ function decodeNoteBlocks(data) {
       index: blocks.length,
       start: paragraphStart,
       length: end - paragraphStart,
-      text: text.slice(paragraphStart, end),
+      text: text2.slice(paragraphStart, end),
       style,
       styleType: attrs.styleType,
       indent: attrs.indent,
@@ -47977,11 +47977,11 @@ function decodeNoteBlocks(data) {
       block.runs.push({
         start,
         length: stop - start,
-        text: text.slice(start, stop),
+        text: text2.slice(start, stop),
         ...run.inline
       });
       if (run.inline.attachment)
-        for (let at = text.indexOf("\uFFFC", start); at !== -1 && at < stop; at = text.indexOf("\uFFFC", at + 1)) {
+        for (let at = text2.indexOf("\uFFFC", start); at !== -1 && at < stop; at = text2.indexOf("\uFFFC", at + 1)) {
           const marker = { ...run.inline.attachment, start: at, blockIndex: block.index };
           block.attachments.push(marker);
           attachments.push(marker);
@@ -47991,8 +47991,8 @@ function decodeNoteBlocks(data) {
     paragraphStart = end + 1;
   }
   return {
-    text,
-    textLength: text.length,
+    text: text2,
+    textLength: text2.length,
     blocks,
     attachments,
     undecodedFields: {
@@ -48182,7 +48182,7 @@ function validateLinkLabel(label) {
     throw new Error("Hyperlink label must be one line without control characters");
   return label;
 }
-var escapeText = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+var escapeText = (text2) => text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 var escapeHref = (url) => escapeText(url).replace(/"/g, "&quot;");
 function buildLinkInsertion(request) {
   const url = validateLinkUrl(request.url);
@@ -48272,20 +48272,1068 @@ function insertLink(request, deps) {
   };
 }
 
-// src/tools/directOperations.ts
-import { createHash as createHash2 } from "node:crypto";
+// src/services/notesExport.ts
+import { mkdirSync as mkdirSync5 } from "node:fs";
+import { dirname as dirname4 } from "node:path";
+
+// src/utils/exportAssets.ts
 import {
   closeSync as closeSync4,
   constants as constants4,
   fstatSync as fstatSync4,
-  mkdtempSync as mkdtempSync4,
+  mkdirSync as mkdirSync4,
   openSync as openSync4,
+  readdirSync as readdirSync3,
+  readSync as readSync3,
+  realpathSync as realpathSync3,
+  statSync as statSync3,
+  writeSync as writeSync3
+} from "node:fs";
+import { homedir as homedir15 } from "node:os";
+import { basename as basename3, extname as extname3, join as join18, relative as relative3, resolve as resolve3, sep as sep3 } from "node:path";
+var NOTES_CONTAINER = join18(homedir15(), "Library/Group Containers/group.com.apple.notes");
+var MAX_EMBED_BYTES = 10 * 1024 * 1024;
+var MAX_DIRECTORY_ENTRIES = 2e4;
+var MAX_BUNDLE_ENTRIES2 = 64;
+var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".heic", ".gif", ".tiff", ".webp"]);
+function safeComponent2(value) {
+  if (!value || value.length > 255) return void 0;
+  if (value === "." || value === ".." || /[/\\\0]/.test(value)) return void 0;
+  return value;
+}
+function confine(candidate, root) {
+  try {
+    const real = realpathSync3.native(candidate);
+    return real.startsWith(root + sep3) ? real : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function listDirectory(dir, limit) {
+  try {
+    const names = readdirSync3(dir);
+    return names.length > limit ? [] : names.sort();
+  } catch {
+    return [];
+  }
+}
+function isFile(path8) {
+  let fd;
+  try {
+    fd = openSync4(path8, constants4.O_RDONLY | constants4.O_NOFOLLOW);
+    return fstatSync4(fd).isFile();
+  } catch {
+    return false;
+  } finally {
+    if (fd !== void 0) closeSync4(fd);
+  }
+}
+function isDirectory2(path8) {
+  try {
+    return statSync3(path8).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function previewArea(name) {
+  const sizes = [...name.matchAll(/-(\d{1,5})x(\d{1,5})(?=-|\.|$)/g)];
+  const last = sizes[sizes.length - 1];
+  return last ? Number(last[1]) * Number(last[2]) : 0;
+}
+var AssetLocator = class {
+  accounts;
+  previewIndex = /* @__PURE__ */ new Map();
+  constructor(container = NOTES_CONTAINER) {
+    let accountsRoot = "";
+    try {
+      accountsRoot = realpathSync3.native(join18(container, "Accounts"));
+    } catch {
+    }
+    this.accounts = accountsRoot ? listDirectory(accountsRoot, 1e3).flatMap((name) => {
+      const dir = safeComponent2(name) && confine(join18(accountsRoot, name), accountsRoot);
+      return dir && isDirectory2(dir) ? [dir] : [];
+    }) : [];
+  }
+  /** Canonical account directories found in the container. */
+  get accountDirs() {
+    return [...this.accounts];
+  }
+  /** The attachment's own file and its best preview, when present. */
+  locate(source) {
+    const id2 = safeComponent2(source.id);
+    if (!id2) return {};
+    for (const account of this.accounts) {
+      const files = this.locateIn(account, id2, source);
+      if (files.primary || files.preview) return files;
+    }
+    return {};
+  }
+  locateIn(account, id2, source) {
+    const preview = this.preview(account, id2);
+    const media = this.media(account, source);
+    switch (source.kind) {
+      case "drawing":
+      case "paper": {
+        const fallback = this.fallback(
+          account,
+          "FallbackImages",
+          id2,
+          source.fallbackImageGeneration,
+          ["FallbackImage.png", "FallbackImage.jpg"]
+        );
+        if (fallback)
+          return { primary: { path: fallback, name: `${source.kind}.png`, role: "fallback" } };
+        return preview ? { primary: preview } : {};
+      }
+      case "scan": {
+        const pdf = this.fallback(account, "FallbackPDFs", id2, source.fallbackPdfGeneration, [
+          "FallbackPDF.pdf"
+        ]);
+        return {
+          ...pdf ? { primary: { path: pdf, name: "scan.pdf", role: "fallback" } } : {},
+          ...preview ? { preview } : {}
+        };
+      }
+      case "link":
+        return preview ? { preview } : {};
+      default:
+        return {
+          ...media ? { primary: media } : {},
+          ...preview ? { preview } : {}
+        };
+    }
+  }
+  /** Media/<media-id>/<generation>/<filename>, then without the generation. */
+  media(account, source) {
+    const mediaId = safeComponent2(source.mediaId);
+    const filename = safeComponent2(source.mediaFilename);
+    if (!mediaId || !filename) return void 0;
+    const generation = safeComponent2(source.mediaGeneration);
+    const candidates = [
+      ...generation ? [join18(account, "Media", mediaId, generation, filename)] : [],
+      join18(account, "Media", mediaId, filename)
+    ];
+    for (const candidate of candidates) {
+      const path8 = confine(candidate, account);
+      if (path8 && isFile(path8)) return { path: path8, name: filename, role: "original" };
+    }
+    return void 0;
+  }
+  /** <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation. */
+  fallback(account, dir, id2, generation, names) {
+    const base = join18(account, dir, id2);
+    const gen = safeComponent2(generation);
+    const generations = [
+      ...gen ? [gen] : [],
+      "",
+      ...listDirectory(base, MAX_BUNDLE_ENTRIES2).filter((name) => name !== gen && safeComponent2(name)).reverse()
+    ];
+    for (const g of generations)
+      for (const name of names) {
+        const path8 = confine(g ? join18(base, g, name) : join18(base, name), account);
+        if (path8 && isFile(path8)) return path8;
+      }
+    return void 0;
+  }
+  /** The largest rendered preview image for an attachment. */
+  preview(account, id2) {
+    let index = this.previewIndex.get(account);
+    if (!index) {
+      index = /* @__PURE__ */ new Map();
+      for (const name of listDirectory(join18(account, "Previews"), MAX_DIRECTORY_ENTRIES)) {
+        const key = name.slice(0, 36).toUpperCase();
+        const entries3 = index.get(key) ?? [];
+        entries3.push(name);
+        index.set(key, entries3);
+      }
+      this.previewIndex.set(account, index);
+    }
+    const entries2 = (index.get(id2.toUpperCase()) ?? []).filter((name) => name.slice(36, 37) === "-" || name.length === 36).filter((name) => {
+      const ext = extname3(name).toLowerCase();
+      return !ext || IMAGE_EXTENSIONS.has(ext) || /^\.\d+$/.test(ext);
+    }).sort((a, b) => previewArea(b) - previewArea(a) || a.localeCompare(b));
+    for (const name of entries2) {
+      const entry = confine(join18(account, "Previews", name), account);
+      if (!entry) continue;
+      const file = isFile(entry) ? entry : this.bundleImage(entry, account);
+      if (file) return { path: file, name: "preview", role: "preview" };
+    }
+    return void 0;
+  }
+  /** Preview.png (or another image) at most two levels inside a bundle. */
+  bundleImage(bundle, account) {
+    const found = [];
+    for (const child of listDirectory(bundle, MAX_BUNDLE_ENTRIES2)) {
+      const path8 = confine(join18(bundle, child), account);
+      if (!path8) continue;
+      if (isFile(path8)) found.push(path8);
+      else
+        for (const grandchild of listDirectory(path8, MAX_BUNDLE_ENTRIES2)) {
+          const inner = confine(join18(path8, grandchild), account);
+          if (inner && isFile(inner)) found.push(inner);
+        }
+    }
+    return found.find((path8) => basename3(path8) === "Preview.png") ?? found.find((path8) => IMAGE_EXTENSIONS.has(extname3(path8).toLowerCase()));
+  }
+};
+function sniffMime(head, name) {
+  const ascii = Buffer.from(head).toString("latin1");
+  if (ascii.startsWith("\x89PNG")) return "image/png";
+  if (head[0] === 255 && head[1] === 216) return "image/jpeg";
+  if (ascii.startsWith("GIF8")) return "image/gif";
+  if (ascii.startsWith("%PDF")) return "application/pdf";
+  if (ascii.slice(4, 12) === "ftypheic" || ascii.slice(4, 12) === "ftypmif1") return "image/heic";
+  if (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") return "image/webp";
+  const byExtension = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".tiff": "image/tiff",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".mov": "video/quicktime",
+    ".mp4": "video/mp4",
+    ".txt": "text/plain"
+  };
+  return byExtension[extname3(name).toLowerCase()] ?? "application/octet-stream";
+}
+function extensionFor(mime) {
+  const map = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/heic": ".heic",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf"
+  };
+  return map[mime] ?? "";
+}
+function safeAssetName(name, mime) {
+  let clean = basename3(name).normalize("NFC").replace(/[^\p{L}\p{N}._ -]+/gu, "_").replace(/^[.\s]+/, "").trim();
+  if (!clean) clean = "attachment";
+  if (!extname3(clean)) clean += extensionFor(mime);
+  const ext = extname3(clean);
+  if (clean.length > 120) clean = clean.slice(0, 120 - ext.length) + ext;
+  return clean;
+}
+function encodePathUrl(path8) {
+  return path8.split("/").map(encodeURIComponent).join("/");
+}
+function canonicalForm(abs) {
+  let current = abs;
+  let rest = "";
+  for (; ; ) {
+    try {
+      const real = realpathSync3.native(current);
+      return rest ? join18(real, rest) : real;
+    } catch {
+      const parent = resolve3(current, "..");
+      if (parent === current) return abs;
+      rest = rest ? join18(basename3(current), rest) : basename3(current);
+      current = parent;
+    }
+  }
+}
+function assertExportPath(p, container = NOTES_CONTAINER) {
+  const abs = assertSafeSavePath(p);
+  const within = (path8, root) => path8 === root || path8.startsWith(root + sep3);
+  const roots = [resolve3(container), canonicalForm(resolve3(container))];
+  const forms = [abs, canonicalForm(abs)];
+  if (forms.some((form) => roots.some((root) => within(form, root))))
+    throw new Error("Refusing to write inside the Notes library container.");
+  return abs;
+}
+var CREATE_FLAGS = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | constants4.O_NOFOLLOW;
+var OutputExistsError = class extends Error {
+  code = "output_exists";
+  constructor(path8) {
+    super(`Output file already exists: ${path8}. Choose a new path or remove the old file first.`);
+    this.name = "OutputExistsError";
+  }
+};
+function openCreateOnly(path8) {
+  try {
+    return openSync4(path8, CREATE_FLAGS, 420);
+  } catch (error2) {
+    if (error2.code === "EEXIST") throw new OutputExistsError(path8);
+    throw error2;
+  }
+}
+function writeAllAndClose(fd, content) {
+  try {
+    const data = Buffer.from(content, "utf8");
+    let written = 0;
+    while (written < data.length) written += writeSync3(fd, data, written);
+    return data.length;
+  } finally {
+    closeSync4(fd);
+  }
+}
+function openSource(path8) {
+  const fd = openSync4(path8, constants4.O_RDONLY | constants4.O_NOFOLLOW);
+  const stat = fstatSync4(fd);
+  if (!stat.isFile()) {
+    closeSync4(fd);
+    throw new Error("Asset is not a regular file");
+  }
+  return { fd, size: stat.size };
+}
+function readHead(fd) {
+  const head = Buffer.alloc(16);
+  const n = readSync3(fd, head, 0, 16, 0);
+  return head.subarray(0, n);
+}
+var SidecarWriter = class {
+  constructor(dir, linkBase) {
+    this.dir = dir;
+    this.linkBase = linkBase;
+  }
+  dir;
+  linkBase;
+  placed = /* @__PURE__ */ new Map();
+  created = false;
+  count = 0;
+  place(asset) {
+    const done = this.placed.get(asset.path);
+    if (done) return done;
+    let source;
+    try {
+      source = openSource(asset.path);
+    } catch {
+      return { error: "unreadable" };
+    }
+    try {
+      const mime = sniffMime(readHead(source.fd), asset.name);
+      if (!this.created) {
+        assertExportPath(this.dir);
+        mkdirSync4(this.dir, { recursive: true });
+        this.created = true;
+      }
+      const name = safeAssetName(asset.name, mime);
+      const ext = extname3(name);
+      const stem = name.slice(0, name.length - ext.length);
+      let target;
+      let out;
+      for (let n = 1; n <= 1e3 && out === void 0; n++) {
+        target = join18(this.dir, n === 1 ? name : `${stem}-${n}${ext}`);
+        try {
+          out = openSync4(target, CREATE_FLAGS, 420);
+        } catch (error2) {
+          if (error2.code !== "EEXIST") throw error2;
+        }
+      }
+      if (out === void 0 || !target) return { error: "no-free-name" };
+      try {
+        const chunk = Buffer.alloc(1024 * 1024);
+        for (let position = 0; ; ) {
+          const n = readSync3(source.fd, chunk, 0, chunk.length, position);
+          if (n <= 0) break;
+          let written = 0;
+          while (written < n) written += writeSync3(out, chunk, written, n - written);
+          position += n;
+        }
+      } finally {
+        closeSync4(out);
+      }
+      this.count++;
+      const url = this.linkBase ? encodePathUrl(relative3(this.linkBase, target).split(sep3).join("/")) : target;
+      const result = { url, mime };
+      this.placed.set(asset.path, result);
+      return result;
+    } catch (error2) {
+      return { error: error2 instanceof Error ? error2.message : String(error2) };
+    } finally {
+      closeSync4(source.fd);
+    }
+  }
+};
+
+// src/utils/exportRender.ts
+var emptyStats = () => ({
+  attachments: 0,
+  placed: 0,
+  placeholders: 0,
+  unavailable: 0,
+  tables: 0,
+  unreadableTables: 0,
+  unreferenced: 0
+});
+var isSafeHref = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
+var LABELS = {
+  table: "Table",
+  image: "Image",
+  drawing: "Drawing",
+  paper: "Drawing",
+  scan: "Scanned document",
+  pdf: "PDF",
+  audio: "Audio",
+  video: "Video",
+  link: "Link",
+  gallery: "Gallery",
+  divider: "Divider",
+  inline: "Inline attachment",
+  file: "File"
+};
+var attachmentLabel = (kind) => LABELS[kind];
+function fmtOf(run) {
+  const fmt = {};
+  if (run.bold) fmt.bold = true;
+  if (run.italic) fmt.italic = true;
+  if (run.underline) fmt.underline = true;
+  if (run.strikethrough) fmt.strikethrough = true;
+  if (run.superscript) fmt.superscript = true;
+  if (run.subscript) fmt.subscript = true;
+  if (run.highlight) fmt.highlight = run.highlight;
+  if (run.color) fmt.color = run.color;
+  if (run.link && run.linkSafe) fmt.link = run.link;
+  return fmt;
+}
+var sameFmt = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function blockPieces(block, plan) {
+  const pieces = [];
+  const pushText = (text2, fmt) => {
+    if (!text2) return;
+    const last = pieces[pieces.length - 1];
+    if (last?.type === "text" && sameFmt(last.fmt, fmt)) last.text += text2;
+    else pieces.push({ type: "text", text: text2, fmt });
+  };
+  for (const run of block.runs) {
+    const fmt = fmtOf(run);
+    const parts = run.text.split("\uFFFC");
+    parts.forEach((part, i) => {
+      if (i > 0 && run.attachment)
+        pieces.push({ type: "attachment", id: run.attachment.id, plan: plan(run.attachment.id) });
+      pushText(part, fmt);
+    });
+  }
+  return pieces;
+}
+var isBlockPlan = (plan) => plan.type === "table" || plan.type === "divider" || plan.type === "gallery";
+function titleBlockIndex(note) {
+  const first2 = note.doc.blocks.find((block) => block.text.trim());
+  if (!first2) return -1;
+  if (first2.style === "title") return first2.index;
+  return first2.text.trim() === note.title.trim() && first2.style !== "monospaced" ? first2.index : -1;
+}
+function place(ctx, asset) {
+  return asset && ctx.writer ? ctx.writer.place(asset) : void 0;
+}
+function planAttachment(attachment, ctx) {
+  ctx.stats.attachments++;
+  const unavailable = (label2, reason, name2) => {
+    ctx.stats.unavailable++;
+    return { type: "unavailable", label: label2, reason, ...name2 ? { name: name2 } : {} };
+  };
+  if (!attachment) return unavailable("Attachment", "missing");
+  const label = attachmentLabel(attachment.kind);
+  const name = attachment.title;
+  switch (attachment.kind) {
+    case "inline": {
+      const link = attachment.uti.endsWith(".link") && attachment.tokenId && isSafeHref(attachment.tokenId) ? attachment.tokenId : void 0;
+      return { type: "inline", text: attachment.altText ?? "", ...link ? { link } : {} };
+    }
+    case "divider":
+      return { type: "divider" };
+    case "table": {
+      ctx.stats.tables++;
+      try {
+        if (!attachment.tableData) throw new Error("no table data");
+        return {
+          type: "table",
+          rows: parseNoteTable(Buffer.from(attachment.tableData, "hex")).rows
+        };
+      } catch {
+        ctx.stats.unreadableTables++;
+        return unavailable(label, "undecodable");
+      }
+    }
+    case "gallery": {
+      ctx.stats.attachments--;
+      return {
+        type: "gallery",
+        items: attachment.children.map((child) => planAttachment(child, ctx))
+      };
+    }
+    case "link": {
+      const url = attachment.url ?? "";
+      const preview = ctx.locator ? place(ctx, ctx.locator.locate(attachment).preview) : void 0;
+      if (preview && "url" in preview) ctx.stats.placed++;
+      return {
+        type: "card",
+        title: name ?? url,
+        displayUrl: url,
+        ...isSafeHref(url) ? { url } : {},
+        ...preview && "url" in preview ? { previewUrl: preview.url } : {}
+      };
+    }
+    default: {
+      if (!ctx.writer) {
+        ctx.stats.placeholders++;
+        return { type: "placeholder", label, ...name ? { name } : {} };
+      }
+      const files = ctx.locator?.locate(attachment) ?? {};
+      const primary = place(ctx, files.primary);
+      const visual = ["image", "drawing", "paper"].includes(attachment.kind);
+      const wantsPreview = attachment.kind === "scan" || attachment.kind === "pdf";
+      const preview = files.preview && (wantsPreview || visual && !(primary && "url" in primary)) ? place(ctx, files.preview) : void 0;
+      const previewUrl = preview && "url" in preview ? preview.url : void 0;
+      if (primary && "url" in primary) {
+        ctx.stats.placed++;
+        const display = visual ? "image" : attachment.kind === "audio" ? "audio" : attachment.kind === "video" ? "video" : "link";
+        return {
+          type: "asset",
+          label,
+          ...name ? { name } : {},
+          display,
+          url: primary.url,
+          mime: primary.mime,
+          ...previewUrl ? { previewUrl } : {}
+        };
+      }
+      if (visual && previewUrl) {
+        ctx.stats.placed++;
+        return {
+          type: "asset",
+          label,
+          ...name ? { name } : {},
+          display: "image",
+          url: previewUrl,
+          mime: preview.mime
+        };
+      }
+      const reason = primary && "error" in primary ? primary.error : "missing";
+      return unavailable(label, reason, name);
+    }
+  }
+}
+function unreferencedAttachments(note) {
+  const referenced = new Set(note.doc.attachments.map((marker) => marker.id));
+  return note.ordered.filter(
+    (attachment) => !referenced.has(attachment.id) && attachment.kind !== "table" && attachment.kind !== "inline" && attachment.kind !== "divider"
+  );
+}
+
+// src/utils/markdownExport.ts
+var NOTE_SEPARATOR = "\n\n---\n\n";
+function escapeMarkdown(text2) {
+  return text2.replace(/[\\`*_[\]<>~|]/g, (char) => `\\${char}`).replace(/&(?=#?[A-Za-z0-9]+;)/g, "&amp;").replace(/==/g, "\\=\\=");
+}
+function escapeLineStart(line) {
+  return line.replace(
+    /^(\s*)([#>+-]|\d+[.)])(?=\s|$)/,
+    (_, space, marker) => /^\d/.test(marker) ? `${space}${marker.slice(0, -1)}\\${marker.slice(-1)}` : `${space}\\${marker}`
+  );
+}
+function linkDestination(url) {
+  return url.replace(
+    /[\s()<>]/g,
+    (char) => char === " " ? "%20" : `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`
+  );
+}
+function delimit(text2, open, close = open) {
+  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text2);
+  return match[2] ? `${match[1]}${open}${match[2]}${close}${match[3]}` : text2;
+}
+var LAYERS = [
+  ["italic", "*", "*"],
+  ["bold", "**", "**"],
+  ["strikethrough", "~~", "~~"],
+  ["underline", "<u>", "</u>"],
+  ["highlight", "==", "=="],
+  ["superscript", "<sup>", "</sup>"],
+  ["subscript", "<sub>", "</sub>"]
+];
+function joinSafe(left, right) {
+  return left && right && /[*~=]$/.test(left) && left.at(-1) === right[0] ? `${left}<!-- -->${right}` : left + right;
+}
+function layered(pieces, depth = 0) {
+  if (depth === LAYERS.length)
+    return pieces.map((piece) => escapeMarkdown(piece.text.replace(/\n/g, " "))).join("");
+  const [key, open, close] = LAYERS[depth];
+  let out = "";
+  for (let i = 0; i < pieces.length; ) {
+    const on = !!pieces[i].fmt[key];
+    let j = i;
+    while (j < pieces.length && !!pieces[j].fmt[key] === on) j++;
+    const inner = layered(pieces.slice(i, j), depth + 1);
+    out = joinSafe(out, on ? delimit(inner, open, close) : inner);
+    i = j;
+  }
+  return out;
+}
+var bracket = (label, name) => `\\[${escapeMarkdown(name ? `${label}: ${name}` : label)}\\]`;
+function planMarkdown(plan) {
+  switch (plan.type) {
+    case "inline":
+      return plan.link ? `[${escapeMarkdown(plan.text)}](${linkDestination(plan.link)})` : escapeMarkdown(plan.text);
+    case "divider":
+      return "---";
+    case "table":
+      return tableMarkdown(plan.rows);
+    case "placeholder":
+      return bracket(plan.label, plan.name);
+    case "unavailable":
+      return bracket(`${plan.label} unavailable`, plan.name);
+    case "asset": {
+      const text2 = escapeMarkdown(plan.name ?? plan.label);
+      if (plan.display === "image") return `![${text2}](${linkDestination(plan.url)})`;
+      const inner = plan.previewUrl ? `![${text2}](${linkDestination(plan.previewUrl)})` : text2;
+      return `[${inner}](${linkDestination(plan.url)})`;
+    }
+    case "card":
+      return plan.url ? `[${escapeMarkdown(plan.title)}](${linkDestination(plan.url)})` : `${escapeMarkdown(plan.title)} (${escapeMarkdown(plan.displayUrl)})`;
+    case "gallery":
+      return plan.items.map(planMarkdown).join("\n\n");
+  }
+}
+function tableMarkdown(rows) {
+  const width = Math.max(1, ...rows.map((row) => row.length));
+  const cell = (value) => escapeMarkdown(value ?? "").replace(/\r?\n/g, "<br>").trim() || " ";
+  const line = (row) => `| ${Array.from({ length: width }, (_, i) => cell(row[i])).join(" | ")} |`;
+  const [head = [], ...body] = rows;
+  return [line(head), `| ${Array(width).fill("---").join(" | ")} |`, ...body.map(line)].join("\n");
+}
+function inlineMarkdown(pieces) {
+  let out = "";
+  for (let i = 0; i < pieces.length; ) {
+    const piece = pieces[i];
+    if (piece.type === "attachment") {
+      out = joinSafe(out, planMarkdown(piece.plan));
+      i++;
+      continue;
+    }
+    const link = piece.fmt.link;
+    let j = i;
+    while (j < pieces.length && pieces[j].type === "text" && pieces[j].fmt.link === link)
+      j++;
+    const inner = layered(pieces.slice(i, j));
+    out = joinSafe(out, link ? delimit(inner, "[", `](${linkDestination(link)})`) : inner);
+    i = j;
+  }
+  return out;
+}
+var LIST_STYLES = /* @__PURE__ */ new Set(["bulleted", "dashed", "numbered", "checklist"]);
+function renderNoteMarkdown(note, ctx) {
+  const plan = (id2) => planAttachment(note.attachments.get(id2), ctx);
+  const titleIndex = titleBlockIndex(note);
+  const lines = [];
+  const counters = [];
+  let code;
+  const flushCode = () => {
+    if (!code) return;
+    const longest = Math.max(
+      2,
+      ...code.lines.map((l) => Math.max(0, ...(l.match(/`+/g) ?? []).map((m) => m.length)))
+    );
+    const fence = "`".repeat(longest + 1);
+    lines.push({
+      text: [fence, ...code.lines, fence].join("\n"),
+      group: "code",
+      quote: code.quote
+    });
+    code = void 0;
+  };
+  if (titleIndex === -1 && note.title.trim())
+    lines.push({ text: `# ${escapeMarkdown(note.title.trim())}`, group: "para", quote: false });
+  for (const block of note.doc.blocks) {
+    if (block.style === "monospaced") {
+      if (code && code.quote !== block.blockQuote) flushCode();
+      code ??= { lines: [], quote: block.blockQuote };
+      code.lines.push(block.text.replace(/\ufffc/g, ""));
+      continue;
+    }
+    flushCode();
+    if (!LIST_STYLES.has(block.style)) counters.length = 0;
+    if (!block.text.trim()) continue;
+    const pieces = blockPieces(block, plan);
+    let segment = [];
+    const segments = [];
+    for (const piece of pieces) {
+      if (piece.type === "attachment" && isBlockPlan(piece.plan)) {
+        segments.push(segment, piece.plan);
+        segment = [];
+      } else segment.push(piece);
+    }
+    segments.push(segment);
+    let first2 = true;
+    for (const segment2 of segments) {
+      if (!Array.isArray(segment2)) {
+        lines.push({ text: planMarkdown(segment2), group: "block", quote: block.blockQuote });
+        continue;
+      }
+      const body = inlineMarkdown(segment2).trim();
+      if (!body) continue;
+      lines.push(renderLine(block, body, first2, block.index === titleIndex, counters));
+      first2 = false;
+    }
+  }
+  flushCode();
+  for (const attachment of unreferencedAttachments(note)) {
+    ctx.stats.unreferenced++;
+    lines.push({
+      text: planMarkdown(planAttachment(attachment, ctx)),
+      group: "block",
+      quote: false
+    });
+  }
+  return joinLines(lines);
+}
+function renderLine(block, body, first2, isTitle, counters) {
+  const quote = block.blockQuote;
+  if (isTitle || block.style === "title") return { text: `# ${body}`, group: "para", quote };
+  if (block.style === "heading") return { text: `## ${body}`, group: "para", quote };
+  if (block.style === "subheading") return { text: `### ${body}`, group: "para", quote };
+  if (!LIST_STYLES.has(block.style) || !first2)
+    return { text: escapeLineStart(body), group: "para", quote };
+  const level = Math.min(block.indent, 20);
+  counters.length = Math.min(counters.length, level + 1);
+  while (counters.length <= level) counters.push(0);
+  const indent = "    ".repeat(level);
+  let marker = "-";
+  if (block.style === "numbered") marker = `${++counters[level]}.`;
+  else {
+    counters[level] = 0;
+    if (block.style === "checklist") marker = block.checklist?.done ? "- [x]" : "- [ ]";
+  }
+  return { text: `${indent}${marker} ${body}`, group: "list", quote };
+}
+function joinLines(lines) {
+  let out = "";
+  let previous;
+  for (const line of lines) {
+    const text2 = line.quote ? line.text.split("\n").map((l) => l ? `> ${l}` : ">").join("\n") : line.text;
+    if (previous) {
+      const tight = previous.group === "list" && line.group === "list" && previous.quote === line.quote;
+      out += tight ? "\n" : previous.quote && line.quote ? "\n>\n" : "\n\n";
+    }
+    out += text2;
+    previous = line;
+  }
+  return out;
+}
+function wrapMarkdown(markdown, width) {
+  if (!width) return markdown;
+  let fenced = false;
+  const out = [];
+  for (const line of markdown.split("\n")) {
+    const bare = line.replace(/^(?:> ?)+/, "");
+    if (/^\s*```/.test(bare)) fenced = !fenced;
+    if (fenced || /^\s*```/.test(bare) || line.length <= width || /^\s*(#|\||!\[)/.test(bare)) {
+      out.push(line);
+      continue;
+    }
+    const prefix = /^((?:> ?)*\s*(?:(?:[-*+]|\d+\.)(?: \[[ x]\])? )?)/.exec(line)[1];
+    const hang = prefix.replace(/[^>\s]/g, " ").replace(/>(?! )/g, "> ");
+    const words = line.slice(prefix.length).split(" ");
+    let current = prefix;
+    let empty = true;
+    for (const word of words) {
+      if (!empty && current.length + 1 + word.length > width) {
+        out.push(current);
+        current = hang + word;
+      } else current += (empty ? "" : " ") + word;
+      empty = false;
+    }
+    out.push(current);
+  }
+  return out.join("\n");
+}
+function renderNotesMarkdown(notes, ctx, { wrap: wrap2 = 0 } = {}) {
+  const body = notes.map((note) => renderNoteMarkdown(note, ctx)).join(NOTE_SEPARATOR);
+  return (wrap2 ? wrapMarkdown(body, wrap2) : body) + (notes.length ? "\n" : "");
+}
+
+// src/utils/noteExportData.ts
+import { execFileSync as execFileSync17 } from "node:child_process";
+import { homedir as homedir16 } from "node:os";
+import { join as join19 } from "node:path";
+var NOTES_DB_PATH10 = join19(
+  homedir16(),
+  "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+);
+var IMAGE_UTIS2 = /* @__PURE__ */ new Set([
+  "public.jpeg",
+  "public.png",
+  "public.heic",
+  "public.heif",
+  "public.image",
+  "public.tiff",
+  "public.webp",
+  "org.webmproject.webp",
+  "com.compuserve.gif",
+  "com.microsoft.bmp",
+  "com.adobe.raw-image",
+  "public.camera-raw-image"
+]);
+var AUDIO_UTIS = /* @__PURE__ */ new Set([
+  "com.apple.m4a-audio",
+  "public.mpeg-4-audio",
+  "public.mp3",
+  "public.audio",
+  "public.aiff-audio",
+  "com.microsoft.waveform-audio"
+]);
+var VIDEO_UTIS = /* @__PURE__ */ new Set([
+  "public.movie",
+  "public.video",
+  "public.mpeg-4",
+  "com.apple.quicktime-movie"
+]);
+function classifyUti(uti) {
+  if (uti === "com.apple.notes.table") return "table";
+  if (uti === "com.apple.notes.inlinetextattachment.dividerline") return "divider";
+  if (uti.startsWith("com.apple.notes.inlinetextattachment.")) return "inline";
+  if (uti === "com.apple.notes.gallery") return "gallery";
+  if (uti === "com.apple.drawing" || uti === "com.apple.drawing.2") return "drawing";
+  if (uti === "com.apple.paper.doc.scan") return "scan";
+  if (uti === "com.apple.paper") return "paper";
+  if (uti === "public.url") return "link";
+  if (uti === "com.adobe.pdf") return "pdf";
+  if (IMAGE_UTIS2.has(uti)) return "image";
+  if (AUDIO_UTIS.has(uti)) return "audio";
+  if (VIDEO_UTIS.has(uti)) return "video";
+  return "file";
+}
+var ATTACHMENT_COLUMNS = [
+  ["uti0", "a", "ZTYPEUTI"],
+  ["uti1", "a", "ZTYPEUTI1"],
+  ["parent", "a", "ZPARENTATTACHMENT"],
+  ["title", "a", "ZTITLE"],
+  ["userTitle", "a", "ZUSERTITLE"],
+  ["url", "a", "ZURLSTRING"],
+  ["alt", "a", "ZALTTEXT"],
+  ["token", "a", "ZTOKENCONTENTIDENTIFIER"],
+  ["fbImageGen", "a", "ZFALLBACKIMAGEGENERATION"],
+  ["fbPdfGen", "a", "ZFALLBACKPDFGENERATION"],
+  ["mediaId", "m", "ZIDENTIFIER"],
+  ["mediaFilename", "m", "ZFILENAME"],
+  ["mediaGen", "m", "ZGENERATION1"]
+];
+var columnCache = /* @__PURE__ */ new Map();
+function sqlite(dbPath2, args) {
+  try {
+    return execFileSync17(
+      "/usr/bin/sqlite3",
+      ["-readonly", ...args.slice(0, -1), dbPath2, args.at(-1)],
+      {
+        encoding: "utf8",
+        timeout: 1e4,
+        maxBuffer: 256 * 1024 * 1024,
+        stdio: ["pipe", "pipe", "pipe"]
+      }
+    ).trim();
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    if (/authorization denied|unable to open database/i.test(message))
+      throw new NoteBlocksError("no-full-disk-access", "The Notes database is not readable");
+    throw new NoteBlocksError("query-failed", "Failed to query the Notes database");
+  }
+}
+function objectColumns(dbPath2 = NOTES_DB_PATH10) {
+  let columns = columnCache.get(dbPath2);
+  if (!columns) {
+    columns = new Set(
+      sqlite(dbPath2, ["SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');"]).split("\n").filter(Boolean)
+    );
+    columnCache.set(dbPath2, columns);
+  }
+  return columns;
+}
+function attachmentQuery(columns) {
+  const col3 = (alias, name) => columns.has(name) ? `${alias}.${name}` : "NULL";
+  const fields = ATTACHMENT_COLUMNS.map(([key, alias, name]) => `'${key}', ${col3(alias, name)}`);
+  const uti = `COALESCE(${col3("a", "ZTYPEUTI")}, ${col3("a", "ZTYPEUTI1")})`;
+  const mergeable = columns.has("ZMERGEABLEDATA1") ? columns.has("ZMERGEABLEDATA") ? "COALESCE(a.ZMERGEABLEDATA1, a.ZMERGEABLEDATA)" : "a.ZMERGEABLEDATA1" : col3("a", "ZMERGEABLEDATA");
+  const noteLinks = ["ZNOTE", "ZNOTE1"].filter((c) => columns.has(c)).map((c) => `a.${c} = @pk`);
+  const owner = noteLinks.length ? `(${noteLinks.join(" OR ")})` : "0";
+  const media = columns.has("ZMEDIA") ? "m.Z_PK = a.ZMEDIA" : "0";
+  const live = columns.has("ZMARKEDFORDELETION") ? "AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
+  return `SELECT json_object('title', (SELECT ${col3("n", "ZTITLE1")} FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk), 'attachments', (SELECT json_group_array(json_object('pk', a.Z_PK, 'id', a.ZIDENTIFIER, ${fields.join(", ")}, 'table', CASE WHEN ${uti} = 'com.apple.notes.table' THEN hex(${mergeable}) END)) FROM ZICCLOUDSYNCINGOBJECT a LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON ${media} WHERE ${owner} AND a.ZIDENTIFIER IS NOT NULL ${live}));`;
+}
+var text = (value) => typeof value === "string" && value.length ? value : typeof value === "number" ? String(value) : void 0;
+function buildAttachments(rows) {
+  const all = rows.filter((row) => typeof row.id === "string" && Number.isInteger(row.pk)).map((row) => {
+    const uti = text(row.uti0) ?? text(row.uti1) ?? "unknown";
+    const attachment = {
+      id: row.id,
+      pk: row.pk,
+      uti,
+      kind: classifyUti(uti),
+      children: []
+    };
+    const set = (key, value) => {
+      if (value !== void 0) attachment[key] = value;
+    };
+    set("parentPk", Number.isInteger(row.parent) ? row.parent : void 0);
+    set("title", text(row.title) ?? text(row.userTitle) ?? text(row.mediaFilename));
+    set("url", text(row.url));
+    set("altText", text(row.alt));
+    set("tokenId", text(row.token));
+    set("mediaId", text(row.mediaId));
+    set("mediaFilename", text(row.mediaFilename));
+    set("mediaGeneration", text(row.mediaGen));
+    set("fallbackImageGeneration", text(row.fbImageGen));
+    set("fallbackPdfGeneration", text(row.fbPdfGen));
+    const table = text(row.table);
+    set("tableData", table && /^[0-9a-f]+$/i.test(table) ? table : void 0);
+    return attachment;
+  }).sort((a, b) => a.pk - b.pk);
+  const byPk = new Map(all.map((a) => [a.pk, a]));
+  const ordered = [];
+  for (const attachment of all) {
+    const parent = attachment.parentPk !== void 0 ? byPk.get(attachment.parentPk) : void 0;
+    if (parent) parent.children.push(attachment);
+    else ordered.push(attachment);
+  }
+  return { byId: new Map(all.map((a) => [a.id, a])), ordered };
+}
+function readExportNote(id2, { dbPath: dbPath2 = NOTES_DB_PATH10 } = {}) {
+  const doc = readNoteBlocks(id2, { dbPath: dbPath2 });
+  const pk = /\/ICNote\/p([0-9]{1,18})$/.exec(id2)[1];
+  const output = sqlite(dbPath2, [
+    "-cmd",
+    ".parameter init",
+    "-cmd",
+    `.parameter set @pk ${pk}`,
+    attachmentQuery(objectColumns(dbPath2))
+  ]);
+  let parsed;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new NoteBlocksError("query-failed", "Unexpected Notes database response");
+  }
+  const rows = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+  const { byId, ordered } = buildAttachments(rows);
+  const firstLine = doc.blocks.find((block) => block.text.trim())?.text.trim() ?? "";
+  return {
+    id: id2,
+    title: text(parsed.title) ?? firstLine,
+    doc,
+    attachments: byId,
+    ordered
+  };
+}
+
+// src/services/notesExport.ts
+var DEFAULT_FOLDER_EXPORT_LIMIT = 100;
+var MAX_FOLDER_EXPORT_LIMIT = 1e3;
+var NotesExportError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "NotesExportError";
+  }
+  code;
+};
+function validPath(path8, what) {
+  try {
+    return assertExportPath(path8);
+  } catch (error2) {
+    throw new NotesExportError(
+      "invalid-path",
+      `${what}: ${error2 instanceof Error ? error2.message : String(error2)}`
+    );
+  }
+}
+function selectNotes(request, deps) {
+  if (!!request.id === !!request.folder)
+    throw new NotesExportError("invalid-request", "Provide exactly one of 'id' or 'folder'.");
+  if (request.id) return [request.id];
+  const limit = Math.min(request.limit ?? DEFAULT_FOLDER_EXPORT_LIMIT, MAX_FOLDER_EXPORT_LIMIT);
+  try {
+    return deps.listNoteRefs(request.account, request.folder, void 0, limit).map((ref) => ref.id);
+  } catch (error2) {
+    throw new NotesExportError(
+      "folder-unavailable",
+      `Could not list folder "${request.folder}": ${error2 instanceof Error ? error2.message : String(error2)}`
+    );
+  }
+}
+function loadNotes(ids, single, read) {
+  const notes = [];
+  const skipped = [];
+  for (const id2 of ids) {
+    try {
+      notes.push(read ? read(id2) : readExportNote(id2));
+    } catch (error2) {
+      if (!(error2 instanceof NoteBlocksError)) throw error2;
+      if (single) throw new NotesExportError(error2.code, error2.message);
+      skipped.push({ id: id2, code: error2.code });
+    }
+  }
+  return { notes, skipped };
+}
+function exportNotesMarkdown(request, deps) {
+  const output = request.outputPath ? validPath(request.outputPath, "outputPath") : void 0;
+  const assetsDir = request.assetsDir ? validPath(request.assetsDir, "assetsDir") : void 0;
+  if (output && assetsDir && output === assetsDir)
+    throw new NotesExportError("invalid-path", "outputPath and assetsDir must differ.");
+  const ids = selectNotes(request, deps);
+  const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
+  let fd;
+  if (output) {
+    mkdirSync5(dirname4(output), { recursive: true });
+    try {
+      fd = openCreateOnly(output);
+    } catch (error2) {
+      if (error2 instanceof OutputExistsError)
+        throw new NotesExportError("output_exists", error2.message);
+      throw error2;
+    }
+  }
+  const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname4(output) : void 0) : void 0;
+  const ctx = {
+    stats: emptyStats(),
+    ...writer ? { writer, locator: deps.locator ?? new AssetLocator() } : {}
+  };
+  let markdown;
+  try {
+    markdown = renderNotesMarkdown(notes, ctx, { wrap: request.wrap ?? 0 });
+  } catch (error2) {
+    if (fd !== void 0) writeAllAndClose(fd, "");
+    throw error2;
+  }
+  const bytes = Buffer.byteLength(markdown);
+  const receipt = {
+    format: "markdown",
+    count: notes.length,
+    bytes,
+    stats: ctx.stats,
+    skipped,
+    ...assetsDir ? { assets: { dir: assetsDir, files: writer.count } } : {}
+  };
+  if (fd !== void 0) {
+    writeAllAndClose(fd, markdown);
+    return { ...receipt, output };
+  }
+  if (bytes > deps.maxInlineBytes)
+    throw new NotesExportError(
+      "too-large",
+      `The Markdown is ${bytes} bytes, over the ${deps.maxInlineBytes}-byte inline limit. Pass outputPath to write it to a file, or export fewer notes.`
+    );
+  return { ...receipt, markdown };
+}
+
+// src/tools/directOperations.ts
+import { createHash as createHash2 } from "node:crypto";
+import {
+  closeSync as closeSync5,
+  constants as constants5,
+  fstatSync as fstatSync5,
+  mkdtempSync as mkdtempSync4,
+  openSync as openSync5,
   readFileSync as readFileSync3,
   rmSync as rmSync4,
   writeFileSync as writeFileSync3
 } from "node:fs";
 import { tmpdir as tmpdir4 } from "node:os";
-import { basename as basename3, extname as extname3, isAbsolute as isAbsolute3, join as join18 } from "node:path";
+import { basename as basename4, extname as extname4, isAbsolute as isAbsolute3, join as join20 } from "node:path";
 var noteId = exactIdInput(
   "ICNote",
   /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i,
@@ -48308,7 +49356,7 @@ function readSnapshot(manager, id2) {
 function assertExistingContentPreserved(before, after) {
   if (before.id !== after.id || before.title !== after.title)
     throw new Error("Note identity changed");
-  const tidy = (text) => text.replace(/\r\n/g, "\n").replace(/[\s\ufffc]+$/gu, "");
+  const tidy = (text2) => text2.replace(/\r\n/g, "\n").replace(/[\s\ufffc]+$/gu, "");
   if (!tidy(after.rich.text).startsWith(tidy(before.rich.text)))
     throw new Error("Existing note text was not preserved");
   if (linkSignature(before.rich.links) !== linkSignature(after.rich.links.slice(0, before.rich.links.length)))
@@ -48330,9 +49378,9 @@ function assertExistingContentPreserved(before, after) {
 }
 function localAttachment(path8) {
   if (!isAbsolute3(path8)) throw new Error("An absolute local file path is required");
-  const descriptor = openSync4(path8, constants4.O_RDONLY | constants4.O_NOFOLLOW);
+  const descriptor = openSync5(path8, constants5.O_RDONLY | constants5.O_NOFOLLOW);
   try {
-    const stat = fstatSync4(descriptor);
+    const stat = fstatSync5(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
       throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
     const bytes = readFileSync3(descriptor);
@@ -48340,7 +49388,7 @@ function localAttachment(path8) {
       throw new Error("Attachment changed while it was being read; try again");
     return bytes;
   } finally {
-    closeSync4(descriptor);
+    closeSync5(descriptor);
   }
 }
 function registerDirectOperations(server2, manager) {
@@ -48453,7 +49501,7 @@ function registerDirectOperations(server2, manager) {
   );
 }
 function attachmentName(path8, filename) {
-  const source = basename3(path8);
+  const source = basename4(path8);
   if (filename === void 0) return source;
   if (Buffer.byteLength(filename, "utf8") > 255)
     throw new Error("filename must be at most 255 bytes");
@@ -48461,9 +49509,9 @@ function attachmentName(path8, filename) {
     throw new Error(
       "filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces"
     );
-  if (extname3(filename).toLowerCase() !== extname3(source).toLowerCase())
+  if (extname4(filename).toLowerCase() !== extname4(source).toLowerCase())
     throw new Error(
-      `filename must keep the source file's extension (${extname3(source) || "none"})`
+      `filename must keep the source file's extension (${extname4(source) || "none"})`
     );
   return filename;
 }
@@ -48474,8 +49522,8 @@ function attachFile(manager, args) {
   if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
   const bytes = localAttachment(path8);
   const beforeAttachments = manager.listAttachmentsById(id2);
-  const directory = mkdtempSync4(join18(tmpdir4(), "notes-attachment-add-"));
-  const temporaryFile = join18(directory, name);
+  const directory = mkdtempSync4(join20(tmpdir4(), "notes-attachment-add-"));
+  const temporaryFile = join20(directory, name);
   try {
     writeFileSync3(temporaryFile, bytes, { mode: 384 });
     if (readSnapshot(manager, id2).hash !== before.hash) throw new Error("Note revision changed");
@@ -48667,18 +49715,18 @@ function appendChecklistItems(args, deps, readRich) {
   const existing = new Set(byPosition(readRich(args.id).checklistItems).map((item) => item.id));
   const landed = [];
   let contentHash = args.expectedContentHash;
-  for (const [index, text] of args.items.entries()) {
+  for (const [index, text2] of args.items.entries()) {
     let wrote = false;
     try {
       const result = mutateBackground(
         { ...args, expectedContentHash: contentHash },
         "create-checklist-item",
-        { text },
+        { text: text2 },
         (before, after) => {
           wrote = true;
           assertPreserved(before, after, { append: true });
           const added = after.checklist.slice(before.checklist.length);
-          if (added.length !== 1 || added[0].text !== text || added[0].done)
+          if (added.length !== 1 || added[0].text !== text2 || added[0].done)
             throw new Error("Native checklist item not verified");
         },
         deps
@@ -48687,14 +49735,14 @@ function appendChecklistItems(args, deps, readRich) {
       const fresh = items.filter(
         (item) => !existing.has(item.id) && !landed.some((done) => done.id === item.id)
       );
-      if (fresh.length !== 1 || fresh[0].text !== text || fresh[0].done)
+      if (fresh.length !== 1 || fresh[0].text !== text2 || fresh[0].done)
         throw new Error("Native checklist identity not verified");
       for (const done of landed) {
         const current = items.find((item) => item.id === done.id);
         if (!current || current.text !== done.text || current.done)
           throw new Error("An earlier appended item changed identity or text");
       }
-      landed.push({ index, id: fresh[0].id, text });
+      landed.push({ index, id: fresh[0].id, text: text2 });
       contentHash = result.contentHash;
     } catch (error2) {
       return {
@@ -48703,7 +49751,7 @@ function appendChecklistItems(args, deps, readRich) {
         landed,
         stoppedAt: {
           index,
-          text,
+          text: text2,
           outcome: wrote ? "uncertain" : "not-written",
           error: error2 instanceof Error ? error2.message : String(error2)
         },
@@ -49035,7 +50083,7 @@ function registerNativeOperations(server2, manager) {
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { existsSync as existsSync12 } from "node:fs";
 import { release as release2 } from "node:os";
-import { dirname as dirname4, resolve as resolve3 } from "node:path";
+import { dirname as dirname5, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 var OPTIONAL_BRIDGE_NOTE = "(optional \u2014 needed only for create-note format: markdown, macOS 26+)";
 var MARKDOWN_MIN_DARWIN_MAJOR = 25;
@@ -49058,11 +50106,11 @@ function setupShortcuts(checkOnly, dependencies = {}) {
     const result = spawnSync2("/usr/bin/open", [path8], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
-  const baseDirectory = dependencies.baseDirectory || resolve3(dirname4(fileURLToPath(import.meta.url)), "../shortcuts");
+  const baseDirectory = dependencies.baseDirectory || resolve4(dirname5(fileURLToPath(import.meta.url)), "../shortcuts");
   const osRelease = (dependencies.osRelease || release2)();
   const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
   const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
-    const path8 = resolve3(baseDirectory, file);
+    const path8 = resolve4(baseDirectory, file);
     let installed = false;
     let identifier;
     let error2;
@@ -50196,17 +51244,17 @@ function guardedAppend({
   scopeText,
   htmlSeparator
 }, onRoute) {
-  const contentToHtml = (text) => {
-    if (format === "html") return text;
-    return text.split("\n").map((line) => {
+  const contentToHtml = (text2) => {
+    if (format === "html") return text2;
+    return text2.split("\n").map((line) => {
       const escaped = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       return `<div>${escaped || "<br>"}</div>`;
     }).join("");
   };
-  const separatorToHtml = (sep3) => {
-    if (format === "html") return sep3;
-    if (sep3 === "\n\n") return "<div><br></div>";
-    const escaped = sep3.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const separatorToHtml = (sep4) => {
+    if (format === "html") return sep4;
+    if (sep4 === "\n\n") return "<div><br></div>";
+    const escaped = sep4.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return `<div>${escaped}</div>`;
   };
   const snapshot = readExactNoteSnapshot(id2);
@@ -50970,8 +52018,8 @@ registerTool(
     if (firstImage && id2) {
       const assets = notesManager.getAttachmentAssetsById(id2);
       const first2 = firstImageView(id2, selectFirstImage(assets));
-      const text = first2 ? `Lead visual: ${first2.kind} attachment ${first2.attachmentId} (${first2.path ? "asset on disk" : first2.previewPath ? "preview only" : "not downloaded"}; order from ${assets.orderSource}).` : "This note has no image, scan, or drawing attachment.";
-      return successResponse(text, { firstImage: first2, orderSource: assets.orderSource });
+      const text2 = first2 ? `Lead visual: ${first2.kind} attachment ${first2.attachmentId} (${first2.path ? "asset on disk" : first2.previewPath ? "preview only" : "not downloaded"}; order from ${assets.orderSource}).` : "This note has no image, scan, or drawing attachment.";
+      return successResponse(text2, { firstImage: first2, orderSource: assets.orderSource });
     }
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
@@ -51474,6 +52522,67 @@ registerTool(
     }
     return successResponse(markdown, { markdown });
   }, "Error getting note as markdown")
+);
+var exportPathInput = (what) => external_exports.string().min(1).max(MAX.SAVE_PATH).optional().describe(
+  `${what} (absolute; under home, a temp dir, or /Volumes; never inside the Notes library)`
+);
+var exportStatsSchema = external_exports.object({
+  attachments: external_exports.number(),
+  placed: external_exports.number(),
+  placeholders: external_exports.number(),
+  unavailable: external_exports.number(),
+  tables: external_exports.number(),
+  unreadableTables: external_exports.number(),
+  unreferenced: external_exports.number()
+});
+registerTool(
+  "export-notes-markdown",
+  {
+    description: "Use when: exporting one note (by exact id) or a folder's notes as one Markdown document rendered from the decoded note body: headings, bulleted/dashed/numbered lists with indent, checklists with state, block quotes, monospaced blocks, bold/italic/strikethrough/underline/highlight, links, tables, and attachments in body order.\nReturns: the Markdown inline (capped by APPLE_NOTES_MCP_EXPORT_MAX_BYTES), or with outputPath a receipt {format, count, bytes, output}; plus attachment counts and skipped notes (for example password-protected ones).\nDo not use when: you need the legacy HTML-converted Markdown of one note (get-note-markdown) or a restorable backup (export-notes-json). A folder document separates notes with '---' and is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is create-only (an existing file is refused with [output_exists]); assetsDir copies attachment files without replacing existing ones (collisions get -2, -3 suffixes). Without assetsDir, attachments render as labeled placeholders.",
+    inputSchema: {
+      id: noteIdInput.optional(),
+      folder: external_exports.string().min(1).max(MAX.FOLDER).optional().describe("Folder path to export instead of one note (nested paths use '/')"),
+      account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account holding the folder (defaults to Notes.app's default account)"),
+      limit: external_exports.number().int().min(1).max(MAX_FOLDER_EXPORT_LIMIT).optional().describe(
+        `Maximum notes read from the folder (default 100, max ${MAX_FOLDER_EXPORT_LIMIT})`
+      ),
+      outputPath: exportPathInput("File to create for the Markdown"),
+      assetsDir: exportPathInput("Directory that receives copies of attachment files"),
+      wrap: external_exports.number().int().min(0).max(1e3).optional().describe("Hard-wrap prose at this many columns (0 or omitted: no wrapping)")
+    },
+    outputSchema: {
+      format: external_exports.string().optional(),
+      count: external_exports.number().optional(),
+      bytes: external_exports.number().optional(),
+      markdown: external_exports.string().optional(),
+      output: external_exports.string().optional(),
+      assets: external_exports.object({ dir: external_exports.string(), files: external_exports.number() }).optional(),
+      stats: exportStatsSchema.optional(),
+      skipped: external_exports.array(external_exports.object({ id: external_exports.string(), code: external_exports.string() })).optional()
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
+  },
+  withErrorHandling((request) => {
+    let receipt;
+    try {
+      receipt = exportNotesMarkdown(request, {
+        listNoteRefs: (account, folder, since, limit) => notesManager.listNoteRefs(account, folder, since, limit),
+        // The document travels twice (text and structuredContent).
+        maxInlineBytes: Math.floor(exportMaxResponseBytes() / 2) - 64 * 1024
+      });
+    } catch (error2) {
+      if (!(error2 instanceof NotesExportError || error2 instanceof NoteBlocksError)) throw error2;
+      const hint = error2.code === "no-full-disk-access" ? ` Grant Full Disk Access to the app that launches this server: ${FULL_DISK_ACCESS_GUIDE_URL}` : "";
+      return errorResponse(`Error exporting Markdown [${error2.code}]: ${error2.message}${hint}`);
+    }
+    const skipped = receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "";
+    if (receipt.output)
+      return successResponse(
+        `Wrote ${receipt.count} note(s) as Markdown (${receipt.bytes} bytes) to ${receipt.output}` + (receipt.assets ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}` : "") + `${skipped}.`,
+        { ...receipt }
+      );
+    return successResponse(receipt.markdown ?? "", { ...receipt });
+  }, "Error exporting Markdown")
 );
 registerTool(
   "get-checklist-state",
