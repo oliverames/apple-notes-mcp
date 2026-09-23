@@ -24,11 +24,10 @@ import {
   readNoteState,
   type PrivateHelperDeps,
 } from "../services/privateHelper.js";
+import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
 
 export const coreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
-export const notesUuid = z
-  .string()
-  .regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i);
+export const notesUuid = z.string().regex(UUID_PATTERN);
 
 /** Resolve the Notes UUID from either an explicit identifier or an x-coredata id. */
 export function resolveIdentifier(
@@ -84,7 +83,7 @@ export function registerPrivateHelperTools(
         description,
         inputSchema,
         annotations,
-        outputSchema: z.object({ ok: z.boolean() }).passthrough(),
+        outputSchema: z.object({ ok: z.boolean().optional() }).passthrough(),
       },
       (async (args: z.infer<z.ZodObject<S>>) => {
         try {

@@ -86,11 +86,11 @@ export function registerPrivatePaperTools(
       description:
         "Use when: you need the vector content of an Apple Notes Paper drawing (com.apple.paper): each stroke's ink, color, width, transform and points, or an SVG outline of them.\n" +
         "Returns: decodePath, strokeCount, pointCount, bounds, inks, strokes (color as sRGB 0..1 [r,g,b,a]; points as arrays in `pointFields` order), and with format svg/both an SVG whose colors are byte-scale rgba(). Typed shapes are reported as not exposed (`shapeDecode`). `truncated` is true when the point budget cut points off.\n" +
-        "Do not use when: you only need Notes' rendered image of the drawing or its handwriting text.\n" +
+        "Do not use when: you only need Notes' rendered image of the drawing (export-paper-image) or its handwriting text (list-paper-attachments).\n" +
         "Safety: read-only. The helper decodes a private copy of the drawing's bundle and opens the Notes store read-only. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and a built helper; pass exactly one of identifier, id, or attachmentIdentifier.",
       inputSchema,
       annotations: { readOnlyHint: true, openWorldHint: false },
-      outputSchema: z.object({ ok: z.boolean() }).passthrough(),
+      outputSchema: z.object({ ok: z.boolean().optional() }).passthrough(),
     },
     handler as unknown as ToolCallback<typeof inputSchema>
   );
