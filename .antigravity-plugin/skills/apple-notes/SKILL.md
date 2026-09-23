@@ -78,6 +78,7 @@ Use this skill when the user:
 | `create-checklist-items` | Append several unchecked native checklist items in order (needs the Background Operations bridge; on `ok: false`, only `landed` items are verified) |
 | `get-note-metadata`      | [BETA] Read pinned/trash/snippet metadata from the NoteStore DB                                                                                     |
 | `get-note-blocks`        | Read a note's paragraph styles, inline formatting, and attachment positions as typed blocks                                                         |
+| `get-audio-transcripts`  | Read the transcripts and summaries Notes stored for a note's audio recordings                                                                       |
 | `list-shared-notes`      | List notes shared with collaborators                                                                                                                |
 | `get-sync-status`        | Check whether iCloud sync is active                                                                                                                 |
 | `health-check`           | Quickly verify Notes.app access                                                                                                                     |
@@ -162,6 +163,12 @@ them in.
 Use titles for discovery only. Mutations require the exact note ID; update,
 append, and delete also require the `contentHash` returned by
 `get-note-content`. This prevents duplicate-title mistakes and stale saves.
+
+For a note with audio recordings, `get-audio-transcripts` returns the
+transcript Notes already computed for each recording (it never transcribes).
+Check each attachment's `status`: `none` means Notes stored no transcript, not
+that the read failed. Ask for `includeSegments` only when word timings or
+speakers per word matter, because segments make the response much larger.
 
 ### Updating Notes
 

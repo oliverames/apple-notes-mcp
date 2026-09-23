@@ -789,6 +789,61 @@ export interface ExportNotesOptions {
   maxResponseBytes?: number;
 }
 
+// =============================================================================
+// Stored audio transcripts (get-audio-transcripts)
+// =============================================================================
+
+/** One recognized word with its position in the recording. */
+export interface TranscriptSegment {
+  text: string;
+  /** Seconds from the start of its fragment. */
+  start?: number;
+  /** Seconds. */
+  duration?: number;
+  speaker?: string;
+  /** 0-based fragment index, present only when the recording has several fragments. */
+  fragment?: number;
+}
+
+export type TranscriptStatus = "ok" | "none" | "undecodable";
+
+/** One top-level audio attachment of a note, in body order. */
+export interface AudioTranscript {
+  attachmentId: string;
+  identifier: string;
+  typeUti: string;
+  status: TranscriptStatus;
+  reason?: string;
+  durationSeconds?: number;
+  needsTranscription?: boolean;
+  fragmentCount?: number;
+  wordCount?: number;
+  text?: string;
+  textTruncated?: boolean;
+  speakers?: string[];
+  summary?: string;
+  topLineSummary?: string;
+  segments?: TranscriptSegment[];
+  segmentsTruncated?: boolean;
+}
+
+export interface AudioTranscriptsResult {
+  id: string;
+  attachments: AudioTranscript[];
+  /** False when the body could not be parsed and attachments are in database order. */
+  bodyOrder: boolean;
+  /** True when segments or text were dropped to fit the response size limit. */
+  truncated: boolean;
+}
+
+/** Options for AppleNotesManager.getAudioTranscripts. */
+export interface AudioTranscriptOptions {
+  /** Include word-level segments (default false). */
+  includeSegments?: boolean;
+  /** Cap on segments returned per attachment (default 2000, at most 20000). */
+  maxSegments?: number;
+}
+
 /**
  * One native table read by get-note-tables, in note body order.
  *

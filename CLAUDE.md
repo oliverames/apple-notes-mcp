@@ -206,6 +206,13 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
   - Plus note-not-found and password-protected errors raised before the database is touched.
 - Works independently of `get-note-content` — use both for full picture
 
+### get-audio-transcripts
+- Reads the transcript (and summary, if any) that Notes already computed for each audio recording in a note, by note id. It never transcribes audio itself
+- Requires Full Disk Access; reads the NoteStore database read-only. Password-protected notes are refused
+- One entry per top-level audio attachment, in body order. Check each entry's `status`: `ok` has `text`; `none` means Notes stored no transcript (not a failure); `undecodable` carries a `reason`
+- `includeSegments: true` adds word-level `segments` (text, start, duration, speaker), capped per attachment by `maxSegments` (default 2000). Leave it off unless word timings matter; it multiplies the response size
+- The `attachmentId` works with `save-attachment` if the user also wants the audio file
+
 ### get-note-tables
 - Requires the note ID; reads the NoteStore database read-only (Full Disk Access)
 - Returns every native table in body order as GitHub-flavored Markdown (`markdown`, first row as header) and as JSON (`tables[].rows`, `rowIds`, `columnIds`)
