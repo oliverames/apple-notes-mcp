@@ -125,6 +125,7 @@ const STRICT_NOTE_ID: Array<[string, string]> = [
   ["get-note-blocks", "id"],
   ["get-note-tables", "id"],
   ["get-audio-transcripts", "id"],
+  ["export-attachments", "noteId"],
   ["update-note", "id"],
   ["append-to-note", "id"],
   ["delete-note", "id"],

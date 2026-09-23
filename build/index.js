@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants3);
+          this.rhs = optimizeExpr(this.rhs, names, constants4);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants3);
+        this.rhs = optimizeExpr(this.rhs, names, constants4);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants3) {
-        this.code = optimizeExpr(this.code, names, constants3);
+      optimizeNames(names, constants4) {
+        this.code = optimizeExpr(this.code, names, constants4);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants3))
+          if (n.optimizeNames(names, constants4))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants3);
-        if (!(super.optimizeNames(names, constants3) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
+        if (!(super.optimizeNames(names, constants4) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants3);
+        this.condition = optimizeExpr(this.condition, names, constants4);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants3) {
-        if (!super.optimizeNames(names, constants3))
+      optimizeNames(names, constants4) {
+        if (!super.optimizeNames(names, constants4))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants3);
+        this.iteration = optimizeExpr(this.iteration, names, constants4);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants3) {
-        if (!super.optimizeNames(names, constants3))
+      optimizeNames(names, constants4) {
+        if (!super.optimizeNames(names, constants4))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants3);
+        this.iterable = optimizeExpr(this.iterable, names, constants4);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants3) {
+      optimizeNames(names, constants4) {
         var _a, _b;
-        super.optimizeNames(names, constants3);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants3);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants3);
+        super.optimizeNames(names, constants4);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants4);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants3) {
+    function optimizeExpr(expr, names, constants4) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants3[n.str];
+        const c = constants4[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants3[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants4[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -2991,7 +2991,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3018,7 +3018,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3843,7 +3843,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve4(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3876,49 +3876,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative2, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize(base, options), options);
-        relative2 = parse3(serialize(relative2, options), options);
+        relative3 = parse3(serialize(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative2.scheme) {
-        target.scheme = relative2.scheme;
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-          target.userinfo = relative2.userinfo;
-          target.host = relative2.host;
-          target.port = relative2.port;
-          target.path = removeDotSegments(relative2.path || "");
-          target.query = relative2.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative2.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative2.query !== void 0) {
-              target.query = relative2.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative2.path[0] === "/") {
-              target.path = removeDotSegments(relative2.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative2.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative2.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative2.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3926,7 +3926,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative2.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4205,7 +4205,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve4,
       resolveComponent,
       equal,
       serialize,
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants3 = {
+    var constants4 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants3) {
-      v = { value: constants3[c] };
+    for (c in constants4) {
+      v = { value: constants4[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -12184,9 +12184,9 @@ var require_URL = __commonJS({
       },
       // See: http://tools.ietf.org/html/rfc3986#section-5.2
       // and https://url.spec.whatwg.org/#constructors
-      resolve: function(relative2) {
+      resolve: function(relative3) {
         var base = this;
-        var r = new URL2(relative2);
+        var r = new URL2(relative3);
         var t = new URL2();
         if (r.scheme !== void 0) {
           t.scheme = r.scheme;
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join16(output, replacement);
+        return join17(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join16(output, rule.append(self.options));
+          output = join17(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join16(output, replacement) {
+    function join17(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -36608,7 +36608,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+        await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -36625,7 +36625,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -36703,7 +36703,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve3(parseResult.data);
+            resolve4(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -36964,12 +36964,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve3, interval);
+      const timeoutId = setTimeout(resolve4, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38282,7 +38282,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+      await new Promise((resolve4) => setTimeout(resolve4, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -38970,12 +38970,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve3) => {
+    return new Promise((resolve4) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve3();
+        resolve4();
       } else {
-        this._stdout.once("drain", resolve3);
+        this._stdout.once("drain", resolve4);
       }
     });
   }
@@ -41036,11 +41036,586 @@ function cleanupTempDir(dir) {
   }
 }
 
+// src/utils/attachmentAssets.ts
+import { execFileSync as execFileSync6 } from "node:child_process";
+import {
+  closeSync as closeSync2,
+  constants as constants2,
+  fstatSync as fstatSync2,
+  lstatSync as lstatSync2,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
+  readdirSync,
+  readSync,
+  realpathSync as realpathSync2,
+  unlinkSync,
+  writeSync
+} from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { basename, dirname as dirname2, extname, isAbsolute as isAbsolute2, join as join6, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { gunzipSync as gunzipSync5 } from "node:zlib";
+var NOTES_CONTAINER_DIR = join6(
+  homedir6(),
+  "Library/Group Containers/group.com.apple.notes"
+);
+var AttachmentStoreError = class extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+    this.name = "AttachmentStoreError";
+  }
+  code;
+};
+var MAX_PREVIEW_DIR_ENTRIES = 1e5;
+var MAX_BUNDLE_ENTRIES = 64;
+var MAX_GENERATION_DIRS = 64;
+var MAX_COLLISION_SUFFIX = 1e4;
+var MAX_BODY_BYTES = 32 * 1024 * 1024;
+var PREVIEW_IMAGE_SUFFIXES = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".heic", ".tiff", ".gif"]);
+var GENERIC_FILE_NAMES = /* @__PURE__ */ new Set([
+  "fallbackimage.png",
+  "fallbackimage.jpg",
+  "fallbackpdf.pdf",
+  "preview.png",
+  "orientedpreview.png"
+]);
+var IMAGE_UTIS = /* @__PURE__ */ new Set([
+  "public.jpeg",
+  "public.png",
+  "public.heic",
+  "public.heif",
+  "public.tiff",
+  "public.image",
+  "com.compuserve.gif",
+  "org.webmproject.webp",
+  "com.microsoft.bmp",
+  "com.adobe.raw-image"
+]);
+function classifyAttachmentKind(uti) {
+  if (!uti) return "other";
+  const u = uti.toLowerCase();
+  if (u === "com.apple.notes.table") return "table";
+  if (u === "public.url" || u.startsWith("public.url")) return "url";
+  if (u === "com.apple.paper.doc.scan" || u === "com.apple.notes.gallery" || u.includes("scan"))
+    return "scan";
+  if (u === "com.apple.paper" || u.startsWith("com.apple.drawing")) return "drawing";
+  if (u === "com.adobe.pdf" || u.includes("pdf")) return "pdf";
+  if (u.includes("audio")) return "audio";
+  if (u === "public.mpeg-4" || u.includes("movie") || u.includes("video")) return "video";
+  if (IMAGE_UTIS.has(u) || u.includes("image")) return "image";
+  return "other";
+}
+function parseNoteId2(noteId3) {
+  const m = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/ICNote\/p(\d+)$/.exec(noteId3);
+  if (!m) {
+    throw new AttachmentStoreError(
+      `Invalid note ID format: "${noteId3}". Expected x-coredata://UUID/ICNote/pNNN`,
+      "invalid_id"
+    );
+  }
+  return { store: m[1], pk: Number(m[2]) };
+}
+function attachmentCoreDataId(noteId3, pk) {
+  return noteId3.replace(/ICNote\/p\d+$/, `ICAttachment/p${pk}`);
+}
+function buildAttachmentRowsSql(notePk, columns) {
+  if (!Number.isSafeInteger(notePk) || notePk < 0) throw new Error("Invalid note primary key");
+  const col2 = (alias, name) => columns.has(name) ? `${alias}.${name}` : "NULL";
+  const firstOf = (alias, names) => {
+    const present = names.filter((n) => columns.has(n)).map((n) => `${alias}.${n}`);
+    if (present.length === 0) return "NULL";
+    return present.length === 1 ? present[0] : `COALESCE(${present.join(", ")})`;
+  };
+  const accountCols = [...columns].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
+  const accountRefs = [
+    ...accountCols.map((c) => `a.${c}`),
+    ...accountCols.map((c) => `n.${c}`)
+  ].join(", ");
+  const account = accountCols.length ? `(SELECT acc.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT acc WHERE acc.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICAccount') AND acc.Z_PK IN (${accountRefs}) LIMIT 1)` : "NULL";
+  const noteLink = columns.has("ZNOTE") ? "a.ZNOTE" : "NULL";
+  const parent = col2("a", "ZPARENTATTACHMENT");
+  const deleted = columns.has("ZMARKEDFORDELETION") ? " AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
+  const fields = [
+    `'pk', a.Z_PK`,
+    `'identifier', a.ZIDENTIFIER`,
+    `'uti', ${col2("a", "ZTYPEUTI")}`,
+    `'parentPk', ${parent}`,
+    `'filename', ${col2("a", "ZFILENAME")}`,
+    `'mediaIdentifier', m.ZIDENTIFIER`,
+    `'mediaFilename', ${col2("m", "ZFILENAME")}`,
+    `'mediaGeneration', ${firstOf("m", ["ZGENERATION1", "ZGENERATION"])}`,
+    `'fallbackImageGeneration', ${col2("a", "ZFALLBACKIMAGEGENERATION")}`,
+    `'fallbackPdfGeneration', ${col2("a", "ZFALLBACKPDFGENERATION")}`,
+    `'accountIdentifier', ${account}`
+  ].join(", ");
+  const mediaJoin = columns.has("ZMEDIA") ? "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON m.Z_PK = a.ZMEDIA" : "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON 0";
+  const childClause = parent === "NULL" ? "" : ` OR a.ZPARENTATTACHMENT IN (SELECT p.Z_PK FROM ZICCLOUDSYNCINGOBJECT p WHERE p.ZNOTE = ${notePk})`;
+  return [
+    "BEGIN;",
+    `SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ${notePk} AND Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICNote');`,
+    `SELECT json_group_array(json_object(${fields})) FROM ZICCLOUDSYNCINGOBJECT a ${mediaJoin} LEFT JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = ${noteLink} WHERE a.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICAttachment') AND (${noteLink} = ${notePk}${childClause})${deleted};`,
+    `SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE = ${notePk};`,
+    "COMMIT;"
+  ].join(" ");
+}
+function runSqlite3(dbPath2, sql) {
+  try {
+    return execFileSync6("/usr/bin/sqlite3", ["-readonly", dbPath2, sql], {
+      encoding: "utf8",
+      timeout: 1e4,
+      maxBuffer: 128 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    if (/authorization denied|unable to open database/i.test(message)) {
+      throw new AttachmentStoreError(
+        "Full Disk Access is required to read attachment paths. Grant it to the app that launches this server, then relaunch it (run the doctor tool to verify).",
+        "no_fda"
+      );
+    }
+    throw new AttachmentStoreError(`Failed to read attachment rows: ${message}`, "query_error");
+  }
+}
+function toStringOrNull(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+function toIntOrNull(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+function parseAttachmentRows(json2) {
+  const raw = JSON.parse(json2 || "[]");
+  if (!Array.isArray(raw)) throw new Error("Invalid attachment rows");
+  const rows = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item;
+    const pk = toIntOrNull(r.pk);
+    const identifier = toStringOrNull(r.identifier);
+    if (pk === null || identifier === null) continue;
+    rows.push({
+      pk,
+      identifier,
+      uti: toStringOrNull(r.uti),
+      parentPk: toIntOrNull(r.parentPk),
+      filename: toStringOrNull(r.filename),
+      mediaIdentifier: toStringOrNull(r.mediaIdentifier),
+      mediaFilename: toStringOrNull(r.mediaFilename),
+      mediaGeneration: toStringOrNull(r.mediaGeneration),
+      fallbackImageGeneration: toStringOrNull(r.fallbackImageGeneration),
+      fallbackPdfGeneration: toStringOrNull(r.fallbackPdfGeneration),
+      accountIdentifier: toStringOrNull(r.accountIdentifier)
+    });
+  }
+  return rows.sort((a, b) => a.pk - b.pk);
+}
+function attachmentOrderFromNoteData(hex3) {
+  if (!hex3 || !/^[0-9a-f]+$/i.test(hex3)) return null;
+  try {
+    const data = gunzipSync5(Buffer.from(hex3, "hex"), { maxOutputLength: MAX_BODY_BYTES });
+    const wrapper = embeddedMessage(getField(decodeMessage(data), 2));
+    const body = wrapper && embeddedMessage(getField(wrapper, 3));
+    if (!body) return null;
+    const ids = [];
+    for (const run of getFields(body, 5)) {
+      const fields = embeddedMessage(run);
+      const info = fields && embeddedMessage(getField(fields, 12));
+      const id2 = info && stringValue(getField(info, 1));
+      if (id2 && !ids.some((seen) => seen.toLowerCase() === id2.toLowerCase())) ids.push(id2);
+    }
+    return ids;
+  } catch {
+    return null;
+  }
+}
+function readNoteAttachmentRows(noteId3, dbPath2 = join6(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
+  const { pk } = parseNoteId2(noteId3);
+  const columnList = runSqlite3(
+    dbPath2,
+    "SELECT group_concat(name, ',') FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');"
+  ).trim();
+  const columns = new Set(columnList.split(",").filter(Boolean));
+  if (!columns.has("ZIDENTIFIER")) {
+    throw new AttachmentStoreError("Unsupported Notes database schema", "query_error");
+  }
+  const lines = runSqlite3(dbPath2, buildAttachmentRowsSql(pk, columns)).split("\n");
+  if (lines[0]?.trim() !== "1") {
+    throw new AttachmentStoreError(
+      `No note found in the database for ID "${noteId3}".`,
+      "not_found"
+    );
+  }
+  let rows;
+  try {
+    rows = parseAttachmentRows(lines[1] ?? "[]");
+  } catch {
+    throw new AttachmentStoreError("Attachment rows could not be parsed", "query_error");
+  }
+  return { rows, bodyOrder: attachmentOrderFromNoteData(lines[2]?.trim()) };
+}
+function safeComponent(value) {
+  if (typeof value !== "string" || !value || value.length > 255) return null;
+  if (value === "." || value === ".." || value.includes("/") || value.includes("\0")) return null;
+  return value;
+}
+function realInside(path7, rootReal) {
+  try {
+    const real = realpathSync2.native(path7);
+    return real === rootReal || real.startsWith(rootReal + sep2) ? real : null;
+  } catch {
+    return null;
+  }
+}
+function isRegularFile(path7) {
+  try {
+    return lstatSync2(path7).isFile();
+  } catch {
+    return false;
+  }
+}
+function isDirectory(path7) {
+  try {
+    return lstatSync2(path7).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function boundedEntries(dir, limit) {
+  try {
+    const entries = readdirSync(dir);
+    return entries.length > limit ? null : entries.sort();
+  } catch {
+    return null;
+  }
+}
+function resolveAccountDir(containerDir, accountIdentifier) {
+  const accountsDir = join6(containerDir, "Accounts");
+  let accountsReal;
+  try {
+    accountsReal = realpathSync2.native(accountsDir);
+  } catch {
+    return null;
+  }
+  const account = safeComponent(accountIdentifier);
+  if (account) {
+    const dir = realInside(join6(accountsReal, account), accountsReal);
+    if (dir && isDirectory(dir)) return dir;
+  }
+  const entries = (boundedEntries(accountsReal, 64) ?? []).filter(
+    (e) => isDirectory(join6(accountsReal, e))
+  );
+  if (entries.length !== 1) return null;
+  return realInside(join6(accountsReal, entries[0]), accountsReal);
+}
+function generationRank(name) {
+  const m = /^(\d+)_/.exec(name);
+  return m ? Number(m[1]) : 0;
+}
+function generationDirs(base, accountDir) {
+  const entries = boundedEntries(base, MAX_GENERATION_DIRS) ?? [];
+  return entries.map((e) => realInside(join6(base, e), accountDir)).filter((p) => p !== null && isDirectory(p)).sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
+}
+function fallbackFiles(accountDir, rootName, identifier, generation, names) {
+  const base = join6(accountDir, rootName, identifier);
+  const found = [];
+  const add = (candidate) => {
+    const real = realInside(candidate, accountDir);
+    if (real && isRegularFile(real) && !found.includes(real)) found.push(real);
+  };
+  const gen = safeComponent(generation);
+  if (gen) for (const name of names) add(join6(base, gen, name));
+  if (isDirectory(base)) {
+    for (const dir of generationDirs(base, accountDir))
+      for (const name of names) add(join6(dir, name));
+    for (const name of names) add(join6(base, name));
+  }
+  for (const name of names) add(join6(accountDir, rootName, `${identifier}${extname(name)}`));
+  return found;
+}
+function previewPixelArea(name) {
+  const matches = [...name.matchAll(/-(\d{1,6})x(\d{1,6})(?=-|\.|$)/g)];
+  const last = matches.at(-1);
+  return last ? Number(last[1]) * Number(last[2]) : 0;
+}
+function previewFileInBundle(bundle, accountDir) {
+  const direct = [];
+  const nested = [];
+  for (const entry of boundedEntries(bundle, MAX_BUNDLE_ENTRIES) ?? []) {
+    const child = realInside(join6(bundle, entry), accountDir);
+    if (!child) continue;
+    if (isRegularFile(child)) direct.push(child);
+    else if (isDirectory(child)) nested.push(child);
+  }
+  nested.sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
+  const pick2 = (files) => files.find((f) => basename(f) === "Preview.png") ?? files.find((f) => PREVIEW_IMAGE_SUFFIXES.has(extname(f).toLowerCase())) ?? null;
+  for (const dir of nested) {
+    const files = (boundedEntries(dir, MAX_BUNDLE_ENTRIES) ?? []).map((e) => realInside(join6(dir, e), accountDir)).filter((p) => p !== null && isRegularFile(p));
+    const chosen = pick2(files);
+    if (chosen) return chosen;
+  }
+  return pick2(direct);
+}
+function listPreviewEntries(accountDir) {
+  return boundedEntries(join6(accountDir, "Previews"), MAX_PREVIEW_DIR_ENTRIES) ?? [];
+}
+function previewPaths(accountDir, identifier, entries) {
+  const id2 = safeComponent(identifier);
+  if (!id2) return [];
+  const prefix = `${id2}-`.toLowerCase();
+  const candidates = entries.filter((name) => name.toLowerCase().startsWith(prefix)).filter((name) => {
+    const ext = extname(name).toLowerCase();
+    return !ext || PREVIEW_IMAGE_SUFFIXES.has(ext) || /^\.\d+$/.test(ext);
+  }).sort((a, b) => previewPixelArea(b) - previewPixelArea(a) || a.localeCompare(b));
+  const files = [];
+  for (const name of candidates) {
+    const real = realInside(join6(accountDir, "Previews", name), accountDir);
+    if (!real) continue;
+    const file = isRegularFile(real) ? real : isDirectory(real) ? previewFileInBundle(real, accountDir) : null;
+    if (file && !files.includes(file)) files.push(file);
+  }
+  return files;
+}
+function assetPathsFor(accountDir, row) {
+  const found = [];
+  const add = (candidate) => {
+    const real = realInside(candidate, accountDir);
+    if (real && isRegularFile(real) && !found.includes(real)) found.push(real);
+  };
+  const mediaId = safeComponent(row.mediaIdentifier);
+  const mediaName = safeComponent(row.mediaFilename);
+  const mediaGen = safeComponent(row.mediaGeneration);
+  if (mediaId && mediaName) {
+    if (mediaGen) add(join6(accountDir, "Media", mediaId, mediaGen, mediaName));
+    add(join6(accountDir, "Media", mediaId, mediaName));
+  }
+  const id2 = safeComponent(row.identifier);
+  if (!id2) return found;
+  const ownName = safeComponent(row.filename);
+  if (ownName) add(join6(accountDir, "Media", id2, ownName));
+  for (const file of fallbackFiles(accountDir, "FallbackImages", id2, row.fallbackImageGeneration, [
+    "FallbackImage.png",
+    "FallbackImage.jpg"
+  ]))
+    add(file);
+  for (const file of fallbackFiles(accountDir, "FallbackPDFs", id2, row.fallbackPdfGeneration, [
+    "FallbackPDF.pdf"
+  ]))
+    add(file);
+  return found;
+}
+function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINER_DIR) {
+  const byPk = new Map(rows.map((r) => [r.pk, r]));
+  const roots = rows.filter((r) => r.parentPk === null || !byPk.has(r.parentPk));
+  const bodyIndex = /* @__PURE__ */ new Map();
+  (bodyOrder ?? []).forEach((id2, index) => bodyIndex.set(id2.toLowerCase(), index));
+  const indexOf = (r) => bodyIndex.get(r.identifier.toLowerCase()) ?? null;
+  const inBody = roots.filter((r) => indexOf(r) !== null);
+  const orderSource = inBody.length > 0 ? "body" : "creation";
+  const orderedRoots = [
+    ...inBody.sort((a, b) => indexOf(a) - indexOf(b)),
+    ...roots.filter((r) => indexOf(r) === null)
+  ];
+  const accountDirs = /* @__PURE__ */ new Map();
+  const previewEntries = /* @__PURE__ */ new Map();
+  const accountDirFor = (account) => {
+    if (!accountDirs.has(account))
+      accountDirs.set(account, resolveAccountDir(containerDir, account));
+    return accountDirs.get(account) ?? null;
+  };
+  const record2 = (row, parent) => {
+    const accountDir = accountDirFor(row.accountIdentifier ?? parent?.accountIdentifier ?? null);
+    let assetPaths = [];
+    let previews = [];
+    if (accountDir) {
+      if (!previewEntries.has(accountDir))
+        previewEntries.set(accountDir, listPreviewEntries(accountDir));
+      assetPaths = assetPathsFor(accountDir, row);
+      previews = previewPaths(accountDir, row.identifier, previewEntries.get(accountDir));
+    }
+    const previewPath = previews[0] ?? null;
+    return {
+      pk: row.pk,
+      identifier: row.identifier,
+      uti: row.uti,
+      kind: classifyAttachmentKind(row.uti),
+      parentIdentifier: parent?.identifier ?? null,
+      filename: row.filename ?? row.mediaFilename,
+      bodyIndex: parent ? null : indexOf(row),
+      assetPaths,
+      previewPath,
+      paths: previewPath ? [...assetPaths, previewPath] : [...assetPaths]
+    };
+  };
+  const attachments = [];
+  for (const root of orderedRoots) {
+    attachments.push(record2(root, null));
+    for (const child of rows.filter((r) => r.parentPk === root.pk && r !== root)) {
+      attachments.push(record2(child, root));
+    }
+  }
+  return { orderSource, attachments };
+}
+function selectFirstImage(assets) {
+  const candidates = assets.attachments.filter((a) => {
+    if (a.parentIdentifier !== null) return true;
+    return assets.orderSource === "creation" || a.bodyIndex !== null;
+  });
+  const eligibleChild = (a) => a.parentIdentifier === null || candidates.some((p) => p.parentIdentifier === null && p.identifier === a.parentIdentifier);
+  const ordered = candidates.filter(eligibleChild);
+  const chosen = ordered.find((a) => a.kind === "image") ?? ordered.find((a) => a.kind === "scan" || a.kind === "drawing");
+  if (!chosen) return null;
+  const siblings = chosen.parentIdentifier ? ordered.filter((a) => a.parentIdentifier === chosen.parentIdentifier) : [];
+  return {
+    pk: chosen.pk,
+    identifier: chosen.identifier,
+    uti: chosen.uti,
+    kind: chosen.kind,
+    path: chosen.assetPaths[0] ?? null,
+    previewPath: chosen.previewPath,
+    parentIdentifier: chosen.parentIdentifier,
+    galleryIndex: chosen.parentIdentifier ? siblings.indexOf(chosen) : null,
+    orderSource: assets.orderSource
+  };
+}
+function canonicalTail(p) {
+  let current = resolve2(p);
+  const tail = [];
+  for (; ; ) {
+    try {
+      return join6(realpathSync2.native(current), ...tail);
+    } catch {
+      const parent = dirname2(current);
+      if (parent === current) return join6(current, ...tail);
+      tail.unshift(basename(current));
+      current = parent;
+    }
+  }
+}
+function isInsideNotesContainer(p, containerDir = NOTES_CONTAINER_DIR) {
+  const target = canonicalTail(p).toLowerCase();
+  const container = canonicalTail(containerDir).toLowerCase();
+  const rel = relative2(container, target);
+  return !(rel === ".." || rel.startsWith(`..${sep2}`) || isAbsolute2(rel));
+}
+function copyFileExclusive(src, dest) {
+  const input = openSync2(src, constants2.O_RDONLY | constants2.O_NOFOLLOW);
+  try {
+    if (!fstatSync2(input).isFile()) throw new Error("Source is not a regular file");
+    const output = openSync2(
+      dest,
+      constants2.O_WRONLY | constants2.O_CREAT | constants2.O_EXCL | constants2.O_NOFOLLOW,
+      384
+    );
+    try {
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      for (; ; ) {
+        const read = readSync(input, buffer, 0, buffer.length, null);
+        if (read === 0) break;
+        let written = 0;
+        while (written < read) written += writeSync(output, buffer, written, read - written);
+      }
+    } catch (error2) {
+      closeSync2(output);
+      unlinkSync(dest);
+      throw error2;
+    }
+    closeSync2(output);
+  } finally {
+    closeSync2(input);
+  }
+}
+function exportFileName(record2, source, kind) {
+  const ext = extname(source);
+  if (kind === "preview") {
+    const stored2 = safeComponent(record2.filename ? basename(record2.filename) : null);
+    const stem = stored2 ? basename(stored2, extname(stored2)) : record2.identifier;
+    return `${safeComponent(stem) ?? record2.identifier}-preview${ext}`;
+  }
+  const stored = safeComponent(record2.filename ? basename(record2.filename) : null);
+  if (stored && !GENERIC_FILE_NAMES.has(stored.toLowerCase())) return stored;
+  const own = basename(source);
+  if (!GENERIC_FILE_NAMES.has(own.toLowerCase())) return own;
+  return `${record2.identifier}${ext}`;
+}
+function collisionName(name, attempt) {
+  if (attempt <= 1) return name;
+  const ext = extname(name);
+  const stem = ext && ext !== name ? name.slice(0, -ext.length) : name;
+  return `${stem}-${attempt}${ext}`;
+}
+function prepareExportDir(exportDir, containerDir = NOTES_CONTAINER_DIR) {
+  const abs = assertSafeSavePath(exportDir);
+  if (isInsideNotesContainer(abs, containerDir)) {
+    throw new Error(`Refusing to write inside the Notes data container: "${abs}"`);
+  }
+  mkdirSync2(abs, { recursive: true });
+  if (isInsideNotesContainer(abs, containerDir)) {
+    throw new Error(`Refusing to write inside the Notes data container: "${abs}"`);
+  }
+  return abs;
+}
+function exportOneAttachment(record2, dir, source) {
+  const base = {
+    pk: record2.pk,
+    identifier: record2.identifier,
+    uti: record2.uti,
+    kind: record2.kind,
+    parentIdentifier: record2.parentIdentifier,
+    exportedTo: null,
+    exportedKind: null
+  };
+  if (!source) return base;
+  const name = exportFileName(record2, source.path, source.kind);
+  for (let attempt = 1; attempt <= MAX_COLLISION_SUFFIX; attempt++) {
+    const dest = join6(dir, collisionName(name, attempt));
+    try {
+      assertSafeSavePath(dest);
+      copyFileExclusive(source.path, dest);
+      return { ...base, exportedTo: dest, exportedKind: source.kind };
+    } catch (error2) {
+      if (error2.code === "EEXIST") continue;
+      return { ...base, error: error2 instanceof Error ? error2.message : String(error2) };
+    }
+  }
+  return { ...base, error: "Too many name collisions in the export directory" };
+}
+function exportSource(record2) {
+  if (record2.assetPaths[0]) return { path: record2.assetPaths[0], kind: "asset" };
+  if (record2.previewPath) return { path: record2.previewPath, kind: "preview" };
+  return null;
+}
+function exportAttachmentAssets(assets, exportDir, options = {}) {
+  const dir = prepareExportDir(exportDir, options.containerDir);
+  if (options.firstImageOnly) {
+    const first2 = selectFirstImage(assets);
+    if (!first2) return { exportDir: dir, results: [], firstImage: null };
+    const record2 = assets.attachments.find((a) => a.pk === first2.pk);
+    return {
+      exportDir: dir,
+      results: [exportOneAttachment(record2, dir, exportSource(record2))],
+      firstImage: first2
+    };
+  }
+  const results = [];
+  for (const record2 of assets.attachments) {
+    if (record2.parentIdentifier !== null) {
+      const parent = assets.attachments.find(
+        (a) => a.parentIdentifier === null && a.identifier === record2.parentIdentifier
+      );
+      if (parent && exportSource(parent)) continue;
+    } else if (!exportSource(record2) && assets.attachments.some((c) => c.parentIdentifier === record2.identifier)) {
+      continue;
+    }
+    results.push(exportOneAttachment(record2, dir, exportSource(record2)));
+  }
+  return { exportDir: dir, results };
+}
+
 // src/services/appleNotesManager.ts
 var import_turndown = __toESM(require_turndown_cjs(), 1);
 import { existsSync as existsSync4 } from "fs";
-import { homedir as homedir6 } from "os";
-import { join as join6 } from "path";
+import { homedir as homedir7 } from "os";
+import { join as join7 } from "path";
 var FIELD_SEP = "";
 var RECORD_SEP = "";
 var AS_FIELD_SEP = "(character id 31)";
@@ -41268,7 +41843,7 @@ function getNoteLinkFromDB(coreDataId2) {
   const match = coreDataId2.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
-  const dbPath2 = join6(homedir6(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+  const dbPath2 = join7(homedir7(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
   if (!existsSync4(dbPath2)) return null;
   try {
     const { DatabaseSync } = __require("node:sqlite");
@@ -43190,6 +43765,37 @@ var AppleNotesManager = class {
       cleanupTempDir(dir);
     }
   }
+  /**
+   * Reads one note's attachments with their on-disk asset and preview paths,
+   * in body order, from the NoteStore database and the Notes group container
+   * (both read-only). Requires Full Disk Access.
+   *
+   * @param noteId - canonical CoreData note id
+   * @throws AttachmentStoreError (`no_fda`, `invalid_id`, `not_found`, `query_error`)
+   */
+  getAttachmentAssetsById(noteId3) {
+    const { rows, bodyOrder } = readNoteAttachmentRows(noteId3);
+    return assembleAttachmentAssets(rows, bodyOrder);
+  }
+  /**
+   * The note's lead visual: the first image in body order (even when its asset
+   * has not downloaded), else the first scan or drawing, else null.
+   */
+  getFirstImageById(noteId3) {
+    return selectFirstImage(this.getAttachmentAssetsById(noteId3));
+  }
+  /**
+   * Copies a note's attachment files into a directory. Each attachment exports
+   * its real asset; its rendered preview only when no asset exists. Existing
+   * files are never replaced: name collisions get `-2`, `-3`, ... suffixes.
+   * The directory must satisfy the same allowlist as save-attachment and may
+   * not be inside the Notes group container.
+   */
+  exportAttachmentsById(noteId3, exportDir, firstImageOnly = false) {
+    return exportAttachmentAssets(this.getAttachmentAssetsById(noteId3), exportDir, {
+      firstImageOnly
+    });
+  }
   // ===========================================================================
   // Batch Operations
   // ===========================================================================
@@ -43603,7 +44209,7 @@ var AppleNotesManager = class {
 };
 
 // src/utils/syncDetection.ts
-import { execFileSync as execFileSync6 } from "child_process";
+import { execFileSync as execFileSync7 } from "child_process";
 import * as fs3 from "fs";
 import * as path3 from "path";
 import * as os3 from "os";
@@ -43648,7 +44254,7 @@ function getSyncStatus(useCache = true) {
         WHERE object.ZCLOUDSTATE = state.Z_PK
       );
     `;
-    const result = execFileSync6(
+    const result = execFileSync7(
       "sqlite3",
       ["-readonly", NOTES_DB_PATH4, query.replace(/\n/g, " ")],
       {
@@ -43707,7 +44313,7 @@ function withSyncAwarenessSync(operation, fn) {
 }
 
 // src/utils/noteMetadata.ts
-import { execFileSync as execFileSync7 } from "child_process";
+import { execFileSync as execFileSync8 } from "child_process";
 import * as fs4 from "fs";
 import * as path4 from "path";
 import * as os4 from "os";
@@ -43727,15 +44333,15 @@ var COLUMN_MAP = [
   { key: "widgetSnippet", column: "ZWIDGETSNIPPET", type: "text" },
   { key: "smartFolderQuery", column: "ZSMARTFOLDERQUERYJSON", type: "text" }
 ];
-function runSqlite3(query) {
-  return execFileSync7("sqlite3", ["-readonly", NOTES_DB_PATH5, query], {
+function runSqlite4(query) {
+  return execFileSync8("sqlite3", ["-readonly", NOTES_DB_PATH5, query], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
   }).trim();
 }
 function presentColumns() {
-  const out = runSqlite3("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);");
+  const out = runSqlite4("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);");
   const cols = /* @__PURE__ */ new Set();
   for (const line of out.split("\n")) {
     const name = line.split("|")[1];
@@ -43763,7 +44369,7 @@ function getNoteMetadata(noteId3) {
       return { metadata: {} };
     }
     const pairs = selected.map((c) => `'${c.key}', ${c.column}`).join(", ");
-    const row = runSqlite3(
+    const row = runSqlite4(
       `SELECT json_object(${pairs}) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ${pk};`
     );
     if (!row) {
@@ -43796,7 +44402,7 @@ function getNoteMetadata(noteId3) {
 }
 
 // src/utils/noteIdentifiers.ts
-import { execFileSync as execFileSync8 } from "child_process";
+import { execFileSync as execFileSync9 } from "child_process";
 import * as fs5 from "fs";
 import * as os5 from "os";
 import * as path5 from "path";
@@ -43878,7 +44484,7 @@ function runJsonQuery(sql, dbPath2) {
   if (!fs5.existsSync(dbPath2)) throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
   let out;
   try {
-    out = execFileSync8("sqlite3", ["-readonly", dbPath2, sql], {
+    out = execFileSync9("sqlite3", ["-readonly", dbPath2, sql], {
       encoding: "utf8",
       timeout: 5e3,
       stdio: ["pipe", "pipe", "pipe"]
@@ -44568,11 +45174,11 @@ function positiveTextTerms(node, negated = false) {
 }
 
 // src/utils/noteQueryStore.ts
-import { execFileSync as execFileSync9 } from "child_process";
+import { execFileSync as execFileSync10 } from "child_process";
 import * as fs6 from "fs";
 import * as os6 from "os";
 import * as path6 from "path";
-import { gunzipSync as gunzipSync5 } from "zlib";
+import { gunzipSync as gunzipSync6 } from "zlib";
 var NOTES_DB_PATH7 = path6.join(
   os6.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
@@ -44708,8 +45314,8 @@ function buildScanSql(available, options) {
     "COMMIT;"
   ].join(" ");
 }
-function runSqlite4(dbPath2, query) {
-  return execFileSync9("sqlite3", ["-readonly", dbPath2, query], {
+function runSqlite5(dbPath2, query) {
+  return execFileSync10("sqlite3", ["-readonly", dbPath2, query], {
     encoding: "utf8",
     timeout: 3e4,
     maxBuffer: 512 * 1024 * 1024,
@@ -44718,7 +45324,7 @@ function runSqlite4(dbPath2, query) {
 }
 function presentColumns2(dbPath2) {
   const cols = /* @__PURE__ */ new Set();
-  for (const line of runSqlite4(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n")) {
+  for (const line of runSqlite5(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n")) {
     const name = line.split("|")[1];
     if (name) cols.add(name);
   }
@@ -44728,13 +45334,13 @@ var escapeSegment = escapeFolderName;
 function resolveFolders(rows) {
   const byPk = new Map(rows.map((row) => [row.pk, row]));
   const resolved = /* @__PURE__ */ new Map();
-  const resolve3 = (pk, seen) => {
+  const resolve4 = (pk, seen) => {
     const cached2 = resolved.get(pk);
     if (cached2) return cached2;
     const row = byPk.get(pk);
     if (!row || seen.has(pk)) return void 0;
     seen.add(pk);
-    const parent = row.parent !== null ? resolve3(row.parent, seen) : void 0;
+    const parent = row.parent !== null ? resolve4(row.parent, seen) : void 0;
     const name = row.name ?? "";
     const path7 = parent ? `${parent.path}/${escapeSegment(name)}` : escapeSegment(name);
     const plainPath = parent ? `${parent.plainPath}/${name}` : name;
@@ -44748,7 +45354,7 @@ function resolveFolders(rows) {
     resolved.set(pk, info);
     return info;
   };
-  for (const row of rows) resolve3(row.pk, /* @__PURE__ */ new Set());
+  for (const row of rows) resolve4(row.pk, /* @__PURE__ */ new Set());
   return resolved;
 }
 var coreDataMs = (seconds) => seconds === null || !Number.isFinite(seconds) ? void 0 : CORE_DATA_EPOCH_MS + seconds * 1e3;
@@ -44778,7 +45384,7 @@ function queryNotes(expression, options = {}) {
   let output;
   try {
     const available = presentColumns2(dbPath2);
-    output = runSqlite4(
+    output = runSqlite5(
       dbPath2,
       buildScanSql(available, { scanLimit, includeDeleted, withBodies, withTags })
     );
@@ -44834,7 +45440,7 @@ function queryNotes(expression, options = {}) {
       try {
         decoded = decodeNoteBody(
           new Uint8Array(
-            gunzipSync5(Buffer.from(row.data, "hex"), { maxOutputLength: 32 * 1024 * 1024 })
+            gunzipSync6(Buffer.from(row.data, "hex"), { maxOutputLength: 32 * 1024 * 1024 })
           )
         );
       } catch {
@@ -44909,10 +45515,10 @@ function queryNotes(expression, options = {}) {
 import { spawnSync } from "child_process";
 
 // src/services/nativeTags.ts
-import { execFileSync as execFileSync10 } from "node:child_process";
+import { execFileSync as execFileSync11 } from "node:child_process";
 import { mkdtempSync as mkdtempSync2, writeFileSync, rmSync as rmSync2 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/services/shortcutConsent.ts
 function shortcutConsentHint(shortcut) {
@@ -44988,7 +45594,7 @@ function addNativeTags(request, deps) {
   };
 }
 function listInstalledShortcuts() {
-  return execFileSync10("/usr/bin/shortcuts", ["list", "--show-identifiers"], {
+  return execFileSync11("/usr/bin/shortcuts", ["list", "--show-identifiers"], {
     encoding: "utf8",
     timeout: 15e3,
     maxBuffer: 1024 * 1024,
@@ -45014,11 +45620,11 @@ function runNativeTagsShortcut(input) {
   const status = nativeTagsStatus();
   if (!status.installed)
     throw new Error(`Import the supplied ${status.shortcut}.shortcut in Shortcuts first`);
-  const directory = mkdtempSync2(join11(tmpdir2(), "apple-notes-native-tags-"));
+  const directory = mkdtempSync2(join12(tmpdir2(), "apple-notes-native-tags-"));
   try {
-    const path7 = join11(directory, "request.json");
+    const path7 = join12(directory, "request.json");
     writeFileSync(path7, JSON.stringify(input), { mode: 384 });
-    execFileSync10("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path7], {
+    execFileSync11("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path7], {
       encoding: "utf8",
       timeout: 6e4,
       maxBuffer: 1024 * 1024,
@@ -45037,10 +45643,10 @@ function runNativeTagsShortcut(input) {
 }
 
 // src/services/backgroundNotes.ts
-import { execFileSync as execFileSync11 } from "node:child_process";
+import { execFileSync as execFileSync12 } from "node:child_process";
 import { mkdtempSync as mkdtempSync3, writeFileSync as writeFileSync2, rmSync as rmSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 
 // src/utils/appendMarkdown.ts
 var escape2 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -45365,9 +45971,9 @@ function runBackgroundShortcut(input, status = backgroundStatus()) {
     throw new Error(
       `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
     );
-  const directory = mkdtempSync3(join12(tmpdir3(), "apple-notes-background-"));
+  const directory = mkdtempSync3(join13(tmpdir3(), "apple-notes-background-"));
   try {
-    const file = join12(directory, "request.json");
+    const file = join13(directory, "request.json");
     writeFileSync2(
       file,
       JSON.stringify({
@@ -45387,7 +45993,7 @@ function runBackgroundShortcut(input, status = backgroundStatus()) {
       { mode: 384 }
     );
     try {
-      execFileSync11("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", file], {
+      execFileSync12("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", file], {
         encoding: "utf8",
         timeout: callTimeoutMs() ?? 6e4,
         maxBuffer: 1024 * 1024,
@@ -45712,7 +46318,7 @@ ${request.content}`
 }
 
 // src/services/capabilityMatrix.ts
-import { execFileSync as execFileSync12 } from "node:child_process";
+import { execFileSync as execFileSync13 } from "node:child_process";
 import { release } from "node:os";
 var MACOS_SHORTCUTS_CLI = "12.0";
 var MACOS_MARKDOWN_IMPORT = "26.0";
@@ -45919,7 +46525,7 @@ function evaluateFeatures(env, features = FEATURES) {
 function readMacOSVersion() {
   if (process.platform !== "darwin") return null;
   try {
-    const out = execFileSync12("/usr/bin/sw_vers", ["-productVersion"], {
+    const out = execFileSync13("/usr/bin/sw_vers", ["-productVersion"], {
       encoding: "utf8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "ignore"]
@@ -46073,12 +46679,12 @@ function formatDoctorReport(r) {
 
 // src/services/fileConfig.ts
 import { existsSync as existsSync9, readFileSync as readFileSync2 } from "fs";
-import { join as join13 } from "path";
-import { homedir as homedir11 } from "os";
+import { join as join14 } from "path";
+import { homedir as homedir12 } from "os";
 function fileConfigPath(env = process.env) {
   const override = env.APPLE_NOTES_MCP_CONFIG_FILE;
   if (override && override.trim()) return override.trim();
-  return join13(homedir11(), "Library", "Application Support", "apple-notes-mcp", "config.json");
+  return join14(homedir12(), "Library", "Application Support", "apple-notes-mcp", "config.json");
 }
 function loadFileConfig(env = process.env, path7 = fileConfigPath(env)) {
   const applied = [];
@@ -46381,11 +46987,11 @@ function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS) {
 }
 
 // src/utils/noteBlocks.ts
-import { execFileSync as execFileSync13 } from "node:child_process";
+import { execFileSync as execFileSync14 } from "node:child_process";
 import { existsSync as existsSync10 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { join as join14 } from "node:path";
-import { gunzipSync as gunzipSync6 } from "node:zlib";
+import { homedir as homedir13 } from "node:os";
+import { join as join15 } from "node:path";
+import { gunzipSync as gunzipSync7 } from "node:zlib";
 var NoteBlocksError = class extends Error {
   code;
   constructor(code, message) {
@@ -46673,7 +47279,7 @@ function summarize(blocks, attachments) {
 function decodeCompressedNoteBlocks(compressed) {
   let data;
   try {
-    data = gunzipSync6(compressed, { maxOutputLength: 32 * 1024 * 1024 });
+    data = gunzipSync7(compressed, { maxOutputLength: 32 * 1024 * 1024 });
   } catch (error2) {
     throw new NoteBlocksError(
       "decompress-failed",
@@ -46727,8 +47333,8 @@ function pageNoteBlocks(doc, { offset = 0, limit = 500, maxBytes = blocksMaxResp
     undecodedFields: doc.undecodedFields
   };
 }
-var NOTES_DB_PATH8 = join14(
-  homedir12(),
+var NOTES_DB_PATH8 = join15(
+  homedir13(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH8 } = {}) {
@@ -46743,7 +47349,7 @@ function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH8 } = {}) {
   const sql = "SELECT json_object('exists', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = @pk AND Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICNote')), 'data', (SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE = @pk), 'encrypted', (SELECT ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA WHERE ZNOTE = @pk));";
   let output;
   try {
-    output = execFileSync13(
+    output = execFileSync14(
       "/usr/bin/sqlite3",
       ["-readonly", "-cmd", ".parameter init", "-cmd", `.parameter set @pk ${pk}`, dbPath2, sql],
       {
@@ -46894,17 +47500,17 @@ function insertLink(request, deps) {
 // src/tools/directOperations.ts
 import { createHash as createHash2 } from "node:crypto";
 import {
-  closeSync as closeSync2,
-  constants as constants2,
-  fstatSync as fstatSync2,
+  closeSync as closeSync3,
+  constants as constants3,
+  fstatSync as fstatSync3,
   mkdtempSync as mkdtempSync4,
-  openSync as openSync2,
+  openSync as openSync3,
   readFileSync as readFileSync3,
   rmSync as rmSync4,
   writeFileSync as writeFileSync3
 } from "node:fs";
 import { tmpdir as tmpdir4 } from "node:os";
-import { basename, extname, isAbsolute as isAbsolute2, join as join15 } from "node:path";
+import { basename as basename2, extname as extname2, isAbsolute as isAbsolute3, join as join16 } from "node:path";
 var noteId = exactIdInput(
   "ICNote",
   /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i,
@@ -46948,10 +47554,10 @@ function assertExistingContentPreserved(before, after) {
   }
 }
 function localAttachment(path7) {
-  if (!isAbsolute2(path7)) throw new Error("An absolute local file path is required");
-  const descriptor = openSync2(path7, constants2.O_RDONLY | constants2.O_NOFOLLOW);
+  if (!isAbsolute3(path7)) throw new Error("An absolute local file path is required");
+  const descriptor = openSync3(path7, constants3.O_RDONLY | constants3.O_NOFOLLOW);
   try {
-    const stat = fstatSync2(descriptor);
+    const stat = fstatSync3(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
       throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
     const bytes = readFileSync3(descriptor);
@@ -46959,7 +47565,7 @@ function localAttachment(path7) {
       throw new Error("Attachment changed while it was being read; try again");
     return bytes;
   } finally {
-    closeSync2(descriptor);
+    closeSync3(descriptor);
   }
 }
 function registerDirectOperations(server2, manager) {
@@ -47072,7 +47678,7 @@ function registerDirectOperations(server2, manager) {
   );
 }
 function attachmentName(path7, filename) {
-  const source = basename(path7);
+  const source = basename2(path7);
   if (filename === void 0) return source;
   if (Buffer.byteLength(filename, "utf8") > 255)
     throw new Error("filename must be at most 255 bytes");
@@ -47080,9 +47686,9 @@ function attachmentName(path7, filename) {
     throw new Error(
       "filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces"
     );
-  if (extname(filename).toLowerCase() !== extname(source).toLowerCase())
+  if (extname2(filename).toLowerCase() !== extname2(source).toLowerCase())
     throw new Error(
-      `filename must keep the source file's extension (${extname(source) || "none"})`
+      `filename must keep the source file's extension (${extname2(source) || "none"})`
     );
   return filename;
 }
@@ -47093,8 +47699,8 @@ function attachFile(manager, args) {
   if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
   const bytes = localAttachment(path7);
   const beforeAttachments = manager.listAttachmentsById(id2);
-  const directory = mkdtempSync4(join15(tmpdir4(), "notes-attachment-add-"));
-  const temporaryFile = join15(directory, name);
+  const directory = mkdtempSync4(join16(tmpdir4(), "notes-attachment-add-"));
+  const temporaryFile = join16(directory, name);
   try {
     writeFileSync3(temporaryFile, bytes, { mode: 384 });
     if (readSnapshot(manager, id2).hash !== before.hash) throw new Error("Note revision changed");
@@ -47654,7 +48260,7 @@ function registerNativeOperations(server2, manager) {
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { existsSync as existsSync11 } from "node:fs";
 import { release as release2 } from "node:os";
-import { dirname as dirname2, resolve as resolve2 } from "node:path";
+import { dirname as dirname3, resolve as resolve3 } from "node:path";
 import { fileURLToPath } from "node:url";
 var OPTIONAL_BRIDGE_NOTE = "(optional \u2014 needed only for create-note format: markdown, macOS 26+)";
 var MARKDOWN_MIN_DARWIN_MAJOR = 25;
@@ -47677,11 +48283,11 @@ function setupShortcuts(checkOnly, dependencies = {}) {
     const result = spawnSync2("/usr/bin/open", [path7], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
-  const baseDirectory = dependencies.baseDirectory || resolve2(dirname2(fileURLToPath(import.meta.url)), "../shortcuts");
+  const baseDirectory = dependencies.baseDirectory || resolve3(dirname3(fileURLToPath(import.meta.url)), "../shortcuts");
   const osRelease = (dependencies.osRelease || release2)();
   const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
   const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
-    const path7 = resolve2(baseDirectory, file);
+    const path7 = resolve3(baseDirectory, file);
     let installed = false;
     let identifier;
     let error2;
@@ -48794,10 +49400,10 @@ function guardedAppend({
       return `<div>${escaped || "<br>"}</div>`;
     }).join("");
   };
-  const separatorToHtml = (sep2) => {
-    if (format === "html") return sep2;
-    if (sep2 === "\n\n") return "<div><br></div>";
-    const escaped = sep2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const separatorToHtml = (sep3) => {
+    if (format === "html") return sep3;
+    if (sep3 === "\n\n") return "<div><br></div>";
+    const escaped = sep3.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return `<div>${escaped}</div>`;
   };
   const snapshot = readExactNoteSnapshot(id2);
@@ -49513,21 +50119,57 @@ registerTool(
     return successResponse(lines.join("\n"), { ...stats });
   }, "Error getting notes statistics")
 );
+function attachmentAssetView(noteId3, record2) {
+  return {
+    attachmentId: attachmentCoreDataId(noteId3, record2.pk),
+    identifier: record2.identifier,
+    uti: record2.uti,
+    kind: record2.kind,
+    parentIdentifier: record2.parentIdentifier,
+    bodyIndex: record2.bodyIndex,
+    assetPaths: record2.assetPaths,
+    previewPath: record2.previewPath,
+    paths: record2.paths
+  };
+}
+function firstImageView(noteId3, first2) {
+  if (!first2) return null;
+  const { pk, ...rest } = first2;
+  return { attachmentId: attachmentCoreDataId(noteId3, pk), ...rest };
+}
 registerTool(
   "list-attachments",
   {
-    description: "Use when: listing the attachments of one note, by id (preferred) or title.\nReturns: each attachment's name, content type, and id (use with save-attachment/fetch-attachment).\nDo not use when: you want the attachment bytes (fetch-attachment) or a file on disk (save-attachment).",
+    description: "Use when: listing the attachments of one note, by id (preferred) or title. With includePaths, also where each attachment's files are on disk; with firstImage, only the note's lead visual.\nReturns: each attachment's name, content type, and id (use with save-attachment/fetch-attachment). includePaths adds identifier, uti, kind, bodyIndex, assetPaths (the attachment's own files), previewPath (Notes' largest rendered thumbnail, always an image file), and paths. firstImage returns {firstImage, orderSource}: the first image in body order even when its asset has not downloaded (path null), else the first scan or drawing, else null.\nDo not use when: you want the attachment bytes (fetch-attachment) or files on disk (save-attachment, export-attachments).\nNote: includePaths and firstImage need the note id and Full Disk Access; they read NoteStore and the Notes data folder read-only. Treat the returned paths as local data: copy files out with export-attachments rather than handing raw paths on.",
     inputSchema: {
       id: looseNoteId(external_exports.string()).optional().describe(`Note ID (preferred - more reliable than title): ${NOTE_ID_FORMS}`),
       title: external_exports.string().max(MAX.TITLE).optional().describe("Note title (use id instead when available)"),
-      account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account containing the note (ignored if id is provided)")
+      account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account containing the note (ignored if id is provided)"),
+      includePaths: external_exports.boolean().optional().describe(
+        "Add on-disk assetPaths, previewPath, and paths to each attachment (requires id and Full Disk Access)"
+      ),
+      firstImage: external_exports.boolean().optional().describe(
+        "Return only the note's lead visual in body order instead of the list (requires id and Full Disk Access)"
+      )
     },
     outputSchema: {
       attachments: external_exports.array(external_exports.object({}).passthrough()).optional(),
-      count: external_exports.number().optional()
+      count: external_exports.number().optional(),
+      firstImage: external_exports.object({}).passthrough().nullable().optional(),
+      orderSource: external_exports.enum(["body", "creation"]).optional(),
+      pathsError: external_exports.string().optional()
     }
   },
-  withErrorHandling(({ id: id2, title, account }) => {
+  withErrorHandling(({ id: id2, title, account, includePaths = false, firstImage = false }) => {
+    if ((includePaths || firstImage) && !id2) {
+      return errorResponse("includePaths and firstImage require the note 'id'");
+    }
+    if (firstImage && id2) {
+      const assets = notesManager.getAttachmentAssetsById(id2);
+      const first2 = firstImageView(id2, selectFirstImage(assets));
+      const text = first2 ? `Lead visual: ${first2.kind} attachment ${first2.attachmentId} (${first2.path ? "asset on disk" : first2.previewPath ? "preview only" : "not downloaded"}; order from ${assets.orderSource}).` : "This note has no image, scan, or drawing attachment.";
+      return successResponse(text, { firstImage: first2, orderSource: assets.orderSource });
+    }
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
       if (!note2) {
@@ -49541,10 +50183,42 @@ registerTool(
         });
       }
       const attachmentList2 = attachments2.map((a) => `  - ${a.name} (${a.contentType})`).join("\n");
-      return successResponse(
-        `Found ${attachments2.length} attachment(s) in "${note2.title}":
+      if (!includePaths) {
+        return successResponse(
+          `Found ${attachments2.length} attachment(s) in "${note2.title}":
 ${attachmentList2}`,
-        { attachments: attachments2, count: attachments2.length }
+          { attachments: attachments2, count: attachments2.length }
+        );
+      }
+      let assets;
+      try {
+        assets = notesManager.getAttachmentAssetsById(id2);
+      } catch (error2) {
+        const pathsError = error2 instanceof Error ? error2.message : String(error2);
+        return successResponse(
+          `Found ${attachments2.length} attachment(s) in "${note2.title}" (paths unavailable: ${pathsError}):
+${attachmentList2}`,
+          { attachments: attachments2, count: attachments2.length, pathsError }
+        );
+      }
+      const byPk = new Map(assets.attachments.map((r) => [r.pk, r]));
+      let onDisk = 0;
+      const enriched = attachments2.map((a) => {
+        const pk = Number(/\/ICAttachment\/p(\d+)$/.exec(a.id)?.[1]);
+        const record2 = byPk.get(pk);
+        if (!record2) return a;
+        if (record2.paths.length > 0) onDisk++;
+        const children = assets.attachments.filter((c) => c.parentIdentifier === record2.identifier).map((c) => attachmentAssetView(id2, c));
+        return {
+          ...a,
+          ...attachmentAssetView(id2, record2),
+          ...children.length ? { children } : {}
+        };
+      });
+      return successResponse(
+        `Found ${attachments2.length} attachment(s) in "${note2.title}" (${onDisk} with files on disk; order from ${assets.orderSource}):
+${attachmentList2}`,
+        { attachments: enriched, count: attachments2.length, orderSource: assets.orderSource }
       );
     }
     if (!title) {
@@ -49697,6 +50371,61 @@ registerTool(
       contentType: r.contentType
     });
   }, "Error saving attachment")
+);
+registerTool(
+  "export-attachments",
+  {
+    description: `Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.
+Returns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "preview" when the asset never downloaded and only Notes' rendered thumbnail was available, or null when nothing was on disk.
+Do not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).
+Safety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.`,
+    inputSchema: {
+      noteId: noteIdInput,
+      exportDir: external_exports.string().min(1, "exportDir is required").max(MAX.SAVE_PATH).describe("Absolute destination directory (created if missing; home, temp, or /Volumes)"),
+      firstImageOnly: external_exports.boolean().optional().describe("Export only the note's lead visual (see list-attachments firstImage)")
+    },
+    outputSchema: {
+      exportDir: external_exports.string().optional(),
+      exported: external_exports.number().optional(),
+      previews: external_exports.number().optional(),
+      skipped: external_exports.number().optional(),
+      failed: external_exports.number().optional(),
+      results: external_exports.array(external_exports.object({}).passthrough()).optional(),
+      firstImage: external_exports.object({}).passthrough().nullable().optional()
+    }
+  },
+  withErrorHandling(({ noteId: noteId3, exportDir, firstImageOnly = false }) => {
+    const r = notesManager.exportAttachmentsById(noteId3, exportDir, firstImageOnly);
+    const results = r.results.map(({ pk, ...rest }) => ({
+      attachmentId: attachmentCoreDataId(noteId3, pk),
+      ...rest
+    }));
+    const exported = results.filter((x) => x.exportedKind !== null).length;
+    const previews = results.filter((x) => x.exportedKind === "preview").length;
+    const failed = results.filter((x) => x.error).length;
+    const skipped = results.length - exported - failed;
+    const structured = {
+      exportDir: r.exportDir,
+      exported,
+      previews,
+      skipped,
+      failed,
+      results
+    };
+    if (firstImageOnly) {
+      structured.firstImage = firstImageView(noteId3, r.firstImage ?? null);
+      if (!r.firstImage) {
+        return successResponse(
+          "This note has no image, scan, or drawing attachment; nothing was exported.",
+          structured
+        );
+      }
+    }
+    return successResponse(
+      `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${skipped} with nothing on disk, ${failed} failed).`,
+      structured
+    );
+  }, "Error exporting attachments")
 );
 registerTool(
   "fetch-attachment",
