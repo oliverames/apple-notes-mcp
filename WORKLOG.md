@@ -1,5 +1,35 @@
 # Worklog
 
+## 2026-09-23 - Upstream parity push; paused for machine downtime
+
+**What changed**: About 30 of our PRs merged upstream today (#182-#233 range, plus #204 as read-only). This session also opened #241, then closed it because sweetrb fixed #236 himself in #240. It synced #234, #235 and #238 with main and pushed them (2211, 2222 and 2165 tests passing), and replied to and resolved the CodeQL thread on #235.
+
+**Decisions made**: Private writes stay fork-only. When the rebuild is done, open one draft upstream PR for the writes foundation. NotesCTL is never named publicly. Never run the full `test:integration`, because it writes live notes.
+
+**Left off at**: (issues are disabled on this fork, so the tracking list lives here)
+
+Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstream main was `1462604` (v2.9.10) when work paused. All branches below are on this fork.
+
+## Ready, not yet opened upstream
+- [ ] `feat/search-match-details` (`fbb60a0`, base 8c90ea7): `matchedIn` + opt-in `wordCount` on `search-notes` / `query-notes`. 2179 tests pass; live read-only check done. Merge current upstream/main, set version to 2.10.x above main, open PR "Part of sweetrb/apple-notes-mcp#181".
+- [ ] `feat/smart-folder-destination-guard` (`2867a1e`, base 8c90ea7): refuses smart folders as create/move destinations. Main today moves such notes into Recently Deleted or creates them inside the smart folder while reporting an error. 2163 tests pass; live-verified on test notes. Fails open without Full Disk Access. Merge main (CHANGELOG conflict), renumber, open PR.
+- [ ] `fix/large-attachment-read` (`be1dfa2`, base 8c90ea7): real fix for sweetrb/apple-notes-mcp#237 (reads >64 MB hit maxBuffer; deletes >5 MB blocked by the inline expected-body limit). Upstream #242 only explains the error. Rebase on main, make `classifyBodyReadError` recognise the new overflow error, renumber, then offer as a follow-up to #242.
+
+## Open upstream PRs to keep mergeable
+- sweetrb/apple-notes-mcp#231 (review changes in progress), #234, #235, #238. Every upstream merge re-conflicts version/CHANGELOG/manifests/build.
+
+## Private writes (fork only; upstream hold)
+- [ ] `feat/native-writes-foundation` (`671c539`): separate opt-in writer binary on top of upstream's read-only helper; copy-store test passes. Needs live smoke test in the `apple-notes-mcp test` folder.
+- [ ] Port the 13 branches as `-v2` onto it (see resume notes in the foundation commit / TECHNICAL_NOTES.md).
+- [ ] Then open ONE draft upstream PR for the foundation with the sync-lag evidence, listing the feature branches (decision 2026-09-23).
+- [ ] Build on the foundation: whole-note highlight, attachment selector in edits, line-break trimming.
+
+## Incidental findings (unverified beyond one run)
+- `src/utils/folderStore.ts` comment says `folders of account` omits smart folders; a live probe showed it returns them.
+- Moving a note that is already in Recently Deleted into a smart folder appeared to tombstone it.
+
+---
+
 ## 2026-07-31 - Upstream PR #114: disclose title-only scope on empty search-notes results
 
 **What changed**: Shipped a code handoff from another session as upstream PR
