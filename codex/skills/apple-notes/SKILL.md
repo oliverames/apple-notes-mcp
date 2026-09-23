@@ -67,24 +67,26 @@ Use this skill when the user:
 
 ### Attachments, Checklists, Collaboration, and Diagnostics
 
-| Tool                     | Purpose                                                                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list-attachments`       | List attachments in a note                                                                                                                          |
-| `save-attachment`        | Save an attachment to disk                                                                                                                          |
-| `fetch-attachment`       | Fetch attachment bytes as base64                                                                                                                    |
-| `show-attachment`        | Reveal an attachment in the Notes.app UI                                                                                                            |
-| `get-checklist-state`    | Read checked/unchecked state for existing checklists                                                                                                |
-| `get-note-tables`        | Read a note's native tables as Markdown and JSON rows, in body order                                                                                |
-| `create-checklist-items` | Append several unchecked native checklist items in order (needs the Background Operations bridge; on `ok: false`, only `landed` items are verified) |
-| `get-note-metadata`      | [BETA] Read pinned/trash/snippet metadata from the NoteStore DB                                                                                     |
-| `get-note-blocks`        | Read a note's paragraph styles, inline formatting, and attachment positions as typed blocks                                                         |
-| `get-audio-transcripts`  | Read the transcripts and summaries Notes stored for a note's audio recordings                                                                       |
-| `list-shared-notes`      | List notes shared with collaborators                                                                                                                |
-| `get-sync-status`        | Check whether iCloud sync is active                                                                                                                 |
-| `health-check`           | Quickly verify Notes.app access                                                                                                                     |
-| `doctor`                 | Run detailed setup diagnostics, including the feature matrix                                                                                        |
-| `get-capabilities`       | Check native-write operations and the OS-aware feature matrix (`features.<name>.available` / `reason`) before calling a tool that depends on them   |
-| `get-notes-stats`        | Summarize note counts and recent activity                                                                                                           |
+| Tool                          | Purpose                                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list-attachments`            | List attachments in a note                                                                                                                          |
+| `add-attachment`              | Attach one local file to an exact note (optional `filename` renames it in Notes)                                                                    |
+| `create-note-with-attachment` | Create a note and attach one local file in one call; on a failed attach, reuse the named note id with `add-attachment`                              |
+| `save-attachment`             | Save an attachment to disk                                                                                                                          |
+| `fetch-attachment`            | Fetch attachment bytes as base64                                                                                                                    |
+| `show-attachment`             | Reveal an attachment in the Notes.app UI                                                                                                            |
+| `get-checklist-state`         | Read checked/unchecked state for existing checklists                                                                                                |
+| `get-note-tables`             | Read a note's native tables as Markdown and JSON rows, in body order                                                                                |
+| `create-checklist-items`      | Append several unchecked native checklist items in order (needs the Background Operations bridge; on `ok: false`, only `landed` items are verified) |
+| `get-note-metadata`           | [BETA] Read pinned/trash/snippet metadata from the NoteStore DB                                                                                     |
+| `get-note-blocks`             | Read a note's paragraph styles, inline formatting, and attachment positions as typed blocks                                                         |
+| `get-audio-transcripts`       | Read the transcripts and summaries Notes stored for a note's audio recordings                                                                       |
+| `list-shared-notes`           | List notes shared with collaborators                                                                                                                |
+| `get-sync-status`             | Check whether iCloud sync is active                                                                                                                 |
+| `health-check`                | Quickly verify Notes.app access                                                                                                                     |
+| `doctor`                      | Run detailed setup diagnostics, including the feature matrix                                                                                        |
+| `get-capabilities`            | Check native-write operations and the OS-aware feature matrix (`features.<name>.available` / `reason`) before calling a tool that depends on them   |
+| `get-notes-stats`             | Summarize note counts and recent activity                                                                                                           |
 
 ## Usage Patterns
 
