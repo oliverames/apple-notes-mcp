@@ -124,6 +124,7 @@ const field = (tool: string, name: string): z.ZodTypeAny => {
 const STRICT_NOTE_ID: Array<[string, string]> = [
   ["get-native-objects", "id"],
   ["get-note-blocks", "id"],
+  ["get-note-structure", "id"],
   ["get-note-tables", "id"],
   ["get-audio-transcripts", "id"],
   ["export-notes-markdown", "id"],

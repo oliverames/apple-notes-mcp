@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+## [2.9.3] - 2026-09-23
+
+### Added
+
+- `get-note-structure` returns a read-only overview of one note from the
+  NoteStore database: decoded text, a block summary, every link with its kind
+  (`inline` hyperlink, rich link `card`, native `note` link chip, native
+  `section` link chip) and its target note and paragraph UUIDs when the URL
+  carries them, native tags, and attachments. Attachments come from the same
+  reader `list-attachments` uses, so both tools report the same `kind`, body
+  order, `previewPath` and `firstImage` for an attachment; gallery and
+  recording children are nested under their parent. Metadata covers
+  `deepLink`, `isShared` (the note or any enclosing folder is shared),
+  `isLocked`, `isPinned`, `inRecentlyDeleted` (including stores that mark
+  Recently Deleted only by its `TrashFolder` identifier), `lastViewed` with a
+  `lastViewedStatus`, `wordCount`, `charCount`, `attachmentCount` (top-level
+  only), `checklistTotal`/`checklistDone` and `hasDrawing`. A
+  password-protected note returns its metadata and attachment rows, with the
+  body-derived fields null. The id accepts the same forms as the other
+  exact-id tools.
+- `src/utils/noteLinks.ts` classifies link kinds and parses Notes deep links
+  for the link features that follow.
+- TECHNICAL_NOTES.md documents where Notes stores each link kind, how preview
+  renditions map to files, the never-viewed `lastViewed` value, and how sharing
+  is derived.
+
 ## [2.9.2] - 2026-09-23
 
 ### Added
