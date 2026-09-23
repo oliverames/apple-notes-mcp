@@ -121,6 +121,7 @@ import {
 } from "@/utils/noteBlocks.js";
 import { pageParagraphs, paragraphLink, readNoteParagraphs } from "@/utils/noteParagraphs.js";
 import { describeNoteStructure, readNoteStructure } from "@/utils/noteStructure.js";
+import { describeLinkInventory, listNoteLinks } from "@/utils/noteLinkInventory.js";
 import { MAX_LINK_LABEL_LENGTH, MAX_LINK_URL_LENGTH } from "@/utils/linkInsert.js";
 import { insertLink } from "@/services/linkInsert.js";
 import {
@@ -1883,6 +1884,88 @@ registerTool(
     });
     return successResponse(describeNoteStructure(structure), { ...structure });
   }, "Error reading note structure")
+);
+
+// --- list-note-links ---
+
+registerTool(
+  "list-note-links",
+  {
+    description:
+      "Use when: you need the links in one note (by exact id) or across a folder (with its subfolders by default), an account, or the whole library, with each link's kind: inline (a hyperlink on text), card (a rich link preview), note (a native link chip to another note) or section (a native link chip to a heading or paragraph).\nReturns: one page of links, newest-modified note first, each with its URL, label, linkSafe, target note and paragraph UUIDs for Notes deep links, card previewPath, and its source noteId, note title, folder path (as list-folders prints it) and account; plus per-kind counts and page info (call again with offset set to page.nextOffset while page.hasMore is true).\nDo not use when: you want one note's full structure (get-note-structure) or its formatting (get-note-blocks).\nSafety: read-only; reads the NoteStore database directly and requires Full Disk Access. Inline links need every body in scope decoded, so they are included only with includeInline (default true for id, false for a folder, account or library scan). Recently Deleted is skipped unless the note is requested by id.",
+    inputSchema: {
+      id: noteIdInput.optional().describe("One exact note ID (do not combine with account/folder)"),
+      account: z
+        .string()
+        .min(1)
+        .max(MAX.ACCOUNT)
+        .optional()
+        .describe("Account name (exact or unique-prefix match)"),
+      folder: z
+        .string()
+        .min(1)
+        .max(MAX.FOLDER)
+        .optional()
+        .describe(
+          "Folder name or path as list-folders prints it, such as Work/Clients (escape a literal slash as \\/)"
+        ),
+      includeSubfolders: z
+        .boolean()
+        .optional()
+        .describe("With folder, also list notes in its subfolders (default true)"),
+      includeInline: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also decode note bodies for inline hyperlinks (slower). Default true for id, false otherwise"
+        ),
+      kinds: z
+        .array(z.enum(["inline", "card", "note", "section"]))
+        .max(4)
+        .optional()
+        .describe("Only these link kinds"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Index of the first link to return (default 0); use page.nextOffset"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(2000)
+        .optional()
+        .describe("Maximum links to return (default 200, max 2000)"),
+    },
+    outputSchema: {
+      scope: z.record(z.unknown()).optional(),
+      inlineIncluded: z.boolean().optional(),
+      notesInScope: z.number().optional(),
+      notesWithoutBody: z.number().optional(),
+      counts: z.record(z.unknown()).optional(),
+      links: z.array(z.record(z.unknown())).optional(),
+      page: z.record(z.unknown()).optional(),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  withErrorHandling(
+    ({ id, account, folder, includeSubfolders, includeInline, kinds, offset, limit }) => {
+      const result = listNoteLinks({
+        id,
+        account,
+        folder,
+        includeSubfolders,
+        includeInline,
+        kinds,
+        offset,
+        limit,
+        maxBytes: blocksMaxResponseBytes(),
+      });
+      return successResponse(describeLinkInventory(result), { ...result });
+    },
+    "Error listing note links"
+  )
 );
 
 registerTool(

@@ -300,6 +300,14 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `previewPath` is Notes' cached rendition (a thumbnail), not the attachment file itself; it is null when Notes has not rendered one
 - Check `linkSafe` before emitting a link into HTML
 
+### list-note-links
+- Lists links with `kind` (`inline`, `card`, `note`, `section`) in one note (`id`), a `folder` (subfolders included unless `includeSubfolders: false`), an `account`, or the whole library, each with its source note id, title, folder path (as `list-folders` prints it) and account
+- Requires Full Disk Access. Folder, account and library scans skip inline links unless `includeInline: true` (it decodes every body in scope); `counts.inline` is 0 then, which does not mean there are none
+- `account` resolves like the other tools (exact name, then a unique prefix). A bare folder name must be unique; when it is ambiguous, retry with one of the paths the error lists
+- `previewPath` on a card is Notes' cached preview image; it is null when Notes has not rendered one
+- Page with `offset: page.nextOffset` while `page.hasMore` is true
+- Check `linkSafe` before emitting a link into HTML
+
 ### get-capabilities / doctor feature matrix
 - Both return `runtimeOS` and a `features` object keyed by feature group (`applescriptCore`, `fullDiskAccessReads`, `backgroundOperationsBridge`, `nativeTagsBridge`, `markdownNoteBridge`, ...). Check a feature's `available` before relying on it, and branch on its machine `reason` (`full_disk_access_missing`, `shortcut_not_installed`, `requires_macos_26`, `not_implemented`, ...) rather than on prose.
 - `unverified: ["notes_automation"]` means the probe did not contact Notes.app, not that Automation is denied. Run `doctor` to confirm it.

@@ -395,8 +395,9 @@ not interpret are counted in `undecodedFields` rather than guessed.
 
 ### Links, Attachments and Note State (verified 2026-09-23, macOS 27.2)
 
-`src/utils/noteLinks.ts` and `src/utils/noteStructure.ts` (the
-`get-note-structure` tool) read these, through the shared helpers in
+`src/utils/noteLinks.ts`, `src/utils/noteStructure.ts` (the
+`get-note-structure` tool) and `src/utils/noteLinkInventory.ts` (the
+`list-note-links` tool) read these, through the shared helpers in
 `noteStoreSql.ts` and `attachmentAssets.ts`. Counts come from a read-only survey of
 one live library with 843 note rows; no content was recorded.
 
@@ -450,6 +451,16 @@ NULL, and for anything before 2007 or in the future.
 when its own `ZSERVERSHAREDATA` or that of its folder (or an enclosing
 folder) is set. That rule selected 53 notes, the same 53 distinct notes
 AppleScript reports with `shared = true`.
+
+**Link inventory.** Cards and native chips are rows, so `list-note-links`
+lists them across a scope in one query. Inline links exist only inside note
+bodies (330 in the 448 notes outside Recently Deleted in the survey), so a
+folder, account or library scan decodes bodies only when asked, 100 rows per
+batch. The scope uses the same active-note predicate as the other listings
+(`activeNoteSql`, which also treats a `TrashFolder%` folder identifier as
+Recently Deleted). A folder scope walks the `ZPARENT` hierarchy with a
+recursive query bound only to the folder's primary key, so subfolders are
+included unless the caller turns that off.
 
 ### Embedded Objects
 

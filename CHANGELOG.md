@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+## [2.9.5] - 2026-09-23
+
+### Added
+
+- `list-note-links` lists links in one note (by exact id), or across a
+  folder, an account or the whole library, read-only from the NoteStore
+  database. Each link has a `kind`: `inline` (a hyperlink on text), `card` (a
+  rich link preview), `note` (a native link chip to another note) or
+  `section` (a native link chip to a heading or paragraph). Rows carry the
+  URL, label, `linkSafe`, target note and paragraph UUIDs parsed from Notes
+  deep links, the card's `previewPath`, and the source `noteId`, note title
+  and modification date, folder path and account. Folder paths, account
+  matching (exact name, then a unique prefix), the Recently Deleted and
+  folderless exclusions and card previews come from the same shared helpers
+  as `list-folders`, `list-special-notes` and `list-attachments`. Cards are
+  identified by the `public.url` attachment type, the same rule
+  `get-note-structure` uses, so both tools count the same cards. A `folder`
+  scope includes its subfolders unless `includeSubfolders` is false. Inline
+  links need every body in scope decoded, so a folder, account or library
+  scan includes them only with `includeInline: true`. Results page with
+  `offset`/`limit` and can be filtered by `kinds`. Contributed by
+  @oliverames (#217).
+
 ## [2.9.4] - 2026-09-23
 
 ### Added

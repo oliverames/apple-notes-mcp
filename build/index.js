@@ -49582,6 +49582,212 @@ function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH7, includeText 
   };
 }
 
+// src/utils/noteLinkInventory.ts
+import { dirname as dirname5 } from "node:path";
+var BODY_BATCH = 100;
+function matchFolder(folders, wanted, account) {
+  const paths = folderPaths(folders);
+  const segments = splitFolderPath(wanted);
+  const key = (parts) => parts.join("\0");
+  const pool = folders.filter(
+    (f) => !f.tombstoned && !f.trash && (account === void 0 || f.account === account)
+  );
+  const byPath = segments.length === 1 ? pool.filter((f) => f.name === segments[0]) : pool.filter((f) => key(splitFolderPath(paths.get(f.pk))) === key(segments));
+  const matches = byPath.length ? byPath : pool.filter((f) => f.name === wanted);
+  if (!matches.length) throw new NoteStoreError(`No folder matches "${wanted}".`, "invalid_input");
+  if (matches.length > 1)
+    throw new NoteStoreError(
+      `Folder "${wanted}" is ambiguous; use one of these paths: ${matches.map((f) => paths.get(f.pk)).join(", ")}.`,
+      "invalid_input"
+    );
+  return { folder: matches[0], path: paths.get(matches[0].pk) };
+}
+function inventorySql(columns) {
+  requireColumns(columns, ["ZFOLDER"], "list-note-links");
+  const c = (alias, name) => col(columns, alias, name);
+  const subtree = columns.has("ZPARENT") ? `WITH RECURSIVE sub(pk) AS (SELECT @folder UNION
+         SELECT x.Z_PK FROM ZICCLOUDSYNCINGOBJECT x JOIN sub ON x.ZPARENT = sub.pk
+         WHERE @subfolders <> 0 AND x.Z_ENT = ${entity("ICFolder")})
+       SELECT pk FROM sub` : "SELECT @folder";
+  const scopeWhere = `n.Z_ENT = ${entity("ICNote")} AND (
+      (@note <> 0 AND n.Z_PK = @note) OR
+      (@note = 0 AND ${activeNoteSql(columns, "n", "f")}
+        AND (@account = 0 OR a.Z_PK = @account)
+        AND (@folder = 0 OR n.ZFOLDER IN (${subtree}))))`;
+  const scope2 = `SELECT n.Z_PK FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns)} WHERE ${scopeWhere}`;
+  return {
+    rows: [
+      "BEGIN;",
+      `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'identifier', ${c("n", "ZIDENTIFIER")},
+        'title', ${c("n", "ZTITLE1")}, 'folder', n.ZFOLDER, 'account', a.Z_PK,
+        'modified', ${c("n", "ZMODIFICATIONDATE1")})
+      FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns)} WHERE ${scopeWhere};`,
+      `SELECT json_object('k', 'card', 'pk', att.Z_PK, 'note', ${c("att", "ZNOTE")},
+        'identifier', ${c("att", "ZIDENTIFIER")}, 'url', ${c("att", "ZURLSTRING")},
+        'title', ${c("att", "ZTITLE")})
+      FROM ZICCLOUDSYNCINGOBJECT att
+      WHERE att.Z_ENT = ${entity("ICAttachment")} AND ${notTombstonedSql(columns, "att")}
+        AND ${c("att", "ZTYPEUTI")} LIKE 'public.url%' AND ${c("att", "ZURLSTRING")} IS NOT NULL
+        AND ${c("att", "ZNOTE")} IN (${scope2});`,
+      `SELECT json_object('k', 'chip', 'note', ${c("i", "ZNOTE1")},
+        'identifier', ${c("i", "ZIDENTIFIER")}, 'token', ${c("i", "ZTOKENCONTENTIDENTIFIER")},
+        'alt', ${c("i", "ZALTTEXT")})
+      FROM ZICCLOUDSYNCINGOBJECT i
+      WHERE i.Z_ENT = ${entity("ICInlineAttachment")} AND ${notTombstonedSql(columns, "i")}
+        AND ${c("i", "ZTYPEUTI1")} = '${NOTE_LINK_UTI}' AND ${c("i", "ZNOTE1")} IN (${scope2});`,
+      "COMMIT;"
+    ].join("\n"),
+    bodies: `SELECT json_object('note', d.ZNOTE, 'data', hex(d.ZDATA),
+        'encrypted', d.ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL)
+      FROM ZICNOTEDATA d WHERE d.ZNOTE IN (${scope2}) AND d.ZNOTE > @after
+      ORDER BY d.ZNOTE LIMIT ${BODY_BATCH};`
+  };
+}
+function decodeBodies(dbPath2, sql, params) {
+  const docs = /* @__PURE__ */ new Map();
+  let after = 0;
+  for (; ; ) {
+    const rows = parseJsonLines(
+      runReadOnlySql(dbPath2, sql, { ...params, after: { int: after } })
+    );
+    for (const row of rows) {
+      after = Math.max(after, row.note);
+      if (row.encrypted || !row.data) continue;
+      try {
+        docs.set(row.note, decodeCompressedNoteBlocks(Buffer.from(row.data, "hex")));
+      } catch {
+      }
+    }
+    if (rows.length < BODY_BATCH) return docs;
+  }
+}
+var KIND_ORDER2 = { inline: 0, card: 1, note: 2, section: 3 };
+function listNoteLinks(options = {}) {
+  const { dbPath: dbPath2 = NOTES_DB_PATH7, offset = 0, limit = 200, maxBytes = 4 * 1024 * 1024 } = options;
+  if (options.id && (options.account || options.folder))
+    throw new NoteStoreError("Pass either id or account/folder, not both.", "invalid_input");
+  const notePk = options.id ? parseNoteId2(options.id).pk : 0;
+  const columns = readColumns(dbPath2);
+  const sql = inventorySql(columns);
+  const context = readStoreContext(dbPath2, columns);
+  const paths = folderPaths(context.folders);
+  const scope2 = {};
+  let accountPk = 0;
+  let folderPk = 0;
+  const includeSubfolders = options.includeSubfolders ?? true;
+  if (options.account) {
+    const account = resolveAccountName(context.accounts, options.account);
+    accountPk = account.pk;
+    scope2.account = account.name;
+    scope2.accountIdentifier = account.identifier;
+  }
+  if (options.folder) {
+    const { folder, path: path10 } = matchFolder(context.folders, options.folder, accountPk || void 0);
+    folderPk = folder.pk;
+    scope2.folder = folder.name;
+    scope2.folderPath = path10;
+    scope2.includeSubfolders = includeSubfolders;
+  }
+  if (options.id) scope2.note = options.id;
+  const params = {
+    note: { int: notePk },
+    account: { int: accountPk },
+    folder: { int: folderPk },
+    subfolders: { int: includeSubfolders ? 1 : 0 }
+  };
+  const rows = parseJsonLines(runReadOnlySql(dbPath2, sql.rows, params));
+  const notes = rows.filter((row) => row.k === "note");
+  if (options.id && !notes.length)
+    throw new NoteStoreError(`No note found for ID "${options.id}".`, "invalid_input");
+  const includeInline = options.includeInline ?? Boolean(options.id);
+  const docs = includeInline ? decodeBodies(dbPath2, sql.bodies, params) : /* @__PURE__ */ new Map();
+  const noteById = new Map(notes.map((note) => [note.pk, note]));
+  const accountById = new Map(context.accounts.map((account) => [account.pk, account]));
+  const folderById = new Map(context.folders.map((folder) => [folder.pk, folder]));
+  const source = (pk) => {
+    const note = noteById.get(pk);
+    const account = accountById.get(note.account ?? -1);
+    const folder = folderById.get(note.folder ?? -1);
+    return {
+      noteId: noteIdFor(context.uuid, pk),
+      noteIdentifier: note.identifier,
+      noteTitle: note.title,
+      noteModified: coreDataToIso(note.modified),
+      folder: folder?.name ?? null,
+      folderPath: folder ? paths.get(folder.pk) : null,
+      account: account?.name ?? null,
+      accountIdentifier: account?.identifier ?? null
+    };
+  };
+  const containerDir = dirname5(dbPath2);
+  const previewEntries = /* @__PURE__ */ new Map();
+  const previewFor = (identifier, account) => {
+    const accountDir = identifier ? resolveAccountDir(containerDir, account) : null;
+    if (!accountDir || !identifier) return null;
+    if (!previewEntries.has(accountDir))
+      previewEntries.set(accountDir, listPreviewEntries(accountDir));
+    return previewPaths(accountDir, identifier, previewEntries.get(accountDir))[0] ?? null;
+  };
+  const all = [];
+  const add = (pk, link) => all.push({ pk, link: { ...link, ...source(pk) } });
+  for (const [pk, doc] of docs) for (const link of inlineLinks(doc)) add(pk, link);
+  for (const row of rows) {
+    if (row.k === "card") {
+      const noteId3 = noteIdFor(context.uuid, row.note);
+      const link = cardLink(
+        { pk: row.pk, identifier: row.identifier ?? "", url: row.url, title: row.title },
+        {
+          doc: docs.get(row.note),
+          noteId: noteId3,
+          previewPath: previewFor(row.identifier, source(row.note).accountIdentifier)
+        }
+      );
+      if (link) add(row.note, link);
+    } else if (row.k === "chip") {
+      const link = nativeLink(
+        { identifier: row.identifier ?? "", token: row.token, alt: row.alt },
+        docs.get(row.note)
+      );
+      if (link) add(row.note, link);
+    }
+  }
+  const wanted = options.kinds?.length ? new Set(options.kinds) : void 0;
+  const links = all.filter(({ link }) => !wanted || wanted.has(link.kind)).sort(
+    (a, b) => (b.link.noteModified ?? "").localeCompare(a.link.noteModified ?? "") || a.pk - b.pk || (a.link.start ?? Number.MAX_SAFE_INTEGER) - (b.link.start ?? Number.MAX_SAFE_INTEGER) || KIND_ORDER2[a.link.kind] - KIND_ORDER2[b.link.kind]
+  ).map(({ link }) => link);
+  const counts = { inline: 0, card: 0, note: 0, section: 0 };
+  for (const link of links) counts[link.kind]++;
+  const start = Math.min(Math.max(0, offset), links.length);
+  const page = [];
+  let bytes = 0;
+  for (let i = start; i < links.length && page.length < limit; i++) {
+    const size = Buffer.byteLength(JSON.stringify(links[i]));
+    if (page.length && bytes + size > maxBytes) break;
+    page.push(links[i]);
+    bytes += size;
+  }
+  const next = start + page.length;
+  return {
+    scope: scope2,
+    inlineIncluded: includeInline,
+    notesInScope: notes.length,
+    notesWithoutBody: includeInline ? notes.length - docs.size : 0,
+    counts,
+    links: page,
+    page: {
+      offset: start,
+      returned: page.length,
+      total: links.length,
+      hasMore: next < links.length,
+      ...next < links.length ? { nextOffset: next } : {}
+    }
+  };
+}
+function describeLinkInventory(result) {
+  const { counts, page } = result;
+  return `Found ${page.total} links in ${result.notesInScope} notes (inline ${counts.inline}${result.inlineIncluded ? "" : " not scanned"}, card ${counts.card}, note ${counts.note}, section ${counts.section}); returned ${page.returned} from offset ${page.offset}` + (page.hasMore ? `; more at offset ${page.nextOffset}` : "") + ".";
+}
+
 // src/utils/linkInsert.ts
 var MAX_LINK_URL_LENGTH = 4096;
 var MAX_LINK_LABEL_LENGTH = 2e3;
@@ -49699,7 +49905,7 @@ function insertLink(request, deps) {
 
 // src/services/notesExport.ts
 import { mkdirSync as mkdirSync5 } from "node:fs";
-import { basename as basename4, dirname as dirname5, extname as extname4, join as join21 } from "node:path";
+import { basename as basename4, dirname as dirname6, extname as extname4, join as join21 } from "node:path";
 
 // src/utils/exportAssets.ts
 import {
@@ -51022,7 +51228,7 @@ function loadNotes(ids, single, read) {
   return { notes, skipped };
 }
 function openOutput(output) {
-  mkdirSync5(dirname5(output), { recursive: true });
+  mkdirSync5(dirname6(output), { recursive: true });
   try {
     return openCreateOnly(output);
   } catch (error2) {
@@ -51047,7 +51253,7 @@ function exportNotesMarkdown(request, deps) {
   const ids = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
   const fd = output ? openOutput(output) : void 0;
-  const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname5(output) : void 0) : void 0;
+  const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname6(output) : void 0) : void 0;
   const ctx = {
     stats: emptyStats(),
     ...writer ? { writer, locator: deps.locator ?? new AssetLocator() } : {}
@@ -51077,7 +51283,7 @@ function exportNotesMarkdown(request, deps) {
   return { ...receipt, markdown };
 }
 function defaultSidecarDir(output) {
-  return join21(dirname5(output), `${basename4(output, extname4(output))}.assets`);
+  return join21(dirname6(output), `${basename4(output, extname4(output))}.assets`);
 }
 function exportNotesHtml(request, deps) {
   if (!request.outputPath)
@@ -51098,7 +51304,7 @@ function exportNotesHtml(request, deps) {
   const ids = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
   const fd = openOutput(output);
-  const writer = assetsDir ? new SidecarWriter(assetsDir, dirname5(output)) : new DataUrlWriter();
+  const writer = assetsDir ? new SidecarWriter(assetsDir, dirname6(output)) : new DataUrlWriter();
   const ctx = {
     stats: emptyStats(),
     writer,
@@ -52204,7 +52410,7 @@ function registerNativeOperations(server2, manager) {
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { existsSync as existsSync13 } from "node:fs";
 import { release as release2 } from "node:os";
-import { dirname as dirname6, resolve as resolve4 } from "node:path";
+import { dirname as dirname7, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 var OPTIONAL_BRIDGE_NOTE = "(optional \u2014 needed only for create-note format: markdown, macOS 26+)";
 var MARKDOWN_MIN_DARWIN_MAJOR = 25;
@@ -52227,7 +52433,7 @@ function setupShortcuts(checkOnly, dependencies = {}) {
     const result = spawnSync2("/usr/bin/open", [path10], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
-  const baseDirectory = dependencies.baseDirectory || resolve4(dirname6(fileURLToPath(import.meta.url)), "../shortcuts");
+  const baseDirectory = dependencies.baseDirectory || resolve4(dirname7(fileURLToPath(import.meta.url)), "../shortcuts");
   const osRelease = (dependencies.osRelease || release2)();
   const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
   const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
@@ -52308,7 +52514,7 @@ import { spawnSync as spawnSync3 } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
 import { existsSync as existsSync14, readFileSync as readFileSync4 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
-import { dirname as dirname7, join as join24, resolve as resolve5 } from "node:path";
+import { dirname as dirname8, join as join24, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var PRIVATE_HELPER_PROTOCOL = 1;
 var ENABLE_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE";
@@ -52333,7 +52539,7 @@ var manifestSchema = external_exports.object({
   osVersion: external_exports.string(),
   compiler: external_exports.string()
 });
-function packageRoot(fromDir = dirname7(fileURLToPath2(import.meta.url))) {
+function packageRoot(fromDir = dirname8(fileURLToPath2(import.meta.url))) {
   let dir = fromDir;
   for (; ; ) {
     const candidate = join24(dir, "package.json");
@@ -52344,7 +52550,7 @@ function packageRoot(fromDir = dirname7(fileURLToPath2(import.meta.url))) {
       } catch {
       }
     }
-    const parent = dirname7(dir);
+    const parent = dirname8(dir);
     if (parent === dir) return resolve5(fromDir, "..");
     dir = parent;
   }
@@ -54088,6 +54294,53 @@ registerTool(
     });
     return successResponse(describeNoteStructure(structure), { ...structure });
   }, "Error reading note structure")
+);
+registerTool(
+  "list-note-links",
+  {
+    description: "Use when: you need the links in one note (by exact id) or across a folder (with its subfolders by default), an account, or the whole library, with each link's kind: inline (a hyperlink on text), card (a rich link preview), note (a native link chip to another note) or section (a native link chip to a heading or paragraph).\nReturns: one page of links, newest-modified note first, each with its URL, label, linkSafe, target note and paragraph UUIDs for Notes deep links, card previewPath, and its source noteId, note title, folder path (as list-folders prints it) and account; plus per-kind counts and page info (call again with offset set to page.nextOffset while page.hasMore is true).\nDo not use when: you want one note's full structure (get-note-structure) or its formatting (get-note-blocks).\nSafety: read-only; reads the NoteStore database directly and requires Full Disk Access. Inline links need every body in scope decoded, so they are included only with includeInline (default true for id, false for a folder, account or library scan). Recently Deleted is skipped unless the note is requested by id.",
+    inputSchema: {
+      id: noteIdInput.optional().describe("One exact note ID (do not combine with account/folder)"),
+      account: external_exports.string().min(1).max(MAX.ACCOUNT).optional().describe("Account name (exact or unique-prefix match)"),
+      folder: external_exports.string().min(1).max(MAX.FOLDER).optional().describe(
+        "Folder name or path as list-folders prints it, such as Work/Clients (escape a literal slash as \\/)"
+      ),
+      includeSubfolders: external_exports.boolean().optional().describe("With folder, also list notes in its subfolders (default true)"),
+      includeInline: external_exports.boolean().optional().describe(
+        "Also decode note bodies for inline hyperlinks (slower). Default true for id, false otherwise"
+      ),
+      kinds: external_exports.array(external_exports.enum(["inline", "card", "note", "section"])).max(4).optional().describe("Only these link kinds"),
+      offset: external_exports.number().int().min(0).optional().describe("Index of the first link to return (default 0); use page.nextOffset"),
+      limit: external_exports.number().int().min(1).max(2e3).optional().describe("Maximum links to return (default 200, max 2000)")
+    },
+    outputSchema: {
+      scope: external_exports.record(external_exports.unknown()).optional(),
+      inlineIncluded: external_exports.boolean().optional(),
+      notesInScope: external_exports.number().optional(),
+      notesWithoutBody: external_exports.number().optional(),
+      counts: external_exports.record(external_exports.unknown()).optional(),
+      links: external_exports.array(external_exports.record(external_exports.unknown())).optional(),
+      page: external_exports.record(external_exports.unknown()).optional()
+    },
+    annotations: { readOnlyHint: true }
+  },
+  withErrorHandling(
+    ({ id: id2, account, folder, includeSubfolders, includeInline, kinds, offset, limit }) => {
+      const result = listNoteLinks({
+        id: id2,
+        account,
+        folder,
+        includeSubfolders,
+        includeInline,
+        kinds,
+        offset,
+        limit,
+        maxBytes: blocksMaxResponseBytes()
+      });
+      return successResponse(describeLinkInventory(result), { ...result });
+    },
+    "Error listing note links"
+  )
 );
 registerTool(
   "list-native-tags",
