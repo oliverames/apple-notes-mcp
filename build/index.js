@@ -42053,6 +42053,77 @@ function exportDrawingRaster(drawing, savePath, containerDir = NOTES_CONTAINER_D
   }
 }
 
+// src/utils/scopeGuard.ts
+var SCOPE_FOLDER_ID = /^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i;
+var MAX_FORBIDDEN_FOLDERS = 50;
+var SCOPE_MARKER = "SAFETY_SCOPE";
+function hasScopeGuard(guard) {
+  return Boolean(
+    guard && (guard.ifFolderId || guard.ifAncestorFolderId || guard.forbiddenAncestorFolderIds && guard.forbiddenAncestorFolderIds.length > 0)
+  );
+}
+function validateScopeGuard(guard) {
+  const ids = [
+    guard.ifFolderId,
+    guard.ifAncestorFolderId,
+    ...guard.forbiddenAncestorFolderIds ?? []
+  ].filter((value) => value !== void 0);
+  for (const id2 of ids) {
+    if (!SCOPE_FOLDER_ID.test(id2)) throw new Error(`Scope guard needs exact folder ids: ${id2}`);
+  }
+  if ((guard.forbiddenAncestorFolderIds?.length ?? 0) > MAX_FORBIDDEN_FOLDERS)
+    throw new Error(`At most ${MAX_FORBIDDEN_FOLDERS} forbidden folder ids are allowed`);
+}
+function chainScript(chainVar, startExpr) {
+  return `
+      set ${chainVar} to {}
+      set ${chainVar}Cursor to ${startExpr}
+      repeat while class of ${chainVar}Cursor is folder
+        set end of ${chainVar} to (id of ${chainVar}Cursor)
+        set ${chainVar}Cursor to container of ${chainVar}Cursor
+      end repeat`;
+}
+function idList(ids) {
+  return `{${ids.map((id2) => `"${id2}"`).join(", ")}}`;
+}
+function buildScopeGuardScript(noteVar, guard, destinationVar) {
+  if (!hasScopeGuard(guard)) return "";
+  validateScopeGuard(guard);
+  const forbidden = guard.forbiddenAncestorFolderIds ?? [];
+  let script = `
+      set scopeFolder to container of ${noteVar}
+      if class of scopeFolder is not folder then return "${SCOPE_MARKER}:the note is not in a folder"`;
+  if (guard.ifFolderId)
+    script += `
+      if (id of scopeFolder) is not "${guard.ifFolderId}" then return "${SCOPE_MARKER}:the note is not in the expected folder"`;
+  if (guard.ifAncestorFolderId || forbidden.length > 0)
+    script += chainScript("scopeChain", "scopeFolder");
+  if (guard.ifAncestorFolderId)
+    script += `
+      if scopeChain does not contain "${guard.ifAncestorFolderId}" then return "${SCOPE_MARKER}:the note is not inside the expected ancestor folder"`;
+  if (forbidden.length > 0) {
+    script += `
+      repeat with forbiddenId in ${idList(forbidden)}
+        if scopeChain contains (contents of forbiddenId) then return "${SCOPE_MARKER}:the note is inside a forbidden folder"
+      end repeat`;
+    if (destinationVar) {
+      script += chainScript("scopeDestChain", destinationVar);
+      script += `
+      repeat with forbiddenId in ${idList(forbidden)}
+        if scopeDestChain contains (contents of forbiddenId) then return "${SCOPE_MARKER}:the destination is inside a forbidden folder"
+      end repeat`;
+    }
+  }
+  return script;
+}
+function parseScopeFailure(output) {
+  const trimmed = output.trim();
+  return trimmed.startsWith(`${SCOPE_MARKER}:`) ? trimmed.slice(SCOPE_MARKER.length + 1) : null;
+}
+function scopeConflictMessage(reason) {
+  return `Scope guard failed: ${reason}. Nothing was changed; read the note's current folder and review before retrying.`;
+}
+
 // src/services/appleNotesManager.ts
 var import_turndown = __toESM(require_turndown_cjs(), 1);
 import { existsSync as existsSync5 } from "fs";
@@ -42826,7 +42897,7 @@ var AppleNotesManager = class {
    * race that would exist if JavaScript checked the note and then issued a
    * separate unconditional `set body` command.
    */
-  updateNoteByIdIfUnchanged(id2, currentTitle, expectedBody, newTitle, newContent, format = "plaintext", expectedRichRevision) {
+  updateNoteByIdIfUnchanged(id2, currentTitle, expectedBody, newTitle, newContent, format = "plaintext", expectedRichRevision, scope2) {
     const safeId = sanitizeNoteId(id2);
     if (expectedRichRevision) {
       const rich = readRichNote(id2);
@@ -42847,7 +42918,7 @@ var AppleNotesManager = class {
     const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
     const safeWrittenBody = escapeHtmlForAppleScript(writtenBody);
     const script = buildAppLevelScript(`
-      set noteRef to note id "${safeId}"
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope2)}
       if (count of attachments of noteRef) is greater than 0 then return "SAFETY_ATTACHMENTS"
       set currentBody to body of noteRef
       considering case
@@ -42861,6 +42932,8 @@ var AppleNotesManager = class {
       console.error(`Failed guarded update for note ID "${id2}":`, result.error);
       return { status: "failed" };
     }
+    const updateScopeFailure = parseScopeFailure(result.output);
+    if (updateScopeFailure) return { status: "scope_conflict", reason: updateScopeFailure };
     const status = result.output.trim();
     if (status === "SAFETY_CONFLICT") return { status: "conflict" };
     if (status === "SAFETY_ATTACHMENTS") return { status: "attachments" };
@@ -42872,12 +42945,12 @@ var AppleNotesManager = class {
    * the caller reviewed. The comparison and delete are one AppleScript action,
    * so a concurrent edit cannot slip between the guard and deletion.
    */
-  deleteNoteByIdIfUnchanged(id2, expectedBody) {
+  deleteNoteByIdIfUnchanged(id2, expectedBody, scope2) {
     const safeId = sanitizeNoteId(id2);
     validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
     const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
     const script = buildAppLevelScript(`
-      set noteRef to note id "${safeId}"
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope2)}
       set originalFolder to missing value
       try
         set originalFolder to container of noteRef
@@ -42909,11 +42982,30 @@ var AppleNotesManager = class {
       console.error(`Failed guarded delete for note ID "${id2}":`, result.error);
       return { status: "failed" };
     }
+    const deleteScopeFailure = parseScopeFailure(result.output);
+    if (deleteScopeFailure) return { status: "scope_conflict", reason: deleteScopeFailure };
     const status = result.output.trim();
     if (status === "SAFETY_CONFLICT") return { status: "conflict" };
     if (status === "SAFETY_IN_RECENTLY_DELETED") return { status: "in-recently-deleted" };
     if (status === "SAFETY_NOT_DELETED") return { status: "not-deleted" };
     return status === "SAFETY_DELETED" ? { status: "deleted" } : { status: "failed" };
+  }
+  /**
+   * Read-only scope pre-check for writes that do not run as AppleScript (the
+   * native Shortcuts operations). Runs the same checks the AppleScript writes
+   * embed, but in a separate script, so it is not atomic with the write.
+   *
+   * @returns null when every precondition holds, otherwise the failure reason
+   */
+  checkNoteScope(id2, scope2) {
+    const safeId = sanitizeNoteId(id2);
+    const result = executeAppleScript(
+      buildAppLevelScript(`
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope2)}
+      return "SCOPE_OK"`)
+    );
+    if (!result.success) return result.error || "the note's folder could not be read";
+    return parseScopeFailure(result.output);
   }
   /**
    * Builds the AppleScript body for a bulk note listing.
@@ -43501,14 +43593,14 @@ var AppleNotesManager = class {
    * @param account - Account containing the destination folder (defaults to Notes.app's default account)
    * @returns true if the move succeeded, false otherwise
    */
-  moveNoteById(id2, destinationFolder, account) {
+  moveNoteById(id2, destinationFolder, account, scope2) {
     const targetAccount = this.resolveAccount(account);
     const safeId = sanitizeNoteId(id2);
     const destFolderRef = `${buildFolderReference(destinationFolder)} of ${AS_ACCOUNT_REF}`;
     const moveCommand = `
       ${buildAccountResolution(targetAccount)}
       set destFolder to ${destFolderRef}
-      set noteRef to note id "${safeId}"
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope2, "destFolder")}
       move noteRef to destFolder
       set movedNoteRef to note id "${safeId}"
       set actualFolder to container of movedNoteRef
@@ -43525,6 +43617,8 @@ var AppleNotesManager = class {
       );
       return false;
     }
+    const scopeFailure = parseScopeFailure(result.output);
+    if (scopeFailure) throw new Error(scopeConflictMessage(scopeFailure));
     if (result.output.trim() !== "SAFETY_MOVED") {
       console.error(
         `Move result for note ID "${id2}" did not verify destination "${destinationFolder}"`
@@ -44426,12 +44520,12 @@ var AppleNotesManager = class {
       }
     });
     if (runnable.length > 0) {
-      const idList = runnable.map((r) => `"${r.safe}"`).join(", ");
+      const idList2 = runnable.map((r) => `"${r.safe}"`).join(", ");
       const script = buildAppLevelScript(`
         ${buildAccountResolution(targetAccount)}
         set destFolder to ${destFolderRef}
         set out to ""
-        repeat with rawId in {${idList}}
+        repeat with rawId in {${idList2}}
           set theId to (rawId as text)
           set noteRef to missing value
           try
@@ -50879,6 +50973,36 @@ function noteIdentifiers(id2) {
 var expectedContentHashInput = external_exports.string().regex(/^sha256:[a-f0-9]{64}$/, "expectedContentHash must come from get-note-content").describe(
   "Revision token returned by get-note-content for this exact ID. The mutation stops if the note changed since that read."
 );
+var SCOPE_FOLDER_ID_MESSAGE = "An exact folder id is required: x-coredata://.../ICFolder/p..., Notes UUID, or numeric key (from list-folders)";
+var scopeFolderIdInput = exactIdInput("ICFolder", SCOPE_FOLDER_ID, SCOPE_FOLDER_ID_MESSAGE, {
+  maxLength: MAX.ID
+});
+var scopeGuardInputs = {
+  ifFolderId: scopeFolderIdInput.optional().describe(
+    "Precondition: the note must currently be in exactly this folder (id from list-folders). Re-checked immediately before the write."
+  ),
+  ifAncestorFolderId: scopeFolderIdInput.optional().describe(
+    "Precondition: the note must be inside this folder or any of its subfolders. Re-checked immediately before the write."
+  ),
+  forbiddenAncestorFolderIds: exactIdArrayInput(
+    "ICFolder",
+    SCOPE_FOLDER_ID,
+    SCOPE_FOLDER_ID_MESSAGE,
+    {
+      maxLength: MAX.ID,
+      maxItems: MAX_FORBIDDEN_FOLDERS
+    }
+  ).optional().describe(
+    "Precondition: the note must not be inside any of these folders or their subfolders (for move-note, neither may the destination). Re-checked immediately before the write."
+  )
+};
+function scopeFrom(args) {
+  return {
+    ifFolderId: args.ifFolderId,
+    ifAncestorFolderId: args.ifAncestorFolderId,
+    forbiddenAncestorFolderIds: args.forbiddenAncestorFolderIds
+  };
+}
 var timeoutSecondsInput = external_exports.number().int().min(CALL_TIMEOUT_SECONDS.min).max(CALL_TIMEOUT_SECONDS.max).optional().describe(
   `Per-call timeout in seconds (${CALL_TIMEOUT_SECONDS.min}-${CALL_TIMEOUT_SECONDS.max}) for each Notes.app automation step this call runs, overriding APPLE_NOTES_MCP_TIMEOUT_MS. A timed-out write is uncertain, not failed: read the note by id before any retry.`
 );
@@ -51805,7 +51929,7 @@ ${lines.join("\n")}` : ".") + partial2,
 registerTool(
   "update-note",
   {
-    description: "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server checks rich metadata revision, atomically checks the AppleScript body, blocks native objects/checklists, and verifies actual link destinations after saving. Preserve returned HTML links unless allowLinkChanges is explicitly requested. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+    description: "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server checks rich metadata revision, atomically checks the AppleScript body, blocks native objects/checklists, and verifies actual link destinations after saving. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds are re-checked inside the same AppleScript as the write. Preserve returned HTML links unless allowLinkChanges is explicitly requested. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
@@ -51819,7 +51943,8 @@ registerTool(
         "New note body. AppleScript cannot produce true Apple Notes checklists; checkbox inputs and `- [ ]` markdown do not render as checkable items. Use a plain list and convert in Notes.app with \u21E7\u2318L."
       ),
       format: external_exports.enum(["plaintext", "html"]).optional().default("plaintext").describe("Content format: 'plaintext' (default) or 'html' for rich formatting"),
-      timeoutSeconds: timeoutSecondsInput
+      timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs
     },
     outputSchema: {
       ok: external_exports.boolean().optional(),
@@ -51838,7 +51963,8 @@ registerTool(
       newTitle,
       newContent,
       format = "plaintext",
-      allowLinkChanges = false
+      allowLinkChanges = false,
+      ...scopeArgs
     }) => {
       const snapshot = readExactNoteSnapshot(id2);
       if ("error" in snapshot) return errorResponse(snapshot.error);
@@ -51859,10 +51985,14 @@ registerTool(
         newTitle,
         newContent,
         format,
-        snapshot.rich.revision
+        snapshot.rich.revision,
+        scopeFrom(scopeArgs)
       );
       if (result.status === "conflict") {
         return errorResponse(revisionConflictMessage(snapshot.note.title));
+      }
+      if (result.status === "scope_conflict") {
+        return errorResponse(scopeConflictMessage(result.reason));
       }
       if (result.status === "attachments") {
         return errorResponse(
@@ -51919,7 +52049,8 @@ function guardedAppend({
   separator = "\n\n",
   format = "plaintext",
   scopeText,
-  htmlSeparator
+  htmlSeparator,
+  ...scopeArgs
 }, onRoute) {
   const contentToHtml = (text2) => {
     if (format === "html") return text2;
@@ -51947,6 +52078,11 @@ function guardedAppend({
       return errorResponse("Provide scopeText: a unique existing phrase for native append");
     if (!VERIFIED_BACKGROUND.has("append-native"))
       return errorResponse("Native append has not passed live validation; see get-capabilities");
+    const nativeScope = scopeFrom(scopeArgs);
+    if (hasScopeGuard(nativeScope)) {
+      const reason = notesManager.checkNoteScope(id2, nativeScope);
+      if (reason) return errorResponse(scopeConflictMessage(reason));
+    }
     onRoute?.("native");
     const result2 = appendNative(notesManager, {
       id: id2,
@@ -51978,10 +52114,14 @@ function guardedAppend({
     void 0,
     combinedBody,
     "html",
-    snapshot.rich.revision
+    snapshot.rich.revision,
+    scopeFrom(scopeArgs)
   );
   if (result.status === "conflict") {
     return errorResponse(revisionConflictMessage(snapshot.note.title));
+  }
+  if (result.status === "scope_conflict") {
+    return errorResponse(scopeConflictMessage(result.reason));
   }
   if (result.status === "attachments") {
     return errorResponse(
@@ -52023,7 +52163,7 @@ function guardedAppend({
 registerTool(
   "append-to-note",
   {
-    description: "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title or the note changed since the read.\nSafety: protected native-object notes use native end-append with scopeText; ordinary notes retain guarded HTML editing. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.\nNative-append HTML subset (protected notes only; ordinary notes accept any HTML Notes.app renders): " + NATIVE_APPEND_HTML_SUBSET + " Native append also requires scopeText, the default blank-line separator and position 'after'.",
+    description: "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title or the note changed since the read.\nSafety: protected native-object notes use native end-append with scopeText; ordinary notes retain guarded HTML editing. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds are re-checked inside the write AppleScript for ordinary notes, and as a separate read just before a native append. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.\nNative-append HTML subset (protected notes only; ordinary notes accept any HTML Notes.app renders): " + NATIVE_APPEND_HTML_SUBSET + " Native append also requires scopeText, the default blank-line separator and position 'after'.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
@@ -52034,7 +52174,8 @@ registerTool(
       ),
       separator: external_exports.string().max(20).optional().default("\n\n").describe("String placed between existing content and new content (default: two newlines)"),
       format: external_exports.enum(["plaintext", "html"]).optional().default("plaintext").describe("Format of the content being appended: 'plaintext' (default) or 'html'"),
-      timeoutSeconds: timeoutSecondsInput
+      timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs
     },
     outputSchema: {
       ok: external_exports.boolean().optional(),
@@ -52120,11 +52261,12 @@ registerTool(
 registerTool(
   "delete-note",
   {
-    description: "Use when: moving one exact note to Recently Deleted after reading and reviewing it.\nReturns: confirmation with the exact id.\nDo not use when: you only have a title or the note changed since review.\nSafety: requires id and expectedContentHash from get-note-content. The body comparison and delete happen in one AppleScript, so a newer edit is preserved. Refuses a note already in Recently Deleted, where a delete would be permanent.",
+    description: "Use when: moving one exact note to Recently Deleted after reading and reviewing it.\nReturns: confirmation with the exact id.\nDo not use when: you only have a title or the note changed since review.\nSafety: requires id and expectedContentHash from get-note-content. The body comparison and delete happen in one AppleScript, so a newer edit is preserved. Refuses a note already in Recently Deleted, where a delete would be permanent. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds are re-checked inside that AppleScript too.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
-      timeoutSeconds: timeoutSecondsInput
+      timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs
     },
     outputSchema: {
       ok: external_exports.boolean().optional(),
@@ -52134,15 +52276,18 @@ registerTool(
       previousContentHash: external_exports.string().optional()
     }
   },
-  withErrorHandling(({ id: id2, expectedContentHash }) => {
+  withErrorHandling(({ id: id2, expectedContentHash, ...scopeArgs }) => {
     const snapshot = readExactNoteSnapshot(id2);
     if ("error" in snapshot) return errorResponse(snapshot.error);
     if (snapshot.contentHash !== expectedContentHash) {
       return errorResponse(revisionConflictMessage(snapshot.note.title));
     }
-    const result = notesManager.deleteNoteByIdIfUnchanged(id2, snapshot.body);
+    const result = notesManager.deleteNoteByIdIfUnchanged(id2, snapshot.body, scopeFrom(scopeArgs));
     if (result.status === "conflict") {
       return errorResponse(revisionConflictMessage(snapshot.note.title));
+    }
+    if (result.status === "scope_conflict") {
+      return errorResponse(scopeConflictMessage(result.reason));
     }
     if (result.status === "in-recently-deleted") {
       return errorResponse(inRecentlyDeletedMessage(snapshot.note.title));
@@ -52171,12 +52316,13 @@ registerTool(
 registerTool(
   "move-note",
   {
-    description: "Use when: moving one exact note to a different folder by id.\nReturns: confirmation and exact-ID readback.\nDo not use when: you only have a title or want to move many notes (batch-move-notes).\nNote: Notes.app's native move preserves the note id, creation date, body, and attachments. The destination folder must already exist.",
+    description: "Use when: moving one exact note to a different folder by id.\nReturns: confirmation and exact-ID readback.\nDo not use when: you only have a title or want to move many notes (batch-move-notes).\nNote: Notes.app's native move preserves the note id, creation date, body, and attachments. The destination folder must already exist. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds (which also covers the destination) are re-checked inside the move AppleScript.",
     inputSchema: {
       id: noteIdInput,
       folder: external_exports.string().min(1, "Destination folder is required").max(MAX.FOLDER),
       account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account containing the note/folder"),
-      timeoutSeconds: timeoutSecondsInput
+      timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs
     },
     outputSchema: {
       ok: external_exports.boolean().optional(),
@@ -52186,12 +52332,12 @@ registerTool(
       verified: external_exports.boolean().optional()
     }
   },
-  withErrorHandling(({ id: id2, folder, account }) => {
+  withErrorHandling(({ id: id2, folder, account, ...scopeArgs }) => {
     const note = notesManager.getNoteById(id2);
     if (!note) {
       return errorResponse(`Note with ID "${id2}" not found`);
     }
-    const success = notesManager.moveNoteById(id2, folder, account);
+    const success = notesManager.moveNoteById(id2, folder, account, scopeFrom(scopeArgs));
     if (!success) {
       return errorResponse(
         `Failed to move note "${note.title}" to folder "${folder}". Folder may not exist.`

@@ -116,6 +116,13 @@ import {
   NotesExportError,
 } from "@/services/notesExport.js";
 import { registerDirectOperations } from "@/tools/directOperations.js";
+import {
+  hasScopeGuard,
+  MAX_FORBIDDEN_FOLDERS,
+  SCOPE_FOLDER_ID,
+  scopeConflictMessage,
+  type ScopeGuard,
+} from "@/utils/scopeGuard.js";
 import { registerNativeTagsBridge } from "@/tools/nativeTagsBridge.js";
 import {
   registerNativeOperations,
@@ -322,6 +329,62 @@ const expectedContentHashInput = z
   .describe(
     "Revision token returned by get-note-content for this exact ID. The mutation stops if the note changed since that read."
   );
+
+const SCOPE_FOLDER_ID_MESSAGE =
+  "An exact folder id is required: x-coredata://.../ICFolder/p..., Notes UUID, or numeric key (from list-folders)";
+
+/**
+ * Exact folder id for the scope guards. Accepts the x-coredata id plus the
+ * folder's Notes UUID or numeric key, resolved to the x-coredata form before
+ * the handler runs (like every other exact id field).
+ */
+const scopeFolderIdInput = exactIdInput("ICFolder", SCOPE_FOLDER_ID, SCOPE_FOLDER_ID_MESSAGE, {
+  maxLength: MAX.ID,
+});
+
+/**
+ * Optional folder preconditions shared by update-note, append-to-note,
+ * delete-note, and move-note. They are re-checked inside the write's own
+ * AppleScript, immediately before the write.
+ */
+const scopeGuardInputs = {
+  ifFolderId: scopeFolderIdInput
+    .optional()
+    .describe(
+      "Precondition: the note must currently be in exactly this folder (id from list-folders). Re-checked immediately before the write."
+    ),
+  ifAncestorFolderId: scopeFolderIdInput
+    .optional()
+    .describe(
+      "Precondition: the note must be inside this folder or any of its subfolders. Re-checked immediately before the write."
+    ),
+  forbiddenAncestorFolderIds: exactIdArrayInput(
+    "ICFolder",
+    SCOPE_FOLDER_ID,
+    SCOPE_FOLDER_ID_MESSAGE,
+    {
+      maxLength: MAX.ID,
+      maxItems: MAX_FORBIDDEN_FOLDERS,
+    }
+  )
+    .optional()
+    .describe(
+      "Precondition: the note must not be inside any of these folders or their subfolders (for move-note, neither may the destination). Re-checked immediately before the write."
+    ),
+};
+
+/** Collects the scope preconditions from a tool's arguments. */
+function scopeFrom(args: {
+  ifFolderId?: string;
+  ifAncestorFolderId?: string;
+  forbiddenAncestorFolderIds?: string[];
+}): ScopeGuard {
+  return {
+    ifFolderId: args.ifFolderId,
+    ifAncestorFolderId: args.ifAncestorFolderId,
+    forbiddenAncestorFolderIds: args.forbiddenAncestorFolderIds,
+  };
+}
 
 const timeoutSecondsInput = z
   .number()
@@ -1600,7 +1663,7 @@ registerTool(
   "update-note",
   {
     description:
-      "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server checks rich metadata revision, atomically checks the AppleScript body, blocks native objects/checklists, and verifies actual link destinations after saving. Preserve returned HTML links unless allowLinkChanges is explicitly requested. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
+      "Use when: replacing the body of one exact Apple Note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title, the note changed since the read, or the note has attachments.\nSafety: requires the exact note id and expectedContentHash from get-note-content. The server checks rich metadata revision, atomically checks the AppleScript body, blocks native objects/checklists, and verifies actual link destinations after saving. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds are re-checked inside the same AppleScript as the write. Preserve returned HTML links unless allowLinkChanges is explicitly requested. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
@@ -1631,6 +1694,7 @@ registerTool(
         .default("plaintext")
         .describe("Content format: 'plaintext' (default) or 'html' for rich formatting"),
       timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs,
     },
     outputSchema: {
       ok: z.boolean().optional(),
@@ -1650,6 +1714,7 @@ registerTool(
       newContent,
       format = "plaintext",
       allowLinkChanges = false,
+      ...scopeArgs
     }) => {
       const snapshot = readExactNoteSnapshot(id);
       if ("error" in snapshot) return errorResponse(snapshot.error);
@@ -1675,10 +1740,14 @@ registerTool(
         newTitle,
         newContent,
         format,
-        snapshot.rich.revision
+        snapshot.rich.revision,
+        scopeFrom(scopeArgs)
       );
       if (result.status === "conflict") {
         return errorResponse(revisionConflictMessage(snapshot.note.title));
+      }
+      if (result.status === "scope_conflict") {
+        return errorResponse(scopeConflictMessage(result.reason));
       }
       if (result.status === "attachments") {
         return errorResponse(
@@ -1753,6 +1822,9 @@ interface GuardedAppendArgs {
    * still requires the default separator.
    */
   htmlSeparator?: string;
+  ifFolderId?: string;
+  ifAncestorFolderId?: string;
+  forbiddenAncestorFolderIds?: string[];
 }
 
 /**
@@ -1771,6 +1843,7 @@ function guardedAppend(
     format = "plaintext",
     scopeText,
     htmlSeparator,
+    ...scopeArgs
   }: GuardedAppendArgs,
   onRoute?: (route: "applescript" | "native") => void
 ): ToolResponse {
@@ -1813,6 +1886,13 @@ function guardedAppend(
       return errorResponse("Provide scopeText: a unique existing phrase for native append");
     if (!VERIFIED_BACKGROUND.has("append-native"))
       return errorResponse("Native append has not passed live validation; see get-capabilities");
+    // Native append runs through Shortcuts, so the scope check is a
+    // separate read just before it rather than part of the write.
+    const nativeScope = scopeFrom(scopeArgs);
+    if (hasScopeGuard(nativeScope)) {
+      const reason = notesManager.checkNoteScope(id, nativeScope);
+      if (reason) return errorResponse(scopeConflictMessage(reason));
+    }
     onRoute?.("native");
     const result = appendNative(notesManager, {
       id,
@@ -1852,10 +1932,14 @@ function guardedAppend(
     undefined,
     combinedBody,
     "html",
-    snapshot.rich.revision
+    snapshot.rich.revision,
+    scopeFrom(scopeArgs)
   );
   if (result.status === "conflict") {
     return errorResponse(revisionConflictMessage(snapshot.note.title));
+  }
+  if (result.status === "scope_conflict") {
+    return errorResponse(scopeConflictMessage(result.reason));
   }
   if (result.status === "attachments") {
     return errorResponse(
@@ -1907,7 +1991,7 @@ registerTool(
   "append-to-note",
   {
     description:
-      "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title or the note changed since the read.\nSafety: protected native-object notes use native end-append with scopeText; ordinary notes retain guarded HTML editing. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.\nNative-append HTML subset (protected notes only; ordinary notes accept any HTML Notes.app renders): " +
+      "Use when: adding content to one exact note after reading it by id.\nReturns: exact id, new content hash, and visible-text readback verification.\nDo not use when: you only have a title or the note changed since the read.\nSafety: protected native-object notes use native end-append with scopeText; ordinary notes retain guarded HTML editing. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds are re-checked inside the write AppleScript for ordinary notes, and as a separate read just before a native append. Notes.app normalizes HTML, so rich formatting is not claimed as byte-identical.\nNative-append HTML subset (protected notes only; ordinary notes accept any HTML Notes.app renders): " +
       NATIVE_APPEND_HTML_SUBSET +
       " Native append also requires scopeText, the default blank-line separator and position 'after'.",
     inputSchema: {
@@ -1943,6 +2027,7 @@ registerTool(
         .default("plaintext")
         .describe("Format of the content being appended: 'plaintext' (default) or 'html'"),
       timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs,
     },
     outputSchema: {
       ok: z.boolean().optional(),
@@ -2066,11 +2151,12 @@ registerTool(
   "delete-note",
   {
     description:
-      "Use when: moving one exact note to Recently Deleted after reading and reviewing it.\nReturns: confirmation with the exact id.\nDo not use when: you only have a title or the note changed since review.\nSafety: requires id and expectedContentHash from get-note-content. The body comparison and delete happen in one AppleScript, so a newer edit is preserved. Refuses a note already in Recently Deleted, where a delete would be permanent.",
+      "Use when: moving one exact note to Recently Deleted after reading and reviewing it.\nReturns: confirmation with the exact id.\nDo not use when: you only have a title or the note changed since review.\nSafety: requires id and expectedContentHash from get-note-content. The body comparison and delete happen in one AppleScript, so a newer edit is preserved. Refuses a note already in Recently Deleted, where a delete would be permanent. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds are re-checked inside that AppleScript too.",
     inputSchema: {
       id: noteIdInput,
       expectedContentHash: expectedContentHashInput,
       timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs,
     },
     outputSchema: {
       ok: z.boolean().optional(),
@@ -2080,16 +2166,19 @@ registerTool(
       previousContentHash: z.string().optional(),
     },
   },
-  withErrorHandling(({ id, expectedContentHash }) => {
+  withErrorHandling(({ id, expectedContentHash, ...scopeArgs }) => {
     const snapshot = readExactNoteSnapshot(id);
     if ("error" in snapshot) return errorResponse(snapshot.error);
     if (snapshot.contentHash !== expectedContentHash) {
       return errorResponse(revisionConflictMessage(snapshot.note.title));
     }
 
-    const result = notesManager.deleteNoteByIdIfUnchanged(id, snapshot.body);
+    const result = notesManager.deleteNoteByIdIfUnchanged(id, snapshot.body, scopeFrom(scopeArgs));
     if (result.status === "conflict") {
       return errorResponse(revisionConflictMessage(snapshot.note.title));
+    }
+    if (result.status === "scope_conflict") {
+      return errorResponse(scopeConflictMessage(result.reason));
     }
     if (result.status === "in-recently-deleted") {
       return errorResponse(inRecentlyDeletedMessage(snapshot.note.title));
@@ -2125,7 +2214,7 @@ registerTool(
   "move-note",
   {
     description:
-      "Use when: moving one exact note to a different folder by id.\nReturns: confirmation and exact-ID readback.\nDo not use when: you only have a title or want to move many notes (batch-move-notes).\nNote: Notes.app's native move preserves the note id, creation date, body, and attachments. The destination folder must already exist.",
+      "Use when: moving one exact note to a different folder by id.\nReturns: confirmation and exact-ID readback.\nDo not use when: you only have a title or want to move many notes (batch-move-notes).\nNote: Notes.app's native move preserves the note id, creation date, body, and attachments. The destination folder must already exist. Optional ifFolderId, ifAncestorFolderId, and forbiddenAncestorFolderIds (which also covers the destination) are re-checked inside the move AppleScript.",
     inputSchema: {
       id: noteIdInput,
       folder: z.string().min(1, "Destination folder is required").max(MAX.FOLDER),
@@ -2135,6 +2224,7 @@ registerTool(
         .optional()
         .describe("Account containing the note/folder"),
       timeoutSeconds: timeoutSecondsInput,
+      ...scopeGuardInputs,
     },
     outputSchema: {
       ok: z.boolean().optional(),
@@ -2144,12 +2234,12 @@ registerTool(
       verified: z.boolean().optional(),
     },
   },
-  withErrorHandling(({ id, folder, account }) => {
+  withErrorHandling(({ id, folder, account, ...scopeArgs }) => {
     const note = notesManager.getNoteById(id);
     if (!note) {
       return errorResponse(`Note with ID "${id}" not found`);
     }
-    const success = notesManager.moveNoteById(id, folder, account);
+    const success = notesManager.moveNoteById(id, folder, account, scopeFrom(scopeArgs));
     if (!success) {
       return errorResponse(
         `Failed to move note "${note.title}" to folder "${folder}". Folder may not exist.`

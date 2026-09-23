@@ -73,6 +73,12 @@ import {
 } from "@/utils/attachmentAssets.js";
 import type { AttachmentExportResult, FirstImage, NoteAttachmentAssets } from "@/types.js";
 import { AUTOMATION_REMEDIATION } from "@/utils/docsUrls.js";
+import {
+  buildScopeGuardScript,
+  parseScopeFailure,
+  scopeConflictMessage,
+  type ScopeGuard,
+} from "@/utils/scopeGuard.js";
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -1537,9 +1543,12 @@ export class AppleNotesManager {
     newTitle: string | undefined,
     newContent: string,
     format: "plaintext" | "html" = "plaintext",
-    expectedRichRevision?: string
+    expectedRichRevision?: string,
+    scope?: ScopeGuard
   ):
-    { status: "updated"; writtenBody: string } | { status: "conflict" | "attachments" | "failed" } {
+    | { status: "updated"; writtenBody: string }
+    | { status: "conflict" | "attachments" | "failed" }
+    | { status: "scope_conflict"; reason: string } {
     const safeId = sanitizeNoteId(id);
     if (expectedRichRevision) {
       const rich = readRichNote(id);
@@ -1565,7 +1574,7 @@ export class AppleNotesManager {
     const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
     const safeWrittenBody = escapeHtmlForAppleScript(writtenBody);
     const script = buildAppLevelScript(`
-      set noteRef to note id "${safeId}"
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope)}
       if (count of attachments of noteRef) is greater than 0 then return "SAFETY_ATTACHMENTS"
       set currentBody to body of noteRef
       considering case
@@ -1580,6 +1589,8 @@ export class AppleNotesManager {
       console.error(`Failed guarded update for note ID "${id}":`, result.error);
       return { status: "failed" };
     }
+    const updateScopeFailure = parseScopeFailure(result.output);
+    if (updateScopeFailure) return { status: "scope_conflict", reason: updateScopeFailure };
     const status = result.output.trim();
     if (status === "SAFETY_CONFLICT") return { status: "conflict" };
     if (status === "SAFETY_ATTACHMENTS") return { status: "attachments" };
@@ -1594,8 +1605,11 @@ export class AppleNotesManager {
    */
   deleteNoteByIdIfUnchanged(
     id: string,
-    expectedBody: string
-  ): { status: "deleted" | "conflict" | "not-deleted" | "in-recently-deleted" | "failed" } {
+    expectedBody: string,
+    scope?: ScopeGuard
+  ):
+    | { status: "deleted" | "conflict" | "not-deleted" | "in-recently-deleted" | "failed" }
+    | { status: "scope_conflict"; reason: string } {
     const safeId = sanitizeNoteId(id);
     validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
     const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
@@ -1609,7 +1623,7 @@ export class AppleNotesManager {
     // re-reads the note's original folder afterwards: a note still listed there
     // was not moved to Recently Deleted and must not be reported as deleted.
     const script = buildAppLevelScript(`
-      set noteRef to note id "${safeId}"
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope)}
       set originalFolder to missing value
       try
         set originalFolder to container of noteRef
@@ -1642,11 +1656,31 @@ export class AppleNotesManager {
       console.error(`Failed guarded delete for note ID "${id}":`, result.error);
       return { status: "failed" };
     }
+    const deleteScopeFailure = parseScopeFailure(result.output);
+    if (deleteScopeFailure) return { status: "scope_conflict", reason: deleteScopeFailure };
     const status = result.output.trim();
     if (status === "SAFETY_CONFLICT") return { status: "conflict" };
     if (status === "SAFETY_IN_RECENTLY_DELETED") return { status: "in-recently-deleted" };
     if (status === "SAFETY_NOT_DELETED") return { status: "not-deleted" };
     return status === "SAFETY_DELETED" ? { status: "deleted" } : { status: "failed" };
+  }
+
+  /**
+   * Read-only scope pre-check for writes that do not run as AppleScript (the
+   * native Shortcuts operations). Runs the same checks the AppleScript writes
+   * embed, but in a separate script, so it is not atomic with the write.
+   *
+   * @returns null when every precondition holds, otherwise the failure reason
+   */
+  checkNoteScope(id: string, scope: ScopeGuard): string | null {
+    const safeId = sanitizeNoteId(id);
+    const result = executeAppleScript(
+      buildAppLevelScript(`
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope)}
+      return "SCOPE_OK"`)
+    );
+    if (!result.success) return result.error || "the note's folder could not be read";
+    return parseScopeFailure(result.output);
   }
 
   /**
@@ -2385,7 +2419,12 @@ export class AppleNotesManager {
    * @param account - Account containing the destination folder (defaults to Notes.app's default account)
    * @returns true if the move succeeded, false otherwise
    */
-  moveNoteById(id: string, destinationFolder: string, account?: string): boolean {
+  moveNoteById(
+    id: string,
+    destinationFolder: string,
+    account?: string,
+    scope?: ScopeGuard
+  ): boolean {
     const targetAccount = this.resolveAccount(account);
     const safeId = sanitizeNoteId(id);
     // buildFolderReference validates the destination path; a malformed folder is
@@ -2393,10 +2432,11 @@ export class AppleNotesManager {
     // exist — Notes.app's `move` does not create it.
     const destFolderRef = `${buildFolderReference(destinationFolder)} of ${AS_ACCOUNT_REF}`;
 
+    // Optional folder preconditions run in the same script, just before `move`.
     const moveCommand = `
       ${buildAccountResolution(targetAccount)}
       set destFolder to ${destFolderRef}
-      set noteRef to note id "${safeId}"
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope, "destFolder")}
       move noteRef to destFolder
       set movedNoteRef to note id "${safeId}"
       set actualFolder to container of movedNoteRef
@@ -2414,6 +2454,9 @@ export class AppleNotesManager {
       );
       return false;
     }
+
+    const scopeFailure = parseScopeFailure(result.output);
+    if (scopeFailure) throw new Error(scopeConflictMessage(scopeFailure));
 
     if (result.output.trim() !== "SAFETY_MOVED") {
       console.error(
