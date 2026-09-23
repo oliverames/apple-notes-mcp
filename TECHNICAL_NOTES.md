@@ -10,6 +10,7 @@ This document contains research findings on Apple Notes internals, programmatic 
 - [Protobuf Data Format](#protobuf-data-format)
 - [Alternative Approaches](#alternative-approaches)
 - [Private helper (NotesShared)](#private-helper-notesshared)
+- [Private writer (fork-only)](#private-writer-fork-only)
 - [Known Issues & Limitations](#known-issues--limitations)
 - [Related Tools & Projects](#related-tools--projects)
 - [Sources](#sources)
@@ -822,6 +823,81 @@ A future write PR needs evidence on all three first.
   (`store_unavailable`) rather than migrate.
 - Reads go through a private model; a field's meaning can change without
   notice. Treat `native-note-state` as diagnostic, not as a contract.
+
+## Private writer (fork-only)
+
+This fork keeps the read-only helper above exactly as merged and adds writes
+as a **separate, opt-in layer**, ready for the day the hold in "Why writes
+were deferred" is lifted. None of it is offered upstream.
+
+### Separation from the read-only helper
+
+| | Read-only helper | Writer |
+|---|---|---|
+| Source | `apple-notes-private-helper.m` | `apple-notes-private-writer.m` |
+| Binary / manifest | `apple-notes-private-helper` / `manifest.json` | `apple-notes-private-writer` / `writer-manifest.json` |
+| Setup | `setup --native-helper` (refuses any write action) | `setup --native-writer` (refuses an action table that differs from the client's) |
+| Client | `privateHelper.ts`, `READ_ONLY_ACTIONS` | `privateWriter.ts`, `WRITER_ACTIONS` (each `read` or `write`) |
+| Switches | `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` | that **and** `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1` |
+
+Both live in the same install directory but never share a file. The
+read-only source test (`privateHelperReadOnly.test.ts`) still enforces every
+read-only rule on the helper source, and also checks that the helper source,
+`privateHelper.ts`, and `privateHelperBuild.ts` never mention the writer, that
+the read-only build compiles only the helper source, and that no writer
+`write` action is in `READ_ONLY_ACTIONS`. `privateWriterSource.test.ts` pins
+the writer's own contract.
+
+### Write contract
+
+Every write action in the writer:
+
+1. is refused before spawning unless both switches are on, and, until it has
+   passed live validation in a release, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`;
+2. is refused by the writer itself (`writes_disabled`, `committed: false`)
+   when it would open the live store read-write without
+   `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`;
+3. takes an `ifRevision` token and compares it with the persisted note's
+   `revision` (the same `r1:` digest the read-only helper reports) before
+   changing anything (`revision_conflict`, `committed: false`);
+4. edits through NotesShared's model (the CRDT for body text), never SQL, and
+   saves with `NSErrorMergePolicy`, so a concurrent Notes.app save wins and the
+   writer's save fails with nothing written;
+5. re-reads the note through a brand-new coordinator opened read-only and
+   compares the result with the intended change; a mismatch is
+   `verification_failed` with `committed: true`;
+6. reports `committed` on every failure after spawning; a timeout or an
+   unreadable response is `committed: "unknown"`, which the MCP envelope
+   reports as `indeterminate: true`.
+
+The writer never uploads. Results carry `pushScheduled: false`, the
+`cloudSync` counters, and `pushState` (`awaiting_notes_app` when Notes.app is
+running, else `queued_for_next_launch`).
+
+### Sync nudge
+
+The writer's read-only `read_sync_state` action reports Notes' own counters
+(`currentLocalVersion`, `latestVersionSyncedToCloud`, `uploadPending`) for up
+to 50 notes or folders plus the library's pending-upload count. Observed on
+macOS 27.2 on 2026-09-23 on the earlier fork branches: Notes.app merges a
+helper save and queues the note, but when it already holds that note in
+memory its upload check reads cached counters and skips it. Moving the note
+through AppleScript into the folder it is already in makes Notes.app save it
+itself (only `folderModificationDate` changes), and the upload was recorded
+6 to 12 seconds later in five trials. `privateSyncNudge.ts` implements that
+move, refuses locked, shared, trashed, non-iCloud, and folder targets, and
+compares the writer's revision token before and after (`contentUnchanged`).
+`native-append-plain-text` runs it with `nudge: true`. `uploadRecorded` is
+Notes' own record that the server accepted the version, not a cross-device
+check.
+
+### Still open
+
+The three concerns in "Why writes were deferred" are not resolved by this
+layer: it makes writes opt-in, guarded, and verifiable, not proven safe.
+Concurrent saves are handled only by optimistic locking, CRDT replica
+identity in a process without a bundle identifier is uninspected, and upload
+depends on Notes.app (the nudge works around the observed skip).
 
 ---
 

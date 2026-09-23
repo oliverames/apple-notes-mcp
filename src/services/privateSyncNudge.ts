@@ -1,0 +1,311 @@
+/**
+ * Sync state and the move-in-place nudge for writer-saved changes.
+ *
+ * The writer saves through its own Core Data stack, and only Notes.app can
+ * upload to iCloud. Observed on macOS 27.2 (TECHNICAL_NOTES.md "Private
+ * writer: sync"): a running Notes.app merges the writer's save and schedules
+ * the note for upload, but when it already holds that note in memory its
+ * upload check reads the cached cloud state, decides "already pushed the
+ * latest version", and skips it.
+ *
+ * The nudge makes Notes.app save the note itself without changing it: it
+ * moves the note into the folder it is already in. Notes records that as a
+ * folder reassignment, bumps the change count on fresh state, and uploads
+ * the note with the writer's pending edits. Body, title, and modification
+ * date are not touched; the writer's revision token, which covers them, is
+ * compared before and after (`contentUnchanged`).
+ *
+ * Every outcome is read back from Notes' own counters (`read_sync_state`).
+ * `uploadRecorded` is true only when `latestVersionSyncedToCloud` has caught
+ * up with `currentLocalVersion`; nothing here claims an upload it did not
+ * observe.
+ *
+ * @module services/privateSyncNudge
+ */
+import { z } from "zod";
+import { executeAppleScript } from "../utils/applescript.js";
+import {
+  PrivateWriteError,
+  callPrivateWriter,
+  defaultWriterDeps,
+  parseWriterResult,
+  type PrivateHelperDeps,
+} from "./privateWriter.js";
+
+const UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+const NOTE_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i;
+const FOLDER_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICFolder\/p\d+$/i;
+export const MAX_SYNC_TARGETS = 50;
+export const MAX_NUDGE_WAIT_SECONDS = 180;
+
+const objectSchema = z
+  .object({
+    identifier: z.string(),
+    found: z.boolean(),
+    reason: z.string().optional(),
+    kind: z.enum(["note", "folder"]).optional(),
+    objectURI: z.string().optional(),
+    markedForDeletion: z.boolean().optional(),
+    inICloudAccount: z.boolean().optional(),
+    cloudStateAvailable: z.boolean().optional(),
+    currentLocalVersion: z.number().int().optional(),
+    latestVersionSyncedToCloud: z.number().int().optional(),
+    uploadPending: z.boolean().optional(),
+    folderIdentifier: z.string().nullable().optional(),
+    folderObjectURI: z.string().nullable().optional(),
+    passwordProtected: z.boolean().optional(),
+    deletedOrInTrash: z.boolean().optional(),
+    sharedViaICloud: z.boolean().optional(),
+    revision: z.string().optional(),
+  })
+  .passthrough();
+export type SyncObjectState = z.infer<typeof objectSchema>;
+
+export const syncStateSchema = z
+  .object({
+    status: z.literal("ok"),
+    objects: z.array(objectSchema),
+    pendingUploadCount: z.number().int().nullable(),
+    syncHostRunning: z.boolean(),
+  })
+  .passthrough();
+export type SyncState = z.infer<typeof syncStateSchema>;
+
+function invalid(message: string): PrivateWriteError {
+  return new PrivateWriteError("invalid_request", message, false);
+}
+
+/** Validate and de-duplicate a list of note or folder UUIDs. */
+export function syncTargets(identifiers: string[]): string[] {
+  const unique = [...new Set(identifiers)];
+  if (!unique.length || unique.length > MAX_SYNC_TARGETS)
+    throw invalid(`identifiers must list 1-${MAX_SYNC_TARGETS} note or folder UUIDs`);
+  for (const id of unique) if (!UUID.test(id)) throw invalid("identifiers must be Notes UUIDs");
+  return unique;
+}
+
+/** Read Notes' own upload counters for up to 50 notes or folders (read-only). */
+export function readSyncState(
+  identifiers: string[],
+  deps: PrivateHelperDeps = defaultWriterDeps()
+): SyncState {
+  return parseWriterResult(
+    syncStateSchema,
+    callPrivateWriter("read_sync_state", { identifiers: syncTargets(identifiers) }, deps),
+    false
+  );
+}
+
+/** Notes' own record that the current local version reached iCloud. */
+export function uploadRecorded(state: SyncObjectState): boolean {
+  return (
+    state.found &&
+    state.currentLocalVersion !== undefined &&
+    state.latestVersionSyncedToCloud !== undefined &&
+    state.latestVersionSyncedToCloud >= state.currentLocalVersion
+  );
+}
+
+/** Why a note cannot be nudged, or null when it can. */
+export function nudgeRefusal(state: SyncObjectState): string | null {
+  if (!state.found) return state.reason ?? "not_found";
+  if (!state.uploadPending) return "nothing_pending";
+  if (state.kind !== "note") return "folders_need_relaunch";
+  if (!state.inICloudAccount) return "not_icloud";
+  if (state.markedForDeletion || state.deletedOrInTrash) return "deleted";
+  if (state.passwordProtected) return "locked";
+  if (state.sharedViaICloud) return "shared";
+  if (!state.objectURI || !NOTE_URI.test(state.objectURI)) return "no_object_id";
+  if (!state.folderObjectURI || !FOLDER_URI.test(state.folderObjectURI)) return "no_folder";
+  return null;
+}
+
+/**
+ * Moves the note into the folder it is already in, refusing if Notes.app
+ * reports a different container. Both ids are validated x-coredata URIs, so
+ * no caller text reaches the script.
+ */
+export function moveInPlaceScript(noteURI: string, folderURI: string): string {
+  if (!NOTE_URI.test(noteURI) || !FOLDER_URI.test(folderURI))
+    throw invalid("Refusing to build a move script from an unexpected object id");
+  return [
+    'tell application "Notes"',
+    `  set theNote to note id "${noteURI}"`,
+    "  set theFolder to container of theNote",
+    `  if (id of theFolder) is not "${folderURI}" then error "container changed" number 9901`,
+    "  move theNote to theFolder",
+    '  return "moved"',
+    "end tell",
+  ].join("\n");
+}
+
+/** Machine side effects of a nudge, injectable for tests. */
+export interface NudgeDeps {
+  helper: PrivateHelperDeps;
+  runAppleScript: (script: string) => { success: boolean; output: string; error?: string };
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+}
+
+export function defaultNudgeDeps(overrides: Partial<NudgeDeps> = {}): NudgeDeps {
+  return {
+    helper: defaultWriterDeps(),
+    runAppleScript: (script) => executeAppleScript(script, { maxRetries: 1, timeoutMs: 30_000 }),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    ...overrides,
+  };
+}
+
+export interface NudgeTargetResult {
+  identifier: string;
+  kind: "note" | "folder" | null;
+  before: { currentLocalVersion?: number; latestVersionSyncedToCloud?: number } | null;
+  after: { currentLocalVersion?: number; latestVersionSyncedToCloud?: number } | null;
+  uploadPendingBefore: boolean;
+  uploadRecorded: boolean;
+  action: "none" | "moved_in_place" | "skipped" | "failed";
+  reason: string | null;
+  /** For a nudged note: the writer's revision token and folder were identical before and after. */
+  contentUnchanged?: boolean;
+}
+
+function versions(state: SyncObjectState | undefined) {
+  if (!state?.found) return null;
+  return {
+    currentLocalVersion: state.currentLocalVersion,
+    latestVersionSyncedToCloud: state.latestVersionSyncedToCloud,
+  };
+}
+
+export interface NudgeReport {
+  syncHostRunning: boolean;
+  waitedSeconds: number;
+  pendingUploadCountBefore: number | null;
+  pendingUploadCountAfter: number | null;
+  allUploadsRecorded: boolean;
+  /** Always false: the writer never uploads; see uploadRecorded per target. */
+  pushScheduled: false;
+  targets: NudgeTargetResult[];
+  warnings: string[];
+  /** The last counters read, for callers that report more (e.g. a relaunch). */
+  before: SyncState;
+  after: SyncState;
+}
+
+/**
+ * Nudge each pending note by moving it in place, then watch Notes' counters
+ * for up to `waitSeconds` (0-180). With `nudge: false` it only reads and
+ * waits. Folders and notes Notes.app cannot upload are skipped with a reason.
+ */
+export async function nudgeInPlace(
+  request: { identifiers: string[]; waitSeconds?: number; nudge?: boolean },
+  deps: NudgeDeps = defaultNudgeDeps()
+): Promise<NudgeReport> {
+  const identifiers = syncTargets(request.identifiers);
+  const act = request.nudge !== false;
+  const waitSeconds = request.waitSeconds ?? (act ? 30 : 0);
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_NUDGE_WAIT_SECONDS)
+    throw invalid(`waitSeconds must be 0-${MAX_NUDGE_WAIT_SECONDS}`);
+
+  const before = readSyncState(identifiers, deps.helper);
+  const byId = new Map(before.objects.map((o) => [o.identifier, o]));
+  const results = new Map<string, NudgeTargetResult>(
+    identifiers.map((id) => {
+      const state = byId.get(id);
+      return [
+        id,
+        {
+          identifier: id,
+          kind: state?.kind ?? null,
+          before: versions(state),
+          after: null,
+          uploadPendingBefore: Boolean(state?.uploadPending),
+          uploadRecorded: state ? uploadRecorded(state) : false,
+          action: "none",
+          reason: state?.found ? null : (state?.reason ?? "not_found"),
+        },
+      ];
+    })
+  );
+  const warnings: string[] = [];
+
+  if (act && !before.syncHostRunning) {
+    warnings.push(
+      "Notes.app is not running, so there is nothing to nudge. Its next launch sweeps every " +
+        "pending change."
+    );
+  } else if (act) {
+    for (const id of identifiers) {
+      const state = byId.get(id);
+      const result = results.get(id)!;
+      if (!state) continue;
+      const refusal = nudgeRefusal(state);
+      if (refusal) {
+        if (refusal !== "nothing_pending" && state.found) {
+          result.action = "skipped";
+          result.reason = refusal;
+        }
+        continue;
+      }
+      const run = deps.runAppleScript(moveInPlaceScript(state.objectURI!, state.folderObjectURI!));
+      if (run.success && run.output.trim() === "moved") {
+        result.action = "moved_in_place";
+      } else {
+        result.action = "failed";
+        result.reason = /9901|container changed/.test(run.error ?? "")
+          ? "container_changed"
+          : `applescript: ${run.error ?? run.output}`.slice(0, 300);
+      }
+    }
+  }
+
+  // Watch Notes' own counters until every pending target records its upload.
+  const pending = () => [...results.values()].filter((r) => r.reason === null && !r.uploadRecorded);
+  const end = deps.now() + waitSeconds * 1000;
+  let after = before;
+  for (let first = true; ; first = false) {
+    if (!first || act) after = readSyncState(identifiers, deps.helper);
+    const now = new Map(after.objects.map((o) => [o.identifier, o]));
+    for (const result of results.values()) {
+      const state = now.get(result.identifier);
+      result.after = versions(state);
+      result.uploadRecorded = state ? uploadRecorded(state) : false;
+      if (result.action === "moved_in_place") {
+        const was = byId.get(result.identifier);
+        result.contentUnchanged =
+          Boolean(was?.revision) &&
+          was?.revision === state?.revision &&
+          was?.folderIdentifier === state?.folderIdentifier;
+      }
+    }
+    if (!pending().length || deps.now() >= end) break;
+    await deps.sleep(2000);
+  }
+
+  const targets = [...results.values()];
+  const stillPending = targets.filter((r) => r.reason === null && !r.uploadRecorded);
+  for (const r of targets)
+    if (r.action === "moved_in_place" && r.contentUnchanged === false)
+      warnings.push(
+        `${r.identifier}: the note's revision changed while it was nudged; something else ` +
+          "edited it at the same time. Read it before relying on its content."
+      );
+  if (stillPending.length && act)
+    warnings.push(
+      `${stillPending.length} target(s) still show a pending upload after ${waitSeconds} s. ` +
+        "Notes.app uploads on its own schedule; check again later."
+    );
+  return {
+    syncHostRunning: after.syncHostRunning,
+    waitedSeconds: waitSeconds,
+    pendingUploadCountBefore: before.pendingUploadCount,
+    pendingUploadCountAfter: after.pendingUploadCount,
+    allUploadsRecorded: stillPending.length === 0,
+    pushScheduled: false,
+    targets,
+    warnings,
+    before,
+    after,
+  };
+}

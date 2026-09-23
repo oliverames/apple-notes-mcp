@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid2 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid2}))`);
+        const invalid3 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid3}))`);
       }
     };
     exports.default = def;
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join27(output, replacement);
+        return join29(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join27(output, rule.append(self.options));
+          output = join29(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join27(output, replacement) {
+    function join29(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -40820,13 +40820,13 @@ function buildSmartFolders(output) {
   if (lines.length < 4) throw new Error("Unexpected smart folder query output");
   const [storeUuid, rowsJson, foldersJson, tagsJson] = lines;
   if (!/^[0-9A-F-]+$/i.test(storeUuid)) throw new Error("Unexpected Notes store identifier");
-  const coreDataId3 = (entity3, pk) => `x-coredata://${storeUuid}/${entity3}/p${pk}`;
+  const coreDataId4 = (entity3, pk) => `x-coredata://${storeUuid}/${entity3}/p${pk}`;
   const rows = JSON.parse(rowsJson);
   const folderRows = JSON.parse(foldersJson || "{}");
   const tagRows = JSON.parse(tagsJson || "[]");
   const folders = {};
   for (const [identifier, row] of Object.entries(folderRows)) {
-    folders[identifier] = { id: coreDataId3("ICFolder", row.pk), title: row.title };
+    folders[identifier] = { id: coreDataId4("ICFolder", row.pk), title: row.title };
   }
   const tags = {};
   for (const tag of tagRows) {
@@ -40837,14 +40837,14 @@ function buildSmartFolders(output) {
   return rows.map((row) => {
     const decoded = decodeSmartFolderQuery(row.query, { folders, tags });
     return {
-      id: coreDataId3("ICFolder", row.pk),
+      id: coreDataId4("ICFolder", row.pk),
       identifier: row.identifier,
       name: row.title,
       account: row.accountName,
-      accountId: row.accountPk === null ? null : coreDataId3("ICAccount", row.accountPk),
+      accountId: row.accountPk === null ? null : coreDataId4("ICAccount", row.accountPk),
       accountIdentifier: row.accountIdentifier,
       parent: row.parentTitle,
-      parentId: row.parentPk === null ? null : coreDataId3("ICFolder", row.parentPk),
+      parentId: row.parentPk === null ? null : coreDataId4("ICFolder", row.parentPk),
       parentIdentifier: row.parentIdentifier,
       match: decoded.match,
       filters: decoded.filters,
@@ -42470,8 +42470,8 @@ function folderDeleteFactsScript(id2) {
       end repeat
       set noteCount to count of notes of f`;
 }
-function getNoteLinkFromDB(coreDataId3) {
-  const match = coreDataId3.match(/\/p(\d+)$/);
+function getNoteLinkFromDB(coreDataId4) {
+  const match = coreDataId4.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
   const dbPath2 = join9(homedir8(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
@@ -53197,7 +53197,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid2 = () => this.issue(
+      const invalid3 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -53207,7 +53207,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid2();
+          if (paint.kind === "invalid") invalid3();
           else if (name === "fill") style.fill = paint;
           else style.stroke = paint;
           break;
@@ -53215,12 +53215,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid2();
+          else invalid3();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid2();
+          if (w === null || w < 0) invalid3();
           else style.strokeWidth = w;
           break;
         }
@@ -53228,7 +53228,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid2();
+          if (o === null) invalid3();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -53236,7 +53236,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid2();
+          else invalid3();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -53256,14 +53256,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid2();
+          if (!list || list.some((v) => v < 0)) invalid3();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid2();
+          if (o === null) invalid3();
           else style.dashoffset = o;
           break;
         }
@@ -55811,6 +55811,841 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
   );
 }
 
+// src/services/privateWriterBuild.ts
+import {
+  chmodSync as chmodSync3,
+  existsSync as existsSync17,
+  mkdirSync as mkdirSync8,
+  mkdtempSync as mkdtempSync7,
+  renameSync as renameSync3,
+  rmSync as rmSync7,
+  writeFileSync as writeFileSync6
+} from "node:fs";
+import { join as join28 } from "node:path";
+
+// src/services/privateWriter.ts
+import { join as join27 } from "node:path";
+var PRIVATE_WRITER_PROTOCOL = 1;
+var WRITES_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
+var ALLOW_UNVERIFIED_ENV = "APPLE_NOTES_MCP_ALLOW_UNVERIFIED";
+var WRITER_BINARY_NAME = "apple-notes-private-writer";
+var WRITER_SOURCE_RELATIVE = "native/private-helper/apple-notes-private-writer.m";
+var WRITER_MANIFEST_NAME = "writer-manifest.json";
+var WRITER_SETUP_COMMAND = "apple-notes-mcp setup --native-writer";
+var DEFAULT_TIMEOUT_MS4 = 2e4;
+var MAX_OUTPUT_BYTES3 = 8 * 1024 * 1024;
+var WRITER_ACTIONS = {
+  hello: "read",
+  probe: "read",
+  read_note_state: "read",
+  append_plain_text: "write",
+  read_sync_state: "read"
+};
+var APPEND_LIVE_VALIDATED = false;
+function defaultWriterDeps(overrides = {}) {
+  return defaultDeps2({ sourcePath: join27(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
+}
+function privateWritesEnabled(env = process.env) {
+  return privateHelperEnabled(env) && env[WRITES_ENV] === "1";
+}
+function inspectWriterInstallation(deps = defaultWriterDeps()) {
+  const installDir = helperInstallDir(deps.env);
+  const binaryPath = join27(installDir, WRITER_BINARY_NAME);
+  const manifestPath = join27(installDir, WRITER_MANIFEST_NAME);
+  const base = {
+    installDir,
+    binaryPath,
+    manifestPath,
+    sourcePath: deps.sourcePath,
+    expectedSourceSha256: null,
+    manifest: null
+  };
+  const fail = (reason, detail) => ({ ...base, ready: false, reason, detail });
+  if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
+  if (!deps.exists(deps.sourcePath))
+    return fail("helper_not_installed", `Packaged writer source is missing: ${deps.sourcePath}`);
+  base.expectedSourceSha256 = sha256Hex2(deps.readFile(deps.sourcePath));
+  if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
+    return fail(
+      "helper_not_installed",
+      `The private writer is not built. Run \`${WRITER_SETUP_COMMAND}\`.`
+    );
+  let manifest;
+  try {
+    manifest = manifestSchema.parse(JSON.parse(deps.readFile(manifestPath).toString("utf8")));
+  } catch (error2) {
+    return fail(
+      "helper_manifest_invalid",
+      `Unreadable writer manifest (${error2 instanceof Error ? error2.message : String(error2)}). Run \`${WRITER_SETUP_COMMAND}\`.`
+    );
+  }
+  base.manifest = manifest;
+  if (manifest.sourceSha256 !== base.expectedSourceSha256 || manifest.protocolVersion !== PRIVATE_WRITER_PROTOCOL)
+    return fail(
+      "helper_stale",
+      `The installed writer was built from a different writer source or protocol than this apple-notes-mcp version ships. Run \`${WRITER_SETUP_COMMAND}\` again.`
+    );
+  if (sha256Hex2(deps.readFile(binaryPath)) !== manifest.binarySha256)
+    return fail(
+      "helper_modified",
+      `The writer binary does not match the checksum recorded when it was built. Run \`${WRITER_SETUP_COMMAND}\` to rebuild it.`
+    );
+  return { ...base, ready: true, reason: null, detail: null };
+}
+var PrivateWriteError = class extends PrivateHelperError {
+  constructor(code, message, committed, details = {}) {
+    super(code, message, details);
+    this.committed = committed;
+    this.name = "PrivateWriteError";
+  }
+  committed;
+};
+var errorSchema3 = external_exports.object({
+  status: external_exports.literal("error"),
+  code: external_exports.string(),
+  message: external_exports.string(),
+  committed: external_exports.boolean().optional()
+}).passthrough();
+var featureSchema2 = external_exports.object({
+  available: external_exports.boolean(),
+  reason: external_exports.string().nullable(),
+  missing: external_exports.array(external_exports.string())
+});
+var writerHelloSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string(),
+  role: external_exports.literal("writer"),
+  readOnly: external_exports.literal(false),
+  actions: external_exports.array(external_exports.string())
+}).passthrough();
+var writerProbeSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  protocolVersion: external_exports.number().int(),
+  role: external_exports.literal("writer"),
+  readOnly: external_exports.literal(false),
+  writesEnabled: external_exports.boolean(),
+  os: external_exports.object({ version: external_exports.string(), notesAppVersion: external_exports.string().nullable() }).passthrough(),
+  framework: external_exports.object({ loaded: external_exports.boolean(), error: external_exports.string().nullable() }).passthrough(),
+  store: external_exports.object({
+    kind: external_exports.enum(["live", "copy"]).nullable(),
+    opened: external_exports.boolean(),
+    reason: external_exports.string().nullable(),
+    noteRows: external_exports.number().int().nullable()
+  }).passthrough(),
+  syncHostRunning: external_exports.boolean(),
+  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+}).passthrough();
+var cloudSyncSchema2 = external_exports.object({
+  available: external_exports.boolean(),
+  inICloudAccount: external_exports.boolean(),
+  currentLocalVersion: external_exports.number().int().optional(),
+  latestVersionSyncedToCloud: external_exports.number().int().optional(),
+  uploadPending: external_exports.boolean().optional()
+}).passthrough();
+var writeSyncFields = {
+  cloudSync: cloudSyncSchema2,
+  pushScheduled: external_exports.boolean(),
+  pushState: external_exports.enum(["awaiting_notes_app", "queued_for_next_launch"]),
+  syncHostRunning: external_exports.boolean(),
+  storeKind: external_exports.enum(["live", "copy"])
+};
+var appendResultSchema = external_exports.object({
+  status: external_exports.literal("updated"),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  appendedUTF16: external_exports.number().int(),
+  revisionBefore: external_exports.string(),
+  revisionAfter: external_exports.string(),
+  modificationDate: external_exports.string().nullable(),
+  ...writeSyncFields
+}).passthrough();
+function callPrivateWriter(action, fields = {}, deps = defaultWriterDeps(), options = {}) {
+  const kind = WRITER_ACTIONS[action];
+  if (!kind)
+    throw new PrivateWriteError(
+      "unknown_action",
+      `"${action}" is not a private writer action.`,
+      void 0
+    );
+  const isWrite = kind === "write";
+  const notCommitted = isWrite ? false : void 0;
+  if (!options.allowDisabled) {
+    if (!privateHelperEnabled(deps.env))
+      throw new PrivateWriteError(
+        "disabled",
+        `The private helper is off. Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in to private writes.`,
+        notCommitted
+      );
+    if (!privateWritesEnabled(deps.env))
+      throw new PrivateWriteError(
+        "writes_disabled",
+        `Private writes are off. Set ${WRITES_ENV}=1 (with ${ENABLE_ENV}=1) to opt in.`,
+        notCommitted
+      );
+  }
+  let binaryPath = options.binaryPath;
+  if (!binaryPath) {
+    const install = inspectWriterInstallation(deps);
+    if (!install.ready)
+      throw new PrivateWriteError(
+        install.reason || "helper_not_installed",
+        install.detail || "",
+        notCommitted
+      );
+    binaryPath = install.binaryPath;
+  }
+  const timeout = Number.parseInt(deps.env[TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS4;
+  const result = deps.spawn(binaryPath, [], {
+    input: JSON.stringify({ protocol: PRIVATE_WRITER_PROTOCOL, action, ...fields }),
+    encoding: "utf8",
+    timeout,
+    killSignal: "SIGKILL",
+    maxBuffer: MAX_OUTPUT_BYTES3,
+    env: deps.env
+  });
+  const errno = result.error?.code;
+  if (errno === "ETIMEDOUT" || result.signal && result.status === null)
+    throw new PrivateWriteError(
+      "timeout",
+      isWrite ? `The writer did not answer within ${timeout} ms. The write is INDETERMINATE: it may have been saved. Read the note state again before retrying.` : `The writer did not answer within ${timeout} ms.`,
+      isWrite ? "unknown" : void 0
+    );
+  if (result.error)
+    throw new PrivateWriteError(
+      "helper_unreachable",
+      `Could not run the writer: ${result.error.message}`,
+      notCommitted
+    );
+  const stdout = String(result.stdout ?? "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new PrivateWriteError(
+      "invalid_response",
+      `The writer exited with status ${result.status} and no JSON response` + (isWrite ? ". The write is INDETERMINATE; read the note state before retrying." : "."),
+      isWrite ? "unknown" : void 0
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new PrivateWriteError(
+      "invalid_response",
+      "The writer response is not a JSON object",
+      isWrite ? "unknown" : void 0
+    );
+  const object3 = parsed;
+  if (result.status !== 0 || object3.status === "error") {
+    const error2 = errorSchema3.safeParse(object3);
+    if (!error2.success)
+      throw new PrivateWriteError(
+        "invalid_response",
+        `The writer failed with an unrecognized error shape (exit ${result.status})`,
+        isWrite ? "unknown" : void 0
+      );
+    const { status: _status, code, message, committed, ...details } = error2.data;
+    void _status;
+    throw new PrivateWriteError(
+      code,
+      message,
+      isWrite ? committed ?? "unknown" : void 0,
+      details
+    );
+  }
+  return object3;
+}
+function parseWriterResult(schema, value, isWrite) {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success)
+    throw new PrivateWriteError(
+      "invalid_response",
+      `Unexpected writer response: ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`,
+      isWrite ? "unknown" : void 0
+    );
+  return parsed.data;
+}
+function requireLiveValidated(validated, toolName, env) {
+  if (!validated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    throw new PrivateWriteError(
+      "not_live_validated",
+      `${toolName} has not passed live validation in this build. Set ${ALLOW_UNVERIFIED_ENV}=1 to run it on a disposable note.`,
+      false
+    );
+}
+function assertNoteIdentifier2(identifier) {
+  try {
+    assertNoteIdentifier(identifier);
+  } catch (error2) {
+    throw new PrivateWriteError(
+      "invalid_request",
+      error2 instanceof Error ? error2.message : String(error2),
+      false
+    );
+  }
+}
+function assertRevision(ifRevision, source = "native-note-state") {
+  if (!/^r1:[a-f0-9]{64}$/.test(ifRevision))
+    throw new PrivateWriteError(
+      "invalid_request",
+      `ifRevision must be a revision token from ${source}`,
+      false
+    );
+}
+var FORBIDDEN_TEXT = /[\x00-\x08\x0B-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+function assertAppendText(text2) {
+  if (!text2.length) throw new PrivateWriteError("invalid_request", "text is required", false);
+  if (text2.length > 5e4)
+    throw new PrivateWriteError("invalid_request", "text exceeds 50000 UTF-16 code units", false);
+  if (FORBIDDEN_TEXT.test(text2))
+    throw new PrivateWriteError(
+      "invalid_request",
+      "text may contain only printable characters, tabs and \\n newlines",
+      false
+    );
+}
+function probePrivateWriter(deps = defaultWriterDeps()) {
+  return parseWriterResult(writerProbeSchema, callPrivateWriter("probe", {}, deps), false);
+}
+function appendPlainText(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertAppendText(request.text);
+  assertRevision(request.ifRevision);
+  requireLiveValidated(APPEND_LIVE_VALIDATED, "native-append-plain-text", deps.env);
+  return parseWriterResult(
+    appendResultSchema,
+    callPrivateWriter("append_plain_text", request, deps),
+    true
+  );
+}
+function privateWriterCapabilities(deps = defaultWriterDeps()) {
+  const enabled = privateHelperEnabled(deps.env);
+  const writesEnabled = privateWritesEnabled(deps.env);
+  const installation = inspectWriterInstallation(deps);
+  const base = { enabled, writesEnabled, installation, probe: null };
+  const off = (reason, detail) => ({
+    ...base,
+    features: { appendPlainText: { available: false, reason, detail } }
+  });
+  if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
+  if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
+  if (!writesEnabled) return off("writes_disabled", `Set ${WRITES_ENV}=1 to opt in to writes.`);
+  if (!installation.ready)
+    return off(installation.reason || "helper_not_installed", installation.detail);
+  let probe;
+  try {
+    probe = probePrivateWriter(deps);
+  } catch (error2) {
+    return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
+  }
+  const feature = probe.features.appendPlainText;
+  let append;
+  if (!feature.available) {
+    const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
+    append = {
+      available: false,
+      reason,
+      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
+    };
+  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
+    append = {
+      available: false,
+      reason: "not_live_validated",
+      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
+    };
+  } else {
+    append = { available: true, reason: null, detail: null };
+  }
+  return { ...base, probe, features: { appendPlainText: append } };
+}
+
+// src/services/privateWriterBuild.ts
+function defaultWriterBuildDeps() {
+  return { ...defaultBuildDeps(), sourcePath: defaultWriterDeps().sourcePath };
+}
+function buildPrivateWriter(checkOnly, deps = defaultWriterBuildDeps()) {
+  const steps = [];
+  const done = (ok) => ({
+    ok,
+    checkOnly,
+    steps,
+    installation: inspectWriterInstallation(deps)
+  });
+  if (checkOnly) {
+    const installation2 = inspectWriterInstallation(deps);
+    steps.push({
+      step: "inspect installed writer",
+      ok: installation2.ready,
+      detail: installation2.ready ? installation2.binaryPath : installation2.detail || void 0
+    });
+    return { ok: installation2.ready, checkOnly, steps, installation: installation2 };
+  }
+  if (deps.platform !== "darwin") {
+    steps.push({ step: "platform", ok: false, detail: "macOS only" });
+    return done(false);
+  }
+  if (!deps.exists(deps.sourcePath)) {
+    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
+    return done(false);
+  }
+  const sourceSha = sha256Hex2(deps.readFile(deps.sourcePath));
+  steps.push({
+    step: "locate source",
+    ok: true,
+    detail: `${deps.sourcePath} (sha256 ${sourceSha})`
+  });
+  const clang = deps.spawn("/usr/bin/xcrun", ["--find", "clang"], { encoding: "utf8" });
+  if (clang.status !== 0) {
+    steps.push({
+      step: "find compiler",
+      ok: false,
+      detail: "No clang found. Install the Command Line Tools with `xcode-select --install`."
+    });
+    return done(false);
+  }
+  const clangVersion = deps.spawn("/usr/bin/xcrun", ["clang", "--version"], { encoding: "utf8" });
+  const compiler = String(clangVersion.stdout || "").split("\n")[0] || "clang";
+  steps.push({ step: "find compiler", ok: true, detail: compiler });
+  const installDir = helperInstallDir(deps.env);
+  mkdirSync8(installDir, { recursive: true, mode: 448 });
+  const staging = mkdtempSync7(join28(installDir, ".staging-writer-"));
+  try {
+    const stagedBinary = join28(staging, WRITER_BINARY_NAME);
+    const compile = deps.spawn(
+      "/usr/bin/xcrun",
+      compileArguments(deps.sourcePath, stagedBinary, sourceSha),
+      { encoding: "utf8", timeout: 18e4 }
+    );
+    if (compile.status !== 0) {
+      steps.push({
+        step: "compile",
+        ok: false,
+        detail: String(compile.stderr || compile.error?.message || "clang failed").slice(0, 4e3)
+      });
+      return done(false);
+    }
+    steps.push({ step: "compile", ok: true });
+    const sign = deps.spawn(
+      "/usr/bin/codesign",
+      ["--force", "--sign", "-", "--identifier", "apple-notes-mcp.private-writer", stagedBinary],
+      { encoding: "utf8" }
+    );
+    if (sign.status !== 0) {
+      steps.push({
+        step: "ad-hoc sign",
+        ok: false,
+        detail: String(sign.stderr || "codesign failed")
+      });
+      return done(false);
+    }
+    steps.push({ step: "ad-hoc sign", ok: true });
+    let hello;
+    try {
+      hello = writerHelloSchema.parse(
+        callPrivateWriter("hello", {}, deps, { allowDisabled: true, binaryPath: stagedBinary })
+      );
+    } catch (error2) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: error2 instanceof Error ? error2.message : String(error2)
+      });
+      return done(false);
+    }
+    if (hello.protocolVersion !== PRIVATE_WRITER_PROTOCOL || hello.sourceSha256 !== sourceSha) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: `writer reported protocol ${hello.protocolVersion}, source ${hello.sourceSha256}`
+      });
+      return done(false);
+    }
+    const known = Object.keys(WRITER_ACTIONS);
+    const unknown2 = hello.actions.filter((action) => !(action in WRITER_ACTIONS));
+    const missing = known.filter((action) => !hello.actions.includes(action));
+    if (unknown2.length || missing.length) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: `writer actions differ from the client's table` + (unknown2.length ? `; unknown: ${unknown2.join(", ")}` : "") + (missing.length ? `; missing: ${missing.join(", ")}` : "") + "; refusing to install"
+      });
+      return done(false);
+    }
+    const writes = known.filter((action) => WRITER_ACTIONS[action] === "write");
+    steps.push({
+      step: "handshake",
+      ok: true,
+      detail: `protocol ${hello.protocolVersion}, write actions: ${writes.join(", ")}`
+    });
+    const manifest = {
+      schemaVersion: 1,
+      protocolVersion: hello.protocolVersion,
+      sourceSha256: sourceSha,
+      binarySha256: sha256Hex2(deps.readFile(stagedBinary)),
+      builtAt: deps.now().toISOString(),
+      osVersion: deps.osVersion(),
+      compiler
+    };
+    chmodSync3(stagedBinary, 448);
+    renameSync3(stagedBinary, join28(installDir, WRITER_BINARY_NAME));
+    writeFileSync6(
+      join28(installDir, WRITER_MANIFEST_NAME),
+      JSON.stringify(manifest, null, 2) + "\n",
+      {
+        mode: 384
+      }
+    );
+    steps.push({ step: "install", ok: true, detail: installDir });
+  } finally {
+    if (existsSync17(staging)) rmSync7(staging, { recursive: true, force: true });
+  }
+  const installation = inspectWriterInstallation(deps);
+  steps.push({
+    step: "verify installation",
+    ok: installation.ready,
+    detail: installation.ready ? void 0 : installation.detail || void 0
+  });
+  return { ok: installation.ready, checkOnly, steps, installation };
+}
+function formatWriterBuild(report) {
+  const lines = ["Apple Notes MCP private writer", ""];
+  for (const step of report.steps)
+    lines.push(`${step.ok ? "\u2713" : "\u2717"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
+  lines.push("");
+  if (report.ok) {
+    lines.push(`Installed at ${report.installation.binaryPath}.`);
+    lines.push(
+      `The writer stays off until you set both APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and ${WRITES_ENV}=1 for the MCP server. Writes that have not passed live validation also need APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. It uses unsupported private API; try it on disposable notes first.`
+    );
+  } else if (report.checkOnly) {
+    lines.push(`Run \`${WRITER_SETUP_COMMAND}\` to build it.`);
+  } else {
+    lines.push("The writer was not installed. Fix the failed step above and run setup again.");
+  }
+  return lines.join("\n");
+}
+
+// src/services/privateSyncNudge.ts
+var UUID3 = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+var NOTE_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i;
+var FOLDER_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICFolder\/p\d+$/i;
+var MAX_SYNC_TARGETS = 50;
+var MAX_NUDGE_WAIT_SECONDS = 180;
+var objectSchema = external_exports.object({
+  identifier: external_exports.string(),
+  found: external_exports.boolean(),
+  reason: external_exports.string().optional(),
+  kind: external_exports.enum(["note", "folder"]).optional(),
+  objectURI: external_exports.string().optional(),
+  markedForDeletion: external_exports.boolean().optional(),
+  inICloudAccount: external_exports.boolean().optional(),
+  cloudStateAvailable: external_exports.boolean().optional(),
+  currentLocalVersion: external_exports.number().int().optional(),
+  latestVersionSyncedToCloud: external_exports.number().int().optional(),
+  uploadPending: external_exports.boolean().optional(),
+  folderIdentifier: external_exports.string().nullable().optional(),
+  folderObjectURI: external_exports.string().nullable().optional(),
+  passwordProtected: external_exports.boolean().optional(),
+  deletedOrInTrash: external_exports.boolean().optional(),
+  sharedViaICloud: external_exports.boolean().optional(),
+  revision: external_exports.string().optional()
+}).passthrough();
+var syncStateSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  objects: external_exports.array(objectSchema),
+  pendingUploadCount: external_exports.number().int().nullable(),
+  syncHostRunning: external_exports.boolean()
+}).passthrough();
+function invalid2(message) {
+  return new PrivateWriteError("invalid_request", message, false);
+}
+function syncTargets(identifiers) {
+  const unique = [...new Set(identifiers)];
+  if (!unique.length || unique.length > MAX_SYNC_TARGETS)
+    throw invalid2(`identifiers must list 1-${MAX_SYNC_TARGETS} note or folder UUIDs`);
+  for (const id2 of unique) if (!UUID3.test(id2)) throw invalid2("identifiers must be Notes UUIDs");
+  return unique;
+}
+function readSyncState(identifiers, deps = defaultWriterDeps()) {
+  return parseWriterResult(
+    syncStateSchema,
+    callPrivateWriter("read_sync_state", { identifiers: syncTargets(identifiers) }, deps),
+    false
+  );
+}
+function uploadRecorded(state) {
+  return state.found && state.currentLocalVersion !== void 0 && state.latestVersionSyncedToCloud !== void 0 && state.latestVersionSyncedToCloud >= state.currentLocalVersion;
+}
+function nudgeRefusal(state) {
+  if (!state.found) return state.reason ?? "not_found";
+  if (!state.uploadPending) return "nothing_pending";
+  if (state.kind !== "note") return "folders_need_relaunch";
+  if (!state.inICloudAccount) return "not_icloud";
+  if (state.markedForDeletion || state.deletedOrInTrash) return "deleted";
+  if (state.passwordProtected) return "locked";
+  if (state.sharedViaICloud) return "shared";
+  if (!state.objectURI || !NOTE_URI.test(state.objectURI)) return "no_object_id";
+  if (!state.folderObjectURI || !FOLDER_URI.test(state.folderObjectURI)) return "no_folder";
+  return null;
+}
+function moveInPlaceScript(noteURI, folderURI) {
+  if (!NOTE_URI.test(noteURI) || !FOLDER_URI.test(folderURI))
+    throw invalid2("Refusing to build a move script from an unexpected object id");
+  return [
+    'tell application "Notes"',
+    `  set theNote to note id "${noteURI}"`,
+    "  set theFolder to container of theNote",
+    `  if (id of theFolder) is not "${folderURI}" then error "container changed" number 9901`,
+    "  move theNote to theFolder",
+    '  return "moved"',
+    "end tell"
+  ].join("\n");
+}
+function defaultNudgeDeps(overrides = {}) {
+  return {
+    helper: defaultWriterDeps(),
+    runAppleScript: (script) => executeAppleScript(script, { maxRetries: 1, timeoutMs: 3e4 }),
+    sleep: (ms) => new Promise((resolve7) => setTimeout(resolve7, ms)),
+    now: () => Date.now(),
+    ...overrides
+  };
+}
+function versions(state) {
+  if (!state?.found) return null;
+  return {
+    currentLocalVersion: state.currentLocalVersion,
+    latestVersionSyncedToCloud: state.latestVersionSyncedToCloud
+  };
+}
+async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
+  const identifiers = syncTargets(request.identifiers);
+  const act = request.nudge !== false;
+  const waitSeconds = request.waitSeconds ?? (act ? 30 : 0);
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_NUDGE_WAIT_SECONDS)
+    throw invalid2(`waitSeconds must be 0-${MAX_NUDGE_WAIT_SECONDS}`);
+  const before = readSyncState(identifiers, deps.helper);
+  const byId = new Map(before.objects.map((o) => [o.identifier, o]));
+  const results = new Map(
+    identifiers.map((id2) => {
+      const state = byId.get(id2);
+      return [
+        id2,
+        {
+          identifier: id2,
+          kind: state?.kind ?? null,
+          before: versions(state),
+          after: null,
+          uploadPendingBefore: Boolean(state?.uploadPending),
+          uploadRecorded: state ? uploadRecorded(state) : false,
+          action: "none",
+          reason: state?.found ? null : state?.reason ?? "not_found"
+        }
+      ];
+    })
+  );
+  const warnings = [];
+  if (act && !before.syncHostRunning) {
+    warnings.push(
+      "Notes.app is not running, so there is nothing to nudge. Its next launch sweeps every pending change."
+    );
+  } else if (act) {
+    for (const id2 of identifiers) {
+      const state = byId.get(id2);
+      const result = results.get(id2);
+      if (!state) continue;
+      const refusal = nudgeRefusal(state);
+      if (refusal) {
+        if (refusal !== "nothing_pending" && state.found) {
+          result.action = "skipped";
+          result.reason = refusal;
+        }
+        continue;
+      }
+      const run = deps.runAppleScript(moveInPlaceScript(state.objectURI, state.folderObjectURI));
+      if (run.success && run.output.trim() === "moved") {
+        result.action = "moved_in_place";
+      } else {
+        result.action = "failed";
+        result.reason = /9901|container changed/.test(run.error ?? "") ? "container_changed" : `applescript: ${run.error ?? run.output}`.slice(0, 300);
+      }
+    }
+  }
+  const pending = () => [...results.values()].filter((r) => r.reason === null && !r.uploadRecorded);
+  const end = deps.now() + waitSeconds * 1e3;
+  let after = before;
+  for (let first2 = true; ; first2 = false) {
+    if (!first2 || act) after = readSyncState(identifiers, deps.helper);
+    const now = new Map(after.objects.map((o) => [o.identifier, o]));
+    for (const result of results.values()) {
+      const state = now.get(result.identifier);
+      result.after = versions(state);
+      result.uploadRecorded = state ? uploadRecorded(state) : false;
+      if (result.action === "moved_in_place") {
+        const was = byId.get(result.identifier);
+        result.contentUnchanged = Boolean(was?.revision) && was?.revision === state?.revision && was?.folderIdentifier === state?.folderIdentifier;
+      }
+    }
+    if (!pending().length || deps.now() >= end) break;
+    await deps.sleep(2e3);
+  }
+  const targets = [...results.values()];
+  const stillPending = targets.filter((r) => r.reason === null && !r.uploadRecorded);
+  for (const r of targets)
+    if (r.action === "moved_in_place" && r.contentUnchanged === false)
+      warnings.push(
+        `${r.identifier}: the note's revision changed while it was nudged; something else edited it at the same time. Read it before relying on its content.`
+      );
+  if (stillPending.length && act)
+    warnings.push(
+      `${stillPending.length} target(s) still show a pending upload after ${waitSeconds} s. Notes.app uploads on its own schedule; check again later.`
+    );
+  return {
+    syncHostRunning: after.syncHostRunning,
+    waitedSeconds: waitSeconds,
+    pendingUploadCountBefore: before.pendingUploadCount,
+    pendingUploadCountAfter: after.pendingUploadCount,
+    allUploadsRecorded: stillPending.length === 0,
+    pushScheduled: false,
+    targets,
+    warnings,
+    before,
+    after
+  };
+}
+
+// src/tools/privateWriterTools.ts
+var coreDataId3 = external_exports.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
+var notesUuid2 = external_exports.string().regex(UUID_PATTERN);
+var revisionToken = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
+function writerEnvelopeCode(helperCode, message) {
+  switch (helperCode) {
+    case "revision_conflict":
+      return "revision_conflict";
+    case "verification_failed":
+      return "verification_failed";
+    case "writes_disabled":
+    case "not_live_validated":
+      return "unsupported";
+    case "ambiguous":
+      return "ambiguous";
+    default:
+      return envelopeCode(helperCode, message);
+  }
+}
+function writerErrorResult(error2) {
+  if (!(error2 instanceof PrivateHelperError)) {
+    const message2 = error2 instanceof Error ? error2.message : String(error2);
+    return errorResult(`native writer: ${message2}`, error2);
+  }
+  const committed = error2 instanceof PrivateWriteError ? error2.committed : void 0;
+  const message = `native writer (${error2.code}): ${error2.message}`;
+  const envelope = {
+    ...error2.details,
+    code: writerEnvelopeCode(error2.code, error2.message),
+    helperCode: error2.code
+  };
+  if (committed === "unknown") {
+    envelope.indeterminate = true;
+  } else if (committed !== void 0) {
+    envelope.committed = committed;
+    envelope.indeterminate = committed === true;
+  } else {
+    envelope.committed = false;
+  }
+  return errorResult(message, new CodedError(message, envelope));
+}
+function registerWriterTool(server2, depsFactory, name, description, inputSchema, annotations, handler) {
+  server2.registerTool(
+    name,
+    {
+      description,
+      inputSchema,
+      annotations,
+      outputSchema: external_exports.object({ ok: external_exports.boolean().optional() }).passthrough()
+    },
+    (async (args) => {
+      try {
+        const result = { ok: true, ...await handler(args, depsFactory()) };
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+          structuredContent: result
+        };
+      } catch (error2) {
+        return writerErrorResult(error2);
+      }
+    })
+  );
+}
+function defaultWriterToolDeps() {
+  const writer = defaultWriterDeps();
+  return { writer, nudge: defaultNudgeDeps({ helper: writer }) };
+}
+function registerPrivateWriterTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-writer-status",
+    "Use when: checking whether the opt-in private WRITER is enabled, built, current, and working before any native write tool (native-append-plain-text and the other native-* write tools).\nReturns: enabled and writesEnabled flags, the writer's installation state (path, manifest, stale/modified checks), its live probe, and per-feature availability with a machine reason (disabled, writes_disabled, helper_not_installed, helper_stale, not_live_validated, ...).\nDo not use when: you only need reads (native-helper-status covers the read-only helper).\nSafety: read-only. The probe opens the Notes store read-only, and only when both switches are on and the writer is installed.",
+    {},
+    { readOnlyHint: true, openWorldHint: false },
+    (_args, deps) => {
+      const capabilities = privateWriterCapabilities(deps.writer);
+      return {
+        ...capabilities,
+        ...capabilities.installation.ready ? {} : { setupCommand: WRITER_SETUP_COMMAND }
+      };
+    }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-append-plain-text",
+    "Use when: appending plain text paragraphs to one exact note through Notes' own data model, with a compare-and-swap guard. This is the private-writer path, distinct from append-native (Shortcuts) and append-to-note (AppleScript HTML rewrite).\nReturns: committed/verified flags, revisionBefore/revisionAfter, the new modification date, and sync state: pushScheduled (always false; the writer cannot upload), pushState, cloudSync versions, and with nudge: true a `sync` report of the move-in-place nudge (uploadRecorded per target).\nDo not use when: the note is locked, shared, trashed, or still downloading, or you need formatting (text is appended as plain body paragraphs).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. Verifies by re-reading in a new Core Data stack. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      text: external_exports.string().min(1).max(5e4).describe(
+        "Plain text to append. \\n starts a new paragraph; no \\r or control characters."
+      ),
+      ifRevision: revisionToken.describe(
+        "The `revision` returned by native-note-state for this note"
+      ),
+      nudge: external_exports.boolean().optional().describe(
+        "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
+      ),
+      nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = appendPlainText(
+        { identifier, text: args.text, ifRevision: args.ifRevision },
+        deps.writer
+      );
+      if (!args.nudge) return { ...result };
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+async function nudgeAfterWrite(identifier, waitSeconds, deps) {
+  try {
+    const report = await nudgeInPlace({ identifiers: [identifier], waitSeconds }, deps);
+    const { before: _before, after: _after, ...rest } = report;
+    void _before;
+    void _after;
+    return { ok: true, ...rest };
+  } catch (error2) {
+    return {
+      ok: false,
+      code: error2 instanceof PrivateHelperError ? error2.code : "internal_error",
+      message: error2 instanceof Error ? error2.message : String(error2)
+    };
+  }
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -55823,6 +56658,11 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--public-help
 if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-helper")) {
   const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatHelperBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-writer")) {
+  const report = buildPrivateWriter(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatWriterBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
 if (process.argv[2] === "setup") {
@@ -55842,6 +56682,7 @@ registerSvgAnalysis(server);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
+registerPrivateWriterTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

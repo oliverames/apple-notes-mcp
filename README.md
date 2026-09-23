@@ -2289,6 +2289,53 @@ title, modification date, folder identifier, lock/trash/shared/editable
 flags, iCloud version counters, and a `revision` change token (compare two
 reads to detect a change). Opens the store with Core Data's read-only option.
 
+### Private writer (opt-in, fork-only, unsupported Apple API)
+
+This fork adds an optional **writer** as a separate layer on top of the
+read-only helper. It is a second program
+(`native/private-helper/apple-notes-private-writer.m`) with its own binary,
+checksum manifest (`writer-manifest.json`), and setup command. The read-only
+helper above is unchanged, and nothing in its build or dispatch path can
+reach the writer. The writer is **off by default** and needs two switches:
+
+```bash
+apple-notes-mcp setup --native-writer          # build, ad-hoc sign, install
+apple-notes-mcp setup --native-writer --check  # report only
+```
+
+- `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` (the private opt-in) **and**
+  `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1` (the write opt-in). The writer
+  itself refuses a read-write open of the live store without the second one.
+- `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` for a write that has not passed live
+  validation in a release (every write so far).
+
+Every write takes an `ifRevision` compare-and-swap token (the `revision` from
+`native-note-state` or a feature's own read), saves through Notes' own data
+model with optimistic locking, and re-reads the note through a fresh Core Data
+stack before it reports success. Failures carry `committed: false` (nothing
+was saved) or `indeterminate: true` (read the note before any retry). The
+writer cannot upload to iCloud; only Notes.app can, and it may skip a note it
+already holds in memory. The optional `nudge` asks Notes.app to save the note
+by moving it into the folder it is already in.
+
+#### `native-writer-status`
+
+Reports both switches, the writer's installation and checksum state, its live
+probe, and per-feature availability with a `reason` (`disabled`,
+`writes_disabled`, `helper_not_installed`, `helper_stale`, `helper_modified`,
+`not_live_validated`, `private_api_unavailable`, `store_unavailable`, …).
+Read-only.
+
+#### `native-append-plain-text`
+
+Appends plain text paragraphs to one note by Notes UUID (`identifier`) or
+x-coredata `id`, guarded by `ifRevision` and verified by read-back. Returns
+`committed`, `verified`, `revisionBefore`/`revisionAfter`, and sync state
+(`cloudSync`, `pushState`; `pushScheduled` is always false). With
+`nudge: true` it then moves the note in place and watches Notes' upload
+counters for `nudgeWaitSeconds` (default 30), reported under `sync`. Refuses
+locked, shared, trashed, and still-downloading notes.
+
 ## Usage Patterns
 
 ### Basic Workflow

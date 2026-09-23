@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+## [2.10.0] - 2026-09-23
+
+### Added
+
+- Opt-in private **writer**, a separate layer over the read-only helper
+  (fork-only). `native/private-helper/apple-notes-private-writer.m` is its own
+  program with its own binary, checksum manifest (`writer-manifest.json`), and
+  setup command, `apple-notes-mcp setup --native-writer`, which refuses a
+  writer whose actions differ from the client's table. The read-only helper,
+  its setup, and its client are unchanged, and the read-only source test now
+  also checks that nothing on that build path can reach the writer.
+- Two switches gate every writer call: `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and
+  the new `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`. The writer checks the
+  second itself before opening the live store read-write. Writes that have not
+  passed live validation also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+- Write contract shared by every write action: `ifRevision` compare-and-swap,
+  a save with optimistic locking, a fresh read-back through a new Core Data
+  stack, and `committed` / `indeterminate` on every uncertain outcome.
+- `native-writer-status` and `native-append-plain-text` (plain paragraphs,
+  optional `nudge`). The writer's `read_sync_state` action and the
+  move-in-place nudge report Notes' own upload counters after a write and ask
+  Notes.app to upload a note it would otherwise skip.
+- `scripts/test-private-helper-copy-store.sh` runs the writer against a copy
+  of the store and checks that the live store is refused as a copy, that a
+  read-write open of the live store is refused without the write switch, and
+  that the live note is unchanged.
+
 ## [2.9.8] - 2026-09-23
 
 ### Added

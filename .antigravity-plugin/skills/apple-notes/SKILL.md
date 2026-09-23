@@ -116,6 +116,20 @@ read-only: write support was deliberately deferred by the maintainer.
 | `native-helper-status` | Report opt-in, build, and live-probe state with a reason code (read-only) |
 | `native-note-state`    | Read a note's native state and `revision` change token (read-only)        |
 
+### Private Writer (opt-in, fork-only, unsupported Apple API)
+
+A separate writer (`apple-notes-mcp setup --native-writer`), off unless both
+`APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`
+are set; unvalidated writes also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+Call `native-writer-status` first. Every write needs a fresh `revision` as
+`ifRevision`; on `revision_conflict` or `indeterminate: true`, read the note
+before retrying.
+
+| Tool                       | Purpose                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `native-writer-status`     | Report both switches, writer build state, and live probe (read-only)             |
+| `native-append-plain-text` | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
+
 ## Usage Patterns
 
 ### Creating Notes

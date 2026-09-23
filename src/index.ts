@@ -156,6 +156,8 @@ import { buildPublicHelper, formatPublicHelperBuild } from "@/services/publicHel
 import { formatNoteDrawings, getNoteDrawings } from "@/services/noteDrawings.js";
 import { buildPrivateHelper, formatHelperBuild } from "@/services/privateHelperBuild.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
+import { buildPrivateWriter, formatWriterBuild } from "@/services/privateWriterBuild.js";
+import { registerPrivateWriterTools } from "@/tools/privateWriterTools.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -175,6 +177,12 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-help
   // Opt-in private helper: compiled locally from the packaged source (#181).
   const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatHelperBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-writer")) {
+  // Opt-in private WRITER: a separate binary from the read-only helper.
+  const report = buildPrivateWriter(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatWriterBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
 if (process.argv[2] === "setup") {
@@ -206,6 +214,7 @@ registerSvgAnalysis(server);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
+registerPrivateWriterTools(server, notesManager);
 
 // =============================================================================
 // Response Helpers
