@@ -52056,7 +52056,7 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
         description,
         inputSchema,
         annotations,
-        outputSchema: external_exports.object({ ok: external_exports.boolean() }).passthrough()
+        outputSchema: external_exports.object({ ok: external_exports.boolean().optional() }).passthrough()
       },
       (async (args) => {
         try {

@@ -83,7 +83,7 @@ export function registerPrivateHelperTools(
         description,
         inputSchema,
         annotations,
-        outputSchema: z.object({ ok: z.boolean() }).passthrough(),
+        outputSchema: z.object({ ok: z.boolean().optional() }).passthrough(),
       },
       (async (args: z.infer<z.ZodObject<S>>) => {
         try {
