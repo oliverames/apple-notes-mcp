@@ -396,7 +396,7 @@ export function safeComponent(value: string | null | undefined): string | null {
 }
 
 /** Canonical path of an existing entry, or null when it is missing or escapes `rootReal`. */
-function realInside(path: string, rootReal: string): string | null {
+export function realInside(path: string, rootReal: string): string | null {
   try {
     const real = realpathSync.native(path);
     return real === rootReal || real.startsWith(rootReal + sep) ? real : null;

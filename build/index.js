@@ -108,7 +108,7 @@ var require_code = __commonJS({
     }
     exports._ = _;
     var plus = new _Code("+");
-    function str(strs, ...args) {
+    function str2(strs, ...args) {
       const expr = [safeStringify(strs[0])];
       let i = 0;
       while (i < args.length) {
@@ -119,7 +119,7 @@ var require_code = __commonJS({
       optimize(expr);
       return new _Code(expr);
     }
-    exports.str = str;
+    exports.str = str2;
     function addCodeArg(code, arg) {
       if (arg instanceof _Code)
         code.push(...arg._items);
@@ -162,7 +162,7 @@ var require_code = __commonJS({
       return;
     }
     function strConcat(c1, c2) {
-      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str`${c1}${c2}`;
+      return c2.emptyStr() ? c1 : c1.emptyStr() ? c2 : str2`${c1}${c2}`;
     }
     exports.strConcat = strConcat;
     function interpolate(x) {
@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants4);
+          this.rhs = optimizeExpr(this.rhs, names, constants5);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants4);
+        this.rhs = optimizeExpr(this.rhs, names, constants5);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants4) {
-        this.code = optimizeExpr(this.code, names, constants4);
+      optimizeNames(names, constants5) {
+        this.code = optimizeExpr(this.code, names, constants5);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants4))
+          if (n.optimizeNames(names, constants5))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
-        if (!(super.optimizeNames(names, constants4) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
+        if (!(super.optimizeNames(names, constants5) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants4);
+        this.condition = optimizeExpr(this.condition, names, constants5);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants4) {
-        if (!super.optimizeNames(names, constants4))
+      optimizeNames(names, constants5) {
+        if (!super.optimizeNames(names, constants5))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants4);
+        this.iteration = optimizeExpr(this.iteration, names, constants5);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants4) {
-        if (!super.optimizeNames(names, constants4))
+      optimizeNames(names, constants5) {
+        if (!super.optimizeNames(names, constants5))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants4);
+        this.iterable = optimizeExpr(this.iterable, names, constants5);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants4) {
+      optimizeNames(names, constants5) {
         var _a, _b;
-        super.optimizeNames(names, constants4);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants4);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants4);
+        super.optimizeNames(names, constants5);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants5);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants5);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants4) {
+    function optimizeExpr(expr, names, constants5) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants4[n.str];
+        const c = constants5[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants4[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants5[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -1124,22 +1124,22 @@ var require_util = __commonJS({
       return (0, codegen_1._)`${topSchemaRef}${schemaPath}${(0, codegen_1.getProperty)(keyword)}`;
     }
     exports.schemaRefOrVal = schemaRefOrVal;
-    function unescapeFragment(str) {
-      return unescapeJsonPointer(decodeURIComponent(str));
+    function unescapeFragment(str2) {
+      return unescapeJsonPointer(decodeURIComponent(str2));
     }
     exports.unescapeFragment = unescapeFragment;
-    function escapeFragment(str) {
-      return encodeURIComponent(escapeJsonPointer(str));
+    function escapeFragment(str2) {
+      return encodeURIComponent(escapeJsonPointer(str2));
     }
     exports.escapeFragment = escapeFragment;
-    function escapeJsonPointer(str) {
-      if (typeof str == "number")
-        return `${str}`;
-      return str.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPointer(str2) {
+      if (typeof str2 == "number")
+        return `${str2}`;
+      return str2.replace(/~/g, "~0").replace(/\//g, "~1");
     }
     exports.escapeJsonPointer = escapeJsonPointer;
-    function unescapeJsonPointer(str) {
-      return str.replace(/~1/g, "/").replace(/~0/g, "~");
+    function unescapeJsonPointer(str2) {
+      return str2.replace(/~1/g, "/").replace(/~0/g, "~");
     }
     exports.unescapeJsonPointer = unescapeJsonPointer;
     function eachItem(xs, f) {
@@ -2164,8 +2164,8 @@ var require_json_schema_traverse = __commonJS({
         post(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
       }
     }
-    function escapeJsonPtr(str) {
-      return str.replace(/~/g, "~0").replace(/\//g, "~1");
+    function escapeJsonPtr(str2) {
+      return str2.replace(/~/g, "~0").replace(/\//g, "~1");
     }
   }
 });
@@ -3261,10 +3261,10 @@ var require_utils = __commonJS({
         isIPV6: true
       };
     }
-    function findToken(str, token) {
+    function findToken(str2, token) {
       let ind = 0;
-      for (let i = 0; i < str.length; i++) {
-        if (str[i] === token) ind++;
+      for (let i = 0; i < str2.length; i++) {
+        if (str2[i] === token) ind++;
       }
       return ind;
     }
@@ -4267,7 +4267,7 @@ var require_core = __commonJS({
     var util_1 = require_util();
     var $dataRefSchema = require_data();
     var uri_1 = require_uri();
-    var defaultRegExp = (str, flags) => new RegExp(str, flags);
+    var defaultRegExp = (str2, flags) => new RegExp(str2, flags);
     defaultRegExp.code = "new RegExp";
     var META_IGNORE_OPTIONS = ["removeAdditional", "useDefaults", "coerceTypes"];
     var EXT_SCOPE_NAMES = /* @__PURE__ */ new Set([
@@ -5062,16 +5062,16 @@ var require_ucs2length = __commonJS({
   "node_modules/.pnpm/ajv@8.20.0/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    function ucs2length(str) {
-      const len = str.length;
+    function ucs2length(str2) {
+      const len = str2.length;
       let length = 0;
       let pos = 0;
       let value;
       while (pos < len) {
         length++;
-        value = str.charCodeAt(pos++);
+        value = str2.charCodeAt(pos++);
         if (value >= 55296 && value <= 56319 && pos < len) {
-          value = str.charCodeAt(pos);
+          value = str2.charCodeAt(pos);
           if ((value & 64512) === 56320)
             pos++;
         }
@@ -6954,8 +6954,8 @@ var require_formats = __commonJS({
     }
     var DATE = /^(\d\d\d\d)-(\d\d)-(\d\d)$/;
     var DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    function date3(str) {
-      const matches = DATE.exec(str);
+    function date3(str2) {
+      const matches = DATE.exec(str2);
       if (!matches)
         return false;
       const year = +matches[1];
@@ -6974,8 +6974,8 @@ var require_formats = __commonJS({
     }
     var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
     function getTime(strictTimeZone) {
-      return function time3(str) {
-        const matches = TIME.exec(str);
+      return function time3(str2) {
+        const matches = TIME.exec(str2);
         if (!matches)
           return false;
         const hr = +matches[1];
@@ -7021,8 +7021,8 @@ var require_formats = __commonJS({
     var DATE_TIME_SEPARATOR = /t|\s/i;
     function getDateTime(strictTimeZone) {
       const time3 = getTime(strictTimeZone);
-      return function date_time(str) {
-        const dateTime = str.split(DATE_TIME_SEPARATOR);
+      return function date_time(str2) {
+        const dateTime = str2.split(DATE_TIME_SEPARATOR);
         return dateTime.length === 2 && date3(dateTime[0]) && time3(dateTime[1]);
       };
     }
@@ -7047,13 +7047,13 @@ var require_formats = __commonJS({
     }
     var NOT_URI_FRAGMENT = /\/|:/;
     var URI = /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i;
-    function uri(str) {
-      return NOT_URI_FRAGMENT.test(str) && URI.test(str);
+    function uri(str2) {
+      return NOT_URI_FRAGMENT.test(str2) && URI.test(str2);
     }
     var BYTE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/gm;
-    function byte(str) {
+    function byte(str2) {
       BYTE.lastIndex = 0;
-      return BYTE.test(str);
+      return BYTE.test(str2);
     }
     var MIN_INT32 = -(2 ** 31);
     var MAX_INT32 = 2 ** 31 - 1;
@@ -7067,11 +7067,11 @@ var require_formats = __commonJS({
       return true;
     }
     var Z_ANCHOR = /[^\\]\\Z/;
-    function regex(str) {
-      if (Z_ANCHOR.test(str))
+    function regex(str2) {
+      if (Z_ANCHOR.test(str2))
         return false;
       try {
-        new RegExp(str);
+        new RegExp(str2);
         return true;
       } catch (e) {
         return false;
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants4 = {
+    var constants5 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants4) {
-      v = { value: constants4[c] };
+    for (c in constants5) {
+      v = { value: constants5[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -9206,12 +9206,12 @@ var require_DOMTokenList = __commonJS({
       if (strProp === clist._lastStringValue) {
         return toArray(clist);
       }
-      var str = strProp.replace(/(^[ \t\r\n\f]+)|([ \t\r\n\f]+$)/g, "");
-      if (str === "") {
+      var str2 = strProp.replace(/(^[ \t\r\n\f]+)|([ \t\r\n\f]+$)/g, "");
+      if (str2 === "") {
         return [];
       } else {
         var seen = /* @__PURE__ */ Object.create(null);
-        return str.split(/[ \t\r\n\f]+/g).filter(function(n) {
+        return str2.split(/[ \t\r\n\f]+/g).filter(function(n) {
           var key = "$" + n;
           if (seen[key]) {
             return false;
@@ -9266,16 +9266,16 @@ var require_select = __commonJS({
       var nodeType = n.parentNode.nodeType;
       return nodeType === 1 || nodeType === 9;
     };
-    var unquote = function(str) {
-      if (!str) return str;
-      var ch = str[0];
+    var unquote = function(str2) {
+      if (!str2) return str2;
+      var ch = str2[0];
       if (ch === '"' || ch === "'") {
-        if (str[str.length - 1] === ch) {
-          str = str.slice(1, -1);
+        if (str2[str2.length - 1] === ch) {
+          str2 = str2.slice(1, -1);
         } else {
-          str = str.slice(1);
+          str2 = str2.slice(1);
         }
-        return str.replace(rules.str_escape, function(s) {
+        return str2.replace(rules.str_escape, function(s) {
           var m = /^\\(?:([0-9A-Fa-f]+)|([\r\n\f]+))/.exec(s);
           if (!m) {
             return s.slice(1);
@@ -9289,14 +9289,14 @@ var require_select = __commonJS({
             String.fromCharCode(cp)
           );
         });
-      } else if (rules.ident.test(str)) {
-        return decodeid(str);
+      } else if (rules.ident.test(str2)) {
+        return decodeid(str2);
       } else {
-        return str;
+        return str2;
       }
     };
-    var decodeid = function(str) {
-      return str.replace(rules.escape, function(s) {
+    var decodeid = function(str2) {
+      return str2.replace(rules.escape, function(s) {
         var m = /^\\([0-9A-Fa-f]+)/.exec(s);
         if (!m) {
           return s[1];
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join17(output, replacement);
+        return join18(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join17(output, rule.append(self.options));
+          output = join18(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join17(output, replacement) {
+    function join18(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -28667,9 +28667,9 @@ function assertNever(_x) {
 }
 function assert(_) {
 }
-function getEnumValues(entries) {
-  const numericValues = Object.values(entries).filter((v) => typeof v === "number");
-  const values = Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
+function getEnumValues(entries2) {
+  const numericValues = Object.values(entries2).filter((v) => typeof v === "number");
+  const values = Object.entries(entries2).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
   return values;
 }
 function joinValues(array2, separator = "|") {
@@ -28755,14 +28755,14 @@ function promiseAllObject(promisesObj) {
 }
 function randomString(length = 10) {
   const chars = "abcdefghijklmnopqrstuvwxyz";
-  let str = "";
+  let str2 = "";
   for (let i = 0; i < length; i++) {
-    str += chars[Math.floor(Math.random() * chars.length)];
+    str2 += chars[Math.floor(Math.random() * chars.length)];
   }
-  return str;
+  return str2;
 }
-function esc(str) {
-  return JSON.stringify(str);
+function esc(str2) {
+  return JSON.stringify(str2);
 }
 var captureStackTrace = Error.captureStackTrace ? Error.captureStackTrace : (..._args) => {
 };
@@ -28850,8 +28850,8 @@ var getParsedType2 = (data) => {
 };
 var propertyKeyTypes = /* @__PURE__ */ new Set(["string", "number", "symbol"]);
 var primitiveTypes = /* @__PURE__ */ new Set(["string", "number", "bigint", "boolean", "symbol", "undefined"]);
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escapeRegex(str2) {
+  return str2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function clone(inst, def, params) {
   const cl = new inst._zod.constr(def ?? inst._zod.def);
@@ -33039,10 +33039,10 @@ var ZodEnum2 = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
   };
 });
 function _enum(values, params) {
-  const entries = Array.isArray(values) ? Object.fromEntries(values.map((v) => [v, v])) : values;
+  const entries2 = Array.isArray(values) ? Object.fromEntries(values.map((v) => [v, v])) : values;
   return new ZodEnum2({
     type: "enum",
-    entries,
+    entries: entries2,
     ...util_exports.normalizeParams(params)
   });
 }
@@ -37774,12 +37774,12 @@ var UriTemplate = class _UriTemplate {
    * A template expression is a sequence of characters enclosed in curly braces,
    * like {foo} or {?bar}.
    */
-  static isTemplate(str) {
-    return /\{[^}\s]+\}/.test(str);
+  static isTemplate(str2) {
+    return /\{[^}\s]+\}/.test(str2);
   }
-  static validateLength(str, max, context) {
-    if (str.length > max) {
-      throw new Error(`${context} exceeds maximum length of ${max} characters (got ${str.length})`);
+  static validateLength(str2, max, context) {
+    if (str2.length > max) {
+      throw new Error(`${context} exceeds maximum length of ${max} characters (got ${str2.length})`);
     }
   }
   get variableNames() {
@@ -37908,8 +37908,8 @@ var UriTemplate = class _UriTemplate {
     }
     return result;
   }
-  escapeRegExp(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  escapeRegExp(str2) {
+    return str2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
   partToRegExp(part) {
     const patterns = [];
@@ -39962,9 +39962,9 @@ var many = (f, n) => getFields(f, n).map((field) => {
 });
 function parseAudioRecording(data) {
   const root = decode(data);
-  const entries = many(root, 3);
-  if (entries.length === 0) throw new Error("No mergeable objects");
-  if (entries.length > 2e6) throw new Error("Recording too large");
+  const entries2 = many(root, 3);
+  if (entries2.length === 0) throw new Error("No mergeable objects");
+  if (entries2.length > 2e6) throw new Error("Recording too large");
   const keys = getFields(root, 4).map((f) => stringValue(f) ?? "");
   const types = getFields(root, 5).map((f) => stringValue(f) ?? "");
   const uuids = getFields(root, 6).map(
@@ -39975,7 +39975,7 @@ function parseAudioRecording(data) {
     if (uuid2 && !uuidSlot.has(uuid2)) uuidSlot.set(uuid2, i);
   });
   const entry = (index) => {
-    const value = entries[index];
+    const value = entries2[index];
     if (!value) throw new Error("Invalid object reference");
     return value;
   };
@@ -40017,7 +40017,7 @@ function parseAudioRecording(data) {
     const text = note && stringValue(getField(note, 2));
     return text?.replace(/\n+$/u, "") || void 0;
   };
-  const recordings = entries.map((e) => customMap(e)).filter((m) => m?.type === "com.apple.notes.ICTTAudioRecording");
+  const recordings = entries2.map((e) => customMap(e)).filter((m) => m?.type === "com.apple.notes.ICTTAudioRecording");
   if (recordings.length !== 1) throw new Error("Expected exactly one audio recording object");
   const recording = recordings[0];
   const fragments = [];
@@ -40322,15 +40322,15 @@ function parseNoteTableCells(compressed) {
 }
 function decodeTable(compressed, strict) {
   const root = decodeMessage(gunzipSync4(compressed, { maxOutputLength: 16 * 1024 * 1024 }));
-  const data = sub2(sub2(root, 2), 3), entries = many2(data, 3);
-  if (entries.length > 1e5) throw new Error("Table too large");
+  const data = sub2(sub2(root, 2), 3), entries2 = many2(data, 3);
+  if (entries2.length > 1e5) throw new Error("Table too large");
   const keys = getFields(data, 4).map(stringValue), types = getFields(data, 5).map(stringValue), uuids = getFields(data, 6).map(hex);
   const entry = (index) => {
-    if (!entries[index]) throw new Error("Invalid table reference");
-    return entries[index];
+    if (!entries2[index]) throw new Error("Invalid table reference");
+    return entries2[index];
   };
   const uuidIndex = (index) => num(sub2(many2(sub2(entry(index), 13), 3)[0], 2), 2);
-  const roots = entries.filter((e) => {
+  const roots = entries2.filter((e) => {
     const map = embeddedMessage(getField(e, 13));
     return map && types[num(map, 1)] === "com.apple.notes.ICTable";
   });
@@ -40392,7 +40392,7 @@ function decodeTable(compressed, strict) {
       values[ri][ci] = text.replace(/\n$/u, "");
     }
   }
-  const rtl = entries.some((e) => {
+  const rtl = entries2.some((e) => {
     const map = embeddedMessage(getField(e, 13));
     return map && many2(map, 3).some(
       (m) => stringValue(getField(sub2(m, 2), 4)) === "CRTableColumnDirectionRightToLeft"
@@ -41036,6 +41036,22 @@ function cleanupTempDir(dir) {
   }
 }
 
+// src/utils/paperAttachments.ts
+import { execFileSync as execFileSync7 } from "node:child_process";
+import {
+  closeSync as closeSync3,
+  constants as constants3,
+  fstatSync as fstatSync3,
+  lstatSync as lstatSync3,
+  mkdirSync as mkdirSync3,
+  openSync as openSync3,
+  readdirSync as readdirSync2,
+  readSync as readSync2,
+  unlinkSync as unlinkSync2,
+  writeSync as writeSync2
+} from "node:fs";
+import { basename as basename2, dirname as dirname3, extname as extname2, join as join7 } from "node:path";
+
 // src/utils/attachmentAssets.ts
 import { execFileSync as execFileSync6 } from "node:child_process";
 import {
@@ -41282,8 +41298,8 @@ function isDirectory(path7) {
 }
 function boundedEntries(dir, limit) {
   try {
-    const entries = readdirSync(dir);
-    return entries.length > limit ? null : entries.sort();
+    const entries2 = readdirSync(dir);
+    return entries2.length > limit ? null : entries2.sort();
   } catch {
     return null;
   }
@@ -41301,19 +41317,19 @@ function resolveAccountDir(containerDir, accountIdentifier) {
     const dir = realInside(join6(accountsReal, account), accountsReal);
     if (dir && isDirectory(dir)) return dir;
   }
-  const entries = (boundedEntries(accountsReal, 64) ?? []).filter(
+  const entries2 = (boundedEntries(accountsReal, 64) ?? []).filter(
     (e) => isDirectory(join6(accountsReal, e))
   );
-  if (entries.length !== 1) return null;
-  return realInside(join6(accountsReal, entries[0]), accountsReal);
+  if (entries2.length !== 1) return null;
+  return realInside(join6(accountsReal, entries2[0]), accountsReal);
 }
 function generationRank(name) {
   const m = /^(\d+)_/.exec(name);
   return m ? Number(m[1]) : 0;
 }
 function generationDirs(base, accountDir) {
-  const entries = boundedEntries(base, MAX_GENERATION_DIRS) ?? [];
-  return entries.map((e) => realInside(join6(base, e), accountDir)).filter((p) => p !== null && isDirectory(p)).sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
+  const entries2 = boundedEntries(base, MAX_GENERATION_DIRS) ?? [];
+  return entries2.map((e) => realInside(join6(base, e), accountDir)).filter((p) => p !== null && isDirectory(p)).sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
 }
 function fallbackFiles(accountDir, rootName, identifier, generation, names) {
   const base = join6(accountDir, rootName, identifier);
@@ -41358,11 +41374,11 @@ function previewFileInBundle(bundle, accountDir) {
 function listPreviewEntries(accountDir) {
   return boundedEntries(join6(accountDir, "Previews"), MAX_PREVIEW_DIR_ENTRIES) ?? [];
 }
-function previewPaths(accountDir, identifier, entries) {
+function previewPaths(accountDir, identifier, entries2) {
   const id2 = safeComponent(identifier);
   if (!id2) return [];
   const prefix = `${id2}-`.toLowerCase();
-  const candidates = entries.filter((name) => name.toLowerCase().startsWith(prefix)).filter((name) => {
+  const candidates = entries2.filter((name) => name.toLowerCase().startsWith(prefix)).filter((name) => {
     const ext = extname(name).toLowerCase();
     return !ext || PREVIEW_IMAGE_SUFFIXES.has(ext) || /^\.\d+$/.test(ext);
   }).sort((a, b) => previewPixelArea(b) - previewPixelArea(a) || a.localeCompare(b));
@@ -41611,11 +41627,348 @@ function exportAttachmentAssets(assets, exportDir, options = {}) {
   return { exportDir: dir, results };
 }
 
+// src/utils/paperAttachments.ts
+var MAX_AXIS = 32768;
+var MAX_PREVIEW_DIR_ENTRIES2 = 1e5;
+var MAX_DIR_ENTRIES = 64;
+var HEADER_BYTES = 64 * 1024;
+var PNG_MAGIC = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+var IMAGE_SUFFIXES = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg"]);
+var axisOk = (n) => Number.isInteger(n) && n > 0 && n <= MAX_AXIS;
+function parseImageHeader(buf) {
+  if (buf.length >= 24 && buf.subarray(0, 8).equals(PNG_MAGIC)) {
+    if (buf.readUInt32BE(8) !== 13 || buf.toString("latin1", 12, 16) !== "IHDR") return null;
+    const width = buf.readUInt32BE(16);
+    const height = buf.readUInt32BE(20);
+    return axisOk(width) && axisOk(height) ? { format: "png", width, height } : null;
+  }
+  if (buf.length >= 4 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) {
+    let offset = 2;
+    while (offset + 4 <= buf.length) {
+      if (buf[offset] !== 255) return null;
+      const marker = buf[offset + 1];
+      if (marker === 255) {
+        offset++;
+        continue;
+      }
+      const length = buf.readUInt16BE(offset + 2);
+      if (length < 2) return null;
+      const isFrame = marker >= 192 && marker <= 207 && marker !== 196 && marker !== 200 && marker !== 204;
+      if (isFrame) {
+        if (offset + 9 > buf.length) return null;
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        return axisOk(width) && axisOk(height) ? { format: "jpeg", width, height } : null;
+      }
+      offset += 2 + length;
+    }
+  }
+  return null;
+}
+function readImageInfoFd(fd) {
+  if (!fstatSync3(fd).isFile()) return null;
+  const buf = Buffer.alloc(HEADER_BYTES);
+  const read = readSync2(fd, buf, 0, buf.length, 0);
+  return parseImageHeader(buf.subarray(0, read));
+}
+function readImageInfo(path7) {
+  let fd;
+  try {
+    fd = openSync3(path7, constants3.O_RDONLY | constants3.O_NOFOLLOW);
+  } catch {
+    return null;
+  }
+  try {
+    return readImageInfoFd(fd);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function buildDrawingRowsSql(notePk, columns) {
+  if (!Number.isSafeInteger(notePk) || notePk < 0) throw new Error("Invalid note primary key");
+  const col2 = (name) => columns.has(name) ? `a.${name}` : "NULL";
+  const accountCols = [...columns].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
+  const account = accountCols.length ? `(SELECT acc.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT acc WHERE acc.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICAccount') AND acc.Z_PK IN (${[
+    ...accountCols.map((c) => `a.${c}`),
+    ...accountCols.map((c) => `n.${c}`)
+  ].join(", ")}) LIMIT 1)` : "NULL";
+  const deleted = columns.has("ZMARKEDFORDELETION") ? " AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
+  const fields = [
+    `'pk', a.Z_PK`,
+    `'identifier', a.ZIDENTIFIER`,
+    `'uti', a.ZTYPEUTI`,
+    `'handwritingSummary', ${col2("ZHANDWRITINGSUMMARY")}`,
+    `'fallbackImageGeneration', ${col2("ZFALLBACKIMAGEGENERATION")}`,
+    `'accountIdentifier', ${account}`
+  ].join(", ");
+  return [
+    "BEGIN;",
+    `SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ${notePk} AND Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICNote');`,
+    `SELECT json_group_array(json_object(${fields})) FROM ZICCLOUDSYNCINGOBJECT a LEFT JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = a.ZNOTE WHERE a.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICAttachment') AND a.ZNOTE = ${notePk} AND (a.ZTYPEUTI = 'com.apple.paper' OR a.ZTYPEUTI = 'com.apple.drawing' OR a.ZTYPEUTI LIKE 'com.apple.drawing.%')${deleted};`,
+    "COMMIT;"
+  ].join(" ");
+}
+function runSqlite4(dbPath2, sql) {
+  try {
+    return execFileSync7("/usr/bin/sqlite3", ["-readonly", dbPath2, sql], {
+      encoding: "utf8",
+      timeout: 1e4,
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    if (/authorization denied|unable to open database/i.test(message)) {
+      throw new AttachmentStoreError(
+        "Full Disk Access is required to read drawing attachments. Grant it to the app that launches this server, then relaunch it (run the doctor tool to verify).",
+        "no_fda"
+      );
+    }
+    throw new AttachmentStoreError(`Failed to read drawing attachments: ${message}`, "query_error");
+  }
+}
+var str = (v) => typeof v === "string" && v.length > 0 ? v : null;
+function parseDrawingRows(json2) {
+  const raw = JSON.parse(json2 || "[]");
+  if (!Array.isArray(raw)) throw new Error("Invalid drawing rows");
+  const rows = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item;
+    const identifier = str(r.identifier);
+    const uti = str(r.uti);
+    if (!Number.isSafeInteger(r.pk) || !identifier || !uti) continue;
+    const summary = str(r.handwritingSummary);
+    rows.push({
+      pk: r.pk,
+      identifier,
+      uti,
+      handwritingSummary: summary && summary.trim() ? summary : null,
+      fallbackImageGeneration: str(r.fallbackImageGeneration),
+      accountIdentifier: str(r.accountIdentifier)
+    });
+  }
+  return rows.sort((a, b) => a.pk - b.pk);
+}
+function readDrawingRows(noteId3, dbPath2 = join7(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
+  const { pk } = parseNoteId2(noteId3);
+  const columns = new Set(
+    runSqlite4(
+      dbPath2,
+      "SELECT group_concat(name, ',') FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');"
+    ).trim().split(",").filter(Boolean)
+  );
+  if (!columns.has("ZIDENTIFIER") || !columns.has("ZTYPEUTI") || !columns.has("ZNOTE")) {
+    throw new AttachmentStoreError("Unsupported Notes database schema", "query_error");
+  }
+  const lines = runSqlite4(dbPath2, buildDrawingRowsSql(pk, columns)).split("\n");
+  if (lines[0]?.trim() !== "1") {
+    throw new AttachmentStoreError(
+      `No note found in the database for ID "${noteId3}".`,
+      "not_found"
+    );
+  }
+  try {
+    return parseDrawingRows(lines[1] ?? "[]");
+  } catch {
+    throw new AttachmentStoreError("Drawing rows could not be parsed", "query_error");
+  }
+}
+function kindOf(path7) {
+  try {
+    const st = lstatSync3(path7);
+    return st.isFile() ? "file" : st.isDirectory() ? "dir" : null;
+  } catch {
+    return null;
+  }
+}
+function entries(dir, limit) {
+  try {
+    const list = readdirSync2(dir);
+    return list.length > limit ? [] : list.sort();
+  } catch {
+    return [];
+  }
+}
+var byGenerationDesc = (a, b) => generationRank(basename2(b)) - generationRank(basename2(a));
+function findFallbackImage(accountDir, identifier, generation) {
+  const id2 = safeComponent(identifier);
+  if (!id2) return null;
+  const base = join7(accountDir, "FallbackImages", id2);
+  const names = ["FallbackImage.png", "FallbackImage.jpg"];
+  const candidates = [];
+  const gen = safeComponent(generation);
+  if (gen) for (const n of names) candidates.push(join7(base, gen, n));
+  const gens = entries(base, MAX_DIR_ENTRIES).map((e) => join7(base, e)).sort(byGenerationDesc);
+  for (const g of gens) for (const n of names) candidates.push(join7(g, n));
+  for (const n of names) candidates.push(join7(base, n));
+  candidates.push(join7(accountDir, "FallbackImages", `${id2}.png`));
+  candidates.push(join7(accountDir, "FallbackImages", `${id2}.jpg`));
+  for (const c of candidates) {
+    const real = realInside(c, accountDir);
+    if (real && kindOf(real) === "file") return real;
+  }
+  return null;
+}
+function findLargestPreview(accountDir, identifier) {
+  const id2 = safeComponent(identifier);
+  if (!id2) return null;
+  const dir = join7(accountDir, "Previews");
+  const prefix = `${id2}-`.toLowerCase();
+  const names = entries(dir, MAX_PREVIEW_DIR_ENTRIES2).filter((n) => n.toLowerCase().startsWith(prefix)).filter((n) => {
+    const ext = extname2(n).toLowerCase();
+    return !ext || IMAGE_SUFFIXES.has(ext) || /^\.\d+$/.test(ext);
+  }).sort((a, b) => previewPixelArea(b) - previewPixelArea(a) || a.localeCompare(b));
+  for (const name of names) {
+    const real = realInside(join7(dir, name), accountDir);
+    if (!real) continue;
+    const kind = kindOf(real);
+    if (kind === "file") return real;
+    if (kind !== "dir") continue;
+    const gens = entries(real, MAX_DIR_ENTRIES).map((e) => realInside(join7(real, e), accountDir)).filter((p) => p !== null && kindOf(p) === "dir").sort(byGenerationDesc);
+    for (const g of [...gens, real]) {
+      const file = realInside(join7(g, "Preview.png"), accountDir);
+      if (file && kindOf(file) === "file") return file;
+    }
+  }
+  return null;
+}
+function describeDrawings(rows, containerDir = NOTES_CONTAINER_DIR) {
+  return rows.map((row) => {
+    const accountDir = resolveAccountDir(containerDir, row.accountIdentifier);
+    const kind = row.uti === "com.apple.paper" ? "paper" : "drawing";
+    const id2 = safeComponent(row.identifier);
+    const fallbackImagePath = accountDir ? findFallbackImage(accountDir, row.identifier, row.fallbackImageGeneration) : null;
+    const previewPath = accountDir ? findLargestPreview(accountDir, row.identifier) : null;
+    const bundle = accountDir && id2 && kind === "paper" ? realInside(join7(accountDir, "Paper", "Bundles", `${id2}.bundle`), accountDir) : null;
+    let raster = null;
+    for (const [path7, source] of [
+      [fallbackImagePath, "fallback"],
+      [previewPath, "preview"]
+    ]) {
+      const info = path7 ? readImageInfo(path7) : null;
+      if (path7 && info) {
+        raster = { path: path7, source, ...info };
+        break;
+      }
+    }
+    return {
+      pk: row.pk,
+      identifier: row.identifier,
+      uti: row.uti,
+      kind,
+      handwritingSummary: row.handwritingSummary,
+      bundlePresent: bundle !== null && kindOf(bundle) === "dir",
+      fallbackImagePath,
+      previewPath,
+      raster
+    };
+  });
+}
+function verifyWrittenImage(fd, path7, expected) {
+  const check2 = readImageInfoFd(fd);
+  if (!check2 || check2.format !== expected.format || check2.width !== expected.width || check2.height !== expected.height) {
+    unlinkSync2(path7);
+    throw new Error("The exported image failed validation and was removed.");
+  }
+  return check2;
+}
+function selectDrawing(drawings, noteId3, attachmentId) {
+  if (attachmentId) {
+    const wanted = attachmentId.toLowerCase();
+    const found = drawings.find(
+      (d) => d.identifier.toLowerCase() === wanted || attachmentCoreDataId(noteId3, d.pk).toLowerCase() === wanted
+    );
+    if (!found) throw new Error(`No Paper or drawing attachment "${attachmentId}" in this note.`);
+    return found;
+  }
+  if (drawings.length === 0) throw new Error("This note has no Paper or drawing attachment.");
+  if (drawings.length > 1) {
+    throw new Error(
+      `This note has ${drawings.length} Paper or drawing attachments; pass attachmentId (from list-paper-attachments) to choose one.`
+    );
+  }
+  return drawings[0];
+}
+function exportDrawingRaster(drawing, savePath, containerDir = NOTES_CONTAINER_DIR) {
+  if (!drawing.raster) {
+    throw new Error(
+      "Notes has no rendered image for this drawing on disk yet (open the note in Notes.app to let it render, then retry)."
+    );
+  }
+  const abs = assertSafeSavePath(savePath);
+  if (isInsideNotesContainer(abs, containerDir)) {
+    throw new Error(`Refusing to write inside the Notes data container: "${abs}"`);
+  }
+  const ext = extname2(abs).toLowerCase();
+  const expected = drawing.raster.format === "png" ? [".png"] : [".jpg", ".jpeg"];
+  if (!expected.includes(ext)) {
+    throw new Error(
+      `The rendered image is ${drawing.raster.format.toUpperCase()}; savePath must end in ${expected.join(" or ")}.`
+    );
+  }
+  mkdirSync3(dirname3(abs), { recursive: true });
+  assertSafeSavePath(abs);
+  if (isInsideNotesContainer(abs, containerDir)) {
+    throw new Error(`Refusing to write inside the Notes data container: "${abs}"`);
+  }
+  const input = openSync3(drawing.raster.path, constants3.O_RDONLY | constants3.O_NOFOLLOW);
+  let bytes = 0;
+  try {
+    if (!fstatSync3(input).isFile()) throw new Error("The rendered image is not a regular file");
+    const header = Buffer.alloc(HEADER_BYTES);
+    const headerLength = readSync2(input, header, 0, header.length, 0);
+    const info = parseImageHeader(header.subarray(0, headerLength));
+    if (!info || info.format !== drawing.raster.format) {
+      throw new Error(
+        "The rendered image changed or is not a valid PNG/JPEG; nothing was written."
+      );
+    }
+    let output;
+    try {
+      output = openSync3(
+        abs,
+        constants3.O_RDWR | constants3.O_CREAT | constants3.O_EXCL | constants3.O_NOFOLLOW,
+        384
+      );
+    } catch (error2) {
+      if (error2.code === "EEXIST") {
+        throw new Error(`"${abs}" already exists; choose a new savePath.`);
+      }
+      throw error2;
+    }
+    try {
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      let position = 0;
+      for (; ; ) {
+        const read = readSync2(input, buffer, 0, buffer.length, position);
+        if (read === 0) break;
+        position += read;
+        let written = 0;
+        while (written < read) written += writeSync2(output, buffer, written, read - written);
+      }
+      bytes = position;
+      const check2 = verifyWrittenImage(output, abs, info);
+      return { savedPath: abs, bytes, source: drawing.raster.source, ...check2 };
+    } catch (error2) {
+      try {
+        unlinkSync2(abs);
+      } catch {
+      }
+      throw error2;
+    } finally {
+      closeSync3(output);
+    }
+  } finally {
+    closeSync3(input);
+  }
+}
+
 // src/services/appleNotesManager.ts
 var import_turndown = __toESM(require_turndown_cjs(), 1);
 import { existsSync as existsSync4 } from "fs";
 import { homedir as homedir7 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 var FIELD_SEP = "";
 var RECORD_SEP = "";
 var AS_FIELD_SEP = "(character id 31)";
@@ -41843,7 +42196,7 @@ function getNoteLinkFromDB(coreDataId2) {
   const match = coreDataId2.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
-  const dbPath2 = join7(homedir7(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+  const dbPath2 = join8(homedir7(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
   if (!existsSync4(dbPath2)) return null;
   try {
     const { DatabaseSync } = __require("node:sqlite");
@@ -42840,7 +43193,7 @@ var AppleNotesManager = class {
       return [];
     }
     const recordSeparator = result.output.includes(RECORD_SEP) ? RECORD_SEP : "\n";
-    const entries = result.output.split(recordSeparator).map((line) => {
+    const entries2 = result.output.split(recordSeparator).map((line) => {
       const parts = line.includes(FIELD_SEP) ? line.split(FIELD_SEP) : line.split("	");
       return {
         id: (parts[0] || "").trim(),
@@ -42853,7 +43206,7 @@ var AppleNotesManager = class {
         account: (parts[4] || "").trim()
       };
     });
-    const byId = new Map(entries.map((e) => [e.id, e]));
+    const byId = new Map(entries2.map((e) => [e.id, e]));
     const buildPath = (entry) => {
       const safeName = escapeFolderName(entry.name);
       if (!entry.parentId) return safeName;
@@ -42863,7 +43216,7 @@ var AppleNotesManager = class {
       }
       return safeName;
     };
-    return entries.map((entry) => ({
+    return entries2.map((entry) => ({
       id: entry.id,
       name: buildPath(entry),
       account: entry.account || targetAccount || "",
@@ -43766,6 +44119,24 @@ var AppleNotesManager = class {
     }
   }
   /**
+   * Lists a note's Paper (`com.apple.paper`) and classic drawing attachments
+   * with Notes' rendered raster, read-only from NoteStore and the Notes group
+   * container. Requires Full Disk Access.
+   *
+   * @throws PaperStoreError (`no_fda`, `invalid_id`, `not_found`, `query_error`)
+   */
+  listPaperAttachmentsById(noteId3) {
+    return describeDrawings(readDrawingRows(noteId3));
+  }
+  /**
+   * Copies Notes' rendered raster of one drawing to a new file. `attachmentId`
+   * (identifier or AppleScript id) is required when the note has more than one.
+   */
+  exportPaperImageById(noteId3, savePath, attachmentId) {
+    const drawing = selectDrawing(this.listPaperAttachmentsById(noteId3), noteId3, attachmentId);
+    return { drawing, ...exportDrawingRaster(drawing, savePath) };
+  }
+  /**
    * Reads one note's attachments with their on-disk asset and preview paths,
    * in body order, from the NoteStore database and the Notes group container
    * (both read-only). Requires Full Disk Access.
@@ -44209,7 +44580,7 @@ var AppleNotesManager = class {
 };
 
 // src/utils/syncDetection.ts
-import { execFileSync as execFileSync7 } from "child_process";
+import { execFileSync as execFileSync8 } from "child_process";
 import * as fs3 from "fs";
 import * as path3 from "path";
 import * as os3 from "os";
@@ -44254,7 +44625,7 @@ function getSyncStatus(useCache = true) {
         WHERE object.ZCLOUDSTATE = state.Z_PK
       );
     `;
-    const result = execFileSync7(
+    const result = execFileSync8(
       "sqlite3",
       ["-readonly", NOTES_DB_PATH4, query.replace(/\n/g, " ")],
       {
@@ -44313,7 +44684,7 @@ function withSyncAwarenessSync(operation, fn) {
 }
 
 // src/utils/noteMetadata.ts
-import { execFileSync as execFileSync8 } from "child_process";
+import { execFileSync as execFileSync9 } from "child_process";
 import * as fs4 from "fs";
 import * as path4 from "path";
 import * as os4 from "os";
@@ -44333,15 +44704,15 @@ var COLUMN_MAP = [
   { key: "widgetSnippet", column: "ZWIDGETSNIPPET", type: "text" },
   { key: "smartFolderQuery", column: "ZSMARTFOLDERQUERYJSON", type: "text" }
 ];
-function runSqlite4(query) {
-  return execFileSync8("sqlite3", ["-readonly", NOTES_DB_PATH5, query], {
+function runSqlite5(query) {
+  return execFileSync9("sqlite3", ["-readonly", NOTES_DB_PATH5, query], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
   }).trim();
 }
 function presentColumns() {
-  const out = runSqlite4("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);");
+  const out = runSqlite5("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);");
   const cols = /* @__PURE__ */ new Set();
   for (const line of out.split("\n")) {
     const name = line.split("|")[1];
@@ -44369,7 +44740,7 @@ function getNoteMetadata(noteId3) {
       return { metadata: {} };
     }
     const pairs = selected.map((c) => `'${c.key}', ${c.column}`).join(", ");
-    const row = runSqlite4(
+    const row = runSqlite5(
       `SELECT json_object(${pairs}) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ${pk};`
     );
     if (!row) {
@@ -44402,7 +44773,7 @@ function getNoteMetadata(noteId3) {
 }
 
 // src/utils/noteIdentifiers.ts
-import { execFileSync as execFileSync9 } from "child_process";
+import { execFileSync as execFileSync10 } from "child_process";
 import * as fs5 from "fs";
 import * as os5 from "os";
 import * as path5 from "path";
@@ -44484,7 +44855,7 @@ function runJsonQuery(sql, dbPath2) {
   if (!fs5.existsSync(dbPath2)) throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
   let out;
   try {
-    out = execFileSync9("sqlite3", ["-readonly", dbPath2, sql], {
+    out = execFileSync10("sqlite3", ["-readonly", dbPath2, sql], {
       encoding: "utf8",
       timeout: 5e3,
       stdio: ["pipe", "pipe", "pipe"]
@@ -45174,7 +45545,7 @@ function positiveTextTerms(node, negated = false) {
 }
 
 // src/utils/noteQueryStore.ts
-import { execFileSync as execFileSync10 } from "child_process";
+import { execFileSync as execFileSync11 } from "child_process";
 import * as fs6 from "fs";
 import * as os6 from "os";
 import * as path6 from "path";
@@ -45314,8 +45685,8 @@ function buildScanSql(available, options) {
     "COMMIT;"
   ].join(" ");
 }
-function runSqlite5(dbPath2, query) {
-  return execFileSync10("sqlite3", ["-readonly", dbPath2, query], {
+function runSqlite6(dbPath2, query) {
+  return execFileSync11("sqlite3", ["-readonly", dbPath2, query], {
     encoding: "utf8",
     timeout: 3e4,
     maxBuffer: 512 * 1024 * 1024,
@@ -45324,7 +45695,7 @@ function runSqlite5(dbPath2, query) {
 }
 function presentColumns2(dbPath2) {
   const cols = /* @__PURE__ */ new Set();
-  for (const line of runSqlite5(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n")) {
+  for (const line of runSqlite6(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n")) {
     const name = line.split("|")[1];
     if (name) cols.add(name);
   }
@@ -45384,7 +45755,7 @@ function queryNotes(expression, options = {}) {
   let output;
   try {
     const available = presentColumns2(dbPath2);
-    output = runSqlite5(
+    output = runSqlite6(
       dbPath2,
       buildScanSql(available, { scanLimit, includeDeleted, withBodies, withTags })
     );
@@ -45515,10 +45886,10 @@ function queryNotes(expression, options = {}) {
 import { spawnSync } from "child_process";
 
 // src/services/nativeTags.ts
-import { execFileSync as execFileSync11 } from "node:child_process";
+import { execFileSync as execFileSync12 } from "node:child_process";
 import { mkdtempSync as mkdtempSync2, writeFileSync, rmSync as rmSync2 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 
 // src/services/shortcutConsent.ts
 function shortcutConsentHint(shortcut) {
@@ -45594,7 +45965,7 @@ function addNativeTags(request, deps) {
   };
 }
 function listInstalledShortcuts() {
-  return execFileSync11("/usr/bin/shortcuts", ["list", "--show-identifiers"], {
+  return execFileSync12("/usr/bin/shortcuts", ["list", "--show-identifiers"], {
     encoding: "utf8",
     timeout: 15e3,
     maxBuffer: 1024 * 1024,
@@ -45620,11 +45991,11 @@ function runNativeTagsShortcut(input) {
   const status = nativeTagsStatus();
   if (!status.installed)
     throw new Error(`Import the supplied ${status.shortcut}.shortcut in Shortcuts first`);
-  const directory = mkdtempSync2(join12(tmpdir2(), "apple-notes-native-tags-"));
+  const directory = mkdtempSync2(join13(tmpdir2(), "apple-notes-native-tags-"));
   try {
-    const path7 = join12(directory, "request.json");
+    const path7 = join13(directory, "request.json");
     writeFileSync(path7, JSON.stringify(input), { mode: 384 });
-    execFileSync11("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path7], {
+    execFileSync12("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", path7], {
       encoding: "utf8",
       timeout: 6e4,
       maxBuffer: 1024 * 1024,
@@ -45643,10 +46014,10 @@ function runNativeTagsShortcut(input) {
 }
 
 // src/services/backgroundNotes.ts
-import { execFileSync as execFileSync12 } from "node:child_process";
+import { execFileSync as execFileSync13 } from "node:child_process";
 import { mkdtempSync as mkdtempSync3, writeFileSync as writeFileSync2, rmSync as rmSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 
 // src/utils/appendMarkdown.ts
 var escape2 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -45971,9 +46342,9 @@ function runBackgroundShortcut(input, status = backgroundStatus()) {
     throw new Error(
       `Install the supplied "${status.shortcut}" Shortcut once; Shortcuts must list it exactly once`
     );
-  const directory = mkdtempSync3(join13(tmpdir3(), "apple-notes-background-"));
+  const directory = mkdtempSync3(join14(tmpdir3(), "apple-notes-background-"));
   try {
-    const file = join13(directory, "request.json");
+    const file = join14(directory, "request.json");
     writeFileSync2(
       file,
       JSON.stringify({
@@ -45993,7 +46364,7 @@ function runBackgroundShortcut(input, status = backgroundStatus()) {
       { mode: 384 }
     );
     try {
-      execFileSync12("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", file], {
+      execFileSync13("/usr/bin/shortcuts", ["run", status.identifier, "--input-path", file], {
         encoding: "utf8",
         timeout: callTimeoutMs() ?? 6e4,
         maxBuffer: 1024 * 1024,
@@ -46318,7 +46689,7 @@ ${request.content}`
 }
 
 // src/services/capabilityMatrix.ts
-import { execFileSync as execFileSync13 } from "node:child_process";
+import { execFileSync as execFileSync14 } from "node:child_process";
 import { release } from "node:os";
 var MACOS_SHORTCUTS_CLI = "12.0";
 var MACOS_MARKDOWN_IMPORT = "26.0";
@@ -46525,7 +46896,7 @@ function evaluateFeatures(env, features = FEATURES) {
 function readMacOSVersion() {
   if (process.platform !== "darwin") return null;
   try {
-    const out = execFileSync13("/usr/bin/sw_vers", ["-productVersion"], {
+    const out = execFileSync14("/usr/bin/sw_vers", ["-productVersion"], {
       encoding: "utf8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "ignore"]
@@ -46679,12 +47050,12 @@ function formatDoctorReport(r) {
 
 // src/services/fileConfig.ts
 import { existsSync as existsSync9, readFileSync as readFileSync2 } from "fs";
-import { join as join14 } from "path";
+import { join as join15 } from "path";
 import { homedir as homedir12 } from "os";
 function fileConfigPath(env = process.env) {
   const override = env.APPLE_NOTES_MCP_CONFIG_FILE;
   if (override && override.trim()) return override.trim();
-  return join14(homedir12(), "Library", "Application Support", "apple-notes-mcp", "config.json");
+  return join15(homedir12(), "Library", "Application Support", "apple-notes-mcp", "config.json");
 }
 function loadFileConfig(env = process.env, path7 = fileConfigPath(env)) {
   const applied = [];
@@ -46987,10 +47358,10 @@ function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS) {
 }
 
 // src/utils/noteBlocks.ts
-import { execFileSync as execFileSync14 } from "node:child_process";
+import { execFileSync as execFileSync15 } from "node:child_process";
 import { existsSync as existsSync10 } from "node:fs";
 import { homedir as homedir13 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 import { gunzipSync as gunzipSync7 } from "node:zlib";
 var NoteBlocksError = class extends Error {
   code;
@@ -47333,7 +47704,7 @@ function pageNoteBlocks(doc, { offset = 0, limit = 500, maxBytes = blocksMaxResp
     undecodedFields: doc.undecodedFields
   };
 }
-var NOTES_DB_PATH8 = join15(
+var NOTES_DB_PATH8 = join16(
   homedir13(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
@@ -47349,7 +47720,7 @@ function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH8 } = {}) {
   const sql = "SELECT json_object('exists', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = @pk AND Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICNote')), 'data', (SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE = @pk), 'encrypted', (SELECT ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA WHERE ZNOTE = @pk));";
   let output;
   try {
-    output = execFileSync14(
+    output = execFileSync15(
       "/usr/bin/sqlite3",
       ["-readonly", "-cmd", ".parameter init", "-cmd", `.parameter set @pk ${pk}`, dbPath2, sql],
       {
@@ -47500,17 +47871,17 @@ function insertLink(request, deps) {
 // src/tools/directOperations.ts
 import { createHash as createHash2 } from "node:crypto";
 import {
-  closeSync as closeSync3,
-  constants as constants3,
-  fstatSync as fstatSync3,
+  closeSync as closeSync4,
+  constants as constants4,
+  fstatSync as fstatSync4,
   mkdtempSync as mkdtempSync4,
-  openSync as openSync3,
+  openSync as openSync4,
   readFileSync as readFileSync3,
   rmSync as rmSync4,
   writeFileSync as writeFileSync3
 } from "node:fs";
 import { tmpdir as tmpdir4 } from "node:os";
-import { basename as basename2, extname as extname2, isAbsolute as isAbsolute3, join as join16 } from "node:path";
+import { basename as basename3, extname as extname3, isAbsolute as isAbsolute3, join as join17 } from "node:path";
 var noteId = exactIdInput(
   "ICNote",
   /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i,
@@ -47555,9 +47926,9 @@ function assertExistingContentPreserved(before, after) {
 }
 function localAttachment(path7) {
   if (!isAbsolute3(path7)) throw new Error("An absolute local file path is required");
-  const descriptor = openSync3(path7, constants3.O_RDONLY | constants3.O_NOFOLLOW);
+  const descriptor = openSync4(path7, constants4.O_RDONLY | constants4.O_NOFOLLOW);
   try {
-    const stat = fstatSync3(descriptor);
+    const stat = fstatSync4(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
       throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
     const bytes = readFileSync3(descriptor);
@@ -47565,7 +47936,7 @@ function localAttachment(path7) {
       throw new Error("Attachment changed while it was being read; try again");
     return bytes;
   } finally {
-    closeSync3(descriptor);
+    closeSync4(descriptor);
   }
 }
 function registerDirectOperations(server2, manager) {
@@ -47678,7 +48049,7 @@ function registerDirectOperations(server2, manager) {
   );
 }
 function attachmentName(path7, filename) {
-  const source = basename2(path7);
+  const source = basename3(path7);
   if (filename === void 0) return source;
   if (Buffer.byteLength(filename, "utf8") > 255)
     throw new Error("filename must be at most 255 bytes");
@@ -47686,9 +48057,9 @@ function attachmentName(path7, filename) {
     throw new Error(
       "filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces"
     );
-  if (extname2(filename).toLowerCase() !== extname2(source).toLowerCase())
+  if (extname3(filename).toLowerCase() !== extname3(source).toLowerCase())
     throw new Error(
-      `filename must keep the source file's extension (${extname2(source) || "none"})`
+      `filename must keep the source file's extension (${extname3(source) || "none"})`
     );
   return filename;
 }
@@ -47699,8 +48070,8 @@ function attachFile(manager, args) {
   if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
   const bytes = localAttachment(path7);
   const beforeAttachments = manager.listAttachmentsById(id2);
-  const directory = mkdtempSync4(join16(tmpdir4(), "notes-attachment-add-"));
-  const temporaryFile = join16(directory, name);
+  const directory = mkdtempSync4(join17(tmpdir4(), "notes-attachment-add-"));
+  const temporaryFile = join17(directory, name);
   try {
     writeFileSync3(temporaryFile, bytes, { mode: 384 });
     if (readSnapshot(manager, id2).hash !== before.hash) throw new Error("Note revision changed");
@@ -48260,7 +48631,7 @@ function registerNativeOperations(server2, manager) {
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { existsSync as existsSync11 } from "node:fs";
 import { release as release2 } from "node:os";
-import { dirname as dirname3, resolve as resolve3 } from "node:path";
+import { dirname as dirname4, resolve as resolve3 } from "node:path";
 import { fileURLToPath } from "node:url";
 var OPTIONAL_BRIDGE_NOTE = "(optional \u2014 needed only for create-note format: markdown, macOS 26+)";
 var MARKDOWN_MIN_DARWIN_MAJOR = 25;
@@ -48283,7 +48654,7 @@ function setupShortcuts(checkOnly, dependencies = {}) {
     const result = spawnSync2("/usr/bin/open", [path7], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
-  const baseDirectory = dependencies.baseDirectory || resolve3(dirname3(fileURLToPath(import.meta.url)), "../shortcuts");
+  const baseDirectory = dependencies.baseDirectory || resolve3(dirname4(fileURLToPath(import.meta.url)), "../shortcuts");
   const osRelease = (dependencies.osRelease || release2)();
   const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
   const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
@@ -50371,6 +50742,88 @@ registerTool(
       contentType: r.contentType
     });
   }, "Error saving attachment")
+);
+function drawingView(noteId3, d) {
+  const { pk, raster, ...rest } = d;
+  return {
+    attachmentId: attachmentCoreDataId(noteId3, pk),
+    ...rest,
+    raster: raster ? { source: raster.source, format: raster.format, width: raster.width, height: raster.height } : null
+  };
+}
+registerTool(
+  "list-paper-attachments",
+  {
+    description: "Use when: finding the Paper drawings (com.apple.paper) and classic drawings in one note, and whether Notes has a rendered image of each.\nReturns: per drawing its attachmentId, identifier, uti, kind (paper or drawing), handwritingSummary (Notes' recognized handwriting text, or null), bundlePresent, fallbackImagePath, previewPath, and raster {source, format, width, height} (the validated image export-paper-image would copy, or null).\nDo not use when: you want every attachment (list-attachments) or the image file itself (export-paper-image).\nSafety: read-only; reads NoteStore and the Notes data folder without opening Notes.app and requires Full Disk Access. Strokes are not decoded: Notes' Paper bundle has no public reader, so the raster is Notes' own rendering.",
+    inputSchema: { id: noteIdInput },
+    outputSchema: {
+      attachments: external_exports.array(external_exports.object({}).passthrough()).optional(),
+      count: external_exports.number().optional()
+    },
+    annotations: { readOnlyHint: true }
+  },
+  withErrorHandling(({ id: id2 }) => {
+    const drawings = notesManager.listPaperAttachmentsById(id2).map((d) => drawingView(id2, d));
+    if (drawings.length === 0) {
+      return successResponse("This note has no Paper or drawing attachments.", {
+        attachments: [],
+        count: 0
+      });
+    }
+    const lines = drawings.map(
+      (d) => `  - ${d.kind} ${d.attachmentId}: ${d.raster ? `${d.raster.format.toUpperCase()} ${d.raster.width}x${d.raster.height} (${d.raster.source})` : "no rendered image on disk"}${d.handwritingSummary ? "; handwriting text stored" : ""}`
+    );
+    return successResponse(
+      `Found ${drawings.length} Paper or drawing attachment(s):
+${lines.join("\n")}`,
+      { attachments: drawings, count: drawings.length }
+    );
+  }, "Error listing Paper attachments")
+);
+registerTool(
+  "export-paper-image",
+  {
+    description: "Use when: saving Notes' rendered image of a Paper drawing or classic drawing to a file.\nReturns: savedPath, format (png or jpeg), width, height, bytes, source (fallback: Notes' full rendering; preview: its largest thumbnail, used only when no full rendering exists), and the drawing's attachmentId and handwritingSummary.\nDo not use when: the attachment is a photo or file (save-attachment or export-attachments).\nSafety: writes one new file; savePath must be absolute, under the home directory, a temp dir, or /Volumes, outside the Notes data folder, must not exist yet, and must end in the image's extension (.png, or .jpg/.jpeg). The image header is validated before and after copying. Pass attachmentId (from list-paper-attachments) when the note has more than one drawing. Requires Full Disk Access; Notes.app is not opened.",
+    inputSchema: {
+      noteId: noteIdInput,
+      savePath: external_exports.string().min(1, "savePath is required").max(MAX.SAVE_PATH).describe(
+        "Absolute path for the new image file (.png, or .jpg/.jpeg for a JPEG rendering)"
+      ),
+      attachmentId: external_exports.string().max(MAX.ATTACHMENT_ID).optional().describe(
+        "Drawing to export (attachmentId or identifier from list-paper-attachments); required when the note has more than one"
+      )
+    },
+    outputSchema: {
+      savedPath: external_exports.string().optional(),
+      format: external_exports.enum(["png", "jpeg"]).optional(),
+      width: external_exports.number().optional(),
+      height: external_exports.number().optional(),
+      bytes: external_exports.number().optional(),
+      source: external_exports.enum(["fallback", "preview"]).optional(),
+      attachmentId: external_exports.string().optional(),
+      identifier: external_exports.string().optional(),
+      kind: external_exports.enum(["paper", "drawing"]).optional(),
+      handwritingSummary: external_exports.string().nullable().optional()
+    }
+  },
+  withErrorHandling(({ noteId: noteId3, savePath, attachmentId }) => {
+    const r = notesManager.exportPaperImageById(noteId3, savePath, attachmentId);
+    return successResponse(
+      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}`,
+      {
+        savedPath: r.savedPath,
+        format: r.format,
+        width: r.width,
+        height: r.height,
+        bytes: r.bytes,
+        source: r.source,
+        attachmentId: attachmentCoreDataId(noteId3, r.drawing.pk),
+        identifier: r.drawing.identifier,
+        kind: r.drawing.kind,
+        handwritingSummary: r.drawing.handwritingSummary
+      }
+    );
+  }, "Error exporting Paper image")
 );
 registerTool(
   "export-attachments",

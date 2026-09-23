@@ -253,6 +253,11 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `batch-delete-notes` and `batch-move-notes` accept at most **500 ids per request** (the limit is enforced at the schema boundary, so an over-long array is rejected before anything runs). Chunk larger sets.
 - `batch-move-notes`' destination folder must already exist — create it with `create-folder` first.
 
+### Paper and drawings
+- `list-paper-attachments` (note `id`, Full Disk Access) reports each Paper (`com.apple.paper`) or classic drawing with `raster` (format and size of Notes' own rendering) and `handwritingSummary` when Notes stored recognized text.
+- `export-paper-image` copies that rendering to a new file. The `savePath` extension must match the format (`.png` for Paper). Pass `attachmentId` when a note has more than one drawing. It never overwrites.
+- Strokes are not decoded; there is no public reader for Notes' Paper bundles. Do not describe the export as vector data.
+
 ### Attachment paths, first image, and batch export
 - `list-attachments` with `includePaths: true` (needs the note `id` and Full Disk Access) adds `assetPaths` (the attachment's own files), `previewPath` (Notes' largest rendered thumbnail, always an image file), and `paths`. Use `assetPaths` when you need the original; a `previewPath` alone means the asset has not downloaded.
 - `list-attachments` with `firstImage: true` returns only the lead visual in body order: the first image even when `path` is `null`, else the first scan or drawing, else `null`.

@@ -73,6 +73,8 @@ Use this skill when the user:
 | `add-attachment`              | Attach one local file to an exact note (optional `filename` renames it in Notes)                                                                    |
 | `create-note-with-attachment` | Create a note and attach one local file in one call; on a failed attach, reuse the named note id with `add-attachment`                              |
 | `save-attachment`             | Save an attachment to disk                                                                                                                          |
+| `list-paper-attachments`      | List Paper and classic drawings in a note, with Notes' rendered image size and any recognized handwriting text                                      |
+| `export-paper-image`          | Save Notes' rendered PNG (or JPEG) of one drawing to a new file                                                                                     |
 | `export-attachments`          | Copy a note\'s attachment files (or only its lead visual) into a directory; `exportedKind` says asset or preview                                    |
 | `fetch-attachment`            | Fetch attachment bytes as base64                                                                                                                    |
 | `show-attachment`             | Reveal an attachment in the Notes.app UI                                                                                                            |
