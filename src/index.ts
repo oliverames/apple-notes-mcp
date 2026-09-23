@@ -155,6 +155,12 @@ import {
 import { formatShortcutSetup, setupShortcuts } from "@/setupShortcuts.js";
 import { buildPublicHelper, formatPublicHelperBuild } from "@/services/publicHelper.js";
 import { formatNoteDrawings, getNoteDrawings } from "@/services/noteDrawings.js";
+import {
+  fitTranscriptions,
+  formatTranscription,
+  TRANSCRIBE_MAX_SECONDS,
+  transcribeNoteAudio,
+} from "@/services/noteTranscription.js";
 import { buildPrivateHelper, formatHelperBuild } from "@/services/privateHelperBuild.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
 
@@ -256,6 +262,25 @@ function withErrorHandling<T extends Record<string, unknown>>(
       return runWithCallTimeout(typeof seconds === "number" ? seconds : undefined, () =>
         handler(params)
       );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return errorResponse(`${errorPrefix}: ${message}`, error);
+    }
+  };
+}
+
+/**
+ * {@link withErrorHandling} for a handler that awaits long-running work. The
+ * handler gets the request's abort signal, which fires when the client
+ * cancels the request, so it can stop child processes it started.
+ */
+function withAsyncErrorHandling<T extends Record<string, unknown>>(
+  handler: (params: T, signal: AbortSignal | undefined) => Promise<ToolResponse>,
+  errorPrefix: string
+) {
+  return async (params: T, extra?: { signal?: AbortSignal }): Promise<ToolResponse> => {
+    try {
+      return await handler(params, extra?.signal);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return errorResponse(`${errorPrefix}: ${message}`, error);
@@ -4516,6 +4541,73 @@ registerTool(
       ...(pointsOmitted ? { pointsOmitted } : {}),
     } as unknown as Record<string, unknown>);
   }, "Error reading drawings")
+);
+
+// --- transcribe-note-audio (public native helper, Speech framework) ---
+
+registerTool(
+  "transcribe-note-audio",
+  {
+    description:
+      "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
+    inputSchema: {
+      id: noteIdInput,
+      locale: z
+        .string()
+        .max(35)
+        .optional()
+        .describe('BCP-47 language of the speech, e.g. "en-US" (default), "it-IT", "fr-FR"'),
+      attachmentId: z
+        .string()
+        .max(MAX.ATTACHMENT_ID)
+        .optional()
+        .describe("Only transcribe this audio attachment (x-coredata ICAttachment id)"),
+      includeText: z
+        .boolean()
+        .optional()
+        .describe("Include transcript text (default true); false returns statuses and counts only"),
+      downloadAssets: z
+        .boolean()
+        .optional()
+        .describe(
+          "Let macOS download the language's on-device speech model if it is missing (default false: returns asset_unavailable at once)"
+        ),
+      maxSeconds: z
+        .number()
+        .int()
+        .min(TRANSCRIBE_MAX_SECONDS.min)
+        .max(TRANSCRIBE_MAX_SECONDS.max)
+        .optional()
+        .describe(
+          `Total time budget for the call in seconds (default ${TRANSCRIBE_MAX_SECONDS.default}); recordings not started in time report code time_limit`
+        ),
+    },
+    outputSchema: {
+      id: z.string().optional(),
+      locale: z.string().optional(),
+      status: z.string().optional(),
+      recordingCount: z.number().optional(),
+      recordings: z.array(z.object({}).passthrough()).optional(),
+    },
+  },
+  withAsyncErrorHandling(async (params, signal) => {
+    const { id, locale, attachmentId, includeText, downloadAssets, maxSeconds } = params;
+    const result = fitTranscriptions(
+      await transcribeNoteAudio(id, {
+        locale,
+        attachmentId,
+        includeText,
+        downloadAssets,
+        maxSeconds,
+        signal,
+      }),
+      exportMaxResponseBytes()
+    );
+    return successResponse(
+      formatTranscription(result),
+      result as unknown as Record<string, unknown>
+    );
+  }, "Error transcribing audio")
 );
 
 // --- list-recent-notes ---
