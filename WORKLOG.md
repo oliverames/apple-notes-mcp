@@ -15,6 +15,25 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
 - [ ] `feat/smart-folder-destination-guard` (`2867a1e`, base 8c90ea7): refuses smart folders as create/move destinations. Main today moves such notes into Recently Deleted or creates them inside the smart folder while reporting an error. 2163 tests pass; live-verified on test notes. Fails open without Full Disk Access. Merge main (CHANGELOG conflict), renumber, open PR.
 - [ ] `fix/large-attachment-read` (`be1dfa2`, base 8c90ea7): real fix for sweetrb/apple-notes-mcp#237 (reads >64 MB hit maxBuffer; deletes >5 MB blocked by the inline expected-body limit). Upstream #242 only explains the error. Rebase on main, make `classifyBodyReadError` recognise the new overflow error, renumber, then offer as a follow-up to #242.
 
+## sweetrb change requests to address first on resume (posted ~21Z, 2026-09-23)
+Read the full reviews with `gh api repos/sweetrb/apple-notes-mcp/pulls/<n>/reviews/<id>`.
+- [ ] **#234** (review 5296113654; head d6220bf, which someone else pushed, so check it first). He asked for four things:
+  - merge main;
+  - escape list bodies in `blockLine`, with fixture cases for `## Notes`, `1. x` and `---`. The keeper's fix may already cover part of this;
+  - stop echoing file contents in template errors, from `parseTemplate`/`readTemplateFile` via the JSON.parse snippet and echoed values;
+  - a version bump and rebuilt bundle.
+- [ ] **#235** (review 5296113924): wait for #234, then:
+  - add a test that `validate-markdown-template` on a file that isn't a template returns none of its contents;
+  - the CodeQL fix is already pushed as 9630336;
+  - bump the version.
+- [ ] **#238** (review 5296114130):
+  - merge main and bump the version;
+  - avoid the macOS 26+ "Allow Paste" prompt on the general pasteboard. The live runs used a named pasteboard, so the real path is untested;
+  - freeze the pasteboard only after the note and revision checks pass;
+  - handle multiple copied file URLs;
+  - use `callTimeoutMs()` and make the unsupported-types output clearer.
+- [ ] **#231**: his review is still open on his head 3de370a, which is mergeable. Wait for his re-review.
+
 ## Open upstream PRs to keep mergeable
 - sweetrb/apple-notes-mcp#231: all review points addressed and replied (9e3a7f4); sweetrb pushed 3de370a (2.9.11), awaiting his re-review. #234, #235, #238 synced. Every upstream merge re-conflicts version/CHANGELOG/manifests/build.
 
