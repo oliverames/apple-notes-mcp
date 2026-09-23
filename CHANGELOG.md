@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## [2.8.22] - 2026-09-23
+
+### Added
+
+- `create-checklist-items` appends 1 to 20 unchecked native checklist items to
+  one note in the order given. Each item is one run of the verified
+  `create-checklist-item` bridge, chained on the previous run's verified
+  revision. After every run the server checks that exactly one new unchecked
+  item with that text and a new native identity appeared and that items
+  appended earlier kept theirs; a final check confirms the new items are the
+  note's last checklist items in order. The first uncertain result stops the
+  call and returns `ok: false` with the verified `landed` items, the item it
+  `stoppedAt` (with `outcome` `"not-written"` or `"uncertain"`), and the items
+  `notAttempted`. It is gated with `create-checklist-item`.
+  The cap is 20 because each item is a synchronous bridge run of a few
+  seconds; a larger batch could outlast an MCP client's request timeout, and a
+  client that retried the whole call would append duplicates.
+
 ## [2.8.21] - 2026-09-23
 
 ### Added

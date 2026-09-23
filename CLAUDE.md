@@ -105,6 +105,8 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 
 **You cannot create an Apple Notes checklist (the interactive ☐ / ☑ items) via this MCP server.** This is an Apple Notes limitation, not a server bug.
 
+The exception is the Background Operations Shortcut bridge: when `get-capabilities` reports `create-checklist-item` available, `create-checklist-item` appends one real unchecked item and `create-checklist-items` appends several in order (1–20, one bridge run of a few seconds each; a client-side timeout does not stop the server, so read the note before any retry). If `create-checklist-items` returns `ok: false`, only the items in `landed` are verified; read the note before retrying, and retry only items that are not present.
+
 When you send checklist HTML or markdown to `create-note` or `update-note`:
 
 | You send | What Notes.app renders |

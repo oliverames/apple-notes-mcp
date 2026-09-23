@@ -65,19 +65,20 @@ Use this skill when the user:
 
 ### Attachments, Checklists, Collaboration, and Diagnostics
 
-| Tool                  | Purpose                                                         |
-| --------------------- | --------------------------------------------------------------- |
-| `list-attachments`    | List attachments in a note                                      |
-| `save-attachment`     | Save an attachment to disk                                      |
-| `fetch-attachment`    | Fetch attachment bytes as base64                                |
-| `show-attachment`     | Reveal an attachment in the Notes.app UI                        |
-| `get-checklist-state` | Read checked/unchecked state for existing checklists            |
-| `get-note-metadata`   | [BETA] Read pinned/trash/snippet metadata from the NoteStore DB |
-| `list-shared-notes`   | List notes shared with collaborators                            |
-| `get-sync-status`     | Check whether iCloud sync is active                             |
-| `health-check`        | Quickly verify Notes.app access                                 |
-| `doctor`              | Run detailed setup diagnostics                                  |
-| `get-notes-stats`     | Summarize note counts and recent activity                       |
+| Tool                     | Purpose                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list-attachments`       | List attachments in a note                                                                                                                          |
+| `save-attachment`        | Save an attachment to disk                                                                                                                          |
+| `fetch-attachment`       | Fetch attachment bytes as base64                                                                                                                    |
+| `show-attachment`        | Reveal an attachment in the Notes.app UI                                                                                                            |
+| `get-checklist-state`    | Read checked/unchecked state for existing checklists                                                                                                |
+| `create-checklist-items` | Append several unchecked native checklist items in order (needs the Background Operations bridge; on `ok: false`, only `landed` items are verified) |
+| `get-note-metadata`      | [BETA] Read pinned/trash/snippet metadata from the NoteStore DB                                                                                     |
+| `list-shared-notes`      | List notes shared with collaborators                                                                                                                |
+| `get-sync-status`        | Check whether iCloud sync is active                                                                                                                 |
+| `health-check`           | Quickly verify Notes.app access                                                                                                                     |
+| `doctor`                 | Run detailed setup diagnostics                                                                                                                      |
+| `get-notes-stats`        | Summarize note counts and recent activity                                                                                                           |
 
 ## Usage Patterns
 
