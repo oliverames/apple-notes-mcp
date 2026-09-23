@@ -166,6 +166,12 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 
 `list-folders` returns full hierarchical paths, so duplicate folder names (e.g., multiple "Archive" folders) are disambiguated.
 
+### delete-folder-by-id
+- Prefer it over `delete-folder` when you have an exact folder id. Read the folder with `get-folder-by-id` (it returns `name`, `parentId`, `accountId`, and `isRoot`), call with `dryRun: true`, then apply with the same guards, `dryRun: false`, and `expectedRevision` set to the returned `revision`.
+- Pass `expectedRoot: true` for a top-level folder, otherwise `expectedParentId`; exactly one is required.
+- It refuses Recently Deleted, smart folders, default and system folders, shared folders, and non-empty folders, with no override. Move or delete the contents first.
+- It is not atomic: the guard is a pre-check followed by an AppleScript delete. Messages starting `Conflict:` mean something changed; read and plan again. It needs Full Disk Access.
+
 ### Folder scope guards
 - `update-note`, `append-to-note`, `delete-note`, and `move-note` accept optional `ifFolderId`, `ifAncestorFolderId`, and `forbiddenAncestorFolderIds` (exact folder ids from `list-folders`).
 - Use them when a write should only happen while the note is still where you reviewed it, or must never touch a protected subtree (for `move-note`, the destination is checked against the forbidden list too).

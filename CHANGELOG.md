@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+## [2.8.45] - 2026-09-23
+
+### Added
+
+- `delete-folder-by-id` deletes one exact, empty, ordinary folder through a
+  plan-then-apply handshake. It requires the folder id plus the current name,
+  account id, and parent id (or `expectedRoot: true`). A dry run returns a
+  revision over the checked state, and the apply call must pass it back
+  unchanged. It refuses Recently Deleted, smart folders, default and system
+  folders, shared folders, and non-empty folders, with no override. Folder
+  type and the stable identifier are read from the local Notes database
+  (read-only), because AppleScript resolves and can delete a smart folder by
+  id even though it never lists one. The guard is a pre-check followed by an
+  AppleScript delete, not one atomic transaction; the Notes.app-visible checks
+  repeat inside the delete script. Two Notes.app quirks are handled: a folder's
+  `folders` list keeps a child deleted earlier in the session (only children
+  that still exist are counted), and the local store can keep a just-deleted
+  note in its old folder for minutes (Notes.app is asked where each such note
+  is now).
+  Failures carry the coded error envelope: `revision_conflict` for drift,
+  `unsupported` for a refused folder, `verification_failed` (indeterminate)
+  for an uncertain outcome, and `full_disk_access_missing` without Full Disk
+  Access. `id` and `expectedParentId` also accept the folder's Notes UUID or
+  numeric key.
+- `get-folder-by-id` also returns `accountId` and `isRoot`.
+
 ## [2.8.44] - 2026-09-23
 
 ### Added

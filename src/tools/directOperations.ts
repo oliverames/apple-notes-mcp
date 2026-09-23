@@ -142,7 +142,7 @@ export function registerDirectOperations(server: McpServer, manager: AppleNotesM
 
   tool(
     "get-folder-by-id",
-    "Use when: reading the exact folder name and parent before a guarded rename.\nReturns: folder id, current name, and parent id.\nDo not use when: listing folders by path (list-folders).\nSafety: read-only.",
+    "Use when: reading the exact folder name, parent, and account before a guarded rename or delete-folder-by-id.\nReturns: folder id, current name, parent id, accountId, and isRoot (true when the folder sits at the account root; pass expectedRoot: true to delete-folder-by-id then, otherwise parentId as expectedParentId).\nDo not use when: listing folders by path (list-folders).\nSafety: read-only.",
     { id: folderId },
     ({ id }) => {
       const folder = manager.getFolderById(id);

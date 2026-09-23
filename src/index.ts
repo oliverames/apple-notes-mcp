@@ -116,6 +116,7 @@ import {
   NotesExportError,
 } from "@/services/notesExport.js";
 import { registerDirectOperations } from "@/tools/directOperations.js";
+import { registerFolderDelete } from "@/tools/folderDelete.js";
 import {
   hasScopeGuard,
   MAX_FORBIDDEN_FOLDERS,
@@ -168,6 +169,7 @@ const server = new McpServer({
  */
 const notesManager = new AppleNotesManager();
 registerDirectOperations(server, notesManager);
+registerFolderDelete(server, notesManager);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 
