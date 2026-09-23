@@ -19,7 +19,8 @@
   - `native-append-plain-text`: appends plain paragraphs guarded by
     `ifRevision`, verified by a fresh read-back. It reports
     `pushScheduled: false`; on macOS 27.2 the change appeared in the running
-    Notes.app at once but was not uploaded to iCloud in the 13 minutes observed.
+    Notes.app at once but was not uploaded to iCloud in the 13 minutes observed;
+    it uploaded only when Notes.app next saved its own change to that note.
     Until it passes a live validation that includes sync, it also requires
     `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
 - `privateHelperCapabilities()` for a future capability matrix, and

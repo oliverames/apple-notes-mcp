@@ -503,9 +503,16 @@ folder, with Notes.app running:
   AppleScript read had Notes.app load the note. For comparison, the same note's creation through AppleScript was
   recorded as uploaded (both counters at 1) within the minute before the
   append. So with Notes.app running, the helper's change was visible locally
-  but not uploaded in that window. Relaunching Notes.app was not tried,
-  because it would interrupt the user; upload on the next launch is the
-  expected path but is unverified here.
+  but not uploaded in that window.
+- The note was then moved to Recently Deleted through AppleScript. Notes.app
+  persisted that move about seven minutes later (a second, unrelated note
+  deleted the same way persisted at the same moment, so the delay is Notes'
+  own save timing). At that save both counters reached 5: Notes.app's own
+  edit to the note scheduled an upload that carried the helper's pending
+  version with it. No save or merge errors appeared in Notes' error log.
+- Relaunching Notes.app was not tried, because it would interrupt the user.
+  Upload on the next launch, or on Notes' next own edit of the note, is the
+  expected path for a helper-only change; the first is unverified here.
 
 The helper cannot upload: CloudKit access for Notes needs Notes.app's
 private entitlements, and scheduling an upload is in-memory state inside
