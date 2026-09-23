@@ -12,7 +12,7 @@
 //
 // Build (src/services/privateHelperBuild.ts; `apple-notes-mcp setup --native-helper`):
 //   xcrun clang -fobjc-arc -O2 -Wall -framework Foundation -framework CoreData \
-//     -framework AppKit -DHELPER_SOURCE_SHA256='"<sha256 of this file>"' \
+//     -framework AppKit -framework PencilKit -DHELPER_SOURCE_SHA256='"<sha256 of this file>"' \
 //     -o apple-notes-private-helper apple-notes-private-helper.m
 //
 // Adding an action: write a `static NSDictionary *HandleX(NSDictionary *)`,
@@ -24,6 +24,7 @@
 #import <CoreData/CoreData.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <Foundation/Foundation.h>
+#import <PencilKit/PencilKit.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <dlfcn.h>
@@ -189,24 +190,28 @@ static NSArray<NSString *> *MissingAPI(const APIRequirement *list, size_t count)
   return missing;
 }
 
-static NSArray<NSString *> *MissingModelProperties(void) {
+static NSArray<NSString *> *MissingModelPropertiesIn(const ModelRequirement *list, size_t count) {
   Class container = objc_getClass("ICPersistentContainer");
   SEL modelSel = sel_registerName("managedObjectModel");
   if (!container || ![container respondsToSelector:modelSel]) return @[ @"managed object model" ];
   NSManagedObjectModel *model = ((id(*)(id, SEL))objc_msgSend)(container, modelSel);
   if (![model isKindOfClass:[NSManagedObjectModel class]]) return @[ @"managed object model" ];
   NSMutableArray *missing = [NSMutableArray array];
-  for (size_t i = 0; i < COUNT(kModelProperties); i++) {
-    NSEntityDescription *entity = model.entitiesByName[@(kModelProperties[i].entity)];
+  for (size_t i = 0; i < count; i++) {
+    NSEntityDescription *entity = model.entitiesByName[@(list[i].entity)];
     if (!entity) {
-      [missing addObject:[NSString stringWithFormat:@"entity %s", kModelProperties[i].entity]];
+      [missing addObject:[NSString stringWithFormat:@"entity %s", list[i].entity]];
       continue;
     }
-    for (NSString *name in [@(kModelProperties[i].properties) componentsSeparatedByString:@","])
+    for (NSString *name in [@(list[i].properties) componentsSeparatedByString:@","])
       if (!entity.propertiesByName[name])
-        [missing addObject:[NSString stringWithFormat:@"%s.%@", kModelProperties[i].entity, name]];
+        [missing addObject:[NSString stringWithFormat:@"%s.%@", list[i].entity, name]];
   }
   return missing;
+}
+
+static NSArray<NSString *> *MissingModelProperties(void) {
+  return MissingModelPropertiesIn(kModelProperties, COUNT(kModelProperties));
 }
 
 typedef NS_ENUM(NSInteger, Feature) { FeatureModel, FeatureRead, FeatureAppend };
@@ -468,12 +473,458 @@ static NSString *RequireIdentifier(NSDictionary *request) {
   return identifier;
 }
 
+#pragma mark - Paper drawings
+
+// Paper (com.apple.paper) keeps its drawing in a Coherence bundle on disk,
+// `Accounts/<account>/Paper/Bundles/<attachment>.bundle`, not in the store.
+// Public PaperKit cannot open that bundle. NotesShared's
+// ICSystemPaperDrawingsHelper can: it returns the attachment's strokes as
+// public PKDrawing objects, whose ink, color, width and points are then read
+// through PencilKit's public API. Nothing here parses bundle bytes, and no
+// geometry is ever synthesized: every number comes from a PKStroke.
+//
+// Reads never touch the live bundle. The helper copies the one bundle into a
+// private temporary directory and redirects every ICAccount directory method
+// to that copy for the life of the process, so whatever NotesShared or
+// Coherence opens, creates or checkpoints is the throwaway copy.
+
+#define MAX_PAPER_STROKES 4096
+#define DEFAULT_PAPER_POINTS 20000
+#define MAX_PAPER_POINTS 40000
+#define MAX_PAPER_BUNDLE_FILES 2048
+#define MAX_PAPER_BUNDLE_BYTES (512LL * 1024 * 1024)
+
+static NSString *const kPaperUTI = @"com.apple.paper";
+
+static const APIRequirement kPaperReadAPI[] = {
+    {"ICSystemPaperDrawingsHelper", "drawingsForAttachment:", YES},
+    {"ICAttachment", "typeUTIIsSystemPaper:", YES},
+    {"ICAccount", "accountFilesDirectoryURL", NO},
+    {"ICAccount", "accountFilesDirectoryURLInApplicationDataContainer", NO},
+    {"ICAccount", "systemPaperDirectoryURL", NO},
+    {"ICAccount", "systemPaperBundlesDirectoryURL", NO},
+    {"ICAccount", "systemPaperTemporaryDirectoryURL", NO},
+    {"ICAccount", "fallbackImageDirectoryURL", NO},
+    {"ICAccount", "fallbackPDFDirectoryURL", NO},
+    {"ICAccount", "previewImageDirectoryURL", NO},
+    {"ICAccount", "mediaDirectoryURL", NO},
+    {"ICAccount", "exportableMediaDirectoryURL", NO},
+    {"ICAccount", "temporaryDirectoryURL", NO},
+    {"PKDrawing", "strokes", NO},
+    {"PKStroke", "ink", NO},
+    {"PKStroke", "path", NO},
+    {"PKStrokePath", "pointAtIndex:", NO},
+};
+
+static const ModelRequirement kPaperModelProperties[] = {
+    {"ICAttachment",
+     "identifier,typeUTI,note,account,markedForDeletion,isPasswordProtected,"
+     "needsInitialFetchFromCloud"},
+};
+
+// Every ICAccount method that yields a directory Notes reads or writes
+// attachment files under, with the subdirectory it maps to inside a sandbox
+// root. All of them are redirected together or not at all.
+typedef struct {
+  const char *sel;
+  const char *suffix;
+} AccountDirectory;
+
+static const AccountDirectory kAccountDirectories[] = {
+    {"accountFilesDirectoryURL", ""},
+    {"accountFilesDirectoryURLInApplicationDataContainer", ""},
+    {"systemPaperDirectoryURL", "Paper"},
+    {"systemPaperBundlesDirectoryURL", "Paper/Bundles"},
+    {"systemPaperTemporaryDirectoryURL", "Paper/Temporary"},
+    {"fallbackImageDirectoryURL", "FallbackImages"},
+    {"fallbackPDFDirectoryURL", "FallbackPDFs"},
+    {"previewImageDirectoryURL", "Previews"},
+    {"mediaDirectoryURL", "Media"},
+    {"exportableMediaDirectoryURL", "ExportableMedia"},
+    {"temporaryDirectoryURL", "Temporary"},
+};
+
+static NSArray<NSString *> *MissingForPaperRead(void) {
+  NSMutableArray *missing = [MissingForFeature(FeatureRead) mutableCopy];
+  if (!gFrameworkLoaded) return missing;
+  [missing addObjectsFromArray:MissingAPI(kPaperReadAPI, COUNT(kPaperReadAPI))];
+  [missing addObjectsFromArray:MissingModelPropertiesIn(kPaperModelProperties,
+                                                        COUNT(kPaperModelProperties))];
+  return missing;
+}
+
+static NSDictionary *PaperFeatureReport(BOOL contextOK, NSString *contextReason) {
+  NSArray *missing = MissingForPaperRead();
+  if (missing.count)
+    return @{@"available" : @NO, @"reason" : @"private_api_unavailable", @"missing" : missing};
+  if (!contextOK)
+    return @{@"available" : @NO, @"reason" : contextReason ?: @"store_unavailable", @"missing" : @[]};
+  return @{@"available" : @YES, @"reason" : [NSNull null], @"missing" : @[]};
+}
+
+static BOOL IsSafePathComponent(NSString *value) {
+  if (![value isKindOfClass:[NSString class]] || value.length == 0 || value.length > 128) return NO;
+  NSCharacterSet *allowed = [NSCharacterSet
+      characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."];
+  if ([value rangeOfCharacterFromSet:allowed.invertedSet].location != NSNotFound) return NO;
+  return ![value isEqualToString:@"."] && ![value isEqualToString:@".."];
+}
+
+static NSString *gSandboxRoot = nil;
+
+static NSURL *SandboxedAccountDirectory(id self, SEL _cmd) {
+  NSString *account = nil;
+  @try {
+    account = [self valueForKey:@"identifier"];
+  } @catch (NSException *e) {
+    account = nil;
+  }
+  // Called from inside NotesShared, so this cannot throw a HelperError. An
+  // unsafe identifier maps to a directory that cannot exist, which makes the
+  // caller fail rather than escape the sandbox.
+  NSString *component = IsSafePathComponent(account) ? account : @"invalid-account";
+  NSString *suffix = @"";
+  for (size_t i = 0; i < COUNT(kAccountDirectories); i++)
+    if (sel_isEqual(_cmd, sel_registerName(kAccountDirectories[i].sel)))
+      suffix = @(kAccountDirectories[i].suffix);
+  NSString *path = [[[gSandboxRoot stringByAppendingPathComponent:@"Accounts"]
+      stringByAppendingPathComponent:component] stringByAppendingPathComponent:suffix];
+  [NSFileManager.defaultManager createDirectoryAtPath:path
+                          withIntermediateDirectories:YES
+                                           attributes:@{NSFilePosixPermissions : @0700}
+                                                error:NULL];
+  return [NSURL fileURLWithPath:path isDirectory:YES];
+}
+
+// Points every ICAccount directory at `root` for the rest of this process.
+// Resolves every method before replacing the first: a partial redirect could
+// leave one path pointing into the live Notes container.
+static void InstallAccountSandbox(NSString *root) {
+  if (gSandboxRoot) {
+    if (![gSandboxRoot isEqualToString:root])
+      Fail(@"internal_error", @"The account sandbox is already installed elsewhere", nil);
+    return;
+  }
+  Class account = objc_getClass("ICAccount");
+  Method methods[COUNT(kAccountDirectories)];
+  for (size_t i = 0; i < COUNT(kAccountDirectories); i++) {
+    methods[i] = account ? class_getInstanceMethod(account, sel_registerName(kAccountDirectories[i].sel))
+                         : NULL;
+    if (!methods[i])
+      Fail(@"private_api_unavailable", @"An ICAccount directory method is missing; refusing to run unsandboxed",
+           @{@"missing" : @[ @(kAccountDirectories[i].sel) ]});
+  }
+  gSandboxRoot = [root copy];
+  for (size_t i = 0; i < COUNT(kAccountDirectories); i++)
+    method_setImplementation(methods[i], (IMP)SandboxedAccountDirectory);
+}
+
+// A private 0700 temporary directory, removed by the caller.
+static NSString *MakePrivateTempDir(NSString *prefix) {
+  NSString *template = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[prefix stringByAppendingString:@".XXXXXX"]];
+  char *buffer = strdup(template.fileSystemRepresentation);
+  char *made = mkdtemp(buffer);
+  NSString *path = made ? [NSFileManager.defaultManager stringWithFileSystemRepresentation:made
+                                                                                    length:strlen(made)]
+                        : nil;
+  free(buffer);
+  if (!path) Fail(@"internal_error", @"Could not create a private temporary directory", nil);
+  chmod(path.fileSystemRepresentation, 0700);
+  return path;
+}
+
+// size and modification time of every regular file in a bundle, refusing
+// links and anything that is not a regular file or directory.
+static NSDictionary *BundleSignature(NSString *bundle, long long *totalBytes) {
+  NSMutableDictionary *signature = [NSMutableDictionary dictionary];
+  long long total = 0;
+  NSDirectoryEnumerator *walker = [NSFileManager.defaultManager enumeratorAtPath:bundle];
+  for (NSString *relative in walker) {
+    NSDictionary *attrs = walker.fileAttributes;
+    NSString *type = attrs.fileType;
+    if ([type isEqualToString:NSFileTypeDirectory]) continue;
+    if (![type isEqualToString:NSFileTypeRegular])
+      Fail(@"unsupported_attachment", @"The Paper bundle contains a link or special file", nil);
+    total += (long long)attrs.fileSize;
+    if (signature.count >= MAX_PAPER_BUNDLE_FILES || total > MAX_PAPER_BUNDLE_BYTES)
+      Fail(@"unsupported_attachment", @"The Paper bundle exceeds the helper's size limits", nil);
+    signature[relative] = [NSString
+        stringWithFormat:@"%llu:%.6f", attrs.fileSize, attrs.fileModificationDate.timeIntervalSince1970];
+  }
+  if (totalBytes) *totalBytes = total;
+  return signature;
+}
+
+// Copies one Paper bundle from the store's container into the sandbox. The
+// bundle directory must sit exactly at Accounts/<account>/Paper/Bundles/ under
+// the store's directory with no link on the way, and must be unchanged across
+// the copy (Notes may be writing it); a moving bundle is retried, then refused.
+static NSDictionary *SnapshotPaperBundle(NSString *storePath, NSString *account, NSString *attachment,
+                                         NSString *sandbox) {
+  if (!IsSafePathComponent(account) || !IsSafePathComponent(attachment))
+    Fail(@"unsupported_attachment", @"The attachment's account or identifier is not a safe path component",
+         nil);
+  NSString *relative = [NSString stringWithFormat:@"Accounts/%@/Paper/Bundles/%@.bundle", account, attachment];
+  NSString *containerDir = [[storePath stringByDeletingLastPathComponent] stringByResolvingSymlinksInPath];
+  NSString *source = [containerDir stringByAppendingPathComponent:relative];
+  if (![[source stringByResolvingSymlinksInPath] isEqualToString:source])
+    Fail(@"unsupported_attachment", @"The Paper bundle path contains a link", nil);
+  BOOL isDir = NO;
+  if (![NSFileManager.defaultManager fileExistsAtPath:source isDirectory:&isDir] || !isDir)
+    Fail(@"bundle_unavailable",
+         @"The Paper bundle is not on this Mac (it may not have downloaded from iCloud yet)", nil);
+  NSString *destination = [sandbox stringByAppendingPathComponent:relative];
+  [NSFileManager.defaultManager createDirectoryAtPath:[destination stringByDeletingLastPathComponent]
+                          withIntermediateDirectories:YES
+                                           attributes:@{NSFilePosixPermissions : @0700}
+                                                error:NULL];
+  for (int attempt = 0; attempt < 3; attempt++) {
+    long long bytes = 0;
+    NSDictionary *before = BundleSignature(source, &bytes);
+    [NSFileManager.defaultManager removeItemAtPath:destination error:NULL];
+    NSError *error = nil;
+    if (![NSFileManager.defaultManager copyItemAtPath:source toPath:destination error:&error])
+      Fail(@"bundle_unavailable", @"Could not copy the Paper bundle",
+           @{@"detail" : OrNull(error.localizedDescription)});
+    NSDictionary *after = BundleSignature(source, NULL);
+    if ([before isEqualToDictionary:after])
+      return @{@"files" : @(before.count), @"bytes" : @(bytes)};
+    usleep(200000);
+  }
+  Fail(@"store_busy", @"The Paper bundle kept changing while it was copied; try again", nil);
+  return nil;
+}
+
+static NSManagedObject *FetchPaperAttachment(NSManagedObjectContext *context, NSDictionary *request) {
+  id attachmentId = request[@"attachmentIdentifier"];
+  id noteId = request[@"identifier"];
+  if ((attachmentId && noteId) || (!attachmentId && !noteId))
+    Fail(@"invalid_request", @"Pass exactly one of `identifier` (note) or `attachmentIdentifier`", nil);
+  NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"ICAttachment"];
+  if (attachmentId) {
+    if (!IsUUID(attachmentId)) Fail(@"invalid_request", @"`attachmentIdentifier` must be a UUID", nil);
+    fetch.predicate = [NSPredicate predicateWithFormat:@"identifier ==[c] %@", attachmentId];
+  } else {
+    if (!IsUUID(noteId)) Fail(@"invalid_request", @"`identifier` must be a Notes UUID", nil);
+    fetch.predicate = [NSPredicate
+        predicateWithFormat:@"note.identifier ==[c] %@ AND typeUTI == %@ AND markedForDeletion != YES", noteId,
+                            kPaperUTI];
+  }
+  fetch.fetchLimit = 64;
+  NSError *error = nil;
+  NSArray *rows = [context executeFetchRequest:fetch error:&error];
+  if (!rows)
+    Fail(@"store_unavailable", @"Attachment fetch failed", @{@"detail" : OrNull(error.localizedDescription)});
+  if (rows.count == 0)
+    Fail(@"not_found", attachmentId ? @"No attachment has that identifier" : @"That note has no Paper drawing",
+         nil);
+  if (rows.count > 1) {
+    NSMutableArray *ids = [NSMutableArray array];
+    for (NSManagedObject *row in rows) [ids addObject:OrNull([row valueForKey:@"identifier"])];
+    Fail(attachmentId ? @"unsupported_attachment" : @"ambiguous_attachment",
+         attachmentId ? @"More than one attachment row has that identifier"
+                      : @"The note has more than one Paper drawing; pass attachmentIdentifier",
+         @{@"attachmentIdentifiers" : ids});
+  }
+  return rows.firstObject;
+}
+
+static void RequireReadablePaper(NSManagedObject *attachment) {
+  NSString *uti = [attachment valueForKey:@"typeUTI"];
+  BOOL isPaper = [uti isKindOfClass:[NSString class]] &&
+                 ((BOOL(*)(id, SEL, id))objc_msgSend)(objc_getClass("ICAttachment"),
+                                                      sel_registerName("typeUTIIsSystemPaper:"), uti) &&
+                 [uti isEqualToString:kPaperUTI];
+  if (!isPaper)
+    Fail(@"unsupported_attachment", @"The attachment is not a Paper drawing (com.apple.paper)",
+         @{@"typeUTI" : OrNull(uti)});
+  NSManagedObject *note = [attachment valueForKey:@"note"];
+  if ([[attachment valueForKey:@"isPasswordProtected"] boolValue] ||
+      (note && SendBool(note, "isPasswordProtected")))
+    Fail(@"unsupported_note", @"Drawings in locked notes are encrypted and are not supported", nil);
+  if ([[attachment valueForKey:@"markedForDeletion"] boolValue])
+    Fail(@"unsupported_attachment", @"The attachment is deleted", nil);
+  if ([[attachment valueForKey:@"needsInitialFetchFromCloud"] boolValue])
+    Fail(@"bundle_unavailable", @"The drawing has not finished downloading from iCloud", nil);
+}
+
+static double Round4(double value) { return round(value * 10000.0) / 10000.0; }
+
+static BOOL AllFinite(const double *values, size_t count) {
+  for (size_t i = 0; i < count; i++)
+    if (!isfinite(values[i])) return NO;
+  return YES;
+}
+
+static NSArray *RectArray(CGRect rect) {
+  return @[ @(Round4(rect.origin.x)), @(Round4(rect.origin.y)), @(Round4(rect.size.width)),
+            @(Round4(rect.size.height)) ];
+}
+
+// Short ink name: "com.apple.ink.pen" -> "pen". Unknown ink identifiers pass
+// through unchanged in `inkIdentifier`.
+static NSString *InkName(NSString *inkType) {
+  NSString *prefix = @"com.apple.ink.";
+  return [inkType hasPrefix:prefix] ? [inkType substringFromIndex:prefix.length] : inkType;
+}
+
+// One stroke as JSON. Points are compact arrays in the order of the
+// response's `pointFields`; `budget` is the number of points still allowed.
+static NSDictionary *StrokeJSON(PKStroke *stroke, BOOL includePoints, NSUInteger *budget,
+                                NSMutableArray *warnings) {
+  PKInk *ink = stroke.ink;
+  NSString *inkType = ink.inkType ?: @"";
+  NSColor *color = [ink.color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+  id colorJSON = [NSNull null];
+  if (color) {
+    double c[4] = {color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent};
+    if (AllFinite(c, 4)) colorJSON = @[ @(Round4(c[0])), @(Round4(c[1])), @(Round4(c[2])), @(Round4(c[3])) ];
+  }
+  if (colorJSON == [NSNull null]) [warnings addObject:@"A stroke color could not be converted to sRGB"];
+  CGAffineTransform t = stroke.transform;
+  double tv[6] = {t.a, t.b, t.c, t.d, t.tx, t.ty};
+  PKStrokePath *path = stroke.path;
+  NSUInteger count = path.count;
+  double widthSum = 0;
+  NSMutableArray *points = [NSMutableArray array];
+  BOOL emit = includePoints && count <= *budget;
+  for (NSUInteger i = 0; i < count; i++) {
+    PKStrokePoint *p = [path pointAtIndex:i];
+    double v[9] = {p.location.x, p.location.y, p.size.width, p.size.height, p.opacity,
+                   p.force,      p.azimuth,    p.altitude,   p.timeOffset};
+    if (!AllFinite(v, 9)) {
+      [warnings addObject:@"A stroke with a non-finite point was skipped"];
+      return nil;
+    }
+    widthSum += v[2];
+    if (emit) {
+      NSMutableArray *row = [NSMutableArray arrayWithCapacity:9];
+      for (int k = 0; k < 9; k++) [row addObject:@(Round4(v[k]))];
+      [points addObject:row];
+    }
+  }
+  // Once one stroke's points do not fit, no later stroke gets any: the strokes
+  // that carry points are always a prefix of the drawing's stroke order.
+  *budget = emit ? *budget - count : 0;
+  NSMutableDictionary *out = [@{
+    @"ink" : InkName(inkType),
+    @"inkIdentifier" : inkType,
+    @"color" : colorJSON,
+    @"width" : @(Round4(count ? widthSum / count : 0)),
+    @"transform" : AllFinite(tv, 6) ? @[ @(tv[0]), @(tv[1]), @(tv[2]), @(tv[3]), @(Round4(tv[4])), @(Round4(tv[5])) ]
+                                    : [NSNull null],
+    @"pointCount" : @(count),
+    @"renderBounds" : RectArray(stroke.renderBounds),
+    @"masked" : @((BOOL)(stroke.mask != nil)),
+  } mutableCopy];
+  if (emit)
+    out[@"points"] = points;
+  else if (includePoints)
+    out[@"pointsOmitted"] = @YES;
+  return out;
+}
+
+static NSArray<PKDrawing *> *DrawingsForAttachment(NSManagedObject *attachment) {
+  id value = ((id(*)(id, SEL, id))objc_msgSend)(objc_getClass("ICSystemPaperDrawingsHelper"),
+                                                sel_registerName("drawingsForAttachment:"), attachment);
+  if ([value isKindOfClass:[PKDrawing class]]) return @[ value ];
+  if (![value isKindOfClass:[NSArray class]]) return @[];
+  NSMutableArray *drawings = [NSMutableArray array];
+  for (id item in value)
+    if ([item isKindOfClass:[PKDrawing class]]) [drawings addObject:item];
+  return drawings;
+}
+
+static NSDictionary *HandleReadPaper(NSDictionary *request) {
+  id includeValue = request[@"includePoints"];
+  if (includeValue && ![includeValue isKindOfClass:[NSNumber class]])
+    Fail(@"invalid_request", @"`includePoints` must be a boolean", nil);
+  BOOL includePoints = includeValue ? [includeValue boolValue] : YES;
+  id maxValue = request[@"maxPoints"];
+  if (maxValue && (![maxValue isKindOfClass:[NSNumber class]] || [maxValue integerValue] < 1 ||
+                   [maxValue integerValue] > MAX_PAPER_POINTS))
+    Fail(@"invalid_request", @"`maxPoints` must be an integer from 1 to 40000", nil);
+  NSUInteger budget = maxValue ? (NSUInteger)[maxValue integerValue] : DEFAULT_PAPER_POINTS;
+  NSArray *missing = MissingForPaperRead();
+  if (missing.count)
+    Fail(@"private_api_unavailable", @"Required NotesShared or PencilKit API is not available on this macOS",
+         @{@"missing" : missing});
+
+  StoreLocation store = ResolveStore();
+  NSString *sandbox = MakePrivateTempDir(@"apple-notes-paper");
+  @try {
+    InstallAccountSandbox(sandbox);
+    NSManagedObjectContext *context = OpenContext(store, YES);
+    NSManagedObject *attachment = FetchPaperAttachment(context, request);
+    RequireReadablePaper(attachment);
+    NSManagedObject *note = [attachment valueForKey:@"note"];
+    id account = (note ? [note valueForKey:@"account"] : nil) ?: [attachment valueForKey:@"account"];
+    NSString *accountId = account ? [account valueForKey:@"identifier"] : nil;
+    NSString *attachmentId = [attachment valueForKey:@"identifier"];
+    NSDictionary *snapshot = SnapshotPaperBundle(store.path, accountId, attachmentId, sandbox);
+
+    NSArray<PKDrawing *> *drawings = DrawingsForAttachment(attachment);
+    NSMutableArray *strokes = [NSMutableArray array];
+    NSMutableArray *warnings = [NSMutableArray array];
+    NSMutableSet *inks = [NSMutableSet set];
+    NSUInteger totalPoints = 0, strokeTotal = 0;
+    CGRect bounds = CGRectNull;
+    BOOL truncated = NO;
+    for (PKDrawing *drawing in drawings) {
+      if (!CGRectIsEmpty(drawing.bounds)) bounds = CGRectUnion(bounds, drawing.bounds);
+      for (PKStroke *stroke in drawing.strokes) {
+        strokeTotal++;
+        if (strokes.count >= MAX_PAPER_STROKES) {
+          truncated = YES;
+          continue;
+        }
+        NSDictionary *json = StrokeJSON(stroke, includePoints, &budget, warnings);
+        if (!json) continue;
+        if (json[@"pointsOmitted"]) truncated = YES;
+        totalPoints += [json[@"pointCount"] unsignedIntegerValue];
+        [inks addObject:json[@"ink"]];
+        [strokes addObject:json];
+      }
+    }
+    return @{
+      @"status" : @"ok",
+      @"storeKind" : store.isCopy ? @"copy" : @"live",
+      @"attachmentIdentifier" : attachmentId,
+      @"noteIdentifier" : OrNull(note ? [note valueForKey:@"identifier"] : nil),
+      @"typeUTI" : [attachment valueForKey:@"typeUTI"],
+      @"decodePath" : @"NotesShared.ICSystemPaperDrawingsHelper",
+      @"vectorDecode" : strokes.count ? @"strokes" : @"empty",
+      @"drawingCount" : @(drawings.count),
+      @"strokeCount" : @(strokeTotal),
+      @"returnedStrokeCount" : @(strokes.count),
+      @"pointCount" : @(totalPoints),
+      @"bounds" : CGRectIsNull(bounds) ? [NSNull null] : RectArray(bounds),
+      @"inks" : [[inks allObjects] sortedArrayUsingSelector:@selector(compare:)],
+      @"pointFields" : @[ @"x", @"y", @"width", @"height", @"opacity", @"force", @"azimuth", @"altitude",
+                          @"timeOffset" ],
+      @"strokes" : strokes,
+      // Typed shapes live only in the Coherence model, which no stable entry
+      // point exposes to an out-of-process reader. They are reported as not
+      // exposed rather than approximated from the rendered image.
+      @"shapes" : @[],
+      @"shapeDecode" : @{@"available" : @NO, @"reason" : @"not_exposed"},
+      @"truncated" : @(truncated),
+      @"warnings" : warnings,
+      @"snapshot" : snapshot,
+    };
+  } @finally {
+    [NSFileManager.defaultManager removeItemAtPath:sandbox error:NULL];
+  }
+}
+
 #pragma mark - Actions
 
 static NSDictionary *HandleHello(NSDictionary *request);
 static NSDictionary *HandleProbe(NSDictionary *request);
 static NSDictionary *HandleReadNoteState(NSDictionary *request);
 static NSDictionary *HandleAppendPlainText(NSDictionary *request);
+static NSDictionary *HandleReadPaper(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -487,6 +938,7 @@ static const ActionSpec kActions[] = {
     {"probe", "", HandleProbe},
     {"read_note_state", "identifier", HandleReadNoteState},
     {"append_plain_text", "identifier,text,ifRevision", HandleAppendPlainText},
+    {"read_paper", "identifier,attachmentIdentifier,includePoints,maxPoints", HandleReadPaper},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -563,6 +1015,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
     @"features" : @{
       @"readNoteState" : FeatureReport(FeatureRead, contextOK, contextReason),
       @"appendPlainText" : FeatureReport(FeatureAppend, contextOK, contextReason),
+      @"readPaper" : PaperFeatureReport(contextOK, contextReason),
     },
   };
 }

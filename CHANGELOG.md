@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+## [2.10.0] - 2026-09-23
+
+### Added
+
+- `native-read-paper` decodes a Paper drawing (`com.apple.paper`) through the
+  opt-in private helper (#181): each stroke's ink, sRGB color, mean width,
+  affine transform, render bounds and points (location, size, opacity, force,
+  azimuth, altitude, time offset), as JSON, an SVG outline with byte-scale
+  `rgba()` colors, or both. Select the drawing by note (`identifier` or `id`,
+  when the note holds one drawing) or by `attachmentIdentifier`; `maxPoints`
+  bounds the response. The strokes come from the public PencilKit objects that
+  NotesShared's `ICSystemPaperDrawingsHelper` builds; no geometry is derived
+  from bundle bytes or the rendered image. Typed shapes are reported as not
+  exposed. Read-only: the helper decodes a private copy of the drawing's
+  bundle with every `ICAccount` directory redirected into it, and opens the
+  store read-only.
+- The helper's new `read_paper` action, a `readPaper` feature in
+  `native-helper-status`, and a Paper decode step in
+  `scripts/test-private-helper-copy-store.sh` that also checks the live
+  bundle is unchanged. The helper now links public PencilKit; rerun
+  `apple-notes-mcp setup --native-helper` after upgrading.
+
 ## [2.9.0] - 2026-09-23
 
 ### Added

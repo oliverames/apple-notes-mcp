@@ -38,7 +38,7 @@ if [ -z "${HELPER:-}" ]; then
   HELPER="$WORK/apple-notes-private-helper"
   SHA="$(/usr/bin/shasum -a 256 "$SOURCE" | cut -d' ' -f1)"
   /usr/bin/xcrun clang -fobjc-arc -O2 -Wall -framework Foundation -framework CoreData \
-    -framework AppKit "-DHELPER_SOURCE_SHA256=\"$SHA\"" -o "$HELPER" "$SOURCE"
+    -framework AppKit -framework PencilKit "-DHELPER_SOURCE_SHA256=\"$SHA\"" -o "$HELPER" "$SOURCE"
   echo "built helper from source sha256 $SHA"
 fi
 
@@ -118,5 +118,47 @@ if [ -n "$LIVE_BEFORE" ]; then
   echo "ok: live note revision unchanged"
 else
   echo "skip: live comparison needs APPLE_NOTES_MCP_ENABLE_PRIVATE=1"
+fi
+
+# 6. Paper decode against the copy. The helper looks for the bundle beside the
+#    copied store (Accounts/<account>/Paper/Bundles), so copy the first Paper
+#    drawing's bundle there. The live bundle is only read (cp), and its file
+#    signature must be the same afterwards.
+LIVE_DIR="$(dirname "$LIVE")"
+PAPER="$(/usr/bin/sqlite3 "$COPY" "SELECT ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT
+  WHERE ZTYPEUTI = 'com.apple.paper' AND IFNULL(ZMARKEDFORDELETION,0) = 0
+    AND IFNULL(ZISPASSWORDPROTECTED,0) = 0 ORDER BY Z_PK LIMIT 1;")"
+if [ -n "$PAPER" ]; then
+  BUNDLE=""
+  for CANDIDATE in "$LIVE_DIR"/Accounts/*/Paper/Bundles/"$PAPER".bundle; do
+    [ -d "$CANDIDATE" ] && BUNDLE="$CANDIDATE"
+  done
+  if [ -n "$BUNDLE" ]; then
+    ACCOUNT_DIR="$(basename "$(dirname "$(dirname "$(dirname "$BUNDLE")")")")"
+    signature() { find "$BUNDLE" -type f -exec stat -f '%N %z %m' {} + | /usr/bin/shasum; }
+    SIG_BEFORE="$(signature)"
+    mkdir -p "$WORK/Accounts/$ACCOUNT_DIR/Paper/Bundles"
+    cp -R "$BUNDLE" "$WORK/Accounts/$ACCOUNT_DIR/Paper/Bundles/"
+    PREQ="{\"protocol\":1,\"action\":\"read_paper\",\"attachmentIdentifier\":\"$PAPER\",\"includePoints\":false}"
+    OUT="$(copy_run "$PREQ" || true)"
+    [ "$(field "$OUT" status)" = "ok" ] || fail "read_paper on the copy failed: $(field "$OUT" code) $(field "$OUT" message)"
+    [ "$(field "$OUT" storeKind)" = "copy" ] || fail "read_paper did not report the copy store"
+    echo "ok: read_paper on the copy: $(field "$OUT" strokeCount) strokes, $(field "$OUT" pointCount) points, vectorDecode $(field "$OUT" vectorDecode)"
+    if [ "${APPLE_NOTES_MCP_ENABLE_PRIVATE:-}" = "1" ]; then
+      LIVE_OUT="$(run "$PREQ" || true)"
+      [ "$(field "$LIVE_OUT" strokeCount)" = "$(field "$OUT" strokeCount)" ] &&
+        [ "$(field "$LIVE_OUT" pointCount)" = "$(field "$OUT" pointCount)" ] ||
+        fail "copy and live decodes disagree"
+      echo "ok: live read_paper agrees with the copy"
+    fi
+    [ "$SIG_BEFORE" = "$(signature)" ] || fail "the live Paper bundle changed during the test"
+    echo "ok: live Paper bundle unchanged"
+    NOPE="{\"protocol\":1,\"action\":\"read_paper\",\"attachmentIdentifier\":\"$NOTE\"}"
+    [ "$(field "$(copy_run "$NOPE" || true)" code)" != "ok" ] || fail "a note UUID decoded as a drawing"
+  else
+    echo "skip: Paper bundle not downloaded on this Mac"
+  fi
+else
+  echo "skip: no Paper drawing in this library"
 fi
 echo "PASS"

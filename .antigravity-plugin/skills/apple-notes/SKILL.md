@@ -81,13 +81,14 @@ Use this skill when the user:
 
 Off unless the user built it (`apple-notes-mcp setup --native-helper`) and set
 `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`. Call `native-helper-status` first; use the
-other two only when it reports the feature `available`.
+other tools only when it reports the feature `available`.
 
 | Tool | Purpose |
 |------|---------|
 | `native-helper-status` | Report opt-in, build, and live-probe state per feature with a reason code |
 | `native-note-state` | Read a note's native state and `revision` token (read-only) |
 | `native-append-plain-text` | Append plain paragraphs with `ifRevision`; verified read-back. Timeout = indeterminate, re-read before retry |
+| `native-read-paper` | Decode a Paper drawing's strokes (ink, sRGB color, width, points) as JSON and/or SVG; typed shapes not exposed (read-only) |
 
 ## Usage Patterns
 

@@ -434,11 +434,13 @@ on error with `{status:"error", code, message}`. Every request carries
 `protocol: 1`; a mismatch is `protocol_mismatch`. Unknown actions and unknown
 request fields are refused. Actions: `hello` (context-free handshake,
 reports the source SHA-256 compiled in), `probe`, `read_note_state`,
-`append_plain_text`. Error codes: `input_too_large`, `invalid_json`,
+`append_plain_text`, `read_paper`. Error codes: `input_too_large`, `invalid_json`,
 `protocol_mismatch`, `unknown_action`, `invalid_request`, `disabled`,
 `store_unavailable`, `private_api_unavailable`, `not_found`,
 `unsupported_note`, `revision_conflict`, `save_failed`,
-`verification_failed`, `internal_error`. Adding an action is a handler plus
+`verification_failed`, `internal_error`, and for Paper
+`unsupported_attachment`, `ambiguous_attachment`, `bundle_unavailable`,
+`store_busy`. Adding an action is a handler plus
 one row in `kActions` and, when it needs new selectors, one requirement table
 the probe reports per feature.
 
@@ -520,6 +522,41 @@ Notes.app. Responses therefore always report `pushScheduled: false`, with
 `pushState: "awaiting_notes_app"` when Notes is running and
 `"queued_for_next_launch"` when it is not. `native-note-state` exposes the two
 version counters so a caller can see when Notes records the upload.
+
+### Paper drawings (`read_paper`)
+
+A Paper drawing (`com.apple.paper`) keeps its content in a Coherence bundle,
+`Accounts/<account>/Paper/Bundles/<attachment>.bundle`, next to the store.
+Public PaperKit cannot load it: `PaperMarkup(dataRepresentation:)` accepts
+only PaperKit's own `%PPK` container, and each `Reference` row of the bundle's
+`Database/data.sqlite3` is refused as "Not a Reference document". Scanning
+those rows with public `PKDrawing(data:)` decoded none of 79 rows in the one
+sample (macOS 27.2), so a raw-bytes route was not pursued.
+
+NotesShared has `+[ICSystemPaperDrawingsHelper drawingsForAttachment:]`,
+which returns the drawing's content as public `PKDrawing` objects. The helper
+reads every stroke through PencilKit's public API: `PKInk.inkType` and
+`color` (converted to sRGB), `PKStroke.transform`, `renderBounds`, `mask`,
+and each `PKStrokePoint`'s location, size, opacity, force, azimuth, altitude
+and time offset. Width is the mean point width. Nothing is derived from the
+bundle's bytes or the fallback image.
+
+Isolation: before opening anything the helper replaces every `ICAccount`
+directory method (`accountFilesDirectoryURL`, `systemPaperBundlesDirectoryURL`,
+`fallbackImageDirectoryURL`, `previewImageDirectoryURL`, and eight more) with
+one that points into a private 0700 temporary directory, then copies the one
+bundle there. If any of those methods is missing it refuses rather than run
+partly redirected. The copy is repeated if the bundle's file sizes or
+modification times change during it, and refused as `store_busy` after three
+tries; links and special files are refused. The store itself is opened
+read-only. The temporary directory is removed before the response is written.
+On macOS 27.2 a decode left the live bundle's file signature unchanged.
+
+Not decoded: typed ShapeMarkup elements (rectangles, arrows, text boxes) live
+only in the Coherence model; reaching them needs Swift-only Coherence and
+PaperKit internals with no stable entry point. `generateFallbackPDFDataForAttachment:`
+returned no data for the sample `com.apple.paper` attachment. The response
+therefore reports `shapes: []` and `shapeDecode.reason: "not_exposed"`.
 
 ### Risks
 

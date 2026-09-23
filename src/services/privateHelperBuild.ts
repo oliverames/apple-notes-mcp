@@ -79,6 +79,9 @@ export function compileArguments(sourcePath: string, outputPath: string, sourceS
     "CoreData",
     "-framework",
     "AppKit",
+    // Public PencilKit: the Paper decoder reads PKDrawing strokes through it.
+    "-framework",
+    "PencilKit",
     // Embedded so `hello` can prove which source the binary came from.
     `-DHELPER_SOURCE_SHA256="${sourceSha}"`,
     "-o",

@@ -62,7 +62,7 @@ process.stdin.on("end", () => {
     case "hello":
       out({ status: "ok", protocolVersion: Number(process.env.FAKE_PROTOCOL || 1), sourceSha256: process.env.FAKE_SOURCE_SHA || "dev", actions: ["hello", "probe", "read_note_state", "append_plain_text"] });
     case "probe":
-      out({ status: "ok", protocolVersion: 1, os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: mode === "ok", reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature("read"), appendPlainText: feature("append") } });
+      out({ status: "ok", protocolVersion: 1, os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: mode === "ok", reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature("read"), appendPlainText: feature("append"), ...(mode === "old-helper" ? {} : { readPaper: feature("paper") }) } });
     case "read_note_state":
       out({ status: "ok", identifier: req.identifier, objectURI: "x-coredata://S/ICNote/p1", title: "t", modificationDate: "2026-09-23T00:00:00.000Z", folderIdentifier: "F", passwordProtected: false, deletedOrInTrash: false, sharedViaICloud: false, editable: true, revision: "r1:" + "b".repeat(64), cloudSync, syncHostRunning: true, echo: req });
     case "append_plain_text":
@@ -506,5 +506,16 @@ describe("privateHelperCapabilities never throws", SPAWN_TIMEOUT, () => {
       fx.deps({ ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" })
     );
     expect(allowed.features.appendPlainText.available).toBe(true);
+  });
+
+  it("reports the Paper decoder, and treats a helper without it as unavailable", () => {
+    fx.install();
+    expect(privateHelperCapabilities(fx.deps(ON)).features.readPaper.available).toBe(true);
+    const old = privateHelperCapabilities(fx.deps({ ...ON, FAKE_MODE: "old-helper" }));
+    expect(old.features.readPaper).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(privateHelperCapabilities(fx.deps()).features.readPaper.reason).toBe("disabled");
   });
 });

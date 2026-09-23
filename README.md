@@ -1252,6 +1252,27 @@ itself. A timeout returns `committed: "unknown"`; read the note state before
 retrying. Until this path passes live validation in a release it also requires
 `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
 
+#### `native-read-paper`
+
+Decodes one Paper drawing (`com.apple.paper`) into its strokes. Pass the
+note's `identifier` or `id` (the note must hold exactly one Paper drawing) or
+the drawing's `attachmentIdentifier`. Each stroke reports its ink (`pen`,
+`pencil`, `marker`, …), color as sRGB `[r, g, b, a]` from 0 to 1, mean width,
+affine `transform`, render bounds, and its points as arrays in `pointFields`
+order (x, y, width, height, opacity, force, azimuth, altitude, timeOffset).
+`format: "svg"` or `"both"` adds an SVG outline with one round-capped path per
+stroke and colors written as byte-scale `rgba(R,G,B,A)`; the SVG does not
+reproduce PencilKit's variable width or ink texture. `maxPoints` (default
+20,000, at most 40,000) caps the points returned; later strokes then carry
+`pointsOmitted: true` and `truncated` is true. Typed shapes are reported as
+`shapeDecode: {available: false, reason: "not_exposed"}`, never approximated.
+
+The strokes come from public PencilKit objects that NotesShared builds from
+the drawing's bundle, not from parsing bundle bytes. The helper decodes a
+private copy of the bundle and opens the store read-only, so the live drawing
+is never opened for writing. Read-only; refuses locked notes, deleted
+drawings, and drawings not yet downloaded (`bundle_unavailable`).
+
 ## Usage Patterns
 
 ### Basic Workflow

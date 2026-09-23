@@ -198,6 +198,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `native-helper-status`, `native-note-state`, and `native-append-plain-text` use Apple's private NotesShared framework through a helper the user builds with `apple-notes-mcp setup --native-helper`. They are off unless `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`; each refusal carries a `code` (`disabled`, `helper_not_installed`, `helper_stale`, `helper_modified`, `private_api_unavailable`, `store_unavailable`, `not_live_validated`).
 - Always call `native-helper-status` first. Do not suggest enabling the helper unprompted: it is unsupported API and can break on any macOS update.
 - `native-append-plain-text` needs `ifRevision` from a fresh `native-note-state`. A `revision_conflict` means re-read and decide again; never retry blindly. `committed: "unknown"` (timeout) means read the state before any retry.
+- `native-read-paper` decodes a Paper drawing's strokes (read-only; feature `readPaper` in `native-helper-status`). Pass `attachmentIdentifier` when a note has several drawings (`ambiguous_attachment` lists them). Colors are sRGB 0..1 in JSON and byte-scale `rgba()` in the SVG. Typed shapes are not exposed, so do not describe the SVG as a pixel-exact copy; Notes' own rendering is the drawing's fallback image, not this SVG.
 - `pushScheduled` is always `false`: the helper cannot upload. Notes.app shows the change locally; iCloud upload is Notes.app's job and may wait for Notes.app to relaunch. Check `cloudSync.uploadPending` in `native-note-state`.
 
 ### Multi-account

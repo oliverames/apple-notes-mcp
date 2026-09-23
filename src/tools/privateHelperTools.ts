@@ -25,13 +25,13 @@ import {
   type PrivateHelperDeps,
 } from "../services/privateHelper.js";
 
-const coreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
-const notesUuid = z
+export const coreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
+export const notesUuid = z
   .string()
   .regex(/^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i);
 
 /** Resolve the Notes UUID from either an explicit identifier or an x-coredata id. */
-function resolveIdentifier(
+export function resolveIdentifier(
   manager: AppleNotesManager,
   args: { identifier?: string; id?: string }
 ): string {
@@ -49,7 +49,7 @@ function resolveIdentifier(
   return match[1];
 }
 
-function errorResult(error: unknown) {
+export function errorResult(error: unknown) {
   const payload =
     error instanceof PrivateHelperError
       ? {

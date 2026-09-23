@@ -255,7 +255,12 @@ export const probeSchema = z
       .passthrough(),
     syncHostRunning: z.boolean(),
     features: z
-      .object({ readNoteState: featureSchema, appendPlainText: featureSchema })
+      .object({
+        readNoteState: featureSchema,
+        appendPlainText: featureSchema,
+        // Absent from helpers built before the Paper decoder existed.
+        readPaper: featureSchema.optional(),
+      })
       .passthrough(),
   })
   .passthrough();
@@ -511,6 +516,7 @@ export interface PrivateCapabilities {
   features: {
     readNoteState: PrivateFeatureStatus;
     appendPlainText: PrivateFeatureStatus;
+    readPaper: PrivateFeatureStatus;
   };
 }
 
@@ -548,6 +554,7 @@ export function privateHelperCapabilities(
   const both = (status: PrivateFeatureStatus) => ({
     readNoteState: status,
     appendPlainText: status,
+    readPaper: status,
   });
   if (installation.reason === "unsupported_platform")
     return {
@@ -598,6 +605,10 @@ export function privateHelperCapabilities(
     enabled,
     installation,
     probe,
-    features: { readNoteState: read, appendPlainText: append },
+    features: {
+      readNoteState: read,
+      appendPlainText: append,
+      readPaper: featureFromProbe(probe.features.readPaper),
+    },
   };
 }

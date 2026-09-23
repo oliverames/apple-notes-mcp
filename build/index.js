@@ -44636,7 +44636,12 @@ var probeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema, appendPlainText: featureSchema }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema,
+    appendPlainText: featureSchema,
+    // Absent from helpers built before the Paper decoder existed.
+    readPaper: featureSchema.optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema = external_exports.object({
   available: external_exports.boolean(),
@@ -44836,7 +44841,8 @@ function privateHelperCapabilities(deps = defaultDeps()) {
   });
   const both = (status) => ({
     readNoteState: status,
-    appendPlainText: status
+    appendPlainText: status,
+    readPaper: status
   });
   if (installation.reason === "unsupported_platform")
     return {
@@ -44882,7 +44888,11 @@ function privateHelperCapabilities(deps = defaultDeps()) {
     enabled,
     installation,
     probe,
-    features: { readNoteState: read, appendPlainText: append }
+    features: {
+      readNoteState: read,
+      appendPlainText: append,
+      readPaper: featureFromProbe(probe.features.readPaper)
+    }
   };
 }
 
@@ -44909,6 +44919,9 @@ function compileArguments(sourcePath, outputPath, sourceSha) {
     "CoreData",
     "-framework",
     "AppKit",
+    // Public PencilKit: the Paper decoder reads PKDrawing strokes through it.
+    "-framework",
+    "PencilKit",
     // Embedded so `hello` can prove which source the binary came from.
     `-DHELPER_SOURCE_SHA256="${sourceSha}"`,
     "-o",
@@ -45163,6 +45176,206 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
   );
 }
 
+// src/services/privatePaper.ts
+var MAX_PAPER_POINTS = 4e4;
+var PAPER_POINT_FIELDS = [
+  "x",
+  "y",
+  "width",
+  "height",
+  "opacity",
+  "force",
+  "azimuth",
+  "altitude",
+  "timeOffset"
+];
+var finite = external_exports.number().finite();
+var rgba = external_exports.tuple([finite, finite, finite, finite]);
+var rect = external_exports.tuple([finite, finite, finite, finite]);
+var paperStrokeSchema = external_exports.object({
+  ink: external_exports.string(),
+  inkIdentifier: external_exports.string(),
+  /** sRGB red, green, blue, alpha, each 0..1. Null when the ink color has no sRGB form. */
+  color: rgba.nullable(),
+  /** Mean rendered point width. */
+  width: finite,
+  /** Affine transform [a, b, c, d, tx, ty] from point space to drawing space. */
+  transform: external_exports.tuple([finite, finite, finite, finite, finite, finite]).nullable(),
+  pointCount: external_exports.number().int().nonnegative(),
+  renderBounds: rect,
+  masked: external_exports.boolean(),
+  points: external_exports.array(external_exports.array(finite).length(PAPER_POINT_FIELDS.length)).optional(),
+  pointsOmitted: external_exports.literal(true).optional()
+}).passthrough();
+var paperReadSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  storeKind: external_exports.enum(["live", "copy"]),
+  attachmentIdentifier: external_exports.string(),
+  noteIdentifier: external_exports.string().nullable(),
+  typeUTI: external_exports.string(),
+  decodePath: external_exports.string(),
+  vectorDecode: external_exports.enum(["strokes", "empty"]),
+  drawingCount: external_exports.number().int().nonnegative(),
+  strokeCount: external_exports.number().int().nonnegative(),
+  returnedStrokeCount: external_exports.number().int().nonnegative(),
+  pointCount: external_exports.number().int().nonnegative(),
+  bounds: rect.nullable(),
+  inks: external_exports.array(external_exports.string()),
+  pointFields: external_exports.array(external_exports.string()),
+  strokes: external_exports.array(paperStrokeSchema),
+  shapes: external_exports.array(external_exports.unknown()),
+  shapeDecode: external_exports.object({ available: external_exports.boolean(), reason: external_exports.string().nullable() }).passthrough(),
+  truncated: external_exports.boolean(),
+  warnings: external_exports.array(external_exports.string())
+}).passthrough();
+function assertPaperReadRequest(request) {
+  const hasNote = request.identifier !== void 0;
+  const hasAttachment = request.attachmentIdentifier !== void 0;
+  if (hasNote === hasAttachment)
+    throw new PrivateHelperError(
+      "invalid_request",
+      "Pass exactly one of identifier (note) or attachmentIdentifier"
+    );
+  if (hasNote) assertNoteIdentifier(request.identifier);
+  else {
+    try {
+      assertNoteIdentifier(request.attachmentIdentifier);
+    } catch {
+      throw new PrivateHelperError("invalid_request", "attachmentIdentifier must be a UUID");
+    }
+  }
+  if (request.maxPoints !== void 0 && (!Number.isInteger(request.maxPoints) || request.maxPoints < 1 || request.maxPoints > MAX_PAPER_POINTS))
+    throw new PrivateHelperError(
+      "invalid_request",
+      `maxPoints must be an integer from 1 to ${MAX_PAPER_POINTS}`
+    );
+}
+function readPaper(request, deps = defaultDeps()) {
+  assertPaperReadRequest(request);
+  const fields = {};
+  if (request.identifier !== void 0) fields.identifier = request.identifier;
+  if (request.attachmentIdentifier !== void 0)
+    fields.attachmentIdentifier = request.attachmentIdentifier;
+  if (request.includePoints !== void 0) fields.includePoints = request.includePoints;
+  if (request.maxPoints !== void 0) fields.maxPoints = request.maxPoints;
+  const response = callPrivateHelper("read_paper", fields, deps);
+  const parsed = paperReadSchema.safeParse(response);
+  if (!parsed.success)
+    throw new PrivateHelperError(
+      "invalid_response",
+      `Unexpected helper response: ${parsed.error.issues.slice(0, 5).map((i) => i.path.join(".") + " " + i.message).join("; ")}`
+    );
+  return parsed.data;
+}
+
+// src/utils/paperSvg.ts
+function formatNumber(value, digits = 3) {
+  const text = Number(value.toFixed(digits)).toString();
+  return text === "-0" ? "0" : text;
+}
+function clamp01(value) {
+  return Math.min(1, Math.max(0, value));
+}
+function rgbaCss(color) {
+  if (!color) return "rgba(0,0,0,1)";
+  const [r, g, b] = color.slice(0, 3).map((c) => Math.round(clamp01(c) * 255));
+  return `rgba(${r},${g},${b},${formatNumber(clamp01(color[3]), 4)})`;
+}
+function isIdentity(t) {
+  return t[0] === 1 && t[1] === 0 && t[2] === 0 && t[3] === 1 && t[4] === 0 && t[5] === 0;
+}
+function strokePathData(points) {
+  const coords = points.map((p) => `${formatNumber(p[0])} ${formatNumber(p[1])}`);
+  if (coords.length === 1) coords.push(coords[0]);
+  return `M ${coords.join(" L ")}`;
+}
+function paperToSvg(input) {
+  const [x, y, w, h] = input.bounds ?? [0, 0, 1, 1];
+  const width = Math.max(w, 1);
+  const height = Math.max(h, 1);
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${formatNumber(width, 2)}" height="${formatNumber(height, 2)}" viewBox="${formatNumber(x)} ${formatNumber(y)} ${formatNumber(width)} ${formatNumber(height)}">`
+  ];
+  let pathCount = 0;
+  let skippedStrokes = 0;
+  for (const stroke of input.strokes) {
+    if (!stroke.points || stroke.points.length === 0) {
+      skippedStrokes++;
+      continue;
+    }
+    const attrs = [
+      `d="${strokePathData(stroke.points)}"`,
+      'fill="none"',
+      `stroke="${rgbaCss(stroke.color)}"`,
+      `stroke-width="${formatNumber(Math.max(stroke.width, 0))}"`,
+      'stroke-linecap="round"',
+      'stroke-linejoin="round"'
+    ];
+    if (stroke.transform && !isIdentity(stroke.transform))
+      attrs.push(
+        `transform="matrix(${stroke.transform.map((n) => formatNumber(n, 6)).join(" ")})"`
+      );
+    parts.push(`<path ${attrs.join(" ")}/>`);
+    pathCount++;
+  }
+  parts.push("</svg>");
+  return { svg: parts.join("\n") + "\n", pathCount, skippedStrokes };
+}
+
+// src/tools/privatePaperTools.ts
+function registerPrivatePaperTools(server2, manager, depsFactory = () => defaultDeps()) {
+  const inputSchema = {
+    identifier: notesUuid.optional().describe("Note UUID; the note must hold exactly one Paper drawing"),
+    id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+    attachmentIdentifier: notesUuid.optional().describe("UUID of one Paper attachment"),
+    format: external_exports.enum(["json", "svg", "both"]).optional().describe("json (default): stroke data; svg: an SVG document; both"),
+    includePoints: external_exports.boolean().optional().describe("Include per-point arrays (default true). SVG output needs points."),
+    maxPoints: external_exports.number().int().min(1).max(MAX_PAPER_POINTS).optional().describe(`Point budget across the drawing (default 20000, max ${MAX_PAPER_POINTS})`)
+  };
+  const handler = async (args) => {
+    try {
+      const deps = depsFactory();
+      const format = args.format ?? "json";
+      const byNote = args.identifier !== void 0 || args.id !== void 0;
+      const decoded = readPaper(
+        {
+          identifier: byNote ? resolveIdentifier(manager, args) : void 0,
+          attachmentIdentifier: args.attachmentIdentifier,
+          includePoints: args.includePoints,
+          maxPoints: args.maxPoints
+        },
+        deps
+      );
+      const { status: _status, ...data } = decoded;
+      void _status;
+      const result = { ok: true, ...data };
+      if (format !== "json") {
+        const rendered = paperToSvg(decoded);
+        result.svg = rendered.svg;
+        result.svgPathCount = rendered.pathCount;
+        result.svgSkippedStrokes = rendered.skippedStrokes;
+      }
+      if (format === "svg") delete result.strokes;
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        structuredContent: result
+      };
+    } catch (error2) {
+      return errorResult(error2);
+    }
+  };
+  server2.registerTool(
+    "native-read-paper",
+    {
+      description: "Use when: you need the vector content of an Apple Notes Paper drawing (com.apple.paper): each stroke's ink, color, width, transform and points, or an SVG outline of them.\nReturns: decodePath, strokeCount, pointCount, bounds, inks, strokes (color as sRGB 0..1 [r,g,b,a]; points as arrays in `pointFields` order), and with format svg/both an SVG whose colors are byte-scale rgba(). Typed shapes are reported as not exposed (`shapeDecode`). `truncated` is true when the point budget cut points off.\nDo not use when: you only need Notes' rendered image of the drawing or its handwriting text.\nSafety: read-only. The helper decodes a private copy of the drawing's bundle and opens the Notes store read-only. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and a built helper; pass exactly one of identifier, id, or attachmentIdentifier.",
+      inputSchema,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      outputSchema: external_exports.object({ ok: external_exports.boolean() }).passthrough()
+    },
+    handler
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -45187,6 +45400,7 @@ registerDirectOperations(server, notesManager);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
+registerPrivatePaperTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

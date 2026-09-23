@@ -105,6 +105,7 @@ describe("compileArguments", () => {
     expect(args[0]).toBe("clang");
     expect(args).toContain("-fobjc-arc");
     expect(args).not.toContain("NotesShared");
+    expect(args).toContain("PencilKit");
     expect(args).toContain(`-DHELPER_SOURCE_SHA256="${SOURCE_SHA}"`);
     expect(args.slice(-3)).toEqual(["-o", "/out", "/s.m"]);
   });
