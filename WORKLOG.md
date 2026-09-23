@@ -16,7 +16,7 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
 - [ ] `fix/large-attachment-read` (`be1dfa2`, base 8c90ea7): real fix for sweetrb/apple-notes-mcp#237 (reads >64 MB hit maxBuffer; deletes >5 MB blocked by the inline expected-body limit). Upstream #242 only explains the error. Rebase on main, make `classifyBodyReadError` recognise the new overflow error, renumber, then offer as a follow-up to #242.
 
 ## Open upstream PRs to keep mergeable
-- sweetrb/apple-notes-mcp#231 (review changes in progress), #234, #235, #238. Every upstream merge re-conflicts version/CHANGELOG/manifests/build.
+- sweetrb/apple-notes-mcp#231: all review points addressed and replied (9e3a7f4); sweetrb pushed 3de370a (2.9.11), awaiting his re-review. #234, #235, #238 synced. Every upstream merge re-conflicts version/CHANGELOG/manifests/build.
 
 ## Private writes (fork only; upstream hold)
 - [ ] `feat/native-writes-foundation` (`671c539`): separate opt-in writer binary on top of upstream's read-only helper; copy-store test passes. Needs live smoke test in the `apple-notes-mcp test` folder.
