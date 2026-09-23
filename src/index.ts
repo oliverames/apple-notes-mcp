@@ -74,6 +74,7 @@ import {
   appendMarkdownHtml,
   countTaskItems,
   stripDuplicateTitleHeading,
+  usesMarkdownBlocks,
 } from "@/utils/appendMarkdown.js";
 import {
   enrichNoteRead,
@@ -426,7 +427,7 @@ registerTool(
         .max(MAX.CONTENT)
         .optional()
         .describe(
-          'Note body; required unless contentPath is given (pass exactly one). AppleScript cannot create true Apple Notes checklists — `<input type="checkbox">`, checklist CSS classes, and markdown `- [ ]` lines do not render as checkable items. To produce a checklist, create the note with a plain `<ul>` or `- ` list and convert it in Notes.app with ⇧⌘L.'
+          'Note body; required unless contentPath is given (pass exactly one). In plaintext and HTML, AppleScript cannot create true Apple Notes checklists — `<input type="checkbox">`, checklist CSS classes, and markdown `- [ ]` lines do not render as checkable items; create a plain `<ul>` or `- ` list and convert it in Notes.app with ⇧⌘L. With format "markdown" (markdownRoute "shortcut"), `- [ ]`/`- [x]` lines, `>` block quotes, ``` fenced code, `---` dividers and `inline code` (which Notes renders as a highlight, not monospace) become native styles (see create-note-markdown-blocks in get-capabilities).'
         ),
       contentPath: z
         .string()
@@ -448,7 +449,7 @@ registerTool(
         .optional()
         .default("shortcut")
         .describe(
-          "How format 'markdown' is imported. 'shortcut' (default) uses the Create Markdown Note Shortcut for real Title/Heading/Subheading styles (iCloud only, no tags; see get-capabilities). 'html' is the fallback when that Shortcut is not installed or the note is outside iCloud: it converts the same bounded Markdown subset to HTML and creates the note through AppleScript in any account, rendering `- [ ]` / `- [x]` task items as ordinary list rows that start with a visible ☐ / ☑ character — not native, checkable checklist items."
+          "How format 'markdown' is imported. 'shortcut' (default) uses the Create Markdown Note Shortcut for real Title/Heading/Subheading styles (iCloud only, no tags; see get-capabilities). 'html' is the fallback when that Shortcut is not installed or the note is outside iCloud: it converts the same bounded Markdown subset to HTML and creates the note through AppleScript in any account, rendering `- [ ]` / `- [x]` task items as ordinary list rows that start with a visible ☐ / ☑ character — not native, checkable checklist items — refusing block quotes, fenced code and inline code, and keeping a `---` line as literal text."
         ),
       tags: z
         .array(z.string().max(MAX.TAG))
@@ -555,6 +556,9 @@ registerTool(
           'tags are not supported with format "markdown"; create the note without tags, then add them with add-native-tags using the returned id'
         );
       requireValidated("create-note-markdown");
+      // Block quotes, fenced code, checklist items, dividers and inline code
+      // have their own gate, so they can be withdrawn without the rest.
+      if (usesMarkdownBlocks(content)) requireValidated("create-note-markdown-blocks");
       const result = createMarkdownNote(notesManager, { title, content, folder });
       return successResponse(`Note created from Markdown: "${title}" [id: ${result.id}]`, {
         ...result,

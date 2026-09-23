@@ -1,5 +1,42 @@
 ## [Unreleased]
 
+## [2.8.33] - 2026-09-23
+
+### Added
+
+- `create-note` with `format: "markdown"` accepts the block constructs Notes'
+  own Markdown importer maps to native styles: `- [ ]`/`- [x]` lines become
+  checklist items with that done state, `>` lines a block quote, a bare
+  ` ``` ` fence Monospaced paragraphs (code text kept literal), a `---`
+  line after a blank line a divider, and `` `inline code` `` highlighted text
+  (not monospace). The readback now checks block-quote text, Monospaced text,
+  each checklist item's text and done state, the divider count and the
+  highlighted text before the note is moved or reported. Constructs the
+  importer would not render faithfully or the server cannot yet verify stay
+  refused, with a specific reason (language after a fence, `~~~` fences,
+  nested or indented quotes, a quote followed directly by text, `---` directly
+  under text, `[X]` or `*`/`+` checklist markers, checklist items next to
+  ordinary list items, padded inline code, tables and strikethrough). These
+  constructs have their own gate, `create-note-markdown-blocks` in
+  `get-capabilities`, live-verified on macOS 27.2: one created note carried
+  the quote flag on the quoted lines, Monospaced style on the code lines
+  (indentation and literal `*`/`_` kept), two checklist items with done
+  states 0 and 1, one `dividerline` attachment, and one highlight run.
+- `readRichNote` style runs carry the decoded paragraph style, block-quote flag
+  and highlight flag alongside the existing comparison signature.
+
+### Unchanged
+
+- `append-native`'s `format: "markdown"` still refuses these constructs. Its
+  Shortcuts Markdown converter is a different one: a live test on macOS 27.2
+  rendered a quote and a fenced block as plain body text, `- [ ]`/`- [x]` as
+  bullets with literal brackets, and inline code as plain text, and dropped
+  `---`.
+- `markdownRoute: "html"` is unaffected: it still renders `- [ ]`/`- [x]` as
+  ☐ / ☑ glyph rows (not native checklist items), keeps a `---` line as literal
+  text, and refuses block quotes, fenced code and inline code, which only the
+  Shortcut route imports natively.
+
 ## [2.8.32] - 2026-09-23
 
 ### Added

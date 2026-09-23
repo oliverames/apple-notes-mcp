@@ -31,6 +31,7 @@ export const VERIFIED_BACKGROUND = new Set<string>([
   "remove-native-tags",
   "replace-native-tag",
   "create-note-markdown",
+  "create-note-markdown-blocks",
 ]);
 const LIVE_VALIDATION_BLOCKERS: Record<string, string> = {};
 const signingRefusal =
@@ -236,6 +237,7 @@ export function registerNativeOperations(server: McpServer, manager: AppleNotesM
         "replace-native-tag",
         "insert-note-link",
         "create-note-markdown",
+        "create-note-markdown-blocks",
       ];
       let tagBridgeInstalled = false;
       try {
@@ -251,7 +253,7 @@ export function registerNativeOperations(server: McpServer, manager: AppleNotesM
       }
       // create-note's Markdown format runs on its own bridge; the rest share Background Operations.
       const installed = (name: string) =>
-        name === "create-note-markdown" ? markdownBridgeInstalled : bridge.installed;
+        name.startsWith("create-note-markdown") ? markdownBridgeInstalled : bridge.installed;
       return {
         bridge,
         nativeTagBridgeInstalled: tagBridgeInstalled,

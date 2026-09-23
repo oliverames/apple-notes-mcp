@@ -26,6 +26,16 @@ describe("task glyph rendering for the HTML Markdown route", () => {
     expect(() => appendMarkdownHtml("- [ ]", { taskGlyphs: true })).toThrow();
   });
 
+  it.each(["> quote", "```\ncode\n```", "run `ls`"])(
+    "still refuses the Shortcut-only block construct %j with task glyphs on",
+    (text) => expect(() => appendMarkdownHtml(text, { taskGlyphs: true })).toThrow()
+  );
+
+  it("keeps a --- line as literal text, not a divider, with task glyphs on", () =>
+    expect(appendMarkdownHtml("a\n\n---", { taskGlyphs: true })).toBe(
+      "<div>a</div><div><br></div><div>---</div>"
+    ));
+
   it("counts only bullet task items", () => {
     expect(countTaskItems("- [ ] a\r\n- [x] b\n- c\n1. [ ] d\ntext [ ] e")).toBe(2);
   });

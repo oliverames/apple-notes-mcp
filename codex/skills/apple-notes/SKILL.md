@@ -281,6 +281,14 @@ Use HTML for predictable rich notes. Apple Notes normalizes HTML internally, but
   checklist; say so to the user).
 - To import a Markdown or text file, pass its absolute path as `contentPath`
   instead of `content` (UTF-8, at most 1 MiB, inside home, temp, or `/Volumes`).
+- On the default Shortcut route, `create-note` with `format: "markdown"` also
+  maps block constructs to native Notes styles (`create-note-markdown-blocks` in `get-capabilities`): `- [ ]`/`- [x]` → native checklist items with that done state,
+  `> text` → a block quote, a bare ` ``` ` fence (no language) →
+  Monospaced paragraphs, a `---` line after a blank line → a divider, and
+  `` `inline code` `` → **highlighted** text (not monospace). Code content is
+  kept literal. `append-native` still refuses all of these, because its
+  converter flattens them (quotes and code to plain body text, `- [ ]` to a
+  bullet with literal brackets, `---` dropped). `markdownRoute: "html"` does not map them either: it renders `- [ ]`/`- [x]` as ☐ / ☑ glyph rows, keeps `---` as literal text, and refuses the rest.
 - Use `<ul><li>` and `<ol><li>` for native bullet and numbered lists. Add `<div><br></div>` after closing `</ul>` or `</ol>` so the next section has spacing.
 - Use `<b>`, `<i>`, `<u>`, and `<s>` for inline emphasis.
 - Use `<tt>` (or `<code>`) for commands, code, paths, API keys, and other technical strings.
@@ -301,7 +309,7 @@ notes, or create a separate formatted note.
 
 Some Notes UI features cannot be created by the current AppleScript-backed create/update tools:
 
-- Interactive checklists: create a plain list instead. Use `get-checklist-state` only to read existing checklist state.
+- Interactive checklists: in plaintext or HTML, create a plain list instead; `create-note` with `format: "markdown"` and `- [ ]`/`- [x]` lines creates real ones, and `create-checklist-item` appends one unchecked item. Use `get-checklist-state` to read checklist state.
 - Collapsible headings: API-created headings look like headings, but may not get Notes' native collapse controls.
 - Block quotes, dashed lists, and background highlights: these require manual Notes UI formatting.
 
