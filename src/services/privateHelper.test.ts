@@ -133,6 +133,10 @@ function caught(fn: () => unknown): PrivateHelperError {
   throw new Error("expected a PrivateHelperError");
 }
 
+// These tests spawn a real fake helper several times each, which can pass the
+// 5 s default under coverage instrumentation or on a slower CI runner.
+const SPAWN_TIMEOUT = { timeout: 20_000 };
+
 describe("configuration", () => {
   it("is opt-in: only the exact value 1 enables the helper", () => {
     expect(privateHelperEnabled({})).toBe(false);
@@ -167,7 +171,7 @@ describe("configuration", () => {
   });
 });
 
-describe("inspectInstallation fails closed", () => {
+describe("inspectInstallation fails closed", SPAWN_TIMEOUT, () => {
   it("refuses other platforms", () => {
     const r = inspectInstallation({ ...fx.deps(), platform: "linux" });
     expect(r).toMatchObject({ ready: false, reason: "unsupported_platform" });
@@ -226,7 +230,7 @@ describe("inspectInstallation fails closed", () => {
   });
 });
 
-describe("callPrivateHelper", () => {
+describe("callPrivateHelper", SPAWN_TIMEOUT, () => {
   it("refuses while the opt-in flag is off, before anything runs", () => {
     fx.install();
     const e = caught(() => callPrivateHelper("probe", {}, fx.deps()));
@@ -347,7 +351,7 @@ describe("callPrivateHelper", () => {
   });
 });
 
-describe("typed actions", () => {
+describe("typed actions", SPAWN_TIMEOUT, () => {
   it("parses the probe", () => {
     fx.install();
     const probe = probePrivateHelper(fx.deps(ON));
@@ -441,7 +445,7 @@ describe("text and identifier rules", () => {
   });
 });
 
-describe("privateHelperCapabilities never throws", () => {
+describe("privateHelperCapabilities never throws", SPAWN_TIMEOUT, () => {
   it("reports unsupported platforms", () => {
     const c = privateHelperCapabilities({ ...fx.deps(ON), platform: "linux" });
     expect(c.features.readNoteState).toMatchObject({
