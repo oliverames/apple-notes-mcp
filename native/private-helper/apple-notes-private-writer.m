@@ -990,9 +990,13 @@ static NSArray<NSString *> *AttachmentGlyphs(NSAttributedString *text) {
                    inRange:NSMakeRange(0, text.length)
                    options:0
                 usingBlock:^(id value, NSRange range, BOOL *stop) {
-                  (void)range;
                   (void)stop;
-                  if (value) [glyphs addObject:CanonicalValue(value)];
+                  if (!value) return;
+                  // Adjacent glyphs for the same attachment form one attribute
+                  // run; list each character so a duplicate glyph is counted
+                  // and a removed one fails the sequence check.
+                  NSString *canonical = CanonicalValue(value);
+                  for (NSUInteger i = 0; i < range.length; i++) [glyphs addObject:canonical];
                 }];
   return glyphs;
 }

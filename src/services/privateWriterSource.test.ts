@@ -110,6 +110,11 @@ describe("private writer source contract", () => {
     expect(CODE).toMatch(
       /AttachmentGlyphs\(persisted\) isEqual:AttachmentGlyphs\(plan\.expected\)/
     );
+    // One entry per glyph character, so two adjacent glyphs of one attachment
+    // (Notes stores AppleScript-added images that way) are not merged into one run.
+    expect(CODE).toMatch(
+      /for \(NSUInteger i = 0; i < range\.length; i\+\+\) \[glyphs addObject:canonical\]/
+    );
     // No target may contain an attachment glyph unless its selector kind allows it.
     expect(CODE).toMatch(
       /static BOOL TargetMayTouchAttachment\(NSString \*kind\) \{\s*\(void\)kind;\s*return NO;/
