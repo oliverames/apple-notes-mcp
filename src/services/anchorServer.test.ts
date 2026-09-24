@@ -7,12 +7,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { request } from "node:http";
-import type { networkInterfaces } from "node:os";
 import {
   parseAnchorsArgs,
   runAnchorsCli,
   startAnchorServer,
-  tailnetAddress,
   type AnchorLookup,
 } from "./anchorServer.js";
 
@@ -160,29 +158,7 @@ describe("anchor resolver server", () => {
   });
 });
 
-describe("tailnetAddress and arguments", () => {
-  const iface = (address: string, internal = false) => ({
-    address,
-    netmask: "255.192.0.0",
-    family: "IPv4" as const,
-    mac: "00:00:00:00:00:00",
-    internal,
-    cidr: null,
-  });
-
-  it("picks a 100.64.0.0/10 address, preferring utun interfaces", () => {
-    const interfaces = {
-      en0: [iface("192.168.1.2"), iface("100.64.0.9")],
-      utun4: [iface("100.101.102.103")],
-      lo0: [iface("127.0.0.1", true)],
-    } as ReturnType<typeof networkInterfaces>;
-    expect(tailnetAddress(interfaces)).toBe("100.101.102.103");
-    expect(tailnetAddress({ en0: [iface("100.128.0.1"), iface("100.63.255.255")] })).toBe(
-      undefined
-    );
-    expect(tailnetAddress({})).toBeUndefined();
-  });
-
+describe("arguments", () => {
   it("parses serve options and rejects anything else", () => {
     expect(parseAnchorsArgs([])).toMatchObject({ help: true });
     expect(parseAnchorsArgs(["serve"])).toEqual({ port: 0, tailnet: false, help: false });

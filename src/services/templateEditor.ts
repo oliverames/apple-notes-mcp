@@ -28,10 +28,17 @@
  *
  * @module services/templateEditor
  */
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { emptyStats } from "../utils/exportRender.js";
+import {
+  bearerToken,
+  crossOriginRefusal,
+  hostAuthority,
+  newServerToken,
+  tokenMatches,
+} from "../utils/localServer.js";
 import {
   BUILTIN_TEMPLATE_NAMES,
   builtinTemplate,
@@ -102,18 +109,16 @@ class EditorHttpError extends Error {
   }
 }
 
-const editorTokenMatches = (given: string | undefined, token: string): boolean => {
-  if (!given) return false;
-  const a = Buffer.from(given);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
-};
-
+/** The editor prefers the Authorization header over `?token=`. */
 function editorPresentedToken(req: IncomingMessage, url: URL): string | undefined {
-  const auth = req.headers.authorization;
-  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
-  return url.searchParams.get("token") ?? undefined;
+  return bearerToken(req)?.trim() ?? url.searchParams.get("token") ?? undefined;
 }
+
+const CROSS_ORIGIN_MESSAGE = {
+  "cross-site": "Cross-site requests are refused.",
+  "foreign-origin": "Cross-origin requests are refused.",
+  "missing-origin": "POST requires the editor's own Origin.",
+} as const;
 
 async function readEditorJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const type = req.headers["content-type"] ?? "";
@@ -152,7 +157,7 @@ export async function startTemplateEditor(
   const host = options.host ?? "127.0.0.1";
   const idleMs = options.idleMs ?? DEFAULT_EDITOR_IDLE_MS;
   const store = options.store ?? new TemplateStore();
-  const token = options.token ?? randomBytes(32).toString("hex");
+  const token = options.token ?? newServerToken();
   const samples = templateSamples();
 
   const initialName = options.name ?? "standard-markdown";
@@ -276,16 +281,10 @@ export async function startTemplateEditor(
     if (req.headers.host !== hostHeader)
       throw new EditorHttpError(421, "wrong-host", "Unexpected Host header.");
     const url = new URL(req.url ?? "/", origin);
-    if (!editorTokenMatches(editorPresentedToken(req, url), token))
+    if (!tokenMatches(editorPresentedToken(req, url), token))
       throw new EditorHttpError(401, "unauthorized", "Missing or wrong token.");
-    const site = req.headers["sec-fetch-site"];
-    if (site && site !== "same-origin" && site !== "none")
-      throw new EditorHttpError(403, "cross-origin", "Cross-site requests are refused.");
-    const requestOrigin = req.headers.origin;
-    if (requestOrigin !== undefined && requestOrigin !== origin)
-      throw new EditorHttpError(403, "cross-origin", "Cross-origin requests are refused.");
-    if (req.method === "POST" && requestOrigin !== origin)
-      throw new EditorHttpError(403, "cross-origin", "POST requires the editor's own Origin.");
+    const refusal = crossOriginRefusal(req, origin, req.method === "POST");
+    if (refusal) throw new EditorHttpError(403, "cross-origin", CROSS_ORIGIN_MESSAGE[refusal]);
     touch();
 
     const route = `${req.method} ${url.pathname}`;
@@ -376,7 +375,7 @@ export async function startTemplateEditor(
     });
   });
   const port = (server.address() as AddressInfo).port;
-  const authority = host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+  const authority = hostAuthority(host, port);
   origin = `http://${authority}`;
   hostHeader = authority;
   touch();

@@ -5,7 +5,7 @@
  * @module services/templateEditorCli
  */
 import { readExportNote, readExportNoteMeta } from "../utils/noteExportData.js";
-import { findTailnetAddress } from "../utils/tailnetAddress.js";
+import { findTailnetAddress } from "../utils/localServer.js";
 import {
   DEFAULT_EDITOR_IDLE_MS,
   startTemplateEditor,

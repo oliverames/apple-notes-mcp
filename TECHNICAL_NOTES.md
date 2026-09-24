@@ -612,8 +612,10 @@ corrupt file is never rewritten. The limit is 20,000 anchors.
 (`src/services/anchorServer.ts`) answers `GET /a/<anchor-id>` with a 302 to
 the current `applenotes://` link when the anchor resolves, and a plain-text
 409 or 404 otherwise. It binds 127.0.0.1, or with `--tailnet` the first IPv4
-in 100.64.0.0/10 found by `os.networkInterfaces()` (utun interfaces first).
-It never runs `tailscale` or changes any configuration. The request checks
+in 100.64.0.0/10 found by `os.networkInterfaces()` (utun interfaces first),
+through the same `findTailnetAddress` as the template editor
+(`src/utils/localServer.ts`). It never runs `tailscale` or changes any
+configuration. The request checks
 run in this order: the failed-token limit (429), the method (GET or HEAD),
 the Host header (the bound address, or `localhost` on loopback), and the
 token (`?token=` or `Authorization: Bearer`, compared with `timingSafeEqual`),
@@ -1041,6 +1043,11 @@ the URL, and never logged.
 The address comes from `os.networkInterfaces()`: the first non-internal IPv4
 in 100.64.0.0/10, preferring `utun*` interfaces. No `tailscale` command runs,
 and no Tailscale, Serve/Funnel or firewall setting is read or changed.
+`findTailnetAddress` in src/utils/localServer.ts does this for both the
+editor and `anchors serve`. The same module holds the parts the two servers
+share: the per-run token, the Bearer header reader, the constant-time
+comparison, the `Host` authority and the cross-origin check (used by the
+editor only). Each server keeps its own order of checks and status codes.
 Without such an address the command exits 1. The same token, host and origin
 checks apply. Tailscale encrypts the traffic between devices, but the
 editor speaks plain HTTP and anyone on the tailnet who can reach the port and
