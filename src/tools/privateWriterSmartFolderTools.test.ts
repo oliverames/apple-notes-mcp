@@ -22,11 +22,11 @@ const REV = `f1:${"a".repeat(64)}`;
 const QUERY = { entity: "note", type: { checklist: true } };
 const WRITER = { writer: true };
 
-function fixture() {
+function fixture(nudge: Record<string, unknown> = {}) {
   const registerTool = vi.fn();
   registerPrivateWriterSmartFolderTools({ registerTool } as unknown as McpServer, () => ({
     writer: WRITER as never,
-    nudge: {} as never,
+    nudge: nudge as never,
   }));
   const call = async (name: string, args: Record<string, unknown>) => {
     const item = registerTool.mock.calls.find((c) => c[0] === name);
@@ -88,6 +88,79 @@ describe("smart folder writer tools", () => {
     );
     await call("native-delete-smart-folder", { identifier: FOLDER, dryRun: true });
     expect(deleteSmartFolder).toHaveBeenCalledWith({ identifier: FOLDER, dryRun: true }, WRITER);
+  });
+
+  it("passes the scope guard and asks a running Notes.app whether it shows a committed change", async () => {
+    const F1 = "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p10298";
+    const URI = "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p77";
+    const scripts: string[] = [];
+    let clock = 0;
+    const nudge = {
+      notesRunning: () => true,
+      runAppleScript: (script: string) => {
+        scripts.push(script);
+        return { success: true, output: `${URI}\t1\tReading\n` };
+      },
+      sleep: async (ms: number) => {
+        clock += ms;
+      },
+      now: () => clock,
+    };
+    vi.mocked(createSmartFolder).mockReturnValue({
+      status: "created",
+      committed: true,
+      identifier: FOLDER,
+      objectURI: URI,
+      title: "Reading",
+      markedForDeletion: false,
+    } as never);
+    const { call } = fixture(nudge);
+    const r = await call("native-create-smart-folder", {
+      title: "Reading",
+      query: QUERY,
+      parentIdentifier: F1,
+      ifFolderId: F1,
+      adoptionWaitSeconds: 0,
+    });
+    expect(vi.mocked(createSmartFolder).mock.calls[0][0]).toMatchObject({
+      scope: { ifFolderId: F1 },
+    });
+    expect(scripts).toHaveLength(1);
+    expect(r.structuredContent).toMatchObject({
+      ok: true,
+      adoptedByNotesApp: true,
+      adoption: { checked: true, expected: "visible", nameInNotesApp: "Reading" },
+    });
+
+    // A deleted smart folder is adopted once Notes.app stops showing it.
+    vi.mocked(deleteSmartFolder).mockReturnValue({
+      status: "deleted",
+      committed: true,
+      identifier: FOLDER,
+      objectURI: URI,
+      title: "Reading",
+      markedForDeletion: true,
+    });
+    const deleted = await call("native-delete-smart-folder", {
+      identifier: FOLDER,
+      dryRun: false,
+      ifRevision: REV,
+      adoptionWaitSeconds: 0,
+    });
+    expect(deleted.structuredContent).toMatchObject({
+      adoptedByNotesApp: false,
+      adoption: { expected: "absent", reason: "still_visible" },
+    });
+
+    // Nothing committed (a no-op or a dry run): no AppleScript at all.
+    vi.mocked(updateSmartFolder).mockReturnValue({ status: "ok", committed: false } as never);
+    const noop = await call("native-update-smart-folder", {
+      identifier: FOLDER,
+      query: QUERY,
+      ifRevision: REV,
+    });
+    expect(scripts).toHaveLength(2);
+    expect(noop.structuredContent).not.toHaveProperty("adoptedByNotesApp");
   });
 
   it("reports the smart-folder destination refusal like the destination guard", async () => {

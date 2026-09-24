@@ -27,6 +27,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 /** 32 hex digits, or the same UUID with dashes. */
 export const TODO_IDENTIFIER =
@@ -114,7 +115,13 @@ export function readNativeChecklist(
  * state.
  */
 export function setChecklistItem(
-  request: { identifier: string; todoIdentifier: string; done: boolean; ifRevision: string },
+  request: {
+    identifier: string;
+    todoIdentifier: string;
+    done: boolean;
+    ifRevision: string;
+    scope?: ScopeGuard;
+  },
   deps: PrivateHelperDeps = defaultWriterDeps()
 ): SetChecklistResult {
   assertNoteIdentifier(request.identifier);
@@ -122,6 +129,7 @@ export function setChecklistItem(
   if (typeof request.done !== "boolean")
     throw new PrivateWriteError("invalid_request", "done must be true or false", false);
   assertRevision(request.ifRevision, "native-checklist-state or native-note-state");
+  const scope = writerScopeFields(request.scope);
   requireLiveValidated(CHECKLIST_TOGGLE_LIVE_VALIDATED, "native-set-checklist-item", deps.env);
   return parseWriterResult(
     setChecklistResultSchema,
@@ -132,6 +140,7 @@ export function setChecklistItem(
         todoIdentifier: request.todoIdentifier.toLowerCase(),
         done: request.done,
         ifRevision: request.ifRevision,
+        ...scope,
       },
       deps
     ),

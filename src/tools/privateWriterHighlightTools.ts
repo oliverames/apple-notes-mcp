@@ -33,6 +33,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 /** Build the writer target from the tool arguments, refusing mixed scopes. */
 function highlightTarget(args: {
@@ -105,6 +106,7 @@ export function registerPrivateWriterHighlightTools(
         .describe(
           "Report the target ranges, character count, and current highlight without writing"
         ),
+      ...writerScopeGuardInput(),
       nudge: z
         .boolean()
         .optional()
@@ -129,6 +131,7 @@ export function registerPrivateWriterHighlightTools(
           color: args.color,
           ifRevision: args.ifRevision,
           dryRun: args.dryRun,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

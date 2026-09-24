@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { packageRoot } from "./privateHelper.js";
 import { WRITER_ACTIONS, WRITER_SOURCE_RELATIVE } from "./privateWriter.js";
+import { SCOPE_GUARDED_ACTIONS } from "./privateWriterScope.js";
 
 const SOURCE = readFileSync(join(packageRoot(__dirname), WRITER_SOURCE_RELATIVE), "utf8");
 const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "")
@@ -325,6 +326,63 @@ describe("private writer source contract", () => {
     );
     expect(body).toMatch(/if \(FolderKind\(parent\) == 2\)/);
     expect(SOURCE).toMatch(/@"reason" : @"smart_folder_destination"/);
+  });
+
+  it("checks folder scope guards on every write, in its own context just before the save", () => {
+    const table = SOURCE.slice(SOURCE.indexOf("kScopeGuardedActions[] = {"));
+    const guarded = [
+      ...table
+        .slice(0, table.indexOf("};"))
+        .matchAll(/\{"([a-z_]+)", ScopeSubject(Note|Folder|NewFolder)\}/g),
+    ].map((m) => m[1]);
+    // Every write action takes the guard, and the client table matches.
+    for (const [name, kind] of Object.entries(WRITER_ACTIONS))
+      if (kind === "write") expect(guarded, name).toContain(name);
+    expect(new Set(guarded)).toEqual(new Set(Object.keys(SCOPE_GUARDED_ACTIONS)));
+    // Both save sites (the append's own and SaveOrFailFor) evaluate the guard
+    // right before the save, and there is no other save.
+    expect(CODE.match(/save:&\w+\]/g)).toHaveLength(2);
+    expect(
+      CODE.match(
+        /EnforceScopeGuard\(context\);\s*NSError \*saveError = nil;\s*gSaveAttempted = YES;/g
+      )
+    ).toHaveLength(2);
+    // Dispatch validates the fields first and re-checks a call that saved nothing.
+    expect(CODE).toMatch(
+      /ParseScopeGuard\(request, subject\);\s*NSDictionary \*result = kActions\[i\]\.handler\(request\);\s*CheckScopeGuardWithoutSave\(\);/
+    );
+    // Fail closed: an id that names no existing folder, or a forbidden id that
+    // names a deleted one, refuses the call.
+    const resolve = SOURCE.slice(
+      SOURCE.indexOf("static NSManagedObjectID *ResolveScopeFolder("),
+      SOURCE.indexOf("static NSManagedObjectID *PersistedParent(")
+    );
+    expect(resolve).toMatch(/if \(!folder\)\s*ScopeFail\(writing, @"scope_folder_not_found"/);
+    expect(resolve).toMatch(/if \(forbidden && BoolAttr\(deleted, @"markedForDeletion"\)\)/);
+    // Folders above the subject are re-read from the store, not the cache.
+    expect(CODE).toMatch(/request\.includesPendingChanges = NO;/);
+    // The note's folder is the one the write read (optimistic locking covers it).
+    expect(SOURCE).toMatch(/committedValuesForKeys:@\[ @"folder" \]/);
+    expect(SOURCE).toMatch(/\{"ICFolder", "identifier,parent,markedForDeletion"\}/);
+  });
+
+  it("repairs a purge flag with an ordinary move to Recently Deleted, never a purge", () => {
+    const body = SOURCE.slice(
+      SOURCE.indexOf("static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request) {"),
+      SOURCE.indexOf("#pragma mark - Sync state")
+    );
+    expect(body).toMatch(/OpenContext\(store, dryRun\)/);
+    expect(body).toMatch(
+      /if \(!IsJSONBool\(request\[@"confirm"\]\) \|\| !\[request\[@"confirm"\] boolValue\]\)/
+    );
+    expect(body).toMatch(/if \(!\[plan\[@"repairable"\] boolValue\]\)/);
+    expect(body).toMatch(/SendVoid\(note, "unmarkForDeletion"\)/);
+    expect(body).toMatch(/SendVoid1\(note, "setFolder:", trash\)/);
+    expect(body).toMatch(/RequireExpectedChanges\(context, allowed/);
+    expect(body).not.toMatch(/"markForDeletion"|deleteNote|deleteObject/);
+    // Verification re-reads the flag, the folder, and the body afresh.
+    expect(body).toMatch(/NSManagedObjectContext \*fresh = OpenContext\(store, YES\)/);
+    expect(body).toMatch(/the note body changed/);
   });
 
   it("identifies itself as the writer in hello and probe", () => {

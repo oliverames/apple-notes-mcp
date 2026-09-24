@@ -36,6 +36,7 @@ import {
   requireLiveValidated,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 /** A query passed as a JSON string or as the parsed object. */
 export type SmartFolderQueryInput = string | Record<string, unknown>;
@@ -226,6 +227,8 @@ export interface CreateSmartFolderRequest {
   query: SmartFolderQueryInput;
   account?: string;
   parentIdentifier?: string;
+  /** Folder preconditions on the smart folder's parent, checked just before the save. */
+  scope?: ScopeGuard;
 }
 
 export function createSmartFolder(
@@ -247,6 +250,7 @@ export function createSmartFolder(
     assertFolderReference(request.parentIdentifier, "parentIdentifier");
     fields.parentIdentifier = request.parentIdentifier;
   }
+  Object.assign(fields, writerScopeFields(request.scope));
   requireLiveValidated(SMART_FOLDERS_LIVE_VALIDATED, "native-create-smart-folder", deps.env);
   return withDecoded(
     parseWriterResult(
@@ -261,6 +265,8 @@ export interface UpdateSmartFolderRequest {
   identifier: string;
   query: SmartFolderQueryInput;
   ifRevision: string;
+  /** Folder preconditions on the smart folder's parent, checked just before the save. */
+  scope?: ScopeGuard;
 }
 
 export function updateSmartFolder(
@@ -276,7 +282,12 @@ export function updateSmartFolder(
       updateSmartFolderResultSchema,
       callPrivateWriter(
         "update_smart_folder",
-        { identifier: request.identifier, queryJSON: text, ifRevision: request.ifRevision },
+        {
+          identifier: request.identifier,
+          queryJSON: text,
+          ifRevision: request.ifRevision,
+          ...writerScopeFields(request.scope),
+        },
         deps
       ),
       true
@@ -288,6 +299,8 @@ export interface DeleteSmartFolderRequest {
   identifier: string;
   dryRun: boolean;
   ifRevision?: string;
+  /** Folder preconditions on the smart folder's parent, checked just before the save. */
+  scope?: ScopeGuard;
 }
 
 export function deleteSmartFolder(
@@ -302,7 +315,7 @@ export function deleteSmartFolder(
       deleteSmartFolderPlanSchema,
       callPrivateWriter(
         "delete_smart_folder",
-        { identifier: request.identifier, dryRun: true },
+        { identifier: request.identifier, dryRun: true, ...writerScopeFields(request.scope) },
         deps,
         { dryRun: true }
       ),
@@ -315,7 +328,12 @@ export function deleteSmartFolder(
     deleteSmartFolderResultSchema,
     callPrivateWriter(
       "delete_smart_folder",
-      { identifier: request.identifier, dryRun: false, ifRevision: request.ifRevision },
+      {
+        identifier: request.identifier,
+        dryRun: false,
+        ifRevision: request.ifRevision,
+        ...writerScopeFields(request.scope),
+      },
       deps
     ),
     true

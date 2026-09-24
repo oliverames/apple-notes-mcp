@@ -179,6 +179,7 @@ import { registerPrivateWriterParagraphTools } from "@/tools/privateWriterParagr
 import { registerPrivateWriterTableTools } from "@/tools/privateWriterTableTools.js";
 import { registerPrivateWriterSmartFolderTools } from "@/tools/privateWriterSmartFolderTools.js";
 import { registerPrivatePaperWriterTools } from "@/tools/privatePaperWriterTools.js";
+import { registerPrivateWriterPurgeRepairTools } from "@/tools/privateWriterPurgeRepairTools.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -245,6 +246,7 @@ registerPrivateWriterParagraphTools(server, notesManager);
 registerPrivateWriterTableTools(server, notesManager);
 registerPrivateWriterSmartFolderTools(server);
 registerPrivatePaperWriterTools(server, notesManager);
+registerPrivateWriterPurgeRepairTools(server, notesManager);
 
 // =============================================================================
 // Response Helpers

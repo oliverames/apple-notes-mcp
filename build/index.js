@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid9 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid9}))`);
+        const invalid10 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid10}))`);
       }
     };
     exports.default = def;
@@ -52807,7 +52807,7 @@ function chooseTemplate(request, deps) {
       "invalid-request",
       "Provide at most one of 'template' or 'templateFile'."
     );
-  const invalid9 = (error2, where) => new NotesExportError("invalid-template", `${where}: ${error2.message}`, error2.errors);
+  const invalid10 = (error2, where) => new NotesExportError("invalid-template", `${where}: ${error2.message}`, error2.errors);
   if (request.template !== void 0) {
     const name2 = request.template;
     if (isBuiltinTemplate(name2))
@@ -52820,7 +52820,7 @@ function chooseTemplate(request, deps) {
       portable2 = deps.findTemplate?.(name2);
     } catch (error2) {
       if (error2 instanceof TemplateValidationError)
-        throw invalid9(error2, `Saved template "${name2}"`);
+        throw invalid10(error2, `Saved template "${name2}"`);
       throw error2;
     }
     if (!portable2) throw new NotesExportError("template-not-found", `No template named "${name2}".`);
@@ -52840,7 +52840,7 @@ function chooseTemplate(request, deps) {
   try {
     portable = parseTemplate(text2);
   } catch (error2) {
-    throw invalid9(error2, "templateFile");
+    throw invalid10(error2, "templateFile");
   }
   const name = portable.name ?? basename4(request.templateFile, extname5(request.templateFile));
   return { info: { name, source: "file" }, template: resolveTemplate(portable, name) };
@@ -55727,7 +55727,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid9 = () => this.issue(
+      const invalid10 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -55737,7 +55737,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint2 = parsePaint(value);
-          if (paint2.kind === "invalid") invalid9();
+          if (paint2.kind === "invalid") invalid10();
           else if (name === "fill") style.fill = paint2;
           else style.stroke = paint2;
           break;
@@ -55745,12 +55745,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid9();
+          else invalid10();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid9();
+          if (w === null || w < 0) invalid10();
           else style.strokeWidth = w;
           break;
         }
@@ -55758,7 +55758,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid9();
+          if (o === null) invalid10();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -55766,7 +55766,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid9();
+          else invalid10();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -55786,14 +55786,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid9();
+          if (!list || list.some((v) => v < 0)) invalid10();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid9();
+          if (o === null) invalid10();
           else style.dashoffset = o;
           break;
         }
@@ -58741,6 +58741,56 @@ import { join as join32 } from "node:path";
 
 // src/services/privateWriter.ts
 import { join as join31 } from "node:path";
+
+// src/services/privateWriterScope.ts
+var FOLDER_ID_MESSAGE = "Use an exact folder id from list-folders (x-coredata://\u2026/ICFolder/p\u2026)";
+function writerScopeGuardInput(subject = "note") {
+  const where = subject === "note" ? "the note's folder" : "the smart folder's parent (or destination) folder";
+  return {
+    ifFolderId: exactIdInput("ICFolder", SCOPE_FOLDER_ID, FOLDER_ID_MESSAGE, { maxLength: 256 }).optional().describe(
+      `Precondition: ${where} must be exactly this folder (id from list-folders). The writer checks it in the same transaction, just before the save.`
+    ),
+    ifAncestorFolderId: exactIdInput("ICFolder", SCOPE_FOLDER_ID, FOLDER_ID_MESSAGE, {
+      maxLength: 256
+    }).optional().describe(
+      `Precondition: ${where} must be this folder or one of its subfolders. Checked just before the save.`
+    ),
+    forbiddenAncestorFolderIds: exactIdArrayInput("ICFolder", SCOPE_FOLDER_ID, FOLDER_ID_MESSAGE, {
+      maxLength: 256,
+      maxItems: MAX_FORBIDDEN_FOLDERS
+    }).optional().describe(
+      `Precondition: ${where} must not be any of these folders or inside them${subject === "note" ? "" : ", and none may be the smart folder itself"}. Every id must name an existing folder, or the call is refused. Checked just before the save.`
+    )
+  };
+}
+function scopeGuardFrom(args) {
+  const guard = {
+    ifFolderId: args.ifFolderId,
+    ifAncestorFolderId: args.ifAncestorFolderId,
+    forbiddenAncestorFolderIds: args.forbiddenAncestorFolderIds
+  };
+  return hasScopeGuard(guard) ? guard : void 0;
+}
+function writerScopeFields(guard) {
+  if (!hasScopeGuard(guard)) return {};
+  try {
+    validateScopeGuard(guard);
+  } catch (error2) {
+    throw new PrivateWriteError(
+      "invalid_request",
+      error2 instanceof Error ? error2.message : String(error2),
+      false
+    );
+  }
+  const fields = {};
+  if (guard.ifFolderId) fields.ifFolderId = guard.ifFolderId;
+  if (guard.ifAncestorFolderId) fields.ifAncestorFolderId = guard.ifAncestorFolderId;
+  if (guard.forbiddenAncestorFolderIds?.length)
+    fields.forbiddenAncestorFolderIds = [...guard.forbiddenAncestorFolderIds];
+  return fields;
+}
+
+// src/services/privateWriter.ts
 var PRIVATE_WRITER_PROTOCOL = 1;
 var WRITES_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
 var ALLOW_UNVERIFIED_ENV = "APPLE_NOTES_MCP_ALLOW_UNVERIFIED";
@@ -58774,7 +58824,8 @@ var WRITER_ACTIONS = {
   create_smart_folder: "write",
   update_smart_folder: "write",
   delete_smart_folder: "write",
-  add_paper: "write"
+  add_paper: "write",
+  repair_purge_flag: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
 var PAPER_WRITE_LIVE_VALIDATED = false;
@@ -58787,6 +58838,7 @@ var LINK_CARD_LIVE_VALIDATED = false;
 var PARAGRAPH_IDS_LIVE_VALIDATED = false;
 var TABLE_WRITES_LIVE_VALIDATED = false;
 var SMART_FOLDERS_LIVE_VALIDATED = false;
+var PURGE_REPAIR_LIVE_VALIDATED = false;
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join31(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -58896,7 +58948,9 @@ var writerProbeSchema = external_exports.object({
     tables: featureSchema2.optional(),
     pruneOrphanTable: featureSchema2.optional(),
     smartFolders: featureSchema2.optional(),
-    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional()
+    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional(),
+    scopeGuards: featureSchema2.optional(),
+    purgeRepair: featureSchema2.optional()
   }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
@@ -59082,10 +59136,12 @@ function appendPlainText(request, deps = defaultWriterDeps()) {
   assertNoteIdentifier2(request.identifier);
   assertAppendText(request.text);
   assertRevision(request.ifRevision);
+  const scope2 = writerScopeFields(request.scope);
   requireLiveValidated(APPEND_LIVE_VALIDATED, "native-append-plain-text", deps.env);
+  const { identifier, text: text2, ifRevision: ifRevision3 } = request;
   return parseWriterResult(
     appendResultSchema,
-    callPrivateWriter("append_plain_text", request, deps),
+    callPrivateWriter("append_plain_text", { identifier, text: text2, ifRevision: ifRevision3, ...scope2 }, deps),
     true
   );
 }
@@ -59319,6 +59375,7 @@ function editNote(request, deps = defaultWriterDeps()) {
   };
   if (request.requireNonSystemPaper !== void 0)
     fields.requireNonSystemPaper = request.requireNonSystemPaper;
+  Object.assign(fields, writerScopeFields(request.scope));
   if (request.dryRun) {
     return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
   }
@@ -59370,7 +59427,10 @@ var WRITER_FEATURES = [
     probeKey: "smartFolders",
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED
   },
-  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED }
+  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  // Folder scope guards only refuse writes; there is nothing to validate live.
+  { key: "scopeGuards", probeKey: "scopeGuards", liveValidated: true },
+  { key: "purgeRepair", probeKey: "purgeRepair", liveValidated: PURGE_REPAIR_LIVE_VALIDATED }
 ];
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
@@ -59669,6 +59729,23 @@ function moveInPlaceScript(noteURI, folderURI) {
     "end tell"
   ].join("\n");
 }
+function notesRunningForThisUser(run = execFileSync21, uid = process.getuid?.() ?? -1) {
+  if (uid < 0)
+    throw new Error("Cannot tell whose Notes.app is running: no user id on this platform");
+  try {
+    run("/usr/bin/pgrep", ["-x", "-u", String(uid), "Notes"], {
+      timeout: 5e3,
+      stdio: "ignore"
+    });
+    return true;
+  } catch (error2) {
+    if (error2.status === 1) return false;
+    const reason = error2 instanceof Error ? error2.message : String(error2);
+    throw new Error(`Could not check whether Notes.app is running (pgrep: ${reason})`, {
+      cause: error2
+    });
+  }
+}
 function defaultNudgeDeps(overrides = {}) {
   return {
     helper: defaultWriterDeps(),
@@ -59676,14 +59753,7 @@ function defaultNudgeDeps(overrides = {}) {
     launchNotes: () => {
       execFileSync21("/usr/bin/open", ["-g", "-a", "Notes"], { timeout: 15e3 });
     },
-    notesRunning: () => {
-      try {
-        execFileSync21("/usr/bin/pgrep", ["-x", "Notes"], { timeout: 5e3, stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    notesRunning: () => notesRunningForThisUser(),
     sleep: (ms) => new Promise((resolve9) => setTimeout(resolve9, ms)),
     now: () => Date.now(),
     ...overrides
@@ -59795,16 +59865,167 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
 }
 var QUIT_SCRIPT = 'tell application "Notes" to quit';
 var QUIT_TIMEOUT_MS = 2e4;
+var RELAUNCH_ADOPTION_WAIT_SECONDS = 20;
 async function waitForQuit(deps, timeoutMs) {
   const end = deps.now() + timeoutMs;
   for (; ; ) {
-    if (!deps.notesRunning()) return true;
+    let running;
+    try {
+      running = deps.notesRunning();
+    } catch (error2) {
+      throw relaunchFailed(
+        `Notes.app was asked to quit, but ${errorText(error2)}. Nothing was relaunched; check Notes.app.`
+      );
+    }
+    if (!running) return true;
     if (deps.now() >= end) return false;
     await deps.sleep(500);
   }
 }
-function relaunchFailed(message) {
-  return new PrivateWriteError("relaunch_failed", message, false);
+function errorText(error2) {
+  const text2 = error2 instanceof Error ? error2.message : String(error2);
+  return text2.charAt(0).toLowerCase() + text2.slice(1);
+}
+function relaunchFailed(message, details) {
+  return new PrivateWriteError("relaunch_failed", message, false, details);
+}
+var MAX_ADOPTION_WAIT_SECONDS = 60;
+function folderAdoptionScript(objectURIs) {
+  for (const uri of objectURIs)
+    if (!FOLDER_URI.test(uri))
+      throw invalid2("Refusing to build an adoption script from an unexpected folder id");
+  return [
+    'tell application "Notes"',
+    '  set out to ""',
+    `  repeat with fid in {${objectURIs.map((uri) => `"${uri}"`).join(", ")}}`,
+    "    set fidText to contents of fid",
+    "    try",
+    "      if exists folder id fidText then",
+    '        set out to out & fidText & tab & "1" & tab & (name of folder id fidText) & linefeed',
+    "      else",
+    '        set out to out & fidText & tab & "0" & tab & linefeed',
+    "      end if",
+    "    on error",
+    '      set out to out & fidText & tab & "E" & tab & linefeed',
+    "    end try",
+    "  end repeat",
+    "  return out",
+    "end tell"
+  ].join("\n");
+}
+function parseFolderAdoption(output, objectURIs) {
+  const known = new Set(objectURIs);
+  const found = /* @__PURE__ */ new Map();
+  let last = null;
+  for (const line of output.split(/\r?\n/)) {
+    const [uri, flag3, ...rest] = line.split("	");
+    if (known.has(uri) && (flag3 === "1" || flag3 === "0" || flag3 === "E")) {
+      const visible2 = flag3 === "1" ? true : flag3 === "0" ? false : null;
+      found.set(uri, { visible: visible2, name: visible2 ? rest.join("	") : null });
+      last = visible2 ? uri : null;
+    } else if (last && line.length) {
+      const entry = found.get(last);
+      entry.name = `${entry.name}
+${line}`;
+    }
+  }
+  return found;
+}
+function adoptionOf(target, seen, failure2) {
+  const objectURI = target.objectURI && FOLDER_URI.test(target.objectURI) ? target.objectURI : null;
+  const expected = target.deleted ? "absent" : "visible";
+  const base = { identifier: target.identifier, objectURI, expected };
+  if (!objectURI)
+    return {
+      ...base,
+      visibleInNotesApp: null,
+      nameInNotesApp: null,
+      adoptedByNotesApp: null,
+      reason: "no_object_id"
+    };
+  if (!seen || seen.visible === null)
+    return {
+      ...base,
+      visibleInNotesApp: null,
+      nameInNotesApp: null,
+      adoptedByNotesApp: null,
+      reason: failure2 ?? "applescript: no answer for this folder"
+    };
+  let adopted;
+  let reason = null;
+  if (expected === "absent") {
+    adopted = !seen.visible;
+    if (!adopted) reason = "still_visible";
+  } else if (!seen.visible) {
+    adopted = false;
+    reason = "not_visible";
+  } else if (typeof target.title === "string" && seen.name !== target.title) {
+    adopted = false;
+    reason = "name_mismatch";
+  } else {
+    adopted = true;
+  }
+  return {
+    ...base,
+    visibleInNotesApp: seen.visible,
+    nameInNotesApp: seen.name,
+    adoptedByNotesApp: adopted,
+    reason
+  };
+}
+async function checkFolderAdoption(targets, deps, waitSeconds = 10) {
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_ADOPTION_WAIT_SECONDS)
+    throw invalid2(`adoption wait must be 0-${MAX_ADOPTION_WAIT_SECONDS} seconds`);
+  const notChecked = (reason) => ({
+    checked: false,
+    reason,
+    waitedSeconds: 0,
+    allAdopted: false,
+    folders: targets.map((t) => adoptionOf(t, void 0, reason))
+  });
+  if (!targets.length)
+    return {
+      checked: false,
+      reason: "no_folders",
+      waitedSeconds: 0,
+      allAdopted: true,
+      folders: []
+    };
+  let running;
+  try {
+    running = deps.notesRunning();
+  } catch (error2) {
+    return notChecked(errorText(error2));
+  }
+  if (!running) return notChecked("notes_not_running");
+  const uris = targets.map((t) => t.objectURI).filter((uri) => typeof uri === "string" && FOLDER_URI.test(uri));
+  const start = deps.now();
+  const end = start + waitSeconds * 1e3;
+  let folders = [];
+  for (; ; ) {
+    let seen = /* @__PURE__ */ new Map();
+    let failure2 = null;
+    if (uris.length) {
+      const run = deps.runAppleScript(folderAdoptionScript([...new Set(uris)]));
+      if (run.success) seen = parseFolderAdoption(run.output, uris);
+      else failure2 = `applescript: ${run.error ?? run.output}`.slice(0, 300);
+    }
+    folders = targets.map(
+      (t) => adoptionOf(t, t.objectURI ? seen.get(t.objectURI) : void 0, failure2)
+    );
+    const waiting = folders.some(
+      (f) => f.adoptedByNotesApp === false || f.adoptedByNotesApp === null && f.objectURI
+    );
+    if (!waiting || deps.now() >= end) break;
+    await deps.sleep(1e3);
+  }
+  return {
+    checked: true,
+    reason: null,
+    waitedSeconds: Math.round((deps.now() - start) / 1e3),
+    allAdopted: folders.every((f) => f.adoptedByNotesApp === true),
+    folders
+  };
 }
 function pushReport(method, report, relaunched, runningBefore) {
   const { before: _before, after: _after, syncHostRunning, ...rest } = report;
@@ -59858,7 +60079,16 @@ async function syncPush(request, deps = defaultNudgeDeps()) {
       `Notes.app ${first2.syncHostRunning ? "was quit but " : ""}could not be opened: ${error2 instanceof Error ? error2.message : String(error2)}. Open Notes.app manually.`
     );
   }
-  const report = await nudgeInPlace({ identifiers, waitSeconds, nudge: false }, deps);
+  const restarted = first2.syncHostRunning ? "quit and reopened" : "opened";
+  let report;
+  try {
+    report = await nudgeInPlace({ identifiers, waitSeconds, nudge: false }, deps);
+  } catch (error2) {
+    throw relaunchFailed(
+      `Notes.app was ${restarted}, but reading the sync state afterwards failed: ${errorText(error2)}. Check again with method status; do not relaunch again.`,
+      { relaunched: true, syncHostRunningBefore: first2.syncHostRunning }
+    );
+  }
   const firstById = new Map(first2.objects.map((o) => [o.identifier, o]));
   for (const target of report.targets) {
     const was = firstById.get(target.identifier);
@@ -59872,6 +60102,33 @@ async function syncPush(request, deps = defaultNudgeDeps()) {
     report.warnings.push(
       `${stillPending.length} target(s) still show a pending upload after ${report.waitedSeconds} s. Notes.app uploads on its own schedule; check again later with method status.`
     );
+  const afterById = new Map(report.after.objects.map((o) => [o.identifier, o]));
+  const folderTargets = report.targets.filter((t) => t.kind === "folder");
+  if (folderTargets.length) {
+    const adoption = await checkFolderAdoption(
+      folderTargets.map((t) => {
+        const state = afterById.get(t.identifier);
+        return {
+          identifier: t.identifier,
+          objectURI: state?.objectURI ?? null,
+          deleted: Boolean(state?.markedForDeletion)
+        };
+      }),
+      deps,
+      RELAUNCH_ADOPTION_WAIT_SECONDS
+    );
+    const byId = new Map(adoption.folders.map((f) => [f.identifier, f]));
+    for (const target of folderTargets) {
+      const folder = byId.get(target.identifier);
+      target.adoption = folder;
+      target.adoptedByNotesApp = folder?.adoptedByNotesApp ?? null;
+    }
+    const notAdopted = folderTargets.filter((t) => t.adoptedByNotesApp !== true);
+    if (notAdopted.length)
+      report.warnings.push(
+        `${notAdopted.length} folder(s) are not confirmed in Notes.app after the relaunch (${notAdopted.map((t) => `${t.identifier}: ${t.adoption?.reason ?? "unknown"}`).join("; ")}).`
+      );
+  }
   return pushReport(method, report, true, first2.syncHostRunning);
 }
 
@@ -59882,6 +60139,8 @@ var revisionToken = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
 function writerEnvelopeCode(helperCode, message) {
   switch (helperCode) {
     case "revision_conflict":
+    case "scope_conflict":
+    // the note is no longer where the guard requires
     case "paragraph_changed":
     // the selected paragraph moved or changed since it was listed
     case "attachment_conflict":
@@ -59894,6 +60153,7 @@ function writerEnvelopeCode(helperCode, message) {
     case "invalid_query":
       return "validation_error";
     case "tag_not_found":
+    case "scope_folder_not_found":
       return "not_found";
     case "folder_exists":
       return "validation_error";
@@ -59993,6 +60253,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
       ifRevision: revisionToken.describe(
         "The `revision` returned by native-note-state for this note"
       ),
+      ...writerScopeGuardInput(),
       nudge: external_exports.boolean().optional().describe(
         "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
       ),
@@ -60002,7 +60263,12 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
     async (args, deps) => {
       const identifier = resolveIdentifier(manager, args);
       const result = appendPlainText(
-        { identifier, text: args.text, ifRevision: args.ifRevision },
+        {
+          identifier,
+          text: args.text,
+          ifRevision: args.ifRevision,
+          scope: scopeGuardFrom(args)
+        },
         deps.writer
       );
       if (!args.nudge) return { ...result };
@@ -60019,7 +60285,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
     `Use when: a note or folder changed through the private writer earlier (native-append-plain-text and the other native write tools, without nudge or with a nudge that timed out) still shows cloudSync.uploadPending, and you want Notes.app to upload it, or just to check whether it has.
 Returns: per target, Notes' own version counters before and after, uploadRecorded (true only when Notes recorded the current version as synced to iCloud), the action taken, and a skip reason; the library-wide pendingUploadCount before and after; warnings. pushScheduled is always false: only Notes.app uploads.
 Do not use when: the change was made through AppleScript or Shortcuts tools (Notes.app uploads those itself), or right after a native write that already ran with nudge: true and reported uploadRecorded.
-Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer's revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).`,
+Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer's revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. After a relaunch, each folder target reports adoptedByNotesApp: whether the reopened Notes.app shows it (or, for a deleted folder, no longer shows it), read through AppleScript. If reading the state after the relaunch fails, the error says Notes.app was already restarted; check with method status rather than relaunching again. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).`,
     {
       identifiers: external_exports.array(notesUuid2).min(1).max(MAX_SYNC_TARGETS).describe("Notes UUIDs of the notes or folders to check (from native-note-state etc.)"),
       method: external_exports.enum(["status", "nudge", "relaunch"]).optional().describe(
@@ -60028,7 +60294,9 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
       confirm: external_exports.boolean().optional().describe("Must be true for relaunch, after the user agreed to Notes.app being quit"),
       waitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("Seconds to watch the counters afterwards (default 30; 0 for status)")
     },
-    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    // destructiveHint: method relaunch quits Notes.app, interrupting whoever uses
+    // it. Annotations are per tool, so the most disruptive mode sets it.
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async (args, deps) => ({ ...await syncPush(args, deps.nudge) })
   );
   registerWriterTool(
@@ -60042,6 +60310,7 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
       dryRun: external_exports.boolean().describe("true: plan only and return revisionBefore. false: apply; requires ifRevision"),
       ifRevision: revisionToken.optional().describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
       requireNonSystemPaper: external_exports.boolean().optional().describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
+      ...writerScopeGuardInput(),
       operations: external_exports.array(editOperationSchema).min(1).max(MAX_EDIT_OPERATIONS).describe(
         "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. An attachment replace with position 'self' and text '' removes that attachment from the body; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else. ordinal counts the note's attachments in body order. expectedCount (default 1) must equal the full match count; occurrence picks one of them. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
       ),
@@ -60059,7 +60328,8 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
           requireNonSystemPaper: args.requireNonSystemPaper,
-          operations: args.operations
+          operations: args.operations,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -60679,6 +60949,7 @@ function composeNote(request, deps = defaultWriterDeps()) {
   else fields.ifRevision = request.ifRevision;
   if (request.requireNonSystemPaper) fields.requireNonSystemPaper = true;
   if (request.insertBeforeHeading) fields.insertBeforeHeading = request.insertBeforeHeading;
+  Object.assign(fields, writerScopeFields(request.scope));
   try {
     const response = callPrivateWriter("compose_note", fields, deps);
     return dryRun ? parseWriterResult(composePlanSchema, response, false) : parseWriterResult(composeResultSchema, response, true);
@@ -60709,6 +60980,9 @@ var composeNoteInput = {
     occurrence: external_exports.number().int().min(1).optional().describe("1-based; default 1"),
     expectedCount: external_exports.number().int().min(1).optional().describe("Exact number of equal Heading paragraphs; default 1")
   }).strict().optional().describe("append only: insert before one exact Heading-style paragraph instead of at the end"),
+  // append/prepend only: create picks its folder itself, so a guard there would
+  // only be checked after Notes.app had already made the note.
+  ...writerScopeGuardInput(),
   nudge: external_exports.boolean().optional().describe(
     "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
   ),
@@ -60734,7 +61008,10 @@ function checkModeFields(args) {
       "id",
       "ifRevision",
       "requireNonSystemPaper",
-      "insertBeforeHeading"
+      "insertBeforeHeading",
+      "ifFolderId",
+      "ifAncestorFolderId",
+      "forbiddenAncestorFolderIds"
     ]);
     if (extra2.length) throw invalid4(`create does not take ${extra2.join(", ")}`);
     if (!args.title?.trim()) throw invalid4("create requires a title");
@@ -60885,7 +61162,8 @@ function runComposeNote(args, runtime) {
       paragraphs,
       ...args.dryRun ? { dryRun: true } : { ifRevision: args.ifRevision },
       ...args.requireNonSystemPaper ? { requireNonSystemPaper: true } : {},
-      ...args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {}
+      ...args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {},
+      scope: scopeGuardFrom(args)
     },
     runtime.deps
   );
@@ -60976,6 +61254,7 @@ function setChecklistItem(request, deps = defaultWriterDeps()) {
   if (typeof request.done !== "boolean")
     throw new PrivateWriteError("invalid_request", "done must be true or false", false);
   assertRevision(request.ifRevision, "native-checklist-state or native-note-state");
+  const scope2 = writerScopeFields(request.scope);
   requireLiveValidated(CHECKLIST_TOGGLE_LIVE_VALIDATED, "native-set-checklist-item", deps.env);
   return parseWriterResult(
     setChecklistResultSchema,
@@ -60985,7 +61264,8 @@ function setChecklistItem(request, deps = defaultWriterDeps()) {
         identifier: request.identifier,
         todoIdentifier: request.todoIdentifier.toLowerCase(),
         done: request.done,
-        ifRevision: request.ifRevision
+        ifRevision: request.ifRevision,
+        ...scope2
       },
       deps
     ),
@@ -61020,6 +61300,7 @@ function registerPrivateWriterChecklistTools(server2, manager, depsFactory = def
       ifRevision: revisionToken.describe(
         "The `revision` from native-checklist-state or native-note-state for this note"
       ),
+      ...writerScopeGuardInput(),
       nudge: external_exports.boolean().optional().describe(
         "After a verified change, ask Notes.app to upload the note by moving it into its own folder (default false; skipped when nothing was written)"
       ),
@@ -61033,7 +61314,8 @@ function registerPrivateWriterChecklistTools(server2, manager, depsFactory = def
           identifier,
           todoIdentifier: args.todoIdentifier,
           done: args.done,
-          ifRevision: args.ifRevision
+          ifRevision: args.ifRevision,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61138,7 +61420,8 @@ function setHighlight(request, deps = defaultWriterDeps()) {
   assertNoteIdentifier2(request.identifier);
   const fields = {
     identifier: request.identifier,
-    ...targetFields(request.target)
+    ...targetFields(request.target),
+    ...writerScopeFields(request.scope)
   };
   if (request.color !== "none" && !HIGHLIGHT_COLORS.includes(request.color))
     throw new PrivateWriteError(
@@ -61211,6 +61494,7 @@ function registerPrivateWriterHighlightTools(server2, manager, depsFactory = def
       dryRun: external_exports.boolean().optional().describe(
         "Report the target ranges, character count, and current highlight without writing"
       ),
+      ...writerScopeGuardInput(),
       nudge: external_exports.boolean().optional().describe(
         "After a verified change, ask Notes.app to upload the note by moving it into its own folder (default false; skipped when nothing was written)"
       ),
@@ -61225,7 +61509,8 @@ function registerPrivateWriterHighlightTools(server2, manager, depsFactory = def
           target: highlightTarget(args),
           color: args.color,
           ifRevision: args.ifRevision,
-          dryRun: args.dryRun
+          dryRun: args.dryRun,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61293,6 +61578,7 @@ function addUrlCard(request, deps = defaultWriterDeps()) {
   const dryRun = request.dryRun === true;
   const fields = { identifier: request.identifier, url: request.url };
   if (request.afterParagraph !== void 0) fields.afterParagraph = request.afterParagraph;
+  Object.assign(fields, writerScopeFields(request.scope));
   if (request.ifRevision !== void 0) {
     assertRevision(request.ifRevision);
     fields.ifRevision = request.ifRevision;
@@ -61334,6 +61620,7 @@ function registerPrivateWriterLinkCardTools(server2, manager, depsFactory = defa
       ),
       ifRevision: revisionToken.optional().describe("The `revision` from native-note-state; required unless dryRun is true"),
       dryRun: external_exports.boolean().optional().describe("Report where the card would go without writing"),
+      ...writerScopeGuardInput(),
       nudge: external_exports.boolean().optional().describe(
         "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
       ),
@@ -61348,7 +61635,8 @@ function registerPrivateWriterLinkCardTools(server2, manager, depsFactory = defa
           url: args.url,
           afterParagraph: args.afterParagraph,
           ifRevision: args.ifRevision,
-          dryRun: args.dryRun
+          dryRun: args.dryRun,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61412,6 +61700,7 @@ function setParagraphId(request, deps = defaultWriterDeps()) {
     ifRevision: request.ifRevision
   };
   if (request.paragraphId !== void 0) fields.paragraphId = request.paragraphId.toUpperCase();
+  Object.assign(fields, writerScopeFields(request.scope));
   return parseWriterResult(
     setParagraphIdSchema,
     callPrivateWriter("set_paragraph_id", fields, deps),
@@ -61496,6 +61785,7 @@ function addSectionLink(request, deps = defaultWriterDeps()) {
   if (request.position !== void 0) fields.position = request.position;
   if (request.clearExistingSectionLinks !== void 0)
     fields.clearExistingSectionLinks = request.clearExistingSectionLinks;
+  Object.assign(fields, writerScopeFields(request.scope));
   return parseWriterResult(
     addSectionLinkSchema,
     callPrivateWriter("add_section_link", fields, deps),
@@ -61525,6 +61815,7 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
         "The `revision` returned by native-note-state for this note"
       ),
       paragraphId: notesUuid2.optional().describe("Optional UUID to assign; must not be in use in the note. Omit to mint one"),
+      ...writerScopeGuardInput(),
       ...nudgeInput
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -61536,7 +61827,8 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
           blockIndex: args.blockIndex,
           expectedText: args.expectedText,
           ifRevision: args.ifRevision,
-          paragraphId: args.paragraphId
+          paragraphId: args.paragraphId,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61568,6 +61860,7 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
         "The `revision` from native-note-state for the note that receives the chip"
       ),
       ifTargetRevision: revisionToken.optional().describe("The target note's `revision` from native-note-state; required for another note"),
+      ...writerScopeGuardInput(),
       ...nudgeInput
     },
     // destructiveHint: clearExistingSectionLinks removes chips.
@@ -61585,7 +61878,8 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
           position: args.position,
           clearExistingSectionLinks: args.clearExistingSectionLinks,
           ifRevision: args.ifRevision,
-          ifTargetRevision: args.ifTargetRevision
+          ifTargetRevision: args.ifTargetRevision,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61724,7 +62018,8 @@ function deleteTableRow(request, deps = defaultWriterDeps()) {
     identifier: request.identifier,
     tableIdentifier: request.tableIdentifier,
     rowIdentifier: request.rowIdentifier,
-    ...mode
+    ...mode,
+    ...writerScopeFields(request.scope)
   };
   const response = callPrivateWriter("delete_table_row", fields, deps, {
     dryRun: request.dryRun
@@ -61748,6 +62043,7 @@ function insertTableRow(request, deps = defaultWriterDeps()) {
   if (request.afterRowIdentifier !== void 0)
     fields.afterRowIdentifier = request.afterRowIdentifier;
   if (request.cells !== void 0) fields.cells = request.cells;
+  Object.assign(fields, writerScopeFields(request.scope));
   return parseWriterResult(
     tableWriteResultSchema,
     callPrivateWriter("insert_table_row", fields, deps),
@@ -61773,7 +62069,8 @@ function setTableCell(request, deps = defaultWriterDeps()) {
         columnIdentifier: request.columnIdentifier,
         text: request.text,
         ifRevision: request.ifRevision,
-        ifTableDigest: request.ifTableDigest
+        ifTableDigest: request.ifTableDigest,
+        ...writerScopeFields(request.scope)
       },
       deps
     ),
@@ -61788,7 +62085,12 @@ function pruneOrphanTable(request, deps = defaultWriterDeps()) {
     requireLiveValidated(TABLE_WRITES_LIVE_VALIDATED, "native-prune-orphan-table", deps.env);
   const response = callPrivateWriter(
     "prune_orphan_table",
-    { identifier: request.identifier, tableIdentifier: request.tableIdentifier, ...mode },
+    {
+      identifier: request.identifier,
+      tableIdentifier: request.tableIdentifier,
+      ...mode,
+      ...writerScopeFields(request.scope)
+    },
     deps,
     { dryRun: request.dryRun }
   );
@@ -61846,6 +62148,7 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
       dryRun: external_exports.boolean().describe("true = plan only; false = apply the planned deletion"),
       ifRevision: ifRevision.optional(),
       ifTableDigest: ifTableDigest.optional(),
+      ...writerScopeGuardInput(),
       ...nudgeFields
     },
     DESTRUCTIVE,
@@ -61858,7 +62161,8 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
           rowIdentifier: args.rowIdentifier,
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
-          ifTableDigest: args.ifTableDigest
+          ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61877,6 +62181,7 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
       cells: external_exports.array(cellText).max(1e3).optional().describe("Cell text by column order; missing trailing cells stay empty"),
       ifRevision,
       ifTableDigest,
+      ...writerScopeGuardInput(),
       ...nudgeFields
     },
     WRITE,
@@ -61889,7 +62194,8 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
           afterRowIdentifier: args.afterRowIdentifier,
           cells: args.cells,
           ifRevision: args.ifRevision,
-          ifTableDigest: args.ifTableDigest
+          ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61909,6 +62215,7 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
       text: cellText.describe("New plain text for the cell; may be empty"),
       ifRevision,
       ifTableDigest,
+      ...writerScopeGuardInput(),
       ...nudgeFields
     },
     WRITE,
@@ -61922,7 +62229,8 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
           columnIdentifier: args.columnIdentifier,
           text: args.text,
           ifRevision: args.ifRevision,
-          ifTableDigest: args.ifTableDigest
+          ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -61940,6 +62248,7 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
       dryRun: external_exports.boolean().describe("true = plan only; false = apply the planned prune"),
       ifRevision: ifRevision.optional(),
       ifTableDigest: ifTableDigest.optional(),
+      ...writerScopeGuardInput(),
       ...nudgeFields
     },
     DESTRUCTIVE,
@@ -61951,7 +62260,8 @@ function registerPrivateWriterTableTools(server2, manager, depsFactory = default
           tableIdentifier: args.tableIdentifier,
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
-          ifTableDigest: args.ifTableDigest
+          ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -62111,6 +62421,7 @@ function createSmartFolder(request, deps = defaultWriterDeps()) {
     assertFolderReference(request.parentIdentifier, "parentIdentifier");
     fields.parentIdentifier = request.parentIdentifier;
   }
+  Object.assign(fields, writerScopeFields(request.scope));
   requireLiveValidated(SMART_FOLDERS_LIVE_VALIDATED, "native-create-smart-folder", deps.env);
   return withDecoded(
     parseWriterResult(
@@ -62130,7 +62441,12 @@ function updateSmartFolder(request, deps = defaultWriterDeps()) {
       updateSmartFolderResultSchema,
       callPrivateWriter(
         "update_smart_folder",
-        { identifier: request.identifier, queryJSON: text2, ifRevision: request.ifRevision },
+        {
+          identifier: request.identifier,
+          queryJSON: text2,
+          ifRevision: request.ifRevision,
+          ...writerScopeFields(request.scope)
+        },
         deps
       ),
       true
@@ -62146,7 +62462,7 @@ function deleteSmartFolder(request, deps = defaultWriterDeps()) {
       deleteSmartFolderPlanSchema,
       callPrivateWriter(
         "delete_smart_folder",
-        { identifier: request.identifier, dryRun: true },
+        { identifier: request.identifier, dryRun: true, ...writerScopeFields(request.scope) },
         deps,
         { dryRun: true }
       ),
@@ -62159,7 +62475,12 @@ function deleteSmartFolder(request, deps = defaultWriterDeps()) {
     deleteSmartFolderResultSchema,
     callPrivateWriter(
       "delete_smart_folder",
-      { identifier: request.identifier, dryRun: false, ifRevision: request.ifRevision },
+      {
+        identifier: request.identifier,
+        dryRun: false,
+        ifRevision: request.ifRevision,
+        ...writerScopeFields(request.scope)
+      },
       deps
     ),
     true
@@ -62172,7 +62493,31 @@ var query2 = external_exports.union([external_exports.string(), external_exports
 );
 var smartFolderId = notesUuid2.describe("Smart folder identifier (UUID) from list-smart-folders");
 var ifRevision2 = external_exports.string().regex(FOLDER_REVISION).describe("The folder `revision` from native-read-smart-folder or the dry run");
-var GATE2 = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders.";
+var adoptionWaitSeconds = external_exports.number().int().min(0).max(MAX_ADOPTION_WAIT_SECONDS).optional().describe(
+  "After a committed write, how long to wait for Notes.app to show the change (default 10; 0 checks once). Skipped when Notes.app is not running"
+);
+async function withAdoption(result, waitSeconds, deps) {
+  if (result.committed !== true || typeof result.identifier !== "string") return result;
+  const report = await checkFolderAdoption(
+    [
+      {
+        identifier: result.identifier,
+        objectURI: typeof result.objectURI === "string" ? result.objectURI : null,
+        title: typeof result.title === "string" ? result.title : null,
+        deleted: result.markedForDeletion === true
+      }
+    ],
+    deps.nudge,
+    waitSeconds ?? 10
+  );
+  const folder = report.folders[0];
+  return {
+    ...result,
+    adoptedByNotesApp: folder?.adoptedByNotesApp ?? null,
+    adoption: { checked: report.checked, waitedSeconds: report.waitedSeconds, ...folder }
+  };
+}
+var GATE2 = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders. After a committed write, adoptedByNotesApp says whether a running Notes.app shows the change (read-only AppleScript; null when Notes.app is not running or it could not be checked).";
 function registerPrivateWriterSmartFolderTools(server2, depsFactory = defaultWriterToolDeps) {
   registerWriterTool(
     server2,
@@ -62194,19 +62539,35 @@ function registerPrivateWriterSmartFolderTools(server2, depsFactory = defaultWri
       account: external_exports.string().min(1).optional().describe(
         "Account identifier or exact name for an account-root smart folder (default: Notes' default account)"
       ),
-      parentIdentifier: external_exports.string().min(1).optional().describe("Ordinary folder (identifier or x-coredata folder id) to create it inside")
+      parentIdentifier: external_exports.string().min(1).optional().describe("Ordinary folder (identifier or x-coredata folder id) to create it inside"),
+      ...writerScopeGuardInput("smart folder"),
+      adoptionWaitSeconds
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    (args, deps) => ({ ...createSmartFolder(args, deps.writer) })
+    async (args, deps) => withAdoption(
+      { ...createSmartFolder({ ...args, scope: scopeGuardFrom(args) }, deps.writer) },
+      args.adoptionWaitSeconds,
+      deps
+    )
   );
   registerWriterTool(
     server2,
     depsFactory,
     "native-update-smart-folder",
     "Use when: replacing the query (rules) of one existing smart folder.\nReturns: status updated, or ok when the stored query already equals the request (nothing written); previousQueryJSON, the stored queryJSON, decoded rules, revisionBefore/revisionAfter, and sync state.\nDo not use when: renaming the folder, creating one (native-create-smart-folder), or editing an ordinary folder.\nSafety: writes through unsupported private API. Needs the folder `revision` from a fresh native-read-smart-folder as ifRevision and refuses on any change since (revision_conflict, committed: false). The query is validated exactly as in native-create-smart-folder. Verified by a fresh read-back. A timeout is indeterminate. " + GATE2,
-    { identifier: smartFolderId, query: query2, ifRevision: ifRevision2 },
+    {
+      identifier: smartFolderId,
+      query: query2,
+      ifRevision: ifRevision2,
+      ...writerScopeGuardInput("smart folder"),
+      adoptionWaitSeconds
+    },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    (args, deps) => ({ ...updateSmartFolder(args, deps.writer) })
+    async (args, deps) => withAdoption(
+      { ...updateSmartFolder({ ...args, scope: scopeGuardFrom(args) }, deps.writer) },
+      args.adoptionWaitSeconds,
+      deps
+    )
   );
   registerWriterTool(
     server2,
@@ -62216,10 +62577,16 @@ function registerPrivateWriterSmartFolderTools(server2, depsFactory = defaultWri
     {
       identifier: smartFolderId,
       dryRun: external_exports.boolean().describe("true = plan only; false = apply the planned deletion"),
-      ifRevision: ifRevision2.optional()
+      ifRevision: ifRevision2.optional(),
+      ...writerScopeGuardInput("smart folder"),
+      adoptionWaitSeconds
     },
     { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    (args, deps) => ({ ...deleteSmartFolder(args, deps.writer) })
+    async (args, deps) => withAdoption(
+      { ...deleteSmartFolder({ ...args, scope: scopeGuardFrom(args) }, deps.writer) },
+      args.adoptionWaitSeconds,
+      deps
+    )
   );
 }
 
@@ -62264,7 +62631,8 @@ function addPaper(request, deps = defaultWriterDeps()) {
     identifier: request.identifier,
     ifRevision: request.ifRevision,
     drawing: request.drawing,
-    format: request.format ?? "auto"
+    format: request.format ?? "auto",
+    ...writerScopeFields(request.scope)
   };
   if (dryRun) fields.dryRun = true;
   if (!dryRun)
@@ -62694,6 +63062,7 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
         "auto (default): Paper when this macOS can create it, else a classic drawing; paper or drawing to insist"
       ),
       dryRun: external_exports.boolean().optional().describe("Validate and plan without writing"),
+      ...writerScopeGuardInput(),
       nudge: external_exports.boolean().optional().describe(
         "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
       ),
@@ -62709,7 +63078,8 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
           ifRevision: args.ifRevision,
           drawing,
           format: args.format,
-          dryRun: args.dryRun
+          dryRun: args.dryRun,
+          scope: scopeGuardFrom(args)
         },
         deps.writer
       );
@@ -62718,6 +63088,143 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
       return {
         ...payload,
         sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
+// src/services/privateWriterPurgeRepair.ts
+var DELETION_STATES = [
+  "active",
+  "in_recently_deleted",
+  "purging_from_recently_deleted",
+  "purge_flag_outside_recently_deleted",
+  "purge_flag_without_folder",
+  "folderless"
+];
+var planFields = {
+  identifier: external_exports.string().nullable(),
+  objectURI: external_exports.string(),
+  title: external_exports.string().nullable(),
+  state: external_exports.enum(DELETION_STATES),
+  repairable: external_exports.boolean(),
+  blockers: external_exports.array(external_exports.string()),
+  folderIdentifier: external_exports.string().nullable(),
+  folderObjectURI: external_exports.string().nullable(),
+  folderMarkedForDeletion: external_exports.boolean(),
+  recentlyDeletedFolderIdentifier: external_exports.string().nullable(),
+  attachmentCount: external_exports.number().int(),
+  attachmentsMarkedForDeletion: external_exports.number().int(),
+  revision: external_exports.string(),
+  cloudSync: cloudSyncSchema2
+};
+var purgeScanSchema = external_exports.object({
+  status: external_exports.literal("scanned"),
+  dryRun: external_exports.literal(true),
+  committed: external_exports.literal(false),
+  markedForDeletionCount: external_exports.number().int(),
+  candidateCount: external_exports.number().int(),
+  truncated: external_exports.boolean(),
+  candidates: external_exports.array(external_exports.object(planFields).passthrough())
+}).passthrough();
+var purgePlanSchema = external_exports.object({
+  status: external_exports.literal("planned"),
+  dryRun: external_exports.literal(true),
+  committed: external_exports.literal(false),
+  ...planFields
+}).passthrough();
+var purgeRepairResultSchema = external_exports.object({
+  status: external_exports.literal("repaired"),
+  dryRun: external_exports.literal(false),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  repairedPurgeFlag: external_exports.literal(true),
+  identifier: external_exports.string(),
+  previousState: external_exports.literal("purge_flag_outside_recently_deleted"),
+  state: external_exports.literal("in_recently_deleted"),
+  fromFolderIdentifier: external_exports.string().nullable(),
+  recentlyDeletedFolderIdentifier: external_exports.string().nullable(),
+  folderIdentifier: external_exports.string().nullable(),
+  revisionBefore: external_exports.string(),
+  revisionAfter: external_exports.string(),
+  modificationDate: external_exports.string().nullable(),
+  ...writeSyncFields
+}).passthrough();
+function invalid9(message, committed) {
+  return new PrivateWriteError("invalid_request", message, committed);
+}
+function repairPurgeFlag(request, deps = defaultWriterDeps()) {
+  const dryRun = request.dryRun !== false;
+  const notCommitted = dryRun ? void 0 : false;
+  if (request.identifier !== void 0) assertNoteIdentifier2(request.identifier);
+  const scope2 = writerScopeFields(request.scope);
+  if (dryRun) {
+    if (request.ifRevision !== void 0 || request.confirm !== void 0)
+      throw invalid9("ifRevision and confirm are only accepted with dryRun: false", notCommitted);
+    if (request.identifier === void 0 && Object.keys(scope2).length)
+      throw invalid9("Folder scope guards need an identifier; a scan takes none", notCommitted);
+    const fields = { dryRun: true, ...scope2 };
+    if (request.identifier !== void 0) fields.identifier = request.identifier;
+    const response = callPrivateWriter("repair_purge_flag", fields, deps, { dryRun: true });
+    return request.identifier === void 0 ? parseWriterResult(purgeScanSchema, response, false) : parseWriterResult(purgePlanSchema, response, false);
+  }
+  if (request.identifier === void 0) throw invalid9("identifier is required to apply", false);
+  if (request.ifRevision === void 0)
+    throw invalid9("ifRevision (the revision from a dry run) is required to apply", false);
+  assertRevision(request.ifRevision, "a dry run of native-repair-purge-flag");
+  if (request.confirm !== true)
+    throw new PrivateWriteError(
+      "confirmation_required",
+      "The repair moves the note to Recently Deleted, where it syncs to every device. Show the user the plan, then pass confirm: true.",
+      false
+    );
+  requireLiveValidated(PURGE_REPAIR_LIVE_VALIDATED, "native-repair-purge-flag", deps.env);
+  return parseWriterResult(
+    purgeRepairResultSchema,
+    callPrivateWriter(
+      "repair_purge_flag",
+      {
+        identifier: request.identifier,
+        dryRun: false,
+        ifRevision: request.ifRevision,
+        confirm: true,
+        ...scope2
+      },
+      deps
+    ),
+    true
+  );
+}
+
+// src/tools/privateWriterPurgeRepairTools.ts
+function registerPrivateWriterPurgeRepairTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-repair-purge-flag",
+    "Use when: a note vanished from Notes without passing through Recently Deleted, or you want to check for notes that carry Notes' permanent-deletion (purge) flag while still in an ordinary folder. That state is corrupt: Notes hides the note and will purge it, and the user cannot recover it. The repair finishes an ordinary delete: it clears the flag and moves the note to Recently Deleted.\nReturns: without identifier (scan): candidateCount, truncated, and up to 50 candidates. With identifier and dryRun (default): the note's state (active, in_recently_deleted, purging_from_recently_deleted, purge_flag_outside_recently_deleted, purge_flag_without_folder, folderless), repairable, blockers, its folder and the account's Recently Deleted folder, attachment counts, and `revision`. Apply: status repaired, state in_recently_deleted, revisionBefore/revisionAfter, and sync state (pushScheduled is always false). The move-in-place nudge skips trashed notes, so to upload the move now use native-sync-push with method relaunch.\nDo not use when: deleting an ordinary note (delete-note), restoring a note from Recently Deleted (move-note), or the plan lists blockers (locked, shared, downloading, attachments_marked_for_deletion, no_recently_deleted_folder).\nSafety: scan and plan are read-only. The apply writes through unsupported private API and never purges: it clears the note's flag, moves it to its account's Recently Deleted folder, stamps the folder time (which starts Notes' 30-day clock), and verifies all of it plus an unchanged body in a fresh Core Data stack. It needs the plan's `revision` as ifRevision and confirm: true after the user agreed. A flag Notes set on purpose (a permanent delete on another device that has not finished syncing) looks the same, and repairing it brings that note back into Recently Deleted on every device; only repair a note the user recognizes. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 for the apply. A timeout is indeterminate: plan again before any retry.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID; omit (with dryRun) to scan for every note in the purge-flag state"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      dryRun: external_exports.boolean().optional().describe("true (default): scan or plan only. false: apply; needs ifRevision and confirm"),
+      ifRevision: revisionToken.optional().describe("The `revision` from the dry run of the same note (required to apply)"),
+      confirm: external_exports.boolean().optional().describe("Must be true to apply, after the user agreed to the move to Recently Deleted"),
+      ...writerScopeGuardInput()
+    },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    (args, deps) => {
+      const identifier = args.identifier === void 0 && args.id === void 0 ? void 0 : resolveIdentifier(manager, args);
+      return {
+        ...repairPurgeFlag(
+          {
+            identifier,
+            dryRun: args.dryRun,
+            ifRevision: args.ifRevision,
+            confirm: args.confirm,
+            scope: scopeGuardFrom(args)
+          },
+          deps.writer
+        )
       };
     }
   );
@@ -62769,6 +63276,7 @@ registerPrivateWriterParagraphTools(server, notesManager);
 registerPrivateWriterTableTools(server, notesManager);
 registerPrivateWriterSmartFolderTools(server);
 registerPrivatePaperWriterTools(server, notesManager);
+registerPrivateWriterPurgeRepairTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

@@ -62,6 +62,7 @@ import {
 } from "../utils/errorCodes.js";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
 import { envelopeCode, resolveIdentifier } from "./privateHelperTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 export const coreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
 export const notesUuid = z.string().regex(UUID_PATTERN);
@@ -72,6 +73,7 @@ export { resolveIdentifier };
 export function writerEnvelopeCode(helperCode: string, message: string): ErrorCode {
   switch (helperCode) {
     case "revision_conflict":
+    case "scope_conflict": // the note is no longer where the guard requires
     case "paragraph_changed": // the selected paragraph moved or changed since it was listed
     case "attachment_conflict":
       return "revision_conflict";
@@ -83,6 +85,7 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "invalid_query":
       return "validation_error";
     case "tag_not_found":
+    case "scope_folder_not_found":
       return "not_found";
     case "folder_exists":
       return "validation_error";
@@ -229,6 +232,7 @@ export function registerPrivateWriterTools(
       ifRevision: revisionToken.describe(
         "The `revision` returned by native-note-state for this note"
       ),
+      ...writerScopeGuardInput(),
       nudge: z
         .boolean()
         .optional()
@@ -247,7 +251,12 @@ export function registerPrivateWriterTools(
     async (args, deps) => {
       const identifier = resolveIdentifier(manager, args);
       const result = appendPlainText(
-        { identifier, text: args.text, ifRevision: args.ifRevision },
+        {
+          identifier,
+          text: args.text,
+          ifRevision: args.ifRevision,
+          scope: scopeGuardFrom(args),
+        },
         deps.writer
       );
       if (!args.nudge) return { ...result };
@@ -265,7 +274,7 @@ export function registerPrivateWriterTools(
     "Use when: a note or folder changed through the private writer earlier (native-append-plain-text and the other native write tools, without nudge or with a nudge that timed out) still shows cloudSync.uploadPending, and you want Notes.app to upload it, or just to check whether it has.\n" +
       "Returns: per target, Notes' own version counters before and after, uploadRecorded (true only when Notes recorded the current version as synced to iCloud), the action taken, and a skip reason; the library-wide pendingUploadCount before and after; warnings. pushScheduled is always false: only Notes.app uploads.\n" +
       "Do not use when: the change was made through AppleScript or Shortcuts tools (Notes.app uploads those itself), or right after a native write that already ran with nudge: true and reported uploadRecorded.\n" +
-      'Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer\'s revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).',
+      'Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer\'s revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. After a relaunch, each folder target reports adoptedByNotesApp: whether the reopened Notes.app shows it (or, for a deleted folder, no longer shows it), read through AppleScript. If reading the state after the relaunch fails, the error says Notes.app was already restarted; check with method status rather than relaunching again. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).',
     {
       identifiers: z
         .array(notesUuid)
@@ -290,7 +299,9 @@ export function registerPrivateWriterTools(
         .optional()
         .describe("Seconds to watch the counters afterwards (default 30; 0 for status)"),
     },
-    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    // destructiveHint: method relaunch quits Notes.app, interrupting whoever uses
+    // it. Annotations are per tool, so the most disruptive mode sets it.
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async (args, deps) => ({ ...(await syncPush(args, deps.nudge)) })
   );
 
@@ -315,6 +326,7 @@ export function registerPrivateWriterTools(
         .boolean()
         .optional()
         .describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
+      ...writerScopeGuardInput(),
       operations: z
         .array(editOperationSchema)
         .min(1)
@@ -346,6 +358,7 @@ export function registerPrivateWriterTools(
           ifRevision: args.ifRevision,
           requireNonSystemPaper: args.requireNonSystemPaper,
           operations: args.operations,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

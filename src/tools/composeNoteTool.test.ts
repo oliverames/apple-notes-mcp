@@ -168,6 +168,16 @@ describe("compose-note append and prepend", () => {
       "a dry run with nudge",
       { mode: "append", identifier: NOTE, blocks: BLOCKS, dryRun: true, nudge: true },
     ],
+    [
+      // create picks its folder itself; a guard could only run after Notes made the note
+      "a folder scope guard on create",
+      {
+        mode: "create",
+        title: "T",
+        blocks: BLOCKS,
+        forbiddenAncestorFolderIds: ["x-coredata://8FA9FE0E-3B93/ICFolder/p1"],
+      },
+    ],
   ])("refuses %s before calling the helper", (_label, args) => {
     const e = caught(() => runComposeNote(args as never, runtime()));
     expect(e).toMatchObject({ code: "invalid_request", committed: false });

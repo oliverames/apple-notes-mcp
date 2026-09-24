@@ -26,6 +26,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 const revision = z.string().regex(/^r1:[a-f0-9]{64}$/);
 export const PARAGRAPH_URL =
@@ -76,6 +77,8 @@ export interface SetParagraphIdRequest {
   ifRevision: string;
   /** Assign this UUID instead of minting one. It must not be in use in the note. */
   paragraphId?: string;
+  /** Folder preconditions, checked by the writer just before the save. */
+  scope?: ScopeGuard;
 }
 
 function invalid(message: string): never {
@@ -106,6 +109,7 @@ export function setParagraphId(
     ifRevision: request.ifRevision,
   };
   if (request.paragraphId !== undefined) fields.paragraphId = request.paragraphId.toUpperCase();
+  Object.assign(fields, writerScopeFields(request.scope));
   return parseWriterResult(
     setParagraphIdSchema,
     callPrivateWriter("set_paragraph_id", fields, deps),

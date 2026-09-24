@@ -28,6 +28,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export const REVISION_TOKEN = /^r1:[a-f0-9]{64}$/;
 export const TABLE_DIGEST = /^t1:[a-f0-9]{64}$/;
@@ -153,6 +154,8 @@ function assertUuid(value: string, field: string): void {
 interface Guards {
   ifRevision?: string;
   ifTableDigest?: string;
+  /** Folder preconditions, checked by the writer just before the save (and in a dry run). */
+  scope?: ScopeGuard;
 }
 
 function assertGuards(guards: Guards): asserts guards is Required<Guards> {
@@ -210,6 +213,7 @@ export function deleteTableRow(
     tableIdentifier: request.tableIdentifier,
     rowIdentifier: request.rowIdentifier,
     ...mode,
+    ...writerScopeFields(request.scope),
   };
   const response = callPrivateWriter("delete_table_row", fields, deps, {
     dryRun: request.dryRun,
@@ -246,6 +250,7 @@ export function insertTableRow(
   if (request.afterRowIdentifier !== undefined)
     fields.afterRowIdentifier = request.afterRowIdentifier;
   if (request.cells !== undefined) fields.cells = request.cells;
+  Object.assign(fields, writerScopeFields(request.scope));
   return parseWriterResult(
     tableWriteResultSchema,
     callPrivateWriter("insert_table_row", fields, deps),
@@ -284,6 +289,7 @@ export function setTableCell(
         text: request.text,
         ifRevision: request.ifRevision,
         ifTableDigest: request.ifTableDigest,
+        ...writerScopeFields(request.scope),
       },
       deps
     ),
@@ -308,7 +314,12 @@ export function pruneOrphanTable(
     requireLiveValidated(TABLE_WRITES_LIVE_VALIDATED, "native-prune-orphan-table", deps.env);
   const response = callPrivateWriter(
     "prune_orphan_table",
-    { identifier: request.identifier, tableIdentifier: request.tableIdentifier, ...mode },
+    {
+      identifier: request.identifier,
+      tableIdentifier: request.tableIdentifier,
+      ...mode,
+      ...writerScopeFields(request.scope),
+    },
     deps,
     { dryRun: request.dryRun }
   );

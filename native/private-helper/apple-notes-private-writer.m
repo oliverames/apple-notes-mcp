@@ -396,6 +396,32 @@ static const APIRequirement kSmartFolderAPI[] = {
     {"ICFilterSelection", "incompatibleLockedNotesFilterTypeSelections", NO},
 };
 
+// Folder scope guards (#57): the subject's folder and each folder's parent,
+// read in the write's own context just before the save.
+static const ModelRequirement kScopeGuardModel[] = {
+    {"ICNote", "identifier,folder"},
+    {"ICFolder", "identifier,parent,markedForDeletion"},
+};
+
+// Purge-flag repair (#89): clears a stray permanent-deletion flag and
+// finishes the move to Recently Deleted that Notes itself makes on delete.
+static const APIRequirement kPurgeRepairAPI[] = {
+    {"ICNote", "unmarkForDeletion", NO},
+    {"ICNote", "setFolder:", NO},
+    {"ICNote", "updateChangeCountWithReason:", NO},
+    {"ICNote", "isDeletedOrInTrash", NO},
+    {"ICAccount", "trashFolder", NO},
+    {"ICFolder", "isTrashFolder", NO},
+};
+
+static const ModelRequirement kPurgeRepairModel[] = {
+    {"ICNote", "identifier,title,folder,account,markedForDeletion,folderModificationDate,attachments,"
+               "needsInitialFetchFromCloud,cloudState"},
+    {"ICFolder", "identifier,folderType,markedForDeletion,account"},
+    {"ICAttachment", "identifier,markedForDeletion"},
+    {"ICAccount", "identifier,markedForDeletion"},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -468,6 +494,8 @@ typedef NS_ENUM(NSInteger, Feature) {
   FeatureTables,
   FeaturePruneTable,
   FeatureSmartFolders,
+  FeatureScopeGuards,
+  FeaturePurgeRepair,
 };
 
 // Features that edit the body text need the append editing surface.
@@ -530,6 +558,12 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
     [missing addObjectsFromArray:MissingModelProperties(kSmartFolderModelProperties,
                                                           COUNT(kSmartFolderModelProperties))];
     [missing addObjectsFromArray:MissingAPI(kSmartFolderAPI, COUNT(kSmartFolderAPI))];
+  }
+  if (feature == FeatureScopeGuards)
+    [missing addObjectsFromArray:MissingModelProperties(kScopeGuardModel, COUNT(kScopeGuardModel))];
+  if (feature == FeaturePurgeRepair) {
+    [missing addObjectsFromArray:MissingModelProperties(kPurgeRepairModel, COUNT(kPurgeRepairModel))];
+    [missing addObjectsFromArray:MissingAPI(kPurgeRepairAPI, COUNT(kPurgeRepairAPI))];
   }
   return missing;
 }
@@ -822,6 +856,9 @@ static NSDictionary *HandleUpdateSmartFolder(NSDictionary *request);
 static NSDictionary *HandleDeleteSmartFolder(NSDictionary *request);
 static NSDictionary *HandleAddPaper(NSDictionary *request);
 static NSDictionary *PaperWriteFeatureReport(BOOL contextOK, NSString *contextReason);
+static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request);
+// Folder scope guards; defined in "Scope guards" below. Every save calls it.
+static void EnforceScopeGuard(NSManagedObjectContext *context);
 
 typedef struct {
   const char *name;
@@ -863,6 +900,7 @@ static const ActionSpec kActions[] = {
     {"update_smart_folder", "identifier,queryJSON,ifRevision", HandleUpdateSmartFolder},
     {"delete_smart_folder", "identifier,dryRun,ifRevision", HandleDeleteSmartFolder},
     {"add_paper", "identifier,ifRevision,drawing,format,dryRun", HandleAddPaper},
+    {"repair_purge_flag", "identifier,dryRun,ifRevision,confirm", HandleRepairPurgeFlag},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -967,6 +1005,8 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"pruneOrphanTable" : FeatureReport(FeaturePruneTable, contextOK, contextReason),
       @"smartFolders" : FeatureReport(FeatureSmartFolders, contextOK, contextReason),
       @"addPaper" : PaperWriteFeatureReport(contextOK, contextReason),
+      @"scopeGuards" : FeatureReport(FeatureScopeGuards, contextOK, contextReason),
+      @"purgeRepair" : FeatureReport(FeaturePurgeRepair, contextOK, contextReason),
     },
   };
 }
@@ -1085,6 +1125,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
   ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"),
                                         kChangeReason);
 
+  EnforceScopeGuard(context);
   NSError *saveError = nil;
   gSaveAttempted = YES;
   if (![context save:&saveError]) {
@@ -1151,6 +1192,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
 // with gSaveAttempted / gSaveSucceeded like the append path's, so main() can
 // tell a failure before, during, and after it apart.
 static void SaveOrFailFor(NSManagedObjectContext *context, NSString *what) {
+  EnforceScopeGuard(context);
   NSError *saveError = nil;
   gSaveAttempted = YES;
   if ([context save:&saveError]) {
@@ -7392,6 +7434,498 @@ static NSDictionary *HandleAddPaper(NSDictionary *request) {
   return out;
 }
 
+#pragma mark - Scope guards
+
+// Folder preconditions on a write (#57), with the same shapes and meaning as
+// the server's AppleScript scope guards (src/utils/scopeGuard.ts):
+//
+// - ifFolderId: the subject's folder is exactly this folder;
+// - ifAncestorFolderId: this folder is the subject's folder or an ancestor;
+// - forbiddenAncestorFolderIds: none of these is the subject's folder or an
+//   ancestor, and none is on the destination's chain when the write moves the
+//   note (repair_purge_flag moves it to Recently Deleted).
+//
+// The subject is the note a write changes, or for smart folders the folder
+// itself (its folder is its parent; a forbidden id may also name the smart
+// folder), or for create_smart_folder the destination parent.
+//
+// Every id must resolve to an existing folder in this store, and a forbidden
+// folder must not be deleted: an id that does not resolve refuses the write
+// (scope_folder_not_found) instead of silently matching nothing.
+//
+// A write evaluates the guard in its own context right before the save
+// (EnforceScopeGuard, called by every save). The note's folder is the value
+// the write read, which the save's optimistic locking protects; every folder
+// above it is re-read from the store at that moment. A call that ends without
+// saving (a dry run, a no-op, a plan) evaluates it in a fresh read-only
+// context before it answers, so a plan reports a scope failure too.
+
+#define MAX_FORBIDDEN_FOLDERS 50
+#define MAX_SCOPE_DEPTH 64
+
+typedef NS_ENUM(NSInteger, ScopeSubject) {
+  ScopeSubjectNone,
+  ScopeSubjectNote,
+  ScopeSubjectFolder,
+  ScopeSubjectNewFolder,
+};
+
+typedef struct {
+  const char *action;
+  ScopeSubject subject;
+} ScopeGuardedAction;
+
+// Every action that writes (or plans a write to) a note or folder. The
+// source test requires every write action to be listed here.
+static const ScopeGuardedAction kScopeGuardedActions[] = {
+    {"append_plain_text", ScopeSubjectNote},
+    {"plan_edit", ScopeSubjectNote},
+    {"edit_note", ScopeSubjectNote},
+    {"compose_note", ScopeSubjectNote},
+    {"set_checklist_item", ScopeSubjectNote},
+    {"set_highlight", ScopeSubjectNote},
+    {"add_url_card", ScopeSubjectNote},
+    {"set_paragraph_id", ScopeSubjectNote},
+    {"add_section_link", ScopeSubjectNote},
+    {"delete_table_row", ScopeSubjectNote},
+    {"insert_table_row", ScopeSubjectNote},
+    {"set_table_cell", ScopeSubjectNote},
+    {"prune_orphan_table", ScopeSubjectNote},
+    {"add_paper", ScopeSubjectNote},
+    {"repair_purge_flag", ScopeSubjectNote},
+    {"create_smart_folder", ScopeSubjectNewFolder},
+    {"update_smart_folder", ScopeSubjectFolder},
+    {"delete_smart_folder", ScopeSubjectFolder},
+};
+
+static NSDictionary *gScopeRequest = nil;  // the request, when it carries a guard
+static ScopeSubject gScopeSubject = ScopeSubjectNone;
+static BOOL gScopeEnforced = NO;  // a save already evaluated the guard
+
+static ScopeSubject ScopeSubjectForAction(NSString *action) {
+  for (size_t i = 0; i < COUNT(kScopeGuardedActions); i++)
+    if ([action isEqualToString:@(kScopeGuardedActions[i].action)]) return kScopeGuardedActions[i].subject;
+  return ScopeSubjectNone;
+}
+
+static NSArray<NSString *> *ScopeGuardKeys(void) {
+  return @[ @"ifFolderId", @"ifAncestorFolderId", @"forbiddenAncestorFolderIds" ];
+}
+
+static BOOL IsFolderURI(id value) {
+  static NSRegularExpression *re;
+  if (!re)
+    re = [NSRegularExpression regularExpressionWithPattern:@"^x-coredata://[0-9A-Fa-f-]+/ICFolder/p[0-9]+$"
+                                                   options:0
+                                                     error:nil];
+  return [value isKindOfClass:[NSString class]] && [value length] <= 256 &&
+         [re numberOfMatchesInString:value options:0 range:NSMakeRange(0, [value length])] == 1;
+}
+
+// Validates the guard fields and remembers them for EnforceScopeGuard. A
+// request without any guard leaves nothing to check.
+static void ParseScopeGuard(NSDictionary *request, ScopeSubject subject) {
+  BOOL any = NO;
+  for (NSString *key in @[ @"ifFolderId", @"ifAncestorFolderId" ]) {
+    if (!request[key]) continue;
+    if (!IsFolderURI(request[key]))
+      Fail(@"invalid_request", [NSString stringWithFormat:@"`%@` must be an x-coredata folder id", key],
+           @{@"committed" : @NO});
+    any = YES;
+  }
+  id forbidden = request[@"forbiddenAncestorFolderIds"];
+  if (forbidden) {
+    if (![forbidden isKindOfClass:[NSArray class]] || [forbidden count] > MAX_FORBIDDEN_FOLDERS)
+      Fail(@"invalid_request", @"`forbiddenAncestorFolderIds` must be an array of at most 50 folder ids",
+           @{@"committed" : @NO});
+    for (id value in forbidden)
+      if (!IsFolderURI(value))
+        Fail(@"invalid_request", @"Every forbiddenAncestorFolderIds entry must be an x-coredata folder id",
+             @{@"committed" : @NO});
+    if ([forbidden count]) any = YES;
+  }
+  if (!any) return;
+  NSArray *missing = MissingForFeature(FeatureScopeGuards);
+  if (missing.count)
+    Fail(@"private_api_unavailable", @"Scope guards need NotesShared model properties missing on this macOS",
+         @{@"missing" : missing, @"committed" : @NO});
+  gScopeRequest = request;
+  gScopeSubject = subject;
+}
+
+static NSString *ScopeNoun(void) { return gScopeSubject == ScopeSubjectNote ? @"note" : @"smart folder"; }
+
+static void ScopeFail(NSManagedObjectContext *writing, NSString *code, NSString *scopeReason, NSString *reason) {
+  if (writing) [writing rollback];
+  Fail(code,
+       [NSString stringWithFormat:@"Scope guard failed: %@. Nothing was changed; read the %@'s current folder "
+                                  @"and review before retrying.",
+                                  reason, ScopeNoun()],
+       @{@"committed" : @NO, @"scopeReason" : scopeReason});
+}
+
+// An existing folder for a guard id, or a refusal. A forbidden folder must
+// also not be deleted: guarding against a folder that is gone is a stale id.
+static NSManagedObjectID *ResolveScopeFolder(NSManagedObjectContext *context, NSManagedObjectContext *writing,
+                                             NSString *uri, NSString *field, BOOL forbidden) {
+  NSManagedObjectID *objectID = nil;
+  @try {
+    NSURL *url = [NSURL URLWithString:uri];
+    objectID = url ? [context.persistentStoreCoordinator managedObjectIDForURIRepresentation:url] : nil;
+  } @catch (NSException *e) {
+    objectID = nil;
+  }
+  NSManagedObject *folder = nil;
+  if (objectID && [objectID.entity.name isEqualToString:@"ICFolder"])
+    folder = [context existingObjectWithID:objectID error:nil];
+  if (!folder)
+    ScopeFail(writing, @"scope_folder_not_found", @"folder_not_found",
+              [NSString stringWithFormat:@"%@ %@ does not name an existing folder in this store", field, uri]);
+  // A folder this write itself deletes (a smart-folder delete) counts as it
+  // was when the write read it.
+  id deleted = writing && folder.hasChanges ? [folder committedValuesForKeys:@[ @"markedForDeletion" ]]
+                                            : [folder dictionaryWithValuesForKeys:@[ @"markedForDeletion" ]];
+  if (forbidden && BoolAttr(deleted, @"markedForDeletion"))
+    ScopeFail(writing, @"scope_folder_not_found", @"folder_deleted",
+              [NSString stringWithFormat:@"%@ %@ names a deleted folder", field, uri]);
+  return objectID;
+}
+
+// The parent of one folder: from the context for a folder this write changed
+// or created, otherwise re-read from the store (not from the context's cache).
+static NSManagedObjectID *PersistedParent(NSManagedObjectContext *context, NSManagedObjectContext *writing,
+                                          NSManagedObjectID *folderID) {
+  NSManagedObject *registered = [context objectRegisteredForID:folderID];
+  if (folderID.isTemporaryID || registered.hasChanges) return [[registered valueForKey:@"parent"] objectID];
+  NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ICFolder"];
+  request.predicate = [NSPredicate predicateWithFormat:@"self == %@", folderID];
+  request.resultType = NSDictionaryResultType;
+  request.propertiesToFetch = @[ @"parent" ];
+  request.includesPendingChanges = NO;
+  NSError *error = nil;
+  NSArray *rows = [context executeFetchRequest:request error:&error];
+  if (!rows)
+    Fail(@"store_unavailable", @"Folder fetch failed during the scope check",
+         @{@"committed" : @NO, @"detail" : OrNull(error.localizedDescription)});
+  if (rows.count != 1)
+    ScopeFail(writing, @"scope_conflict", @"folder_vanished", @"a folder above the target no longer exists");
+  id parent = [rows.firstObject objectForKey:@"parent"];
+  return [parent isKindOfClass:[NSManagedObjectID class]] ? parent : nil;
+}
+
+static NSArray<NSManagedObjectID *> *ScopeChain(NSManagedObjectContext *context, NSManagedObjectContext *writing,
+                                                NSManagedObjectID *start) {
+  NSMutableArray *chain = [NSMutableArray array];
+  for (NSManagedObjectID *cursor = start; cursor; cursor = PersistedParent(context, writing, cursor)) {
+    if (chain.count >= MAX_SCOPE_DEPTH || [chain containsObject:cursor])
+      ScopeFail(writing, @"scope_conflict", @"folder_chain_invalid", @"the folder chain is cyclic or too deep");
+    [chain addObject:cursor];
+  }
+  return chain;
+}
+
+static NSManagedObjectID *ObjectIDOf(id object) {
+  return [object isKindOfClass:[NSManagedObject class]] ? [object objectID] : nil;
+}
+
+// Evaluates the guard. `writing` is the write's own context (right before its
+// save) or nil for the read-only check of a call that saved nothing.
+static void EvaluateScopeGuard(NSManagedObjectContext *context, NSManagedObjectContext *writing) {
+  NSDictionary *request = gScopeRequest;
+  NSManagedObjectID *home = nil, *subjectFolder = nil, *destination = nil;
+  if (gScopeSubject == ScopeSubjectNote) {
+    if (!IsUUID(request[@"identifier"]))
+      Fail(@"invalid_request", @"Scope guards need the note `identifier`", @{@"committed" : @NO});
+    NSManagedObject *note = FetchNote(context, request[@"identifier"]);
+    // The folder the write read (the save's optimistic locking protects it),
+    // and where the write puts the note if it moves it.
+    id read = writing ? [note committedValuesForKeys:@[ @"folder" ]][@"folder"] : [note valueForKey:@"folder"];
+    home = ObjectIDOf(read);
+    NSManagedObjectID *now = ObjectIDOf([note valueForKey:@"folder"]);
+    if (now && ![now isEqual:home]) destination = now;
+  } else if (gScopeSubject == ScopeSubjectFolder) {
+    if (!IsUUID(request[@"identifier"]))
+      Fail(@"invalid_request", @"Scope guards need the folder `identifier`", @{@"committed" : @NO});
+    NSManagedObject *folder = FetchByIdentifier(context, @"ICFolder", request[@"identifier"]);
+    subjectFolder = folder.objectID;
+    id read = writing ? [folder committedValuesForKeys:@[ @"parent" ]][@"parent"] : [folder valueForKey:@"parent"];
+    home = ObjectIDOf(read);
+  } else {
+    NSManagedObject *created = nil;
+    if (writing)
+      for (NSManagedObject *object in context.insertedObjects)
+        if ([object.entity.name isEqualToString:@"ICFolder"]) {
+          if (created) ScopeFail(writing, @"scope_conflict", @"ambiguous_subject", @"the write creates more than one folder");
+          created = object;
+        }
+    if (created) {
+      home = ObjectIDOf([created valueForKey:@"parent"]);
+    } else if ([request[@"parentIdentifier"] isKindOfClass:[NSString class]]) {
+      home = FetchFolderRef(context, request[@"parentIdentifier"], @"parentIdentifier").objectID;
+    }
+  }
+
+  NSMutableArray<NSManagedObjectID *> *forbidden = [NSMutableArray array];
+  for (NSString *uri in request[@"forbiddenAncestorFolderIds"] ?: @[])
+    [forbidden addObject:ResolveScopeFolder(context, writing, uri, @"forbiddenAncestorFolderIds entry", YES)];
+  NSManagedObjectID *exact = request[@"ifFolderId"]
+                                 ? ResolveScopeFolder(context, writing, request[@"ifFolderId"], @"ifFolderId", NO)
+                                 : nil;
+  NSManagedObjectID *ancestor =
+      request[@"ifAncestorFolderId"]
+          ? ResolveScopeFolder(context, writing, request[@"ifAncestorFolderId"], @"ifAncestorFolderId", NO)
+          : nil;
+
+  NSString *noun = ScopeNoun();
+  if ((exact || ancestor) && !home)
+    ScopeFail(writing, @"scope_conflict", @"not_in_folder",
+              [NSString stringWithFormat:@"the %@ is not in a folder", noun]);
+  if (exact && ![exact isEqual:home])
+    ScopeFail(writing, @"scope_conflict", @"not_in_expected_folder",
+              [NSString stringWithFormat:@"the %@ is not in the expected folder", noun]);
+  NSArray *chain = home ? ScopeChain(context, writing, home) : @[];
+  if (ancestor && ![chain containsObject:ancestor])
+    ScopeFail(writing, @"scope_conflict", @"not_inside_expected_ancestor",
+              [NSString stringWithFormat:@"the %@ is not inside the expected ancestor folder", noun]);
+  if (forbidden.count) {
+    for (NSManagedObjectID *id_ in forbidden)
+      if ([chain containsObject:id_] || [id_ isEqual:subjectFolder])
+        ScopeFail(writing, @"scope_conflict", @"inside_forbidden_folder",
+                  [NSString stringWithFormat:@"the %@ is inside a forbidden folder", noun]);
+    NSArray *destinationChain = destination ? ScopeChain(context, writing, destination) : @[];
+    for (NSManagedObjectID *id_ in forbidden)
+      if ([destinationChain containsObject:id_])
+        ScopeFail(writing, @"scope_conflict", @"destination_inside_forbidden_folder",
+                  @"the destination is inside a forbidden folder");
+  }
+}
+
+static void EnforceScopeGuard(NSManagedObjectContext *context) {
+  if (!gScopeRequest) return;
+  [context processPendingChanges];
+  EvaluateScopeGuard(context, context);
+  gScopeEnforced = YES;
+}
+
+// For a guarded call that returned without saving: the same check in a fresh
+// read-only context, before the answer goes out.
+static void CheckScopeGuardWithoutSave(void) {
+  if (!gScopeRequest || gScopeEnforced) return;
+  NSManagedObjectContext *context = OpenContext(ResolveStore(), YES);
+  EvaluateScopeGuard(context, nil);
+}
+
+#pragma mark - Purge-flag repair
+
+// A note is deleted in Notes by moving it to its account's Recently Deleted
+// folder; its markedForDeletion flag stays clear until the 30-day lifetime
+// ends (or the user deletes it there), when Notes sets the flag and purges
+// it. A note with the flag set while still in an ordinary folder is in
+// neither state: Notes hides it and will purge it, but it never passed
+// through Recently Deleted, so the user cannot recover it (observed when a
+// tool set the flag instead of moving the note). repair_purge_flag detects
+// that state and, with confirm and ifRevision, finishes an ordinary delete:
+// clear the flag and move the note to Recently Deleted. It never purges.
+
+static NSString *const kPurgeRepairReason = @"apple-notes-mcp repair_purge_flag";
+#define MAX_PURGE_CANDIDATES 50
+
+static BOOL IsRecentlyDeleted(NSManagedObject *folder) {
+  if (!folder) return NO;
+  if ([folder respondsToSelector:sel_registerName("isTrashFolder")] && SendBool(folder, "isTrashFolder")) return YES;
+  return IsTrashFolder(folder);
+}
+
+static NSString *DeletionState(NSManagedObject *note) {
+  BOOL marked = BoolAttr(note, @"markedForDeletion");
+  NSManagedObject *folder = [note valueForKey:@"folder"];
+  if (!folder) return marked ? @"purge_flag_without_folder" : @"folderless";
+  if (IsRecentlyDeleted(folder)) return marked ? @"purging_from_recently_deleted" : @"in_recently_deleted";
+  return marked ? @"purge_flag_outside_recently_deleted" : @"active";
+}
+
+// The note's state and everything that blocks a repair.
+static NSDictionary *PurgePlan(NSManagedObject *note) {
+  NSString *state = DeletionState(note);
+  NSManagedObject *folder = [note valueForKey:@"folder"];
+  NSManagedObject *account = [note valueForKey:@"account"];
+  NSManagedObject *trash = account ? Send(account, "trashFolder") : nil;
+  NSUInteger attachments = 0, markedAttachments = 0;
+  for (NSManagedObject *attachment in [note valueForKey:@"attachments"] ?: @[]) {
+    attachments++;
+    if (BoolAttr(attachment, @"markedForDeletion")) markedAttachments++;
+  }
+  NSMutableArray *blockers = [NSMutableArray array];
+  if (![state isEqualToString:@"purge_flag_outside_recently_deleted"]) [blockers addObject:@"not_in_purge_flag_state"];
+  if (SendBool(note, "isPasswordProtected")) [blockers addObject:@"locked"];
+  if (SendBool(note, "isSharedViaICloud")) [blockers addObject:@"shared"];
+  if (BoolAttr(note, @"needsInitialFetchFromCloud")) [blockers addObject:@"downloading"];
+  if (!account || BoolAttr(account, @"markedForDeletion")) [blockers addObject:@"account_unavailable"];
+  if (![trash isKindOfClass:[NSManagedObject class]] || !IsRecentlyDeleted(trash) ||
+      BoolAttr(trash, @"markedForDeletion"))
+    [blockers addObject:@"no_recently_deleted_folder"];
+  if (markedAttachments) [blockers addObject:@"attachments_marked_for_deletion"];
+  return @{
+    @"identifier" : OrNull(StringAttr(note, @"identifier")),
+    @"objectURI" : note.objectID.URIRepresentation.absoluteString,
+    @"title" : OrNull(StringAttr(note, @"title")),
+    @"state" : state,
+    @"repairable" : @((BOOL)(blockers.count == 0)),
+    @"blockers" : blockers,
+    @"folderIdentifier" : OrNull(StringAttr(folder, @"identifier")),
+    @"folderObjectURI" : OrNull(folder ? folder.objectID.URIRepresentation.absoluteString : nil),
+    @"folderMarkedForDeletion" : @(BoolAttr(folder, @"markedForDeletion")),
+    @"recentlyDeletedFolderIdentifier" :
+        OrNull([trash isKindOfClass:[NSManagedObject class]] ? StringAttr(trash, @"identifier") : nil),
+    @"attachmentCount" : @(attachments),
+    @"attachmentsMarkedForDeletion" : @(markedAttachments),
+    @"revision" : RevisionToken(note),
+    @"cloudSync" : CloudSyncState(note),
+  };
+}
+
+// Dry run without an identifier: every note in the purge-flag state (or with
+// the flag and no folder), up to MAX_PURGE_CANDIDATES.
+static NSDictionary *ScanPurgeFlags(NSManagedObjectContext *context) {
+  NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ICNote"];
+  request.predicate = [NSPredicate predicateWithFormat:@"markedForDeletion == YES"];
+  NSError *error = nil;
+  NSArray *rows = [context executeFetchRequest:request error:&error];
+  if (!rows) Fail(@"store_unavailable", @"Note fetch failed", @{@"detail" : OrNull(error.localizedDescription)});
+  NSMutableArray *candidates = [NSMutableArray array];
+  NSUInteger found = 0;
+  for (NSManagedObject *note in rows) {
+    NSString *state = DeletionState(note);
+    if (![state isEqualToString:@"purge_flag_outside_recently_deleted"] &&
+        ![state isEqualToString:@"purge_flag_without_folder"])
+      continue;
+    found++;
+    if (candidates.count < MAX_PURGE_CANDIDATES) [candidates addObject:PurgePlan(note)];
+  }
+  return @{
+    @"status" : @"scanned",
+    @"dryRun" : @YES,
+    @"committed" : @NO,
+    @"markedForDeletionCount" : @(rows.count),
+    @"candidateCount" : @(found),
+    @"truncated" : @((BOOL)(found > candidates.count)),
+    @"candidates" : candidates,
+  };
+}
+
+static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request) {
+  gWriteRequest = YES;
+  id dryRunValue = request[@"dryRun"];
+  if (!IsJSONBool(dryRunValue)) Fail(@"invalid_request", @"`dryRun` must be true or false", nil);
+  BOOL dryRun = [dryRunValue boolValue];
+  NSString *identifier = nil;
+  if (request[@"identifier"] || !dryRun) identifier = RequireIdentifier(request);
+  NSString *ifRevision = nil;
+  if (dryRun) {
+    if (request[@"ifRevision"] || request[@"confirm"])
+      Fail(@"invalid_request", @"`ifRevision` and `confirm` are only accepted with dryRun false", nil);
+  } else {
+    ifRevision = RequireString(request, @"ifRevision");
+    if (!IsJSONBool(request[@"confirm"]) || ![request[@"confirm"] boolValue])
+      Fail(@"confirmation_required", @"Repairing a purge flag moves the note to Recently Deleted; pass confirm: true",
+           nil);
+  }
+  RequireFeature(FeaturePurgeRepair);
+
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, dryRun);
+  if (!identifier) return ScanPurgeFlags(context);
+  NSManagedObject *note = FetchNote(context, identifier);
+  NSDictionary *plan = PurgePlan(note);
+  NSString *revisionBefore = plan[@"revision"];
+  if (dryRun) {
+    NSMutableDictionary *response = [plan mutableCopy];
+    response[@"status"] = @"planned";
+    response[@"dryRun"] = @YES;
+    response[@"committed"] = @NO;
+    return response;
+  }
+  if (![revisionBefore isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+  if (![plan[@"repairable"] boolValue])
+    Fail(@"unsupported_note", @"This note cannot be repaired this way",
+         @{@"committed" : @NO, @"state" : plan[@"state"], @"blockers" : plan[@"blockers"]});
+
+  NSManagedObject *from = [note valueForKey:@"folder"];
+  NSManagedObject *account = [note valueForKey:@"account"];
+  NSManagedObject *trash = Send(account, "trashFolder");
+  NSString *bodyBefore = NoteBodyData(note) ? SHA256Hex(NoteBodyData(note)) : @"none";
+  NSMutableArray *allowed = [NSMutableArray arrayWithObjects:note, from, trash, account, nil];
+  for (NSManagedObject *attachment in [note valueForKey:@"attachments"] ?: @[]) [allowed addObject:attachment];
+
+  SendVoid(note, "unmarkForDeletion");
+  if (BoolAttr(note, @"markedForDeletion")) {
+    [context rollback];
+    Fail(@"save_failed", @"Notes did not clear the deletion flag; nothing was saved", @{@"committed" : @NO});
+  }
+  // What Notes does before it moves a note to Recently Deleted.
+  if ([note respondsToSelector:sel_registerName("notifyAttachmentsNoteWillMoveToRecentlyDeletedFolder")])
+    SendVoid(note, "notifyAttachmentsNoteWillMoveToRecentlyDeletedFolder");
+  SendVoid1(note, "setFolder:", trash);
+  // -setFolder: leaves the folder timestamp alone. It is both CloudKit's
+  // last-writer-wins stamp for the folder reference and the start of the
+  // 30-day Recently Deleted clock, so it is set here.
+  NSDate *now = [NSDate date];
+  [note setValue:now forKey:@"folderModificationDate"];
+  SendVoid1(note, "updateChangeCountWithReason:", kPurgeRepairReason);
+  RequireExpectedChanges(context, allowed, [NSSet setWithObject:@"ICCloudState"]);
+  SaveOrFail(context);
+
+  NSString *problem = nil;
+  NSDictionary *after = nil;
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *reread = FetchNote(fresh, identifier);
+    NSManagedObject *folder = [reread valueForKey:@"folder"];
+    NSDate *stamped = [reread valueForKey:@"folderModificationDate"];
+    NSData *body = NoteBodyData(reread);
+    if (BoolAttr(reread, @"markedForDeletion"))
+      problem = @"the deletion flag is still set";
+    else if (!IsRecentlyDeleted(folder) || ![StringAttr(folder, @"identifier") isEqual:StringAttr(trash, @"identifier")])
+      problem = @"the note is not in its account's Recently Deleted folder";
+    else if (!SendBool(reread, "isDeletedOrInTrash"))
+      problem = @"Notes does not report the note as in Recently Deleted";
+    else if (![stamped isKindOfClass:[NSDate class]] || fabs(stamped.timeIntervalSinceReferenceDate -
+                                                             now.timeIntervalSinceReferenceDate) > 1.0)
+      problem = @"the folder timestamp was not stored";
+    else if (![(body ? SHA256Hex(body) : @"none") isEqualToString:bodyBefore])
+      problem = @"the note body changed";
+    NSMutableDictionary *state = [NoteState(reread) mutableCopy];
+    state[@"state"] = DeletionState(reread);
+    after = state;
+  } @catch (NSException *e) {
+    // After a successful save: a committed write that could not be verified.
+    problem = e.reason ?: e.name;
+  }
+  if (problem)
+    Fail(@"verification_failed", [NSString stringWithFormat:@"Repair read-back failed: %@", problem],
+         @{@"committed" : @YES, @"revisionBefore" : revisionBefore});
+
+  NSMutableDictionary *response = [@{
+    @"status" : @"repaired",
+    @"dryRun" : @NO,
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"repairedPurgeFlag" : @YES,
+    @"identifier" : identifier,
+    @"previousState" : plan[@"state"],
+    @"state" : after[@"state"],
+    @"fromFolderIdentifier" : plan[@"folderIdentifier"],
+    @"recentlyDeletedFolderIdentifier" : plan[@"recentlyDeletedFolderIdentifier"],
+    @"folderIdentifier" : after[@"folderIdentifier"],
+    @"revisionBefore" : revisionBefore,
+    @"revisionAfter" : after[@"revision"],
+  } mutableCopy];
+  [response addEntriesFromDictionary:SyncFields(after, store)];
+  return response;
+}
+
 #pragma mark - Sync state
 
 #define MAX_SYNC_IDENTIFIERS 50
@@ -7506,10 +8040,16 @@ static NSDictionary *Dispatch(void) {
     NSMutableSet *allowed = [NSMutableSet setWithArray:@[ @"protocol", @"action" ]];
     NSString *extra = @(kActions[i].allowedKeys);
     if (extra.length) [allowed addObjectsFromArray:[extra componentsSeparatedByString:@","]];
+    ScopeSubject subject = ScopeSubjectForAction(action);
+    if (subject != ScopeSubjectNone) [allowed addObjectsFromArray:ScopeGuardKeys()];
     for (NSString *key in request)
       if (![allowed containsObject:key])
         Fail(@"invalid_request", [NSString stringWithFormat:@"Unknown request field `%@`", key], nil);
-    return kActions[i].handler(request);
+    if (subject == ScopeSubjectNone) return kActions[i].handler(request);
+    ParseScopeGuard(request, subject);
+    NSDictionary *result = kActions[i].handler(request);
+    CheckScopeGuardWithoutSave();
+    return result;
   }
   Fail(@"unknown_action", @"Action is not in the whitelist", @{@"actions" : ActionNames()});
   return nil;

@@ -147,7 +147,11 @@ A separate writer (`apple-notes-mcp setup --native-writer`), off unless both
 are set; unvalidated writes also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
 Call `native-writer-status` first. Every write needs a fresh `revision` as
 `ifRevision`; on `revision_conflict` or `indeterminate: true`, read the note
-before retrying.
+before retrying. Every write also takes the folder scope guards
+(`ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds`), checked
+inside the writer just before the save; `helperCode: "scope_conflict"` means
+the note is no longer where the guard requires, and
+`scope_folder_not_found` means a guard id names no existing folder.
 
 | Tool                         | Purpose                                                                                                                                                                                                        |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -168,6 +172,7 @@ before retrying.
 | `native-create-smart-folder` | Create a smart folder from a query Notes validates; idempotent                                                                                                                                                 |
 | `native-update-smart-folder` | Replace a smart folder's query, guarded by its revision                                                                                                                                                        |
 | `native-delete-smart-folder` | Delete one empty smart folder; dry run first, then apply with its revision                                                                                                                                     |
+| `native-repair-purge-flag`   | Find a note flagged for purge outside Recently Deleted and move it there; dry run, then `confirm: true`                                                                                                        |
 
 ## Usage Patterns
 

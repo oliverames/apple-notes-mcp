@@ -32,6 +32,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 export function registerPrivateWriterChecklistTools(
   server: McpServer,
@@ -73,6 +74,7 @@ export function registerPrivateWriterChecklistTools(
       ifRevision: revisionToken.describe(
         "The `revision` from native-checklist-state or native-note-state for this note"
       ),
+      ...writerScopeGuardInput(),
       nudge: z
         .boolean()
         .optional()
@@ -96,6 +98,7 @@ export function registerPrivateWriterChecklistTools(
           todoIdentifier: args.todoIdentifier,
           done: args.done,
           ifRevision: args.ifRevision,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

@@ -45,6 +45,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 export const composeNoteInput = {
   mode: z
@@ -91,6 +92,9 @@ export const composeNoteInput = {
     .strict()
     .optional()
     .describe("append only: insert before one exact Heading-style paragraph instead of at the end"),
+  // append/prepend only: create picks its folder itself, so a guard there would
+  // only be checked after Notes.app had already made the note.
+  ...writerScopeGuardInput(),
   nudge: z
     .boolean()
     .optional()
@@ -139,6 +143,9 @@ function checkModeFields(args: ComposeArgs): void {
       "ifRevision",
       "requireNonSystemPaper",
       "insertBeforeHeading",
+      "ifFolderId",
+      "ifAncestorFolderId",
+      "forbiddenAncestorFolderIds",
     ]);
     if (extra.length) throw invalid(`create does not take ${extra.join(", ")}`);
     if (!args.title?.trim()) throw invalid("create requires a title");
@@ -314,6 +321,7 @@ export function runComposeNote(
       ...(args.dryRun ? { dryRun: true } : { ifRevision: args.ifRevision }),
       ...(args.requireNonSystemPaper ? { requireNonSystemPaper: true } : {}),
       ...(args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {}),
+      scope: scopeGuardFrom(args),
     },
     runtime.deps
   );

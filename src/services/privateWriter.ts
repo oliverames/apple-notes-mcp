@@ -48,6 +48,7 @@ import {
   type PrivateUnavailableReason,
 } from "./privateHelper.js";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export type { PrivateHelperDeps };
 
@@ -95,6 +96,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   update_smart_folder: "write",
   delete_smart_folder: "write",
   add_paper: "write",
+  repair_purge_flag: "write",
 };
 
 /**
@@ -157,6 +159,12 @@ export const TABLE_WRITES_LIVE_VALIDATED = false;
  * delete's dry run and `read_smart_folder` are not gated.
  */
 export const SMART_FOLDERS_LIVE_VALIDATED = false;
+
+/**
+ * The same gate for the purge-flag repair (native-repair-purge-flag). Its
+ * dry run and scan are read-only and not gated.
+ */
+export const PURGE_REPAIR_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -323,6 +331,8 @@ export const writerProbeSchema = z
         pruneOrphanTable: featureSchema.optional(),
         smartFolders: featureSchema.optional(),
         addPaper: featureSchema.extend({ formats: z.array(z.string()) }).optional(),
+        scopeGuards: featureSchema.optional(),
+        purgeRepair: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -583,16 +593,18 @@ export function probePrivateWriter(
 
 /** Append plain text paragraphs, guarded by `ifRevision` and verified by read-back. */
 export function appendPlainText(
-  request: { identifier: string; text: string; ifRevision: string },
+  request: { identifier: string; text: string; ifRevision: string; scope?: ScopeGuard },
   deps: PrivateHelperDeps = defaultWriterDeps()
 ): PrivateAppendResult {
   assertNoteIdentifier(request.identifier);
   assertAppendText(request.text);
   assertRevision(request.ifRevision);
+  const scope = writerScopeFields(request.scope);
   requireLiveValidated(APPEND_LIVE_VALIDATED, "native-append-plain-text", deps.env);
+  const { identifier, text, ifRevision } = request;
   return parseWriterResult(
     appendResultSchema,
-    callPrivateWriter("append_plain_text", request, deps),
+    callPrivateWriter("append_plain_text", { identifier, text, ifRevision, ...scope }, deps),
     true
   );
 }
@@ -929,6 +941,8 @@ export interface EditNoteRequest {
   /** Required to apply: the plan's revisionBefore. */
   ifRevision?: string;
   requireNonSystemPaper?: boolean;
+  /** Folder preconditions, checked by the writer (in the plan too). */
+  scope?: ScopeGuard;
 }
 
 /**
@@ -961,6 +975,7 @@ export function editNote(
   };
   if (request.requireNonSystemPaper !== undefined)
     fields.requireNonSystemPaper = request.requireNonSystemPaper;
+  Object.assign(fields, writerScopeFields(request.scope));
   if (request.dryRun) {
     return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
   }
@@ -1026,6 +1041,9 @@ export const WRITER_FEATURES = [
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED,
   },
   { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  // Folder scope guards only refuse writes; there is nothing to validate live.
+  { key: "scopeGuards", probeKey: "scopeGuards", liveValidated: true },
+  { key: "purgeRepair", probeKey: "purgeRepair", liveValidated: PURGE_REPAIR_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

@@ -29,6 +29,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export const PAPER_FORMATS = ["auto", "paper", "drawing"] as const;
 export type PaperFormat = (typeof PAPER_FORMATS)[number];
@@ -79,6 +80,8 @@ export interface AddPaperRequest {
   drawing: AuthorDrawing;
   format?: PaperFormat;
   dryRun?: boolean;
+  /** Folder preconditions, checked by the writer just before the save. */
+  scope?: ScopeGuard;
 }
 
 /**
@@ -99,6 +102,7 @@ export function addPaper(
     ifRevision: request.ifRevision,
     drawing: request.drawing,
     format: request.format ?? "auto",
+    ...writerScopeFields(request.scope),
   };
   if (dryRun) fields.dryRun = true;
   if (!dryRun)
