@@ -80,6 +80,69 @@ describe("highlight writer tool", () => {
     expect(nudgeInPlace).not.toHaveBeenCalled();
   });
 
+  it("sends a note-scope target and refuses match or count with it", async () => {
+    vi.mocked(setHighlight).mockReturnValue({ status: "planned", committed: false } as never);
+    const { call } = fixture();
+    await call("native-highlight-text", {
+      identifier: NOTE,
+      scope: "note",
+      color: "blue",
+      dryRun: true,
+    });
+    expect(setHighlight).toHaveBeenCalledWith(
+      {
+        identifier: NOTE,
+        target: { scope: "note" },
+        color: "blue",
+        ifRevision: undefined,
+        dryRun: true,
+      },
+      WRITER
+    );
+    for (const extra of [{ match: "due" }, { expectedCount: 2 }]) {
+      const r = await call("native-highlight-text", {
+        identifier: NOTE,
+        scope: "note",
+        color: "blue",
+        ifRevision: REV,
+        ...extra,
+      });
+      expect(r.isError).toBe(true);
+      expect(r.structuredContent).toMatchObject({
+        code: "validation_error",
+        helperCode: "invalid_request",
+        committed: false,
+      });
+    }
+    const missing = await call("native-highlight-text", {
+      identifier: NOTE,
+      color: "blue",
+      ifRevision: REV,
+    });
+    expect(missing.structuredContent).toMatchObject({
+      helperCode: "invalid_request",
+      committed: false,
+    });
+    expect(setHighlight).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps an empty whole-note scope to a validation error", async () => {
+    vi.mocked(setHighlight).mockImplementationOnce(() => {
+      throw new PrivateWriteError("nothing_to_highlight", "no body", false);
+    });
+    const r = await fixture().call("native-highlight-text", {
+      identifier: NOTE,
+      scope: "note",
+      color: "mint",
+      ifRevision: REV,
+    });
+    expect(r.structuredContent).toMatchObject({
+      code: "validation_error",
+      helperCode: "nothing_to_highlight",
+      committed: false,
+    });
+  });
+
   it("nudges only after a committed write", async () => {
     vi.mocked(nudgeInPlace).mockResolvedValue({
       allUploadsRecorded: false,
@@ -130,5 +193,8 @@ describe("highlight writer tool", () => {
     expect(schema.ifRevision.safeParse(undefined).success).toBe(true);
     expect(schema.ifRevision.safeParse("r1:abc").success).toBe(false);
     expect(schema.match.safeParse("").success).toBe(false);
+    expect(schema.match.safeParse(undefined).success).toBe(true);
+    expect(schema.scope.safeParse("note").success).toBe(true);
+    expect(schema.scope.safeParse("paragraph").success).toBe(false);
   });
 });

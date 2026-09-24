@@ -10,12 +10,15 @@
  * requested change, and Notes' derived `hasEmphasis` flag to agree. `dryRun`
  * reports the plan without writing.
  *
- * The request names a `scope`. The only scope today is `"text"`: every exact,
- * case-sensitive occurrence of a literal `match`, which must occur exactly
- * `expectedCount` times. The action, result shape, planning, and verification
- * work on any list of ranges, so a later whole-note scope is one more
- * {@link HighlightTarget} variant and one more branch in the writer's target
- * selection.
+ * The request names a `scope`:
+ * - `"text"`: every exact, case-sensitive occurrence of a literal `match`,
+ *   which must occur exactly `expectedCount` times.
+ * - `"note"`: the whole body after the title paragraph, split around
+ *   attachment glyphs (U+FFFC). Paragraph separators in the body are included;
+ *   the title paragraph (through its newline) and attachment glyphs are
+ *   skipped and counted in `skipped`. It takes no `match` or `expectedCount`.
+ * Planning, the no-op check, the edit, and verification work on any list of
+ * ranges, so the scopes differ only in the writer's target selection.
  *
  * @module services/privateWriterHighlight
  */
@@ -38,8 +41,10 @@ export type HighlightColor = (typeof HIGHLIGHT_COLORS)[number] | "none";
 export const MAX_MATCH_UTF16 = 1000;
 export const MAX_HIGHLIGHT_RANGES = 100;
 
-/** What to highlight. Only the exact-text scope exists today. */
-export type HighlightTarget = { scope: "text"; match: string; expectedCount?: number };
+/** What to highlight: exact text, or the whole body after the title. */
+export type HighlightTarget =
+  { scope: "text"; match: string; expectedCount?: number } | { scope: "note" };
+export const HIGHLIGHT_SCOPES = ["text", "note"] as const;
 
 const revision = z.string().regex(/^r1:[a-f0-9]{64}$/);
 const runSchema = z.object({
@@ -54,9 +59,19 @@ export const highlightResultSchema = z
     committed: z.boolean(),
     dryRun: z.boolean(),
     identifier: z.string(),
-    scope: z.literal("text"),
+    scope: z.enum(HIGHLIGHT_SCOPES),
     color: z.string(),
     rangeCount: z.number().int().positive(),
+    /** UTF-16 code units across all target ranges. */
+    characterCount: z.number().int().positive(),
+    /** Scope "note" only: what the whole-note scope left out. */
+    skipped: z
+      .object({
+        titleUTF16: z.number().int().nonnegative(),
+        attachmentGlyphs: z.number().int().nonnegative(),
+        highlightedAttachmentGlyphs: z.number().int().nonnegative(),
+      })
+      .optional(),
     revisionBefore: revision,
     revisionAfter: revision,
     plan: z
@@ -119,8 +134,18 @@ export interface HighlightRequest {
 
 /** The writer fields for one target. */
 function targetFields(target: HighlightTarget): Record<string, unknown> {
+  if (target.scope === "note") {
+    const extra = target as { match?: unknown; expectedCount?: unknown };
+    if (extra.match !== undefined || extra.expectedCount !== undefined)
+      throw new PrivateWriteError(
+        "invalid_request",
+        'match and expectedCount apply only to scope "text"',
+        false
+      );
+    return { scope: "note" };
+  }
   if (target.scope !== "text")
-    throw new PrivateWriteError("invalid_request", 'scope must be "text"', false);
+    throw new PrivateWriteError("invalid_request", 'scope must be "text" or "note"', false);
   assertHighlightMatch(target.match);
   const expectedCount = target.expectedCount ?? 1;
   if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > MAX_HIGHLIGHT_RANGES)

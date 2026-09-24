@@ -32,7 +32,10 @@ process.stdin.on("end", () => {
   if (mode === "hang") { setTimeout(() => {}, 60000); return; }
   if (mode === "mismatch") out({ status: "error", code: "match_count_mismatch", message: "2 not 1", committed: false, found: 2 }, 1);
   if (mode === "malformed") out({ status: "updated" });
-  const base = { identifier: req.identifier, scope: req.scope, color: req.color, rangeCount: req.expectedCount, revisionBefore: "r1:" + "b".repeat(64),
+  if (mode === "empty") out({ status: "error", code: "nothing_to_highlight", message: "no body", committed: false, skipped: { titleUTF16: 6, attachmentGlyphs: 1, highlightedAttachmentGlyphs: 0 } }, 1);
+  const note = req.scope === "note";
+  const base = { identifier: req.identifier, scope: req.scope, color: req.color, rangeCount: note ? 2 : req.expectedCount, characterCount: note ? 40 : 4 * req.expectedCount,
+    ...(note ? { skipped: { titleUTF16: 6, attachmentGlyphs: 1, highlightedAttachmentGlyphs: 0 } } : {}), revisionBefore: "r1:" + "b".repeat(64),
     hasEmphasis: req.color !== "none", modificationDate: null, cloudSync: { available: true, inICloudAccount: true }, pushScheduled: false,
     pushState: "awaiting_notes_app", syncHostRunning: true, storeKind: "live", echo: req };
   const run = { start: 3, lengthUTF16: 4, color: req.color === "none" ? null : req.color };
@@ -148,7 +151,9 @@ describe("setHighlight", SPAWN_TIMEOUT, () => {
     const bad = [
       { ...request, identifier: "x" },
       { ...request, target: { ...target, match: "" } },
-      { ...request, target: { ...target, scope: "note" as never } },
+      { ...request, target: { ...target, scope: "para" as never } },
+      { ...request, target: { scope: "note", match: "due" } as never },
+      { ...request, target: { scope: "note", expectedCount: 1 } as never },
       { ...request, color: "red" as never },
       { ...request, target: { ...target, expectedCount: 0 } },
       { ...request, target: { ...target, expectedCount: 1.5 } },
@@ -169,6 +174,33 @@ describe("setHighlight", SPAWN_TIMEOUT, () => {
     expect(r.ranges?.[0].storedRuns[0].color).toBe("mint");
     expect(r.echo).toMatchObject({ scope: "text", expectedCount: 2, ifRevision: REV });
     expect((r.echo as Record<string, unknown>).dryRun).toBeUndefined();
+  });
+
+  it("sends the whole-note scope without match or count and returns what it skipped", () => {
+    const note = { ...request, target: { scope: "note" as const } };
+    const plan = setHighlight({ ...note, ifRevision: undefined, dryRun: true }, deps());
+    expect(plan.echo).toEqual({
+      protocol: 1,
+      action: "set_highlight",
+      identifier: NOTE,
+      scope: "note",
+      color: "mint",
+      dryRun: true,
+    });
+    expect(plan).toMatchObject({
+      status: "planned",
+      scope: "note",
+      rangeCount: 2,
+      characterCount: 40,
+      skipped: { titleUTF16: 6, attachmentGlyphs: 1, highlightedAttachmentGlyphs: 0 },
+    });
+    const r = setHighlight({ ...note, color: "none" }, deps(ALLOW));
+    expect(r).toMatchObject({ status: "updated", committed: true, scope: "note" });
+    expect(r.echo).toMatchObject({ scope: "note", color: "none", ifRevision: REV });
+    expect(caught(() => setHighlight(note, deps({ ...ALLOW, FAKE_MODE: "empty" })))).toMatchObject({
+      code: "nothing_to_highlight",
+      committed: false,
+    });
   });
 
   it("removes a highlight with color none", () => {
