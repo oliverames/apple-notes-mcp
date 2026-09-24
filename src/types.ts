@@ -1497,6 +1497,18 @@ export interface NotesExportReceipt {
   assetFiles?: string[];
 }
 
+/**
+ * What add-attachment-from-pasteboard took from the pasteboard.
+ */
+export interface PasteboardAttachmentSource {
+  /** "file" = a copied file's bytes; "data" = image or PDF bytes. */
+  kind: "file" | "data";
+  /** Pasteboard type (UTI) that was read, e.g. "public.png" or "public.file-url". */
+  type: string;
+  /** Default attachment name for the pasted content, before any filename override. */
+  filename: string;
+}
+
 // =============================================================================
 // Database-Backed Recent Listing and Folder Tree
 // =============================================================================
