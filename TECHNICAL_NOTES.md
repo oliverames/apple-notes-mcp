@@ -1286,6 +1286,64 @@ was not inspected visually. `currentLocalVersion` went from 1 to 3 while
 `latestVersionSyncedToCloud` stayed 1 for the 12-minute read-only poll; about
 two and a half hours later both were 3, so Notes.app uploaded the change in
 between, on a trigger that was not observed. That test predates the sync
+
+### URL link cards (`add_url_card`)
+
+A card Notes made itself (inspected on a store copy, macOS 27.2, 2026-09-23)
+is an `ICAttachment` row with `typeUTI` `public.url`, `urlString`, a title,
+about 20 bytes of `metadataData`, and one preview-image child, plus a single
+U+FFFC in the note text whose only attribute is `NSAttachment`, an
+`ICTTAttachment` carrying the attachment identifier and UTI. The glyph run has
+no `TTStyle`, so the card's line is body text.
+
+The writer calls `-[ICNote addURLAttachmentWithURL:]`, which creates the
+attachment row with the URL and type but does not place a glyph
+(`-rangeForAttachment:` returns NotFound; if a future release places one, the
+writer rolls back and refuses rather than guess). It then inserts
+`"\n" + glyph` through `insertAttributedString:atIndex:` at the end of the
+chosen paragraph's text, so the card becomes the next line and the original
+newline follows it. The separator copies the anchor paragraph's `TTStyle`,
+keeping that paragraph's style. With no anchor the card goes at the end, with
+a separator only when the body does not already end in a newline. An anchor
+that matches zero or several whole paragraphs is `match_count_mismatch` with
+`found`. `updateChangeCountWithReason:` runs on both the note and the
+attachment, because the attachment is its own cloud object; the result reports
+the attachment's own `cloudSync` counters. The probe also checks the
+`ICAttachment` model properties the action reads (`identifier`, `typeUTI`,
+`urlString`, `note`, `cloudState`).
+
+The fresh read-back requires the text to equal the old text plus the
+insertion at the planned index, the glyph to name the new attachment exactly
+once at the planned index, and the attachment row to be a `public.url`
+attachment for that URL on that note. `dryRun` opens the store read-only and
+reports the insertion point. The MCP tool is `native-add-url-card` (optional
+`nudge`, which moves the note; whether the move alone also uploads the
+attachment has not been observed).
+
+The writer makes no network request and writes no file.
+`scripts/test-private-writer-link-card-copy-store.sh` passed on a store copy on
+2026-09-24: the live write gate, a missing anchor, four refused URLs, a stale
+revision, a dry run with no change, two cards after the same paragraph and one
+at the end (+6 UTF-16 units, each glyph read back at its planned index), a
+refused replay, no new file under the live Notes container, and the live note
+unchanged. On the copy the attachment reported `currentLocalVersion` 1 and
+`latestVersionSyncedToCloud` 0, so it is marked for upload.
+
+Earlier live test (2026-09-23, macOS 27.2), run with the same edit logic in
+the earlier combined helper, before it moved into this writer: on a test note
+in an iCloud folder the attachment row started with no title, summary,
+metadata, or preview image, and AppleScript already listed it with its URL.
+About 20 seconds after the note was shown in Notes.app, Notes had fetched the
+preview itself: both cards had a title, one had a summary and a preview-image
+child, and both had metadata, the same shape as a card Notes made itself. The
+note had not yet uploaded its own creation (`latestVersionSyncedToCloud` 0)
+when the cards were added, and the writes raised `currentLocalVersion` to 4.
+After the note was shown in Notes.app, Notes fetched the previews (its own
+saves raised the note to 7), and within about two minutes the note and both
+attachments reported `latestVersionSyncedToCloud` equal to
+`currentLocalVersion`. Displaying the note, which made Notes.app save its own
+change to it, was enough to upload those writes. Whether the card and its
+preview appear on another device was not checked. That test predates the sync
 nudge. The writer build of this action has not been live-tested yet.
 
 ### Still open

@@ -158,6 +158,7 @@ before retrying.
 | `native-checklist-state`    | List native checklist items with `todoIdentifier`, `done`, and the note `revision` (read-only)                                                                                                                 |
 | `native-set-checklist-item` | Check or uncheck one item by `todoIdentifier` with `ifRevision`; `persistedDone` read-back; same state writes nothing                                                                                          |
 | `native-highlight-text`     | Highlight (purple/pink/orange/mint/blue) or remove (`none`) exact text (`expectedCount` guard) or, with `scope: "note"`, the whole body after the title, skipping attachments; `dryRun`, stored runs read back |
+| `native-add-url-card`       | Add a rich URL link card at the end or after one exact paragraph; `dryRun`, read-back of glyph and attachment; not idempotent                                                                                  |
 
 ## Usage Patterns
 

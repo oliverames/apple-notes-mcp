@@ -82,6 +82,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_checklist: "read",
   set_checklist_item: "write",
   set_highlight: "write",
+  add_url_card: "write",
 };
 
 /**
@@ -113,6 +114,13 @@ export const CHECKLIST_TOGGLE_LIVE_VALIDATED = false;
  * APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. A dry run never writes and is not gated.
  */
 export const HIGHLIGHT_LIVE_VALIDATED = false;
+
+/**
+ * URL link cards have not passed live end-to-end validation in a released
+ * build of the writer. Until they have, a write also requires
+ * APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. A dry run never writes and is not gated.
+ */
+export const LINK_CARD_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -272,6 +280,7 @@ export const writerProbeSchema = z
         composeObjects: featureSchema.optional(),
         checklistToggle: featureSchema.optional(),
         highlight: featureSchema.optional(),
+        linkCard: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -944,6 +953,7 @@ export const WRITER_FEATURES = [
     liveValidated: CHECKLIST_TOGGLE_LIVE_VALIDATED,
   },
   { key: "highlight", probeKey: "highlight", liveValidated: HIGHLIGHT_LIVE_VALIDATED },
+  { key: "linkCard", probeKey: "linkCard", liveValidated: LINK_CARD_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 
