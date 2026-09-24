@@ -21,9 +21,13 @@ const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "")
 
 /**
  * Write actions that legitimately take no ifRevision. Each entry needs a
- * reason; none exist in the foundation.
+ * reason.
  */
-const NO_REVISION_WRITES: Record<string, string> = {};
+const NO_REVISION_WRITES: Record<string, string> = {
+  create_smart_folder:
+    "creates a new folder, so there is no persisted revision; the guard is that no active " +
+    "folder with that title exists in the destination, checked in the write context",
+};
 
 function actionRows(): Array<{ name: string; keys: string[]; handler: string }> {
   const table = SOURCE.slice(SOURCE.indexOf("kActions[] = {"));
@@ -91,6 +95,34 @@ describe("private writer source contract", () => {
   it("never issues SQL or a batch request", () => {
     expect(CODE).not.toMatch(/sqlite3_(?:exec|prepare)/);
     expect(CODE).not.toMatch(/NSBatch(?:Update|Delete|Insert)Request/);
+  });
+
+  it("reports committed false for a write that failed before its first save", () => {
+    expect(CODE).toMatch(/if \(gWriteRequest && !gSaveAttempted && !out\[""\]\) out\[""\] = @NO;/);
+    for (const name of ["HandleCreateSmartFolder", "HandleUpdateSmartFolder"])
+      expect(handlerBody(name), name).toMatch(/^[^{]*\{\s*gWriteRequest = YES;/);
+    expect(handlerBody("HandleDeleteSmartFolder")).toMatch(
+      /if \(!dryRun\) \{\s*gWriteRequest = YES;/
+    );
+    // Every save path marks the attempt before saving.
+    const saver = CODE.slice(CODE.indexOf("static void SaveFolderOrFail("));
+    expect(saver.slice(0, saver.indexOf("save:"))).toMatch(/gSaveAttempted = YES;/);
+  });
+
+  it("opens the smart-folder delete read-write only for the apply", () => {
+    expect(handlerBody("HandleDeleteSmartFolder")).toMatch(/OpenContext\(store, dryRun\)/);
+    expect(handlerBody("HandleCreateSmartFolder")).toMatch(
+      /NSManagedObjectContext \*validation = OpenContext\(store, YES\)/
+    );
+  });
+
+  it("never lets a smart folder be a parent", () => {
+    const body = CODE.slice(
+      CODE.indexOf("static void RequireSmartFolderParent("),
+      CODE.indexOf("static void ResolveDestination(")
+    );
+    expect(body).toMatch(/if \(FolderKind\(parent\) == 2\)/);
+    expect(SOURCE).toMatch(/@"reason" : @"smart_folder_destination"/);
   });
 
   it("identifies itself as the writer in hello and probe", () => {

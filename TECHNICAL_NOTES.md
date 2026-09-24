@@ -891,6 +891,56 @@ compares the writer's revision token before and after (`contentUnchanged`).
 Notes' own record that the server accepted the version, not a cross-device
 check.
 
+### Smart folders
+
+A smart folder is an ordinary synced `ICFolder` row with `folderType` 2 and a
+query document in `smartFolderQueryJSON`. The read-only `list-smart-folders`
+reader decodes those rows with SQL; the writer adds `read_smart_folder`
+(read) and `create_smart_folder`, `update_smart_folder`, and
+`delete_smart_folder` (writes).
+
+- Query pipeline: the writer parses the request, peels Notes' outer
+  `{"and":[{"deleted":false}, X]}` wrapper, checks every clause against the
+  known set (booleans such as `checklist` and `pinned`, `attachmentSection`,
+  `tag`, `folder`, date ranges, participants; 32 levels and 256 clauses at
+  most), resolves `tag` names with `+[ICHashtag
+  standardizedHashtagRepresentationForDisplayText:]` to exactly one tag in the
+  destination account, and wraps a bare `folder` clause in a one-item `or`
+  (the shape Notes resolves). It then sets the document on a scratch folder in
+  a read-only context, parses it with `-smartFolderQueryObjC`, builds the
+  filter selection, and asks `+[ICQueryObjC
+  objc_queryForNotesMatchingFilterSelection:]` to regenerate it. The
+  regenerated document is what gets stored. Observed on macOS 27.2: Notes'
+  filter model drops a `not` and collapses some `and` groups, so the writer
+  compares a normalized form of the request and of the regeneration and
+  refuses the query when they differ (`query_not_representable`).
+- Revision: folders have no `r1:` note revision, so the update and delete
+  compare an `f1:` folder revision, a SHA-256 over the identifier, title,
+  type, canonical query, account, parent, deletion flag, child-folder and
+  note counts, title timestamp, and the cloud state's local version.
+  `create_smart_folder` takes none, because nothing exists yet; its guard is
+  the title check in the write context right before the save, and an
+  identical existing smart folder makes it a no-op.
+- Saves: the create uses `+[ICFolder newFolderInAccount:]` or
+  `newFolderInParentFolder:`, sets the title, query, and type, and stamps
+  `dateForLastTitleModification` (and `parentModificationDate` when nested),
+  which the factories leave nil and which otherwise let the first server echo
+  revert the title or drop the parent. The delete calls `-markForDeletion`.
+  Before each save the writer checks that the context holds only the intended
+  changes (`unexpected_changes`, `committed: false`), and after it re-reads
+  the folder through a new read-only stack.
+- A write that fails before its first save reports `committed: false` even
+  when the failing check did not set it; the writer tracks whether a save was
+  attempted.
+- A smart folder is never a parent, the same rule as the smart-folder
+  destination guard: the refusal carries `reason: "smart_folder_destination"`.
+- The sync nudge moves a note into its own folder and has no folder
+  equivalent, so the smart-folder tools do not offer it.
+  `SMART_FOLDERS_LIVE_VALIDATED` is false. On the earlier combined-helper
+  branch, a live create, query repair, and delete in a test folder were
+  recorded as uploaded by Notes.app without a relaunch (not checked on a
+  second device).
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

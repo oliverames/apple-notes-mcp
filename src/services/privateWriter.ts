@@ -73,6 +73,10 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_note_state: "read",
   append_plain_text: "write",
   read_sync_state: "read",
+  read_smart_folder: "read",
+  create_smart_folder: "write",
+  update_smart_folder: "write",
+  delete_smart_folder: "write",
 };
 
 /**
@@ -80,6 +84,12 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
  * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
  */
 export const APPEND_LIVE_VALIDATED = false;
+
+/**
+ * The same gate for the smart-folder writes (create, update, delete). The
+ * delete's dry run and `read_smart_folder` are not gated.
+ */
+export const SMART_FOLDERS_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -228,7 +238,11 @@ export const writerProbeSchema = z
       .passthrough(),
     syncHostRunning: z.boolean(),
     features: z
-      .object({ readNoteState: featureSchema, appendPlainText: featureSchema })
+      .object({
+        readNoteState: featureSchema,
+        appendPlainText: featureSchema,
+        smartFolders: featureSchema.optional(),
+      })
       .passthrough(),
   })
   .passthrough();
@@ -273,6 +287,12 @@ export interface WriterCallOptions {
   allowDisabled?: boolean;
   /** Run a specific binary without the installation check (setup verification only). */
   binaryPath?: string;
+  /**
+   * Treat a write action as a read for this call. A dry run of a two-phase
+   * write opens the store read-only, so its timeout is not indeterminate. It
+   * can only lower the classification, never raise a read to a write.
+   */
+  dryRun?: boolean;
 }
 
 /**
@@ -292,7 +312,7 @@ export function callPrivateWriter(
       `"${action}" is not a private writer action.`,
       undefined
     );
-  const isWrite = kind === "write";
+  const isWrite = kind === "write" && !options.dryRun;
   const notCommitted = isWrite ? false : undefined;
   if (!options.allowDisabled) {
     if (!privateHelperEnabled(deps.env))
@@ -489,12 +509,55 @@ export interface PrivateWriterFeatureStatus {
   detail: string | null;
 }
 
+/**
+ * Each reported writer feature: the probe entry it reads, and its
+ * live-validation flag (null for a read, which is never gated).
+ */
+const WRITER_FEATURES = {
+  appendPlainText: { probe: "appendPlainText", validated: APPEND_LIVE_VALIDATED },
+  readSmartFolders: { probe: "smartFolders", validated: null },
+  editSmartFolders: { probe: "smartFolders", validated: SMART_FOLDERS_LIVE_VALIDATED },
+} as const satisfies Record<string, { probe: string; validated: boolean | null }>;
+
+export type PrivateWriterFeature = keyof typeof WRITER_FEATURES;
+
 export interface PrivateWriterCapabilities {
   enabled: boolean;
   writesEnabled: boolean;
   installation: WriterInstallationReport;
   probe: PrivateWriterProbe | null;
-  features: { appendPlainText: PrivateWriterFeatureStatus };
+  features: Record<PrivateWriterFeature, PrivateWriterFeatureStatus>;
+}
+
+function featureStatus(
+  probed: z.infer<typeof featureSchema> | undefined,
+  validated: boolean | null,
+  env: NodeJS.ProcessEnv
+): PrivateWriterFeatureStatus {
+  if (!probed)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The writer probe did not report this feature",
+    };
+  if (!probed.available) {
+    const reason =
+      probed.reason === "store_unavailable" || probed.reason === "disabled"
+        ? (probed.reason as PrivateWriterUnavailableReason)
+        : "private_api_unavailable";
+    return {
+      available: false,
+      reason,
+      detail: probed.missing.length ? `missing: ${probed.missing.join(", ")}` : probed.reason,
+    };
+  }
+  if (validated === false && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
+      available: false,
+      reason: "not_live_validated",
+      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
+    };
+  return { available: true, reason: null, detail: null };
 }
 
 /** Never throws. Runs the live probe only when both switches are on and the writer is installed. */
@@ -505,12 +568,15 @@ export function privateWriterCapabilities(
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const names = Object.keys(WRITER_FEATURES) as PrivateWriterFeature[];
   const off = (
     reason: PrivateWriterUnavailableReason,
     detail: string | null
   ): PrivateWriterCapabilities => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } },
+    features: Object.fromEntries(
+      names.map((name) => [name, { available: false, reason, detail }])
+    ) as PrivateWriterCapabilities["features"],
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -523,26 +589,12 @@ export function privateWriterCapabilities(
   } catch (error) {
     return off("helper_unreachable", error instanceof Error ? error.message : String(error));
   }
-  const feature = probe.features.appendPlainText;
-  let append: PrivateWriterFeatureStatus;
-  if (!feature.available) {
-    const reason =
-      feature.reason === "store_unavailable" || feature.reason === "disabled"
-        ? (feature.reason as PrivateWriterUnavailableReason)
-        : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  const probed = probe.features as Record<string, z.infer<typeof featureSchema> | undefined>;
+  const features = Object.fromEntries(
+    names.map((name) => {
+      const { probe: key, validated } = WRITER_FEATURES[name];
+      return [name, featureStatus(probed[key], validated, deps.env)];
+    })
+  ) as PrivateWriterCapabilities["features"];
+  return { ...base, probe, features };
 }

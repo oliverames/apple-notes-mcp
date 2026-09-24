@@ -58,6 +58,15 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
   switch (helperCode) {
     case "revision_conflict":
       return "revision_conflict";
+    case "unsupported_folder":
+    case "query_not_representable":
+      return "unsupported";
+    case "invalid_query":
+      return "validation_error";
+    case "tag_not_found":
+      return "not_found";
+    case "folder_exists":
+      return "validation_error";
     case "verification_failed":
       return "verification_failed";
     case "writes_disabled":

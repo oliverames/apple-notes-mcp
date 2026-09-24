@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid3 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid3}))`);
+        const invalid4 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid4}))`);
       }
     };
     exports.default = def;
@@ -39444,9 +39444,9 @@ function queryNoteData(noteId3) {
     return { hex: null, error: "invalid_id" };
   }
   const pk = pkMatch[1];
-  const query2 = `SELECT hex(nd.ZDATA) FROM ZICNOTEDATA nd JOIN ZICCLOUDSYNCINGOBJECT n ON nd.ZNOTE = n.Z_PK WHERE n.Z_PK = ${pk};`;
+  const query3 = `SELECT hex(nd.ZDATA) FROM ZICNOTEDATA nd JOIN ZICCLOUDSYNCINGOBJECT n ON nd.ZNOTE = n.Z_PK WHERE n.Z_PK = ${pk};`;
   try {
-    const result = execFileSync2("sqlite3", ["-readonly", NOTES_DB_PATH, query2], {
+    const result = execFileSync2("sqlite3", ["-readonly", NOTES_DB_PATH, query3], {
       encoding: "utf8",
       timeout: 5e3,
       stdio: ["pipe", "pipe", "pipe"]
@@ -40749,7 +40749,7 @@ function decodeSmartFolderQuery(raw, context = {}) {
       inner = type.and.filter((clause) => !isDeletedWrapper(clause));
     }
   }
-  const query2 = inner.length === 1 ? inner[0] : { and: inner };
+  const query3 = inner.length === 1 ? inner[0] : { and: inner };
   let match = "all";
   let filters;
   const only = inner.length === 1 && isClause(inner[0]) ? inner[0] : void 0;
@@ -40768,7 +40768,7 @@ function decodeSmartFolderQuery(raw, context = {}) {
   return {
     match,
     filters,
-    query: query2,
+    query: query3,
     ...includesRecentlyDeleted === void 0 ? {} : { includesRecentlyDeleted },
     fullyDecoded: decoder.fullyDecoded
   };
@@ -42690,9 +42690,9 @@ var AppleNotesManager = class {
    * const topResults = manager.searchNotes("project", false, undefined, undefined, undefined, 10);
    * ```
    */
-  searchNotes(query2, searchContent = false, account, folder, modifiedSince, limit) {
+  searchNotes(query3, searchContent = false, account, folder, modifiedSince, limit) {
     const targetAccount = this.resolveAccount(account);
-    const safeQuery = escapePlainStringForAppleScript(query2);
+    const safeQuery = escapePlainStringForAppleScript(query3);
     const safeLimit = limit !== void 0 && limit > 0 ? Math.floor(limit) : void 0;
     const whereParts = [];
     if (searchContent) {
@@ -42750,7 +42750,7 @@ var AppleNotesManager = class {
     const script = buildAccountScopedScript({ account: targetAccount }, searchCommand);
     const result = executeAppleScript(script);
     if (!result.success) {
-      throw new Error(`Failed to search notes for "${query2}": ${result.error ?? "unknown error"}`);
+      throw new Error(`Failed to search notes for "${query3}": ${result.error ?? "unknown error"}`);
     }
     if (!result.output.trim()) {
       return [];
@@ -45163,7 +45163,7 @@ function getSyncStatus(useCache = true) {
       status.secondsSinceLastChange = Math.round(secondsAgo);
       status.recentActivity = secondsAgo < RECENT_ACTIVITY_THRESHOLD_SECONDS;
     }
-    const query2 = `
+    const query3 = `
       SELECT COUNT(*) FROM ZICCLOUDSTATE state
       WHERE state.ZCURRENTLOCALVERSION > state.ZLATESTVERSIONSYNCEDTOCLOUD
       AND state.ZLATESTVERSIONSYNCEDTOCLOUD IS NOT NULL
@@ -45174,7 +45174,7 @@ function getSyncStatus(useCache = true) {
     `;
     const result = execFileSync9(
       "sqlite3",
-      ["-readonly", NOTES_DB_PATH5, query2.replace(/\n/g, " ")],
+      ["-readonly", NOTES_DB_PATH5, query3.replace(/\n/g, " ")],
       {
         encoding: "utf8",
         timeout: 5e3,
@@ -45251,8 +45251,8 @@ var COLUMN_MAP = [
   { key: "widgetSnippet", column: "ZWIDGETSNIPPET", type: "text" },
   { key: "smartFolderQuery", column: "ZSMARTFOLDERQUERYJSON", type: "text" }
 ];
-function runSqlite5(query2) {
-  return execFileSync10("sqlite3", ["-readonly", NOTES_DB_PATH6, query2], {
+function runSqlite5(query3) {
+  return execFileSync10("sqlite3", ["-readonly", NOTES_DB_PATH6, query3], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
@@ -46570,14 +46570,14 @@ function lookupStableIdentifiers(ids, entity3, dbPath2 = NOTES_DB_PATH9) {
     wanted.set(pk, list);
   }
   if (wanted.size === 0) return result;
-  let query2;
+  let query3;
   try {
-    query2 = runJsonQuery(buildLookupSql(entity3, [...wanted.keys()]), dbPath2);
+    query3 = runJsonQuery(buildLookupSql(entity3, [...wanted.keys()]), dbPath2);
   } catch {
     return result;
   }
-  const store = query2.store?.toUpperCase();
-  for (const row of query2.rows) {
+  const store = query3.store?.toUpperCase();
+  for (const row of query3.rows) {
     const fields = {};
     for (const key of [
       "identifier",
@@ -47324,8 +47324,8 @@ function buildScanSql(available, options) {
     "COMMIT;"
   ].join(" ");
 }
-function runSqlite6(dbPath2, query2) {
-  return execFileSync14("sqlite3", ["-readonly", dbPath2, query2], {
+function runSqlite6(dbPath2, query3) {
+  return execFileSync14("sqlite3", ["-readonly", dbPath2, query3], {
     encoding: "utf8",
     timeout: 3e4,
     maxBuffer: 512 * 1024 * 1024,
@@ -49328,9 +49328,9 @@ var UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 function parseNotesShowUrl(url) {
   const match = /^(?:apple)?notes:\/\/showNote\?(.*)$/i.exec(url);
   if (!match) return void 0;
-  const query2 = new URLSearchParams(match[1]);
-  const note = query2.get("identifier") ?? "";
-  const paragraph = query2.get("paragraphID") ?? "";
+  const query3 = new URLSearchParams(match[1]);
+  const note = query3.get("identifier") ?? "";
+  const paragraph = query3.get("paragraphID") ?? "";
   const result = {};
   if (UUID.test(note)) result.targetNote = note.toUpperCase();
   if (UUID.test(paragraph)) result.paragraphId = paragraph.toUpperCase();
@@ -53303,7 +53303,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid3 = () => this.issue(
+      const invalid4 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -53313,7 +53313,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid3();
+          if (paint.kind === "invalid") invalid4();
           else if (name === "fill") style.fill = paint;
           else style.stroke = paint;
           break;
@@ -53321,12 +53321,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid3();
+          else invalid4();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid3();
+          if (w === null || w < 0) invalid4();
           else style.strokeWidth = w;
           break;
         }
@@ -53334,7 +53334,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid3();
+          if (o === null) invalid4();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -53342,7 +53342,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid3();
+          else invalid4();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -53362,14 +53362,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid3();
+          if (!list || list.some((v) => v < 0)) invalid4();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid3();
+          if (o === null) invalid4();
           else style.dashoffset = o;
           break;
         }
@@ -56329,9 +56329,14 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  read_smart_folder: "read",
+  create_smart_folder: "write",
+  update_smart_folder: "write",
+  delete_smart_folder: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var SMART_FOLDERS_LIVE_VALIDATED = false;
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56424,7 +56429,11 @@ var writerProbeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema2,
+    appendPlainText: featureSchema2,
+    smartFolders: featureSchema2.optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
   available: external_exports.boolean(),
@@ -56459,7 +56468,7 @@ function callPrivateWriter(action, fields = {}, deps = defaultWriterDeps(), opti
       `"${action}" is not a private writer action.`,
       void 0
     );
-  const isWrite = kind === "write";
+  const isWrite = kind === "write" && !options.dryRun;
   const notCommitted = isWrite ? false : void 0;
   if (!options.allowDisabled) {
     if (!privateHelperEnabled(deps.env))
@@ -56574,8 +56583,8 @@ function assertNoteIdentifier2(identifier) {
     );
   }
 }
-function assertRevision(ifRevision, source = "native-note-state") {
-  if (!/^r1:[a-f0-9]{64}$/.test(ifRevision))
+function assertRevision(ifRevision2, source = "native-note-state") {
+  if (!/^r1:[a-f0-9]{64}$/.test(ifRevision2))
     throw new PrivateWriteError(
       "invalid_request",
       `ifRevision must be a revision token from ${source}`,
@@ -56608,14 +56617,45 @@ function appendPlainText(request, deps = defaultWriterDeps()) {
     true
   );
 }
+var WRITER_FEATURES = {
+  appendPlainText: { probe: "appendPlainText", validated: APPEND_LIVE_VALIDATED },
+  readSmartFolders: { probe: "smartFolders", validated: null },
+  editSmartFolders: { probe: "smartFolders", validated: SMART_FOLDERS_LIVE_VALIDATED }
+};
+function featureStatus(probed, validated, env) {
+  if (!probed)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The writer probe did not report this feature"
+    };
+  if (!probed.available) {
+    const reason = probed.reason === "store_unavailable" || probed.reason === "disabled" ? probed.reason : "private_api_unavailable";
+    return {
+      available: false,
+      reason,
+      detail: probed.missing.length ? `missing: ${probed.missing.join(", ")}` : probed.reason
+    };
+  }
+  if (validated === false && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
+      available: false,
+      reason: "not_live_validated",
+      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
+    };
+  return { available: true, reason: null, detail: null };
+}
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const names = Object.keys(WRITER_FEATURES);
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: Object.fromEntries(
+      names.map((name) => [name, { available: false, reason, detail }])
+    )
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56668,14 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
-  if (!feature.available) {
-    const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  const probed = probe.features;
+  const features = Object.fromEntries(
+    names.map((name) => {
+      const { probe: key, validated } = WRITER_FEATURES[name];
+      return [name, featureStatus(probed[key], validated, deps.env)];
+    })
+  );
+  return { ...base, probe, features };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57011,6 +57040,15 @@ function writerEnvelopeCode(helperCode, message) {
   switch (helperCode) {
     case "revision_conflict":
       return "revision_conflict";
+    case "unsupported_folder":
+    case "query_not_representable":
+      return "unsupported";
+    case "invalid_query":
+      return "validation_error";
+    case "tag_not_found":
+      return "not_found";
+    case "folder_exists":
+      return "validation_error";
     case "verification_failed":
       return "verification_failed";
     case "writes_disabled":
@@ -57136,6 +57174,269 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateWriterSmartFolders.ts
+var FOLDER_REVISION = /^f1:[a-f0-9]{64}$/;
+var FOLDER_IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
+var FOLDER_OBJECT_ID = /^x-coredata:\/\/[0-9A-F-]+\/ICFolder\/p\d+$/i;
+var MAX_QUERY_BYTES = 64 * 1024;
+var CONTROL = /[\x00-\x1F\x7F-\x9F]/u;
+var folderCloudSync = external_exports.object({
+  available: external_exports.boolean(),
+  inICloudAccount: external_exports.boolean(),
+  currentLocalVersion: external_exports.number().int().optional(),
+  latestVersionSyncedToCloud: external_exports.number().int().optional(),
+  uploadPending: external_exports.boolean().optional()
+}).passthrough();
+var smartFolderStateSchema = external_exports.object({
+  identifier: external_exports.string(),
+  objectURI: external_exports.string(),
+  title: external_exports.string().nullable(),
+  folderType: external_exports.number().int(),
+  accountIdentifier: external_exports.string().nullable(),
+  parentIdentifier: external_exports.string().nullable(),
+  queryJSON: external_exports.string().nullable(),
+  markedForDeletion: external_exports.boolean(),
+  childFolderCount: external_exports.number().int(),
+  physicalNoteCount: external_exports.number().int(),
+  titleDurability: external_exports.enum(["stamped", "missing"]),
+  parentDurability: external_exports.enum(["stamped", "missing"]).nullable(),
+  revision: external_exports.string().regex(FOLDER_REVISION),
+  cloudSync: folderCloudSync
+}).passthrough();
+var readSmartFolderSchema = smartFolderStateSchema.extend({ status: external_exports.literal("ok"), syncHostRunning: external_exports.boolean() }).passthrough();
+var pushFields = {
+  pushScheduled: external_exports.literal(false),
+  syncHostRunning: external_exports.boolean(),
+  pushState: external_exports.enum(["awaiting_notes_app", "queued_for_next_launch", "not_applicable"]),
+  storeKind: external_exports.enum(["live", "copy"])
+};
+var resolutionFields = {
+  requestedQueryJSON: external_exports.string(),
+  queryJSON: external_exports.string(),
+  queryNormalized: external_exports.boolean(),
+  deletedWrapperAdded: external_exports.boolean(),
+  resolvedTags: external_exports.array(
+    external_exports.object({
+      requested: external_exports.string(),
+      standardizedContent: external_exports.string(),
+      displayText: external_exports.string().nullable(),
+      identifier: external_exports.string().nullable()
+    }).passthrough()
+  ),
+  filterCount: external_exports.number().int(),
+  nativeQueryValidated: external_exports.literal(true),
+  nativeMinimumSupportedVersion: external_exports.number().int()
+};
+var createSmartFolderResultSchema = smartFolderStateSchema.extend({
+  status: external_exports.enum(["created", "ok"]),
+  changed: external_exports.boolean(),
+  existing: external_exports.boolean(),
+  committed: external_exports.boolean(),
+  ...resolutionFields,
+  ...pushFields
+}).passthrough();
+var updateSmartFolderResultSchema = smartFolderStateSchema.extend({
+  status: external_exports.enum(["updated", "ok"]),
+  changed: external_exports.boolean(),
+  committed: external_exports.boolean(),
+  revisionBefore: external_exports.string().regex(FOLDER_REVISION),
+  revisionAfter: external_exports.string().regex(FOLDER_REVISION),
+  ...resolutionFields,
+  ...pushFields
+}).passthrough();
+var deleteSmartFolderPlanSchema = smartFolderStateSchema.extend({
+  status: external_exports.literal("planned"),
+  dryRun: external_exports.literal(true),
+  committed: external_exports.literal(false)
+}).passthrough();
+var deleteSmartFolderResultSchema = smartFolderStateSchema.extend({
+  status: external_exports.literal("deleted"),
+  dryRun: external_exports.literal(false),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  markedForDeletion: external_exports.literal(true),
+  revisionBefore: external_exports.string().regex(FOLDER_REVISION),
+  revisionAfter: external_exports.string().regex(FOLDER_REVISION),
+  ...pushFields
+}).passthrough();
+function invalid3(message) {
+  return new PrivateWriteError("invalid_request", message, false);
+}
+function queryText(query3, field) {
+  let text2;
+  if (typeof query3 === "string") {
+    let parsed;
+    try {
+      parsed = JSON.parse(query3);
+    } catch {
+      throw invalid3(`${field} is not valid JSON`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw invalid3(`${field} must be a JSON object`);
+    text2 = query3;
+  } else {
+    text2 = JSON.stringify(query3);
+  }
+  if (Buffer.byteLength(text2, "utf8") > MAX_QUERY_BYTES) throw invalid3(`${field} exceeds 64 KiB`);
+  return text2;
+}
+function assertFolderTitle(title) {
+  if (!title.length || title.length > 256 || title.trim() !== title || CONTROL.test(title))
+    throw invalid3("title must be 1-256 characters with no control characters or edge whitespace");
+}
+function assertFolderReference(value, field) {
+  if (!FOLDER_IDENTIFIER.test(value) && !FOLDER_OBJECT_ID.test(value))
+    throw invalid3(`${field} must be a folder identifier or an x-coredata folder id`);
+}
+function assertSmartFolderIdentifier(identifier) {
+  if (!UUID_PATTERN.test(identifier))
+    throw invalid3("identifier must be a smart folder's identifier (UUID) from list-smart-folders");
+}
+function assertFolderRevision(ifRevision2) {
+  if (!ifRevision2 || !FOLDER_REVISION.test(ifRevision2))
+    throw invalid3("ifRevision must be the `revision` from native-read-smart-folder or a dry run");
+}
+function withDecoded(folder) {
+  return { ...folder, decoded: decodeSmartFolderQuery(folder.queryJSON) };
+}
+function readSmartFolder(identifier, deps = defaultWriterDeps()) {
+  assertSmartFolderIdentifier(identifier);
+  return withDecoded(
+    parseWriterResult(
+      readSmartFolderSchema,
+      callPrivateWriter("read_smart_folder", { identifier }, deps),
+      false
+    )
+  );
+}
+function createSmartFolder(request, deps = defaultWriterDeps()) {
+  assertFolderTitle(request.title);
+  const fields = {
+    title: request.title,
+    queryJSON: queryText(request.query, "query")
+  };
+  if (request.account !== void 0 && request.parentIdentifier !== void 0)
+    throw invalid3("Pass account or parentIdentifier, not both");
+  if (request.account !== void 0) {
+    if (!request.account.trim()) throw invalid3("account must not be empty");
+    fields.account = request.account;
+  }
+  if (request.parentIdentifier !== void 0) {
+    assertFolderReference(request.parentIdentifier, "parentIdentifier");
+    fields.parentIdentifier = request.parentIdentifier;
+  }
+  requireLiveValidated(SMART_FOLDERS_LIVE_VALIDATED, "native-create-smart-folder", deps.env);
+  return withDecoded(
+    parseWriterResult(
+      createSmartFolderResultSchema,
+      callPrivateWriter("create_smart_folder", fields, deps),
+      true
+    )
+  );
+}
+function updateSmartFolder(request, deps = defaultWriterDeps()) {
+  assertSmartFolderIdentifier(request.identifier);
+  const text2 = queryText(request.query, "query");
+  assertFolderRevision(request.ifRevision);
+  requireLiveValidated(SMART_FOLDERS_LIVE_VALIDATED, "native-update-smart-folder", deps.env);
+  return withDecoded(
+    parseWriterResult(
+      updateSmartFolderResultSchema,
+      callPrivateWriter(
+        "update_smart_folder",
+        { identifier: request.identifier, queryJSON: text2, ifRevision: request.ifRevision },
+        deps
+      ),
+      true
+    )
+  );
+}
+function deleteSmartFolder(request, deps = defaultWriterDeps()) {
+  assertSmartFolderIdentifier(request.identifier);
+  if (request.dryRun) {
+    if (request.ifRevision !== void 0)
+      throw invalid3("ifRevision is only accepted with dryRun: false");
+    return parseWriterResult(
+      deleteSmartFolderPlanSchema,
+      callPrivateWriter(
+        "delete_smart_folder",
+        { identifier: request.identifier, dryRun: true },
+        deps,
+        { dryRun: true }
+      ),
+      false
+    );
+  }
+  assertFolderRevision(request.ifRevision);
+  requireLiveValidated(SMART_FOLDERS_LIVE_VALIDATED, "native-delete-smart-folder", deps.env);
+  return parseWriterResult(
+    deleteSmartFolderResultSchema,
+    callPrivateWriter(
+      "delete_smart_folder",
+      { identifier: request.identifier, dryRun: false, ifRevision: request.ifRevision },
+      deps
+    ),
+    true
+  );
+}
+
+// src/tools/privateWriterSmartFolderTools.ts
+var query2 = external_exports.union([external_exports.string(), external_exports.record(external_exports.string(), external_exports.unknown())]).describe(
+  'Smart-folder query: {"entity":"note","type":{...}} as an object or a JSON string (a rawQuery from list-smart-folders works). Clauses: {"and":[...]}, {"or":[...]}, {"not":{...}}; booleans checklist, checklistInProgress, checklistCompleted, attachment, pinned, systemPaper, passwordProtected, shared, mention, tagged; {"attachmentSection":1-7}; {"tag":"display name"}; {"folder":"<folder identifier or x-coredata id>"}; {"creationDateRelativeRange"|"modificationDateRelativeRange":{"type":0-5} or {"type":6,"customAmount":n,"customUnit":0-4}}; {"creationDateRange"|"modificationDateRange":{"fromDate":s,"toDate":s}} (seconds since 2001-01-01 UTC); {"sharedParticipant"|"mentionParticipant":"<participant id>"}.'
+);
+var smartFolderId = notesUuid2.describe("Smart folder identifier (UUID) from list-smart-folders");
+var ifRevision = external_exports.string().regex(FOLDER_REVISION).describe("The folder `revision` from native-read-smart-folder or the dry run");
+var GATE = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders.";
+function registerPrivateWriterSmartFolderTools(server2, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-read-smart-folder",
+    "Use when: you need one smart folder's `revision` before native-update-smart-folder or native-delete-smart-folder, or its writer-side state (canonical queryJSON, child and note counts, cloudSync).\nReturns: identifier, title, accountIdentifier, parentIdentifier (null at an account root), queryJSON (canonical, sorted keys), decoded rules, childFolderCount, physicalNoteCount, `revision`, and cloudSync versions.\nDo not use when: listing or finding smart folders (list-smart-folders returns every smart folder's identifier and rules).\nSafety: read-only; the writer opens the store with Core Data's read-only option. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer.",
+    { identifier: smartFolderId },
+    { readOnlyHint: true, openWorldHint: false },
+    (args, deps) => ({ ...readSmartFolder(args.identifier, deps.writer) })
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-create-smart-folder",
+    "Use when: creating a Notes smart folder from a query, at an account root or inside an ordinary folder.\nReturns: status created, or ok when an identical smart folder (same title, destination, and query) already exists and nothing was written; the stored queryJSON Notes regenerated, requestedQueryJSON, resolvedTags, filterCount, decoded rules, the folder identifier and revision, and sync state.\nDo not use when: you want an ordinary folder (create-folder), to change an existing smart folder's query (native-update-smart-folder), or to put notes in it (its query decides membership).\nSafety: writes to the Notes database through unsupported private API. Tag names must resolve to one existing tag in the destination account; folder filters must name ordinary folders there. The query goes through Notes' own parser, and one Notes cannot store without changing its meaning is refused (query_not_representable). A smart folder is never a parent (reason smart_folder_destination), nor Recently Deleted or a shared folder. A folder with the same title in the destination is refused (folder_exists) unless it is an identical smart folder. Verified by a fresh read-back. A timeout is indeterminate: read list-smart-folders before any retry. " + GATE,
+    {
+      title: external_exports.string().min(1).max(256).describe("Exact smart-folder title"),
+      query: query2,
+      account: external_exports.string().min(1).optional().describe(
+        "Account identifier or exact name for an account-root smart folder (default: Notes' default account)"
+      ),
+      parentIdentifier: external_exports.string().min(1).optional().describe("Ordinary folder (identifier or x-coredata folder id) to create it inside")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    (args, deps) => ({ ...createSmartFolder(args, deps.writer) })
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-update-smart-folder",
+    "Use when: replacing the query (rules) of one existing smart folder.\nReturns: status updated, or ok when the stored query already equals the request (nothing written); previousQueryJSON, the stored queryJSON, decoded rules, revisionBefore/revisionAfter, and sync state.\nDo not use when: renaming the folder, creating one (native-create-smart-folder), or editing an ordinary folder.\nSafety: writes through unsupported private API. Needs the folder `revision` from a fresh native-read-smart-folder as ifRevision and refuses on any change since (revision_conflict, committed: false). The query is validated exactly as in native-create-smart-folder. Verified by a fresh read-back. A timeout is indeterminate. " + GATE,
+    { identifier: smartFolderId, query: query2, ifRevision },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    (args, deps) => ({ ...updateSmartFolder(args, deps.writer) })
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-delete-smart-folder",
+    "Use when: deleting one exact, empty smart folder. Two phases: dryRun: true, show the plan (title and rules) to the user, then apply with dryRun: false and the plan's `revision` as ifRevision.\nReturns: dry run: status planned with the folder state and revision (nothing written). Apply: status deleted, committed, verified (fresh read-back of the tombstone), revisionBefore/revisionAfter, and sync state.\nDo not use when: deleting an ordinary folder (delete-folder-by-id); this refuses anything that is not a smart folder.\nSafety: marks the folder deleted through unsupported private API, the way Notes deletes one, so the deletion syncs. Refuses folders with child folders or with notes physically stored in them, and any change since the dry run (revision_conflict). A dry run needs only the two switches; the apply is also gated. " + GATE,
+    {
+      identifier: smartFolderId,
+      dryRun: external_exports.boolean().describe("true = plan only; false = apply the planned deletion"),
+      ifRevision: ifRevision.optional()
+    },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    (args, deps) => ({ ...deleteSmartFolder(args, deps.writer) })
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57474,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivateWriterSmartFolderTools(server);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;
@@ -57549,7 +57851,7 @@ registerTool(
       scanTruncated: external_exports.boolean().optional()
     }
   },
-  withErrorHandling(({ query: query2, searchContent = false, account, folder, modifiedSince, limit }) => {
+  withErrorHandling(({ query: query3, searchContent = false, account, folder, modifiedSince, limit }) => {
     const effectiveLimit = resolveSearchLimit(limit);
     const limitWasDefault = limit === void 0;
     let source;
@@ -57559,7 +57861,7 @@ registerTool(
       if (searchContent) {
         try {
           const db = searchContentViaDatabase({
-            query: query2,
+            query: query3,
             account: notesManager.searchAccountScope(account),
             folder,
             modifiedSince,
@@ -57576,7 +57878,7 @@ registerTool(
       }
       try {
         return notesManager.searchNotes(
-          query2,
+          query3,
           searchContent,
           account,
           folder,
@@ -57617,7 +57919,7 @@ ${syncWarnings.join(" ")}` : "";
     if (notes.length === 0) {
       const scopeHint = describeSearchScope(searchContent, notes.length);
       return successResponse(
-        `No notes found matching "${query2}" in ${searchType}${folderInfo}${dateInfo}${scopeHint}${scanNote}${syncNote}`,
+        `No notes found matching "${query3}" in ${searchType}${folderInfo}${dateInfo}${scopeHint}${scanNote}${syncNote}`,
         { notes: [], count: 0, ...sourceFields, ...scanFields }
       );
     }
@@ -57674,10 +57976,10 @@ registerTool(
     },
     annotations: { readOnlyHint: true }
   },
-  withErrorHandling(({ query: query2, limit, scanLimit, includeDeleted }) => {
+  withErrorHandling(({ query: query3, limit, scanLimit, includeDeleted }) => {
     let result;
     try {
-      result = queryNotes(query2, { limit, scanLimit, includeDeleted });
+      result = queryNotes(query3, { limit, scanLimit, includeDeleted });
     } catch (error2) {
       if (error2 instanceof NoteQueryError || error2 instanceof NoteQueryStoreError) {
         return errorResponse(

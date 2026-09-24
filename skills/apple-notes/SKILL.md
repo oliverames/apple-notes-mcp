@@ -126,10 +126,14 @@ Call `native-writer-status` first. Every write needs a fresh `revision` as
 `ifRevision`; on `revision_conflict` or `indeterminate: true`, read the note
 before retrying.
 
-| Tool                       | Purpose                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `native-writer-status`     | Report both switches, writer build state, and live probe (read-only)             |
-| `native-append-plain-text` | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
+| Tool                         | Purpose                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `native-writer-status`       | Report both switches, writer build state, and live probe (read-only)             |
+| `native-append-plain-text`   | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
+| `native-read-smart-folder`   | Read one smart folder's state and `f1:` revision (read-only)                     |
+| `native-create-smart-folder` | Create a smart folder from a query Notes validates; idempotent                   |
+| `native-update-smart-folder` | Replace a smart folder's query, guarded by its revision                          |
+| `native-delete-smart-folder` | Delete one empty smart folder; dry run first, then apply with its revision       |
 
 ## Usage Patterns
 

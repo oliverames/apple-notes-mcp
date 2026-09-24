@@ -66,11 +66,13 @@ process.stdin.on("end", () => {
     case "hello":
       out({ status: "ok", protocolVersion: 1, sourceSha256: "dev", role: "writer", readOnly: false, actions: ["hello"] });
     case "probe":
-      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature(), appendPlainText: feature() } });
+      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: process.env.FAKE_MODE === "old-probe" ? { readNoteState: feature(), appendPlainText: feature() } : { readNoteState: feature(), appendPlainText: feature(), smartFolders: feature() } });
     case "append_plain_text":
       out({ status: "updated", committed: true, verified: true, identifier: req.identifier, appendedUTF16: req.text.length, separatorInserted: false, revisionBefore: req.ifRevision, revisionAfter: "r1:" + "d".repeat(64), modificationDate: "2026-09-23T00:00:00.000Z", title: "t", cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, storeKind: "live", echo: req });
     case "read_note_state":
       out({ status: "ok", identifier: req.identifier, echo: req });
+    case "delete_smart_folder":
+      out({ status: "planned", echo: req });
     default:
       out({ status: "error", code: "unknown_action", message: "no" }, 1);
   }
@@ -242,6 +244,22 @@ describe("callPrivateWriter", () => {
     expect(read).toMatchObject({ code: "timeout", committed: undefined });
   }, 20_000);
 
+  it("treats a dry run of a write action as a read", () => {
+    const env = { ...ON, FAKE_MODE: "hang", APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS: "300" };
+    const dry = thrown(() =>
+      callPrivateWriter("delete_smart_folder", {}, deps(env), { dryRun: true })
+    );
+    expect(dry).toMatchObject({ code: "timeout", committed: undefined });
+    const apply = thrown(() => callPrivateWriter("delete_smart_folder", {}, deps(env)));
+    expect(apply).toMatchObject({ code: "timeout", committed: "unknown" });
+    const off = thrown(() =>
+      callPrivateWriter("delete_smart_folder", {}, deps({ APPLE_NOTES_MCP_ENABLE_PRIVATE: "1" }), {
+        dryRun: true,
+      })
+    );
+    expect(off).toMatchObject({ code: "writes_disabled", committed: undefined });
+  }, 20_000);
+
   it("reports an unrunnable binary as not committed", () => {
     const error = thrown(() =>
       callPrivateWriter("append_plain_text", {}, deps(ON), {
@@ -397,6 +415,24 @@ describe("privateWriterCapabilities", () => {
       reason: null,
       detail: null,
     });
+  });
+
+  it("reports the smart-folder features, gating only the writes", () => {
+    install();
+    const gated = privateWriterCapabilities(deps(ON)).features;
+    expect(gated.readSmartFolders).toEqual({ available: true, reason: null, detail: null });
+    expect(gated.editSmartFolders.reason).toBe("not_live_validated");
+    expect(privateWriterCapabilities(deps(UNVERIFIED)).features.editSmartFolders.available).toBe(
+      true
+    );
+    const off = privateWriterCapabilities(deps()).features;
+    expect(Object.values(off).every((f) => f.reason === "disabled")).toBe(true);
+    const old = privateWriterCapabilities(deps({ ...UNVERIFIED, FAKE_MODE: "old-probe" }));
+    expect(old.features.readSmartFolders).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(old.features.appendPlainText.available).toBe(true);
   });
 
   it("maps probe feature failures and unreachable writers", () => {

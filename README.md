@@ -2378,6 +2378,39 @@ x-coredata `id`, guarded by `ifRevision` and verified by read-back. Returns
 counters for `nudgeWaitSeconds` (default 30), reported under `sync`. Refuses
 locked, shared, trashed, and still-downloading notes.
 
+#### Smart folders
+
+Four tools create, edit, and delete smart folders. Find a smart folder and
+its rules with the read-only `list-smart-folders` first; it returns each
+folder's `identifier` and stored query (`rawQuery`).
+
+- `native-read-smart-folder` (read-only): one smart folder's state by
+  `identifier`, with its canonical `queryJSON`, decoded rules, child and note
+  counts, `cloudSync`, and a folder `revision` (`f1:…`).
+- `native-create-smart-folder`: `title` plus `query` (an object or a JSON
+  string), at the root of `account` (default: Notes' default account) or
+  inside the ordinary folder `parentIdentifier`. Calling it again with the
+  same title, destination, and query returns `status: "ok"` and writes
+  nothing; a different folder with that title is refused (`folder_exists`).
+- `native-update-smart-folder`: replaces one smart folder's query, guarded by
+  its `revision` as `ifRevision`.
+- `native-delete-smart-folder`: two phases. `dryRun: true` returns the
+  folder and its `revision`; `dryRun: false` with that revision marks it
+  deleted, the way Notes deletes a folder. Only empty smart folders.
+
+Each query goes through Notes' own query parser, and the writer stores the
+form Notes regenerates from it. A query Notes cannot store without changing
+its meaning is refused (`query_not_representable`); a tag must exist exactly
+once in the destination account (`tag_not_found`), and a folder filter must
+name an ordinary folder there. Like the smart-folder destination guard, a
+smart folder is never a parent: the create refuses one with `code:
+"unsupported"`, `committed: false`, and `reason: "smart_folder_destination"`.
+Every write is verified through a fresh Core Data stack. The sync nudge is
+not offered, because it moves notes and a folder has no equivalent; check
+`cloudSync` with `native-read-smart-folder` after Notes.app saves. Writes
+need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; the read and the delete's dry run
+do not.
+
 ## Usage Patterns
 
 ### Basic Workflow
