@@ -150,6 +150,17 @@ describe("AnchorRegistry", () => {
     }
   });
 
+  it("treats an empty file as an empty registry and replaces it on the next write", () => {
+    mkdirSync(join(dir, "support"));
+    for (const body of ["", "  \n"]) {
+      writeFileSync(path, body);
+      expect(registry.load()).toEqual([]);
+      registry.record([candidate()]);
+      expect(registry.load()).toHaveLength(1);
+      writeFileSync(path, body);
+    }
+  });
+
   it("waits for the lock, reports a busy registry, and clears a stale lock", () => {
     registry.record([candidate()]);
     const lock = `${path}.lock`;
