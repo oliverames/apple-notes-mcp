@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-## [2.9.23] - 2026-09-24
+## [2.9.24] - 2026-09-24
 
 ### Added
 
@@ -39,6 +39,13 @@
 - The probe checks the folder fields `read_sync_state` reads, and a copy of
   the store (`APPLE_NOTES_MCP_PRIVATE_STORE`) still needs
   `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`.
+
+## [2.9.23] - 2026-09-24
+
+### Documentation
+
+- The README's Author section now has a Contributors list crediting
+  Oliver Ames (@oliverames) for his many merged pull requests and bug reports.
 
 ## [2.9.22] - 2026-09-24
 
