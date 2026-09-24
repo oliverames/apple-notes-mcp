@@ -27,6 +27,19 @@
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
 
+### Fixed
+
+- The writer reports `committed: false` for every refusal before its save
+  (a locked, shared or trashed note, bad input, a missing API), and an
+  exception after a successful save reports a committed, unverified write
+  instead of an unknown outcome. The read-back catches any exception.
+- Written text may contain format characters (emoji joiners, ZWNJ, soft
+  hyphens, BOMs, bidi marks); only C0/C1 control characters are refused,
+  matching the client's check.
+- The probe checks the folder fields `read_sync_state` reads, and a copy of
+  the store (`APPLE_NOTES_MCP_PRIVATE_STORE`) still needs
+  `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`.
+
 ## [2.9.20] - 2026-09-24
 
 ### Documentation

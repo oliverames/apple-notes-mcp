@@ -88,6 +88,45 @@ describe("private writer source contract", () => {
     expect(SOURCE).toMatch(/@"committed" : @NO/);
   });
 
+  it("reports committed from where the failure happened, not from its type", () => {
+    // Every write handler marks itself before anything can save, and the
+    // save is bracketed so main() can tell before, during and after apart.
+    const append = handlerBody("HandleAppendPlainText");
+    expect(append).toMatch(/gWriteRequest = YES;[\s\S]*RequireFeature/);
+    expect(append).toMatch(
+      /gSaveAttempted = YES;\s*if \(!\[context save:&saveError\]\)[\s\S]*gSaveSucceeded = YES;/
+    );
+    // The read-back after a successful save catches every exception.
+    expect(append).toMatch(/@catch \(NSException \*e\)/);
+    expect(append).not.toMatch(/@catch \(HelperError \*e\)/);
+    // main(): refusals before the save are committed: false; an exception
+    // after a successful save is a committed, unverified write.
+    expect(SOURCE).toMatch(
+      /if \(gWriteRequest && !gSaveAttempted && !out\[@"committed"\]\) out\[@"committed"\] = @NO;/
+    );
+    expect(SOURCE).toMatch(
+      /if \(gSaveSucceeded\) \{\s*out\[@"code"\] = @"verification_failed";\s*out\[@"committed"\] = @YES;/
+    );
+  });
+
+  it("forbids only C0/C1 control characters in written text", () => {
+    // controlCharacterSet also covers Cf (ZWJ emoji, soft hyphen, BOM, bidi
+    // marks), which ordinary text contains.
+    expect(CODE).not.toMatch(/controlCharacterSet/);
+    expect(CODE).toMatch(/addCharactersInRange:NSMakeRange\(0x00, 0x20\)/);
+    expect(CODE).toMatch(/addCharactersInRange:NSMakeRange\(0x7F, 0x21\)/);
+  });
+
+  it("probes every folder property read_sync_state reads", () => {
+    expect(SOURCE).toMatch(/\{"ICFolder", "identifier,markedForDeletion,cloudState"\}/);
+  });
+
+  it("requires the main switch even for a copy of the store", () => {
+    expect(SOURCE).toMatch(
+      /if \(!\[NSProcessInfo\.processInfo\.environment\[kEnableEnv\] isEqualToString:@"1"\]\)\s*Fail\(@"disabled"/
+    );
+  });
+
   it("never issues SQL or a batch request", () => {
     expect(CODE).not.toMatch(/sqlite3_(?:exec|prepare)/);
     expect(CODE).not.toMatch(/NSBatch(?:Update|Delete|Insert)Request/);

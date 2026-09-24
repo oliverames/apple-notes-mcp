@@ -153,13 +153,22 @@ typedef struct {
   const char *properties;  // comma-separated
 } ModelRequirement;
 
+// A write handler sets gWriteRequest before it can save; the save sets
+// gSaveAttempted just before -save: and gSaveSucceeded after it returns YES.
+// main() uses them so an error raised before the save reports committed:
+// false, and an exception after a successful save still reports committed:
+// true, instead of both reading as indeterminate.
+static BOOL gWriteRequest = NO;
+static BOOL gSaveAttempted = NO;
+static BOOL gSaveSucceeded = NO;
+
 static const ModelRequirement kModelProperties[] = {
     {"ICNote",
      "identifier,title,modificationDate,creationDate,folder,account,noteData,cloudState,"
      "isPasswordProtected,markedForDeletion,needsInitialFetchFromCloud"},
     {"ICNoteData", "data"},
     {"ICCloudState", "currentLocalVersion,latestVersionSyncedToCloud"},
-    {"ICFolder", "identifier"},
+    {"ICFolder", "identifier,markedForDeletion,cloudState"},
 };
 
 static const APIRequirement kAppendAPI[] = {
@@ -312,7 +321,7 @@ static StoreLocation ResolveStore(void) {
 // NSReadOnlyPersistentStoreOption so a read can never write.
 static NSManagedObjectContext *OpenContext(StoreLocation store, BOOL readOnly) {
   RequireFeature(FeatureModel);
-  if (!store.isCopy && ![NSProcessInfo.processInfo.environment[kEnableEnv] isEqualToString:@"1"])
+  if (![NSProcessInfo.processInfo.environment[kEnableEnv] isEqualToString:@"1"])
     Fail(@"disabled", @"The private helper is disabled; set APPLE_NOTES_MCP_ENABLE_PRIVATE=1 to opt in",
          nil);
   // Second, independent switch for read-write opens of the live store. The
@@ -628,7 +637,12 @@ static void RequireAppendableNote(NSManagedObject *note) {
 static void ValidateAppendText(NSString *text) {
   if (text.length > MAX_APPEND_UTF16)
     Fail(@"invalid_request", @"`text` exceeds 50000 UTF-16 code units", nil);
-  NSMutableCharacterSet *forbidden = [NSMutableCharacterSet controlCharacterSet];
+  // Only category Cc (C0 and C1 controls) is forbidden: controlCharacterSet
+  // also covers Cf, which would refuse ZWJ emoji, ZWNJ, soft hyphens, BOMs
+  // and bidi marks that appear in ordinary text.
+  NSMutableCharacterSet *forbidden = [NSMutableCharacterSet new];
+  [forbidden addCharactersInRange:NSMakeRange(0x00, 0x20)];
+  [forbidden addCharactersInRange:NSMakeRange(0x7F, 0x21)];
   [forbidden removeCharactersInString:@"\n\t"];
   [forbidden addCharactersInString:@"\uFFFC\u2028\u2029"];
   if ([text rangeOfCharacterFromSet:forbidden].location != NSNotFound)
@@ -659,6 +673,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
   NSString *identifier = RequireIdentifier(request);
   NSString *text = RequireString(request, @"text");
   NSString *ifRevision = RequireString(request, @"ifRevision");
+  gWriteRequest = YES;
   ValidateAppendText(text);
   RequireFeature(FeatureAppend);
 
@@ -702,6 +717,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
                                         kChangeReason);
 
   NSError *saveError = nil;
+  gSaveAttempted = YES;
   if (![context save:&saveError]) {
     [context rollback];
     BOOL conflict = saveError.code == NSManagedObjectMergeError ||
@@ -711,6 +727,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
                   : @"The Core Data save failed; nothing was saved",
          @{@"committed" : @NO, @"detail" : OrNull(saveError.localizedDescription)});
   }
+  gSaveSucceeded = YES;
 
   // Fresh read-back through a brand-new coordinator so no in-memory state
   // from the write can satisfy the check.
@@ -726,8 +743,10 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
     verified = [persisted isEqualToString:expected];
     if (!verified) verifyDetail = @"The persisted body does not equal the previous body plus the appended text";
     after = NoteState(reread);
-  } @catch (HelperError *e) {
-    verifyDetail = e.reason;
+  } @catch (NSException *e) {
+    // Any failure here happens after a successful save: report it as a
+    // committed write that could not be verified, never as uncommitted.
+    verifyDetail = e.reason ?: e.name;
   }
   if (!verified)
     Fail(@"verification_failed", verifyDetail ?: @"Read-back failed",
@@ -883,17 +902,26 @@ int main(void) {
     @try {
       EmitAndExit(Dispatch(), 0);
     } @catch (HelperError *e) {
-      NSMutableDictionary *out = [e.userInfo mutableCopy];
+      NSMutableDictionary *out = [e.userInfo mutableCopy] ?: [NSMutableDictionary dictionary];
+      if (gWriteRequest && !gSaveAttempted && !out[@"committed"]) out[@"committed"] = @NO;
       out[@"status"] = @"error";
       out[@"message"] = e.reason ?: @"error";
       EmitAndExit(out, 1);
     } @catch (NSException *e) {
-      EmitAndExit(@{
+      NSMutableDictionary *out = [@{
         @"status" : @"error",
         @"code" : @"internal_error",
         @"message" : [NSString stringWithFormat:@"%@: %@", e.name, e.reason ?: @""],
-      },
-                  1);
+      } mutableCopy];
+      // Before the save nothing was written; after a successful save the
+      // write is committed even though the rest of the handler failed.
+      // Between the two (the save itself threw) the outcome stays unknown.
+      if (gWriteRequest && !gSaveAttempted) out[@"committed"] = @NO;
+      if (gSaveSucceeded) {
+        out[@"code"] = @"verification_failed";
+        out[@"committed"] = @YES;
+      }
+      EmitAndExit(out, 1);
     }
   }
   return 1;
