@@ -59,6 +59,8 @@ Use this skill when the user:
 | `save-markdown-template`     | Save a template to the library by slug name (create-only unless `force`)                                                                                                                                                                                                                                                                                                                                                                                     |
 | `delete-markdown-template`   | Delete a saved template (built-ins cannot be deleted)                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+To edit a template visually, the user can run `apple-notes-mcp templates edit [name]` in a terminal: a local, token-gated web editor with live validation and a preview on sample notes. It is a command-line tool, not an MCP tool, so suggest it rather than trying to start it.
+
 ### Folder Operations
 
 | Tool                  | Purpose                                                                                             |
