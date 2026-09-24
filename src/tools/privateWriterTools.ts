@@ -72,6 +72,7 @@ export { resolveIdentifier };
 export function writerEnvelopeCode(helperCode: string, message: string): ErrorCode {
   switch (helperCode) {
     case "revision_conflict":
+    case "paragraph_changed": // the selected paragraph moved or changed since it was listed
       return "revision_conflict";
     case "verification_failed":
       return "verification_failed";

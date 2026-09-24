@@ -83,6 +83,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   set_checklist_item: "write",
   set_highlight: "write",
   add_url_card: "write",
+  set_paragraph_id: "write",
 };
 
 /**
@@ -121,6 +122,9 @@ export const HIGHLIGHT_LIVE_VALIDATED = false;
  * APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. A dry run never writes and is not gated.
  */
 export const LINK_CARD_LIVE_VALIDATED = false;
+
+/** Same gate for minting paragraph identifiers (native-set-paragraph-id). */
+export const PARAGRAPH_IDS_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -281,6 +285,7 @@ export const writerProbeSchema = z
         checklistToggle: featureSchema.optional(),
         highlight: featureSchema.optional(),
         linkCard: featureSchema.optional(),
+        setParagraphId: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -954,6 +959,11 @@ export const WRITER_FEATURES = [
   },
   { key: "highlight", probeKey: "highlight", liveValidated: HIGHLIGHT_LIVE_VALIDATED },
   { key: "linkCard", probeKey: "linkCard", liveValidated: LINK_CARD_LIVE_VALIDATED },
+  {
+    key: "setParagraphId",
+    probeKey: "setParagraphId",
+    liveValidated: PARAGRAPH_IDS_LIVE_VALIDATED,
+  },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

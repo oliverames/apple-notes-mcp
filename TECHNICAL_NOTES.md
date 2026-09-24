@@ -1346,6 +1346,32 @@ change to it, was enough to upload those writes. Whether the card and its
 preview appear on another device was not checked. That test predates the sync
 nudge. The writer build of this action has not been live-tested yet.
 
+### Paragraph identifiers
+
+Upstream's read-only `list-note-paragraphs` and `get-paragraph-link` (#218)
+classify each paragraph's stored UUID (ParagraphStyle field 9) as `unique`,
+`shared` or `missing` and refuse to link the last two. They never mint one.
+The writer's `set_paragraph_id` action (`native-set-paragraph-id`) adds that
+write and builds on the upstream listing rather than repeating it: the
+caller picks a paragraph by its upstream `blockIndex` and `text`.
+
+The writer applies upstream's rules to the live attributed string: blocks
+split on `\n` only, a block owns its terminating newline, its UUID is the one
+on its first character, and that UUID is unique when no character of another
+block carries it. It refuses a block whose text no longer matches
+(`paragraph_changed`, `committed: false`), returns `unchanged` without saving
+when the UUID is already unique, and otherwise gives every run of the block a
+copy of its own `ICTTParagraphStyle` carrying a new UUID, through
+`-[ICTTMergeableAttributedString setAttributes:range:]` so the change merges
+like any attribute edit. The read-back checks that the text is identical,
+that the block carries the new UUID on every character and uniquely, that its
+other attributes and paragraph style value are unchanged, and that every
+other block kept its first UUID. A run without a paragraph style counts as
+body text (style 3) in that comparison, since the new style it receives is
+the default body style. `scripts/test-private-helper-copy-store.sh` checks
+the result on a copy with upstream's own reader (`readNoteParagraphs`),
+which must report the paragraph as `unique` with the writer's `url`.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

@@ -156,6 +156,18 @@
 - `scripts/test-private-writer-link-card-copy-store.sh` exercises the link
   card action on a store copy, with shared setup in
   `scripts/private-writer-copy-store-lib.sh`.
+- `native-set-paragraph-id` (writer action `set_paragraph_id`) gives one
+  paragraph a unique paragraph identifier, so `get-paragraph-link` can link a
+  paragraph whose identifier was `shared` or `missing`. It selects the
+  paragraph by `blockIndex` and `text` from the read-only
+  `list-note-paragraphs`, uses the same uniqueness rules, returns `unchanged`
+  without writing when the identifier is already unique, and takes the
+  optional `nudge`. Gated by `PARAGRAPH_IDS_LIVE_VALIDATED`.
+- `native-writer-status` reports each writer feature from one
+  `WRITER_FEATURES` table (key, probe key, live-validation flag).
+- The copy-store script checks paragraph identifiers with upstream's
+  `list-note-paragraphs` reader against the copy, and confirms that every live
+  note a feature check uses is unchanged.
 
 ### Fixed
 

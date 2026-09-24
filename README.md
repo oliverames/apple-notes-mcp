@@ -2809,6 +2809,21 @@ reporting and the optional `nudge` match `native-append-plain-text`. Writes
 also require `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated in a
 release; dry runs do not.
 
+#### `native-set-paragraph-id`
+
+Gives one paragraph a paragraph identifier of its own, so
+`get-paragraph-link` and `list-note-paragraphs` can link it. Use it when
+`list-note-paragraphs` reports the paragraph's `paragraphIdStatus` as `shared`
+or `missing`. Pass the paragraph's `blockIndex` and `text` (as
+`expectedText`) from `list-note-paragraphs`, and `ifRevision` from
+`native-note-state`. The writer applies the same block and uniqueness rules
+as `list-note-paragraphs`, mints a UUID (or assigns `paragraphId` if it is
+unused), and verifies by read-back that only that paragraph's identifier
+changed. Returns `status: "updated"` with the new `paragraphId` and `url`, or
+`status: "unchanged"` (nothing written) when the identifier was already
+unique. `paragraph_changed` (code `revision_conflict`, `committed: false`)
+means the block no longer holds that text. Takes the optional `nudge`.
+
 ## Usage Patterns
 
 ### Basic Workflow

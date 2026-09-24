@@ -266,6 +266,22 @@ static const APIRequirement kLinkCardAPI[] = {
     {"ICTTAttachment", "attachmentIdentifier", NO},
 };
 
+// Paragraph identifiers: the UUID on a paragraph style (attribute key
+// TTStyle), set through the mergeable string so the change merges like any
+// other attribute edit.
+static const APIRequirement kParagraphIdAPI[] = {
+    {"ICTTParagraphStyle", "uuid", NO},
+    {"ICTTParagraphStyle", "setUuid:", NO},
+    {"ICTTParagraphStyle", "style", NO},
+    {"ICTTParagraphStyle", "defaultParagraphStyle", YES},
+    {"ICTTMergeableAttributedString", "setAttributes:range:", NO},
+    {"ICTTMergeableString", "beginEditing", NO},
+    {"ICTTMergeableString", "endEditing", NO},
+    {"ICNote", "edited:range:changeInLength:", NO},
+    {"ICNote", "saveNoteData", NO},
+    {"ICNote", "updateChangeCountWithReason:", NO},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -333,6 +349,7 @@ typedef NS_ENUM(NSInteger, Feature) {
   FeatureChecklist,
   FeatureHighlight,
   FeatureLinkCard,
+  FeatureParagraphIds,
 };
 
 static NSArray<NSString *> *MissingForFeature(Feature feature) {
@@ -345,7 +362,9 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
     [missing addObjectsFromArray:MissingModelProperties(kModelProperties, COUNT(kModelProperties))];
     [missing addObjectsFromArray:MissingAPI(kReadAPI, COUNT(kReadAPI))];
   }
-  if (feature >= FeatureAppend)
+  // Paragraph ids change only an attribute, so they do not need the append
+  // editing surface.
+  if (feature >= FeatureAppend && feature != FeatureParagraphIds)
     [missing addObjectsFromArray:MissingAPI(kAppendAPI, COUNT(kAppendAPI))];
   if (feature == FeatureEdit) [missing addObjectsFromArray:MissingAPI(kEditAPI, COUNT(kEditAPI))];
   if (feature == FeatureCompose)
@@ -358,6 +377,8 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
     [missing addObjectsFromArray:MissingAPI(kLinkCardAPI, COUNT(kLinkCardAPI))];
     [missing addObjectsFromArray:MissingModelProperties(kLinkCardModel, COUNT(kLinkCardModel))];
   }
+  if (feature == FeatureParagraphIds)
+    [missing addObjectsFromArray:MissingAPI(kParagraphIdAPI, COUNT(kParagraphIdAPI))];
   return missing;
 }
 
@@ -624,6 +645,7 @@ static NSDictionary *HandleReadChecklist(NSDictionary *request);
 static NSDictionary *HandleSetChecklistItem(NSDictionary *request);
 static NSDictionary *HandleSetHighlight(NSDictionary *request);
 static NSDictionary *HandleAddURLCard(NSDictionary *request);
+static NSDictionary *HandleSetParagraphId(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -647,6 +669,8 @@ static const ActionSpec kActions[] = {
     {"set_checklist_item", "identifier,todoIdentifier,done,ifRevision", HandleSetChecklistItem},
     {"set_highlight", "identifier,scope,match,expectedCount,color,ifRevision,dryRun", HandleSetHighlight},
     {"add_url_card", "identifier,url,afterParagraph,ifRevision,dryRun", HandleAddURLCard},
+    {"set_paragraph_id", "identifier,blockIndex,expectedText,paragraphId,ifRevision",
+     HandleSetParagraphId},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -745,6 +769,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"checklistToggle" : FeatureReport(FeatureChecklist, contextOK, contextReason),
       @"highlight" : FeatureReport(FeatureHighlight, contextOK, contextReason),
       @"linkCard" : FeatureReport(FeatureLinkCard, contextOK, contextReason),
+      @"setParagraphId" : FeatureReport(FeatureParagraphIds, contextOK, contextReason),
     },
   };
 }
@@ -1039,6 +1064,15 @@ static const StyleSpec *StyleNamed(NSString *name) {
   for (size_t i = 0; i < COUNT(kStyles); i++)
     if ([name isEqualToString:@(kStyles[i].name)]) return &kStyles[i];
   return NULL;
+}
+
+// Serializes the edited body and marks the note for upload. Must run before
+// SaveOrFail.
+static void FinishNoteEdit(NSManagedObject *note, NSString *reason, NSDate *now) {
+  if (!SendBool(note, "saveNoteData"))
+    Fail(@"save_failed", @"NotesShared did not serialize the edited body", @{@"committed" : @NO});
+  [note setValue:now forKey:@"modificationDate"];
+  ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"), reason);
 }
 
 static BOOL IsJSONBool(id value) {
@@ -4097,6 +4131,297 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
     @"attachment" : stored,
     @"previewFetched" : @NO,
     @"revisionAfter" : after[@"revision"],
+  }];
+  [result addEntriesFromDictionary:SyncFields(after, store)];
+  return result;
+}
+
+#pragma mark - Paragraph identifiers
+
+// Every Notes paragraph style (ICTTParagraphStyle, attribute key TTStyle) can
+// carry a UUID, and Notes opens applenotes://showNote?identifier=<note>&
+// paragraphID=<uuid> at the paragraph carrying it. Notes copies the UUID when
+// a paragraph is split, so body paragraphs often share one. The read-only
+// list-note-paragraphs tool (src/utils/noteParagraphs.ts) classifies each
+// block's UUID as unique, shared or missing; these functions apply the same
+// rules to the live attributed string so a write can mint a UUID of its own
+// for one block:
+//   - blocks split on "\n" only; a trailing newline adds no empty block;
+//   - a block owns its text plus its terminating newline;
+//   - its UUID is the one on its first character (the newline when empty);
+//   - that UUID is unique when no character of another block carries it.
+
+static NSString *const kParagraphStyleKey = @"TTStyle";
+#define EDITED_ATTRIBUTES 1  // NSTextStorageEditedAttributes
+
+static NSUUID *StyleUUID(id style) {
+  if (!style || ![style respondsToSelector:sel_registerName("uuid")]) return nil;
+  id uuid = Send(style, "uuid");
+  return [uuid isKindOfClass:[NSUUID class]] ? uuid : nil;
+}
+
+// The paragraph style value (0 title, 1 heading, 2 subheading, 3 body, ...).
+// A run without a paragraph style renders as body text, so it counts as 3.
+static NSInteger StyleValue(id style) {
+  if (!style || ![style respondsToSelector:sel_registerName("style")]) return 3;
+  return (NSInteger)((unsigned int (*)(id, SEL))objc_msgSend)(style, sel_registerName("style"));
+}
+
+// Text used to compare a caller's expectedText: attachment glyphs removed,
+// surrounding whitespace trimmed.
+static NSString *ComparableText(NSString *text) {
+  NSString *stripped = [text stringByReplacingOccurrencesOfString:@"\uFFFC" withString:@""];
+  return [stripped stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+// Blocks in upstream's order and with upstream's ranges, each with its first
+// UUID, every UUID any of its characters carries (NSNull for none), and its
+// paragraph style value.
+static NSArray<NSDictionary *> *NoteBlocks(NSAttributedString *body) {
+  NSMutableArray *blocks = [NSMutableArray array];
+  NSString *text = body.string;
+  NSUInteger length = text.length;
+  NSUInteger start = 0;
+  while (start < length) {
+    NSRange newline = [text rangeOfString:@"\n" options:NSLiteralSearch
+                                    range:NSMakeRange(start, length - start)];
+    NSUInteger end = newline.location == NSNotFound ? length : newline.location;
+    NSRange owned = NSMakeRange(start, MIN(end + 1, length) - start);
+    NSMutableSet *uuids = [NSMutableSet set];
+    [body enumerateAttribute:kParagraphStyleKey
+                     inRange:owned
+                     options:0
+                  usingBlock:^(id value, NSRange range, BOOL *stop) {
+                    (void)range;
+                    (void)stop;
+                    [uuids addObject:StyleUUID(value) ?: (id)[NSNull null]];
+                  }];
+    id style = [body attribute:kParagraphStyleKey atIndex:start effectiveRange:NULL];
+    NSMutableDictionary *block = [@{
+      @"index" : @(blocks.count),
+      @"text" : [text substringWithRange:NSMakeRange(start, end - start)],
+      @"owned" : [NSValue valueWithRange:owned],
+      @"style" : @(StyleValue(style)),
+      @"uuids" : uuids,
+    } mutableCopy];
+    NSUUID *first = StyleUUID(style);
+    if (first) block[@"uuid"] = first;
+    [blocks addObject:block];
+    start = end + 1;
+  }
+  return blocks;
+}
+
+// For each UUID, the indexes of the blocks that carry it anywhere.
+static NSDictionary<NSUUID *, NSIndexSet *> *BlocksByUUID(NSArray<NSDictionary *> *blocks) {
+  NSMutableDictionary *owners = [NSMutableDictionary dictionary];
+  for (NSDictionary *block in blocks)
+    for (id uuid in block[@"uuids"]) {
+      if (![uuid isKindOfClass:[NSUUID class]]) continue;
+      NSMutableIndexSet *set = owners[uuid] ?: [NSMutableIndexSet indexSet];
+      [set addIndex:[block[@"index"] unsignedIntegerValue]];
+      owners[uuid] = set;
+    }
+  return owners;
+}
+
+// "unique", "shared" or "missing", as list-note-paragraphs reports it.
+static NSString *ParagraphIdStatus(NSDictionary *block, NSDictionary *owners) {
+  NSUUID *uuid = block[@"uuid"];
+  if (!uuid) return @"missing";
+  return [owners[uuid] count] == 1 ? @"unique" : @"shared";
+}
+
+static NSString *ParagraphLink(NSString *noteIdentifier, NSUUID *uuid) {
+  return [NSString stringWithFormat:@"applenotes://showNote?identifier=%@&paragraphID=%@",
+                                    noteIdentifier.uppercaseString, uuid.UUIDString];
+}
+
+// Gives every run of `owned` a copy of its own paragraph style carrying
+// `uuid`. -[ICTTMergeableAttributedString setAttributes:range:] replaces a
+// run's whole dictionary, so each run keeps its other attributes (links,
+// fonts, attachments) and only TTStyle changes.
+static void AssignParagraphUUID(id ms, NSAttributedString *body, NSRange owned, NSUUID *uuid) {
+  NSMutableArray *updates = [NSMutableArray array];
+  [body enumerateAttributesInRange:owned
+                           options:0
+                        usingBlock:^(NSDictionary *attrs, NSRange range, BOOL *stop) {
+                          (void)stop;
+                          id style = attrs[kParagraphStyleKey]
+                                         ?: Send(objc_getClass("ICTTParagraphStyle"),
+                                                 "defaultParagraphStyle");
+                          id copy = [style mutableCopy];
+                          ((void (*)(id, SEL, id))objc_msgSend)(copy, sel_registerName("setUuid:"),
+                                                                uuid);
+                          NSMutableDictionary *merged = [attrs mutableCopy];
+                          merged[kParagraphStyleKey] = copy;
+                          [updates addObject:@[ merged, [NSValue valueWithRange:range] ]];
+                        }];
+  SendVoid(ms, "beginEditing");
+  for (NSArray *update in updates)
+    ((void (*)(id, SEL, id, NSRange))objc_msgSend)(ms, sel_registerName("setAttributes:range:"),
+                                                   update[0], [update[1] rangeValue]);
+  SendVoid(ms, "endEditing");
+}
+
+// True when, at every index of `range`, every attribute other than TTStyle is
+// equal in both strings and the paragraph style value is unchanged.
+static BOOL SameAttributesExceptParagraphUUID(NSAttributedString *a, NSAttributedString *b,
+                                              NSRange range) {
+  if (NSMaxRange(range) > a.length || NSMaxRange(range) > b.length) return NO;
+  for (NSUInteger i = range.location; i < NSMaxRange(range); i++) {
+    NSMutableDictionary *left = [[a attributesAtIndex:i effectiveRange:NULL] mutableCopy];
+    NSMutableDictionary *right = [[b attributesAtIndex:i effectiveRange:NULL] mutableCopy];
+    if (StyleValue(left[kParagraphStyleKey]) != StyleValue(right[kParagraphStyleKey])) return NO;
+    [left removeObjectForKey:kParagraphStyleKey];
+    [right removeObjectForKey:kParagraphStyleKey];
+    if (![left isEqualToDictionary:right]) return NO;
+  }
+  return YES;
+}
+
+// Every block other than `except` keeps its text and first UUID.
+static BOOL OtherBlocksUnchanged(NSArray *before, NSArray *after, NSSet<NSNumber *> *except) {
+  if (before.count != after.count) return NO;
+  for (NSUInteger i = 0; i < before.count; i++) {
+    if ([except containsObject:@(i)]) continue;
+    NSDictionary *x = before[i], *y = after[i];
+    if (![x[@"text"] isEqualToString:y[@"text"]]) return NO;
+    if (!(x[@"uuid"] == y[@"uuid"] || [x[@"uuid"] isEqual:y[@"uuid"]])) return NO;
+  }
+  return YES;
+}
+
+static NSUInteger RequireBlockIndex(NSDictionary *request) {
+  id value = request[@"blockIndex"];
+  // NSJSONSerialization decodes true/false as the CFBoolean singletons.
+  if (![value isKindOfClass:[NSNumber class]] || value == (id)kCFBooleanTrue ||
+      value == (id)kCFBooleanFalse || [value doubleValue] < 0 ||
+      [value doubleValue] != floor([value doubleValue]) || [value doubleValue] > 1e9)
+    Fail(@"invalid_request", @"`blockIndex` must be a non-negative integer", nil);
+  return [value unsignedIntegerValue];
+}
+
+static NSUUID *OptionalParagraphId(NSDictionary *request) {
+  if (!request[@"paragraphId"]) return nil;
+  NSString *text = RequireString(request, @"paragraphId");
+  if (!IsUUID(text)) Fail(@"invalid_request", @"`paragraphId` must be a UUID", nil);
+  return [[NSUUID alloc] initWithUUIDString:text];
+}
+
+// The block at `index`, refused unless it is a non-empty paragraph whose text
+// still equals `expectedText` (attachment glyphs and outer whitespace aside).
+static NSDictionary *ExpectedBlock(NSArray *blocks, NSUInteger index, NSString *expectedText) {
+  if (index >= blocks.count)
+    Fail(@"paragraph_changed", @"No block has that blockIndex any more", @{@"committed" : @NO});
+  NSDictionary *block = blocks[index];
+  NSString *text = ComparableText(block[@"text"]);
+  if (!text.length)
+    Fail(@"invalid_request", @"That block is an empty paragraph; choose one list-note-paragraphs lists",
+         @{@"committed" : @NO});
+  if (![text isEqualToString:ComparableText(expectedText)])
+    Fail(@"paragraph_changed", @"The block at that index no longer has the expected text",
+         @{@"committed" : @NO});
+  return block;
+}
+
+static NSDictionary *HandleSetParagraphId(NSDictionary *request) {
+  gWriteRequest = YES;
+  NSString *identifier = RequireIdentifier(request);
+  NSString *ifRevision = RequireString(request, @"ifRevision");
+  NSString *expectedText = RequireString(request, @"expectedText");
+  NSUInteger index = RequireBlockIndex(request);
+  NSUUID *requested = OptionalParagraphId(request);
+  RequireFeature(FeatureParagraphIds);
+
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, NO);
+  NSManagedObject *note = FetchNote(context, identifier);
+  RequireAppendableNote(note);
+  NSString *revisionBefore = RevisionToken(note);
+  if (![revisionBefore isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+
+  NSAttributedString *body = [LoadBody(note, NULL) copy];
+  NSArray *blocks = NoteBlocks(body);
+  NSDictionary *owners = BlocksByUUID(blocks);
+  NSDictionary *target = ExpectedBlock(blocks, index, expectedText);
+  NSString *noteIdentifier = [note valueForKey:@"identifier"];
+  NSUUID *previous = target[@"uuid"];
+  NSString *previousStatus = ParagraphIdStatus(target, owners);
+  NSMutableDictionary *result = [@{
+    @"identifier" : noteIdentifier,
+    @"blockIndex" : @(index),
+    @"text" : target[@"text"],
+    @"styleType" : target[@"style"],
+    @"previousParagraphId" : previous ? previous.UUIDString : [NSNull null],
+    @"previousParagraphIdStatus" : previousStatus,
+    @"revisionBefore" : revisionBefore,
+  } mutableCopy];
+
+  if ([previousStatus isEqualToString:@"unique"] && (!requested || [requested isEqual:previous])) {
+    [result addEntriesFromDictionary:@{
+      @"status" : @"unchanged",
+      @"changed" : @NO,
+      @"committed" : @NO,
+      @"paragraphId" : previous.UUIDString,
+      @"url" : ParagraphLink(noteIdentifier, previous),
+      @"revisionAfter" : revisionBefore,
+    }];
+    return result;
+  }
+  if (requested && owners[requested])
+    Fail(@"invalid_request", @"`paragraphId` is already used by a paragraph of this note",
+         @{@"committed" : @NO});
+  NSUUID *uuid = requested ?: [NSUUID UUID];
+  NSRange owned = [target[@"owned"] rangeValue];
+
+  id ms = Send(note, "mergeableString");
+  AssignParagraphUUID(ms, body, owned, uuid);
+  ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+      note, sel_registerName("edited:range:changeInLength:"), EDITED_ATTRIBUTES, owned, 0);
+  FinishNoteEdit(note, @"apple-notes-mcp set_paragraph_id", [NSDate date]);
+  SaveOrFail(context);
+
+  // Fresh read-back: same text, the block carries the new UUID on every
+  // character and no other block carries it, nothing but TTStyle's UUID
+  // changed in the block, and every other block kept its first UUID.
+  NSString *verifyDetail = nil;
+  NSDictionary *after = nil;
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *reread = FetchNote(fresh, identifier);
+    NSAttributedString *persisted = [LoadBody(reread, NULL) copy];
+    NSArray *blocksAfter = NoteBlocks(persisted);
+    NSDictionary *ownersAfter = BlocksByUUID(blocksAfter);
+    NSDictionary *block = index < blocksAfter.count ? blocksAfter[index] : nil;
+    if (![persisted.string isEqualToString:body.string])
+      verifyDetail = @"The note text changed";
+    else if (![block[@"uuid"] isEqual:uuid] || [block[@"uuids"] count] != 1 ||
+             ![ParagraphIdStatus(block, ownersAfter) isEqualToString:@"unique"])
+      verifyDetail = @"The paragraph does not carry the new identifier uniquely";
+    else if (!SameAttributesExceptParagraphUUID(body, persisted, owned))
+      verifyDetail = @"Attributes other than the paragraph identifier changed";
+    else if (!OtherBlocksUnchanged(blocks, blocksAfter, [NSSet setWithObject:@(index)]))
+      verifyDetail = @"Another paragraph changed";
+    else
+      after = NoteState(reread);
+  } @catch (NSException *e) {
+    // After a successful save: a committed write that could not be verified.
+    verifyDetail = e.reason ?: e.name;
+  }
+  if (verifyDetail)
+    Fail(@"verification_failed", verifyDetail, @{@"committed" : @YES, @"revisionBefore" : revisionBefore});
+  [result addEntriesFromDictionary:@{
+    @"status" : @"updated",
+    @"changed" : @YES,
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"paragraphId" : uuid.UUIDString,
+    @"url" : ParagraphLink(noteIdentifier, uuid),
+    @"revisionAfter" : after[@"revision"],
+    @"modificationDate" : after[@"modificationDate"],
   }];
   [result addEntriesFromDictionary:SyncFields(after, store)];
   return result;

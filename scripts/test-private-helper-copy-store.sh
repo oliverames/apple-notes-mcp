@@ -139,7 +139,115 @@ OUT="$(copy_run "$APPEND" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed append not refused"
 echo "ok: replayed append refused"
 
-# Feature write checks go here, each against the copy only.
+# Feature write checks go here, each against the copy only. Each note a
+# feature writes to in the copy is recorded with watch_live first, and step 5
+# proves its live revision did not change.
+WATCHED="$WORK/watched-live"
+: >"$WATCHED"
+watch_live() { printf '%s %s\n' "$1" "$(field "$(run "$(read_request "$1")")" revision)" >>"$WATCHED"; }
+
+# Upstream's read-only paragraph reader (src/utils/noteParagraphs.ts),
+# bundled once and pointed at the copy, so every paragraph write is checked by
+# the same code list-note-paragraphs runs. Prints one JSON object per call.
+READER="$WORK/paragraph-reader.mjs"
+cat >"$WORK/paragraph-reader.ts" <<'TS'
+import { readNoteParagraphs } from "@/utils/noteParagraphs.js";
+const [id, dbPath] = process.argv.slice(2);
+try {
+  process.stdout.write(JSON.stringify(readNoteParagraphs({ id }, { dbPath })));
+} catch (error) {
+  process.stdout.write(JSON.stringify({ error: String(error) }));
+}
+TS
+(cd "$REPO" && node_modules/.bin/esbuild "$WORK/paragraph-reader.ts" --bundle --platform=node \
+  --format=esm --log-level=error --tsconfig="$REPO/tsconfig.json" \
+  "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" \
+  --outfile="$READER")
+object_uri() { field "$(copy_run "$(read_request "$1")")" objectURI; }
+paragraphs_on_copy() { node "$READER" "$(object_uri "$1")" "$COPY"; }
+# JSON-encode one string field (plutil cannot emit a bare JSON string).
+json_string() {
+  printf '%s' "$1" | node -e '
+    let s = "";
+    process.stdin.on("data", (c) => (s += c)).on("end", () => {
+      let v = JSON.parse(s);
+      for (const k of process.argv[1].split(".")) v = v[k];
+      process.stdout.write(JSON.stringify(v));
+    });' "$2"
+}
+
+writable() {
+  local state
+  state="$(copy_run "$(read_request "$1")" || true)"
+  [ "$(field "$state" editable)" = "true" ] && [ "$(field "$state" sharedViaICloud)" = "false" ] &&
+    [ "$(field "$state" deletedOrInTrash)" = "false" ]
+}
+recent_notes() {
+  /usr/bin/sqlite3 "$COPY" "SELECT n.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT n
+    JOIN ZICNOTEDATA d ON d.ZNOTE = n.Z_PK
+    WHERE n.ZIDENTIFIER IS NOT NULL AND n.ZFOLDER IS NOT NULL
+      AND IFNULL(n.ZISPASSWORDPROTECTED,0)=0 AND IFNULL(n.ZMARKEDFORDELETION,0)=0
+    ORDER BY n.ZMODIFICATIONDATE1 DESC LIMIT $1;"
+}
+
+# 4a. Paragraph identifiers: mint one for a block whose ID is shared (a
+#    recent writable note that has one, else the append note), or re-assign a
+#    unique one, which must be a no-op.
+PNOTE="$NOTE"
+for CANDIDATE in $(recent_notes 80); do
+  writable "$CANDIDATE" || continue
+  if [ "$(field "$(paragraphs_on_copy "$CANDIDATE")" counts.shared)" -gt 0 ] 2>/dev/null; then
+    PNOTE="$CANDIDATE"
+    break
+  fi
+done
+watch_live "$PNOTE"
+PARAS="$(paragraphs_on_copy "$PNOTE")"
+[ -z "$(field "$PARAS" error)" ] || fail "paragraph reader: $(field "$PARAS" error)"
+PCOUNT="$(printf '%s' "$PARAS" | /usr/bin/plutil -extract paragraphs raw -o - - 2>/dev/null || echo 0)"
+PI=""
+for WANT in shared missing; do
+  I=0
+  while [ -z "$PI" ] && [ "$I" -lt "${PCOUNT:-0}" ]; do
+    [ "$(field "$PARAS" "paragraphs.$I.paragraphIdStatus")" = "$WANT" ] && PI="$I"
+    I=$((I + 1))
+  done
+done
+EXPECT_UNCHANGED=""
+if [ -z "$PI" ]; then
+  PI=0
+  EXPECT_UNCHANGED=1
+fi
+BLOCK="$(field "$PARAS" "paragraphs.$PI.blockIndex")"
+echo "paragraphs: $PCOUNT (unique $(field "$PARAS" counts.unique), shared $(field "$PARAS" counts.shared), missing $(field "$PARAS" counts.missing)); target block $BLOCK status $(field "$PARAS" "paragraphs.$PI.paragraphIdStatus")"
+REV="$(field "$(copy_run "$(read_request "$PNOTE")")" revision)"
+set_paragraph_request() { # expectedText-json revision
+  printf '{"protocol":1,"action":"set_paragraph_id","identifier":"%s","blockIndex":%s,"expectedText":%s,"ifRevision":"%s"}' \
+    "$PNOTE" "$BLOCK" "$1" "$2"
+}
+OUT="$(copy_run "$(set_paragraph_request '"not the paragraph text"' "$REV")" || true)"
+[ "$(field "$OUT" code)" = "paragraph_changed" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "wrong expectedText not refused: $(field "$OUT" code)"
+echo "ok: wrong expectedText refused, committed=false"
+SETP="$(set_paragraph_request "$(json_string "$PARAS" "paragraphs.$PI.text")" "$REV")"
+OUT="$(copy_run "$SETP" || true)"
+STATUS="$(field "$OUT" status)"
+if [ -n "$EXPECT_UNCHANGED" ]; then
+  [ "$STATUS" = "unchanged" ] || fail "unique paragraph re-assigned: $STATUS $(field "$OUT" code)"
+  echo "ok: every paragraph already unique; set_paragraph_id was a no-op"
+else
+  [ "$STATUS" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "set_paragraph_id: $(field "$OUT" code) $(field "$OUT" message)"
+  PID="$(field "$OUT" paragraphId)"
+  AFTERP="$(paragraphs_on_copy "$PNOTE")"
+  [ "$(field "$AFTERP" "paragraphs.$PI.paragraphId")" = "$PID" ] || fail "reader does not see the new identifier"
+  [ "$(field "$AFTERP" "paragraphs.$PI.paragraphIdStatus")" = "unique" ] || fail "reader does not see it as unique"
+  [ "$(field "$AFTERP" "paragraphs.$PI.url")" = "$(field "$OUT" url)" ] || fail "reader url differs from the writer's"
+  echo "ok: paragraph identifier minted and verified; list-note-paragraphs reader agrees (unique $(field "$AFTERP" counts.unique))"
+  OUT="$(copy_run "$SETP" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed set_paragraph_id not refused: $(field "$OUT" code)"
+  echo "ok: replayed set_paragraph_id refused"
+fi
 
 # 4b. plan_edit / edit_note on the copy, checked by an independent decoder
 # (scripts/check-edit-preservation.mjs decodes the stored protobuf itself, with
@@ -410,4 +518,9 @@ for PAIR in $EDIT_LIVE_BEFORE; do
     fail "a live edit-note revision changed during the copy test (a concurrent edit in Notes also causes this; rerun)"
 done
 echo "ok: live note revisions unchanged"
+while read -r WNOTE WREV; do
+  [ "$WREV" = "$(field "$(run "$(read_request "$WNOTE")")" revision)" ] ||
+    fail "a live note used by a feature check changed during the copy test"
+done <"$WATCHED"
+echo "ok: $(wc -l <"$WATCHED" | tr -d ' ') feature-check live note revision(s) unchanged"
 echo "PASS"

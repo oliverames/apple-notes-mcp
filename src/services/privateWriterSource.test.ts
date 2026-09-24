@@ -236,6 +236,16 @@ describe("private writer source contract", () => {
     expect(SOURCE).toMatch(/hasEmphasis flag does not match its stored highlights/);
   });
 
+  it("sets a paragraph identifier through the mergeable string and verifies it afresh", () => {
+    const body = handlerBody("HandleSetParagraphId");
+    expect(body).toMatch(/ExpectedBlock\(blocks, index, expectedText\)/);
+    expect(body).toMatch(/AssignParagraphUUID\(ms, body, owned, uuid\)/);
+    expect(body).toMatch(/SaveOrFail\(context\)/);
+    expect(body).toMatch(/OpenContext\(store, YES\)/);
+    expect(body).toMatch(/OtherBlocksUnchanged/);
+    expect(SOURCE).toMatch(/sel_registerName\("setAttributes:range:"\)/);
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);

@@ -175,6 +175,7 @@ import { registerComposeNoteTool } from "@/tools/composeNoteTool.js";
 import { registerPrivateWriterChecklistTools } from "@/tools/privateWriterChecklistTools.js";
 import { registerPrivateWriterHighlightTools } from "@/tools/privateWriterHighlightTools.js";
 import { registerPrivateWriterLinkCardTools } from "@/tools/privateWriterLinkCardTools.js";
+import { registerPrivateWriterParagraphTools } from "@/tools/privateWriterParagraphTools.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -237,6 +238,7 @@ registerComposeNoteTool(server, notesManager);
 registerPrivateWriterChecklistTools(server, notesManager);
 registerPrivateWriterHighlightTools(server, notesManager);
 registerPrivateWriterLinkCardTools(server, notesManager);
+registerPrivateWriterParagraphTools(server, notesManager);
 
 // =============================================================================
 // Response Helpers
