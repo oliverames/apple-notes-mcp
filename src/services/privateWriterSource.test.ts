@@ -93,6 +93,33 @@ describe("private writer source contract", () => {
     expect(CODE).not.toMatch(/NSBatch(?:Update|Delete|Insert)Request/);
   });
 
+  it("plans edits read-only and verifies an applied edit outside its ranges", () => {
+    const plan = handlerBody("HandlePlanEdit");
+    expect(plan).toMatch(/OpenContext\(store, YES\)/);
+    expect(plan).toMatch(/\[context rollback\]/);
+    const apply = handlerBody("HandleEditNote");
+    expect(apply).toMatch(/RequireString\(request, ""\)/);
+    expect(apply).toMatch(
+      /OpenContext\(store, NO\)[\s\S]*SaveOrFail\(context\)[\s\S]*OpenContext\(store, YES\)/
+    );
+    expect(apply).toMatch(/VerifyAgainstPlan\(persisted, plan\)/);
+    expect(apply).toMatch(/AttachmentIdentifiers\(reread\)/);
+    // Formatting outside the edits is compared run by run, including
+    // timestamps, and the glyph sequence against the planned text.
+    expect(CODE).toMatch(/CanonicalRuns\(plan\.snapshot, oldRange, NO\)/);
+    expect(CODE).toMatch(
+      /AttachmentGlyphs\(persisted\) isEqual:AttachmentGlyphs\(plan\.expected\)/
+    );
+    // No target may contain an attachment glyph unless its selector kind allows it.
+    expect(CODE).toMatch(
+      /static BOOL TargetMayTouchAttachment\(NSString \*kind\) \{\s*\(void\)kind;\s*return NO;/
+    );
+    // Only the note, its data, and its cloud state may be dirty before a save.
+    expect(SOURCE).toMatch(
+      /Fail\(@"unexpected_side_effect",[\s\S]{0,400}?@"objects" : unexpected\}/
+    );
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);

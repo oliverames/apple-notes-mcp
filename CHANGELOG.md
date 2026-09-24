@@ -26,6 +26,20 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+- `native-edit-note`: in-place edits through the writer (replace literal text,
+  insert or delete paragraphs, retitle) that leave attachments and formatting
+  outside the edited ranges untouched. `dryRun: true` runs the read-only
+  `plan_edit` action; the apply (`edit_note`) needs the plan's
+  `revisionBefore` as `ifRevision`, refuses any edit that would change
+  another object, and re-reads the note to prove the text, every attribute
+  run outside the edits, the attachment glyph sequence, and the attachment
+  rows (reported as `preservation`). Optional `nudge`. Not yet
+  live-validated, so applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+- `native-writer-status` reports `planEdit` and `editNote` beside
+  `appendPlainText`; the features come from one `WRITER_FEATURES` table.
+- The copy-store script runs a plan, apply, and restore round trip on up to
+  eight notes and checks each step with `scripts/check-edit-preservation.mjs`,
+  an independent decoder of the stored note.
 
 ## [2.9.11] - 2026-09-23
 

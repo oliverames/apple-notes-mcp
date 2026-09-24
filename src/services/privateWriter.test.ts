@@ -15,6 +15,7 @@ import {
 } from "./privateHelper.js";
 import {
   APPEND_LIVE_VALIDATED,
+  EDIT_LIVE_VALIDATED,
   PRIVATE_WRITER_PROTOCOL,
   PrivateWriteError,
   WRITER_ACTIONS,
@@ -25,7 +26,10 @@ import {
   assertAppendText,
   assertRevision,
   callPrivateWriter,
+  WRITER_FEATURES,
   defaultWriterDeps,
+  editNote,
+  editOperationSchema,
   inspectWriterInstallation,
   parseWriterResult,
   privateWriterCapabilities,
@@ -55,6 +59,7 @@ process.stdin.on("end", () => {
   if (mode === "verify-failed") out({ status: "error", code: "verification_failed", message: "mismatch", committed: true }, 1);
   if (mode === "no-committed") out({ status: "error", code: "save_failed", message: "?" }, 1);
   if (mode === "malformed") out({ status: "updated" });
+  if (mode === "edit-side-effect") out({ status: "error", code: "unexpected_side_effect", message: "no", committed: false, objects: ["updated ICAttachment (noteUsingTitleForNoteTitle)"] }, 1);
   const feature = () => {
     if (mode === "missing-api") return { available: false, reason: "private_api_unavailable", missing: ["-[ICNote saveNoteData]"] };
     if (mode === "missing-api-empty") return { available: false, reason: "private_api_unavailable", missing: [] };
@@ -66,11 +71,18 @@ process.stdin.on("end", () => {
     case "hello":
       out({ status: "ok", protocolVersion: 1, sourceSha256: "dev", role: "writer", readOnly: false, actions: ["hello"] });
     case "probe":
-      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature(), appendPlainText: feature() } });
+      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: mode === "old-writer" ? { readNoteState: feature(), appendPlainText: feature() } : { readNoteState: feature(), appendPlainText: feature(), planEdit: feature(), editNote: feature() } });
     case "append_plain_text":
       out({ status: "updated", committed: true, verified: true, identifier: req.identifier, appendedUTF16: req.text.length, separatorInserted: false, revisionBefore: req.ifRevision, revisionAfter: "r1:" + "d".repeat(64), modificationDate: "2026-09-23T00:00:00.000Z", title: "t", cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, storeKind: "live", echo: req });
     case "read_note_state":
       out({ status: "ok", identifier: req.identifier, echo: req });
+    case "plan_edit":
+    case "edit_note": {
+      const plan = { identifier: req.identifier, revisionBefore: "r1:" + "e".repeat(64), planDigest: "p1:x", operationCount: req.operations.length, targetCount: 1, operations: [{ index: 0, op: req.operations[0].op, matchedCount: 1, targets: [{ paragraphIndex: 2, paragraphStyle: "body", location: 40, length: 5, newLength: 5 }] }], lengthBefore: 100, lengthAfter: 100, unchangedUTF16: 95, wouldChange: mode !== "edit-noop", titleChanged: false, attachmentGlyphs: 1, storeKind: "live", echo: req };
+      if (req.action === "plan_edit") out({ status: "planned", dryRun: true, committed: false, ...plan });
+      if (mode === "edit-noop") out({ status: "unchanged", dryRun: false, committed: false, revisionAfter: plan.revisionBefore, ...plan });
+      out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 95, formattingOutsideEditsVerified: true, attachmentGlyphs: 1, attachmentGlyphSequenceVerified: true, attachmentRows: 1, attachmentRowsVerified: true }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan });
+    }
     default:
       out({ status: "error", code: "unknown_action", message: "no" }, 1);
   }
@@ -420,5 +432,271 @@ describe("privateWriterCapabilities", () => {
         .reason
     ).toBe("helper_unreachable");
     expect(probePrivateWriter(deps(ON)).role).toBe("writer");
+  });
+});
+
+const REPLACE = [
+  {
+    op: "replace" as const,
+    selector: { text: "Draft" },
+    replacement: { text: "Final" },
+    expectedCount: 1,
+  },
+];
+
+describe("editNote", () => {
+  beforeEach(() => install());
+
+  it("plans through the read-only plan_edit without the live-validation gate", () => {
+    expect(WRITER_ACTIONS.plan_edit).toBe("read");
+    expect(WRITER_ACTIONS.edit_note).toBe("write");
+    expect(EDIT_LIVE_VALIDATED).toBe(false);
+    const plan = editNote({ identifier: NOTE, dryRun: true, operations: REPLACE }, deps(ON));
+    expect(plan).toMatchObject({ status: "planned", committed: false, wouldChange: true });
+    expect(plan.revisionBefore).toMatch(/^r1:e+$/);
+    expect((plan as Record<string, unknown>).echo).toEqual({
+      protocol: 1,
+      action: "plan_edit",
+      identifier: NOTE,
+      operations: REPLACE,
+    });
+  });
+
+  it("applies through edit_note with ifRevision and reports the read-back's preservation", () => {
+    const r = editNote(
+      {
+        identifier: NOTE,
+        dryRun: false,
+        ifRevision: REV,
+        requireNonSystemPaper: true,
+        operations: REPLACE,
+      },
+      deps(UNVERIFIED)
+    );
+    expect(r).toMatchObject({
+      status: "updated",
+      committed: true,
+      verified: true,
+      pushScheduled: false,
+      preservation: {
+        formattingOutsideEditsVerified: true,
+        attachmentGlyphSequenceVerified: true,
+        attachmentRowsVerified: true,
+      },
+    });
+    expect((r as Record<string, unknown>).echo).toEqual({
+      protocol: 1,
+      action: "edit_note",
+      identifier: NOTE,
+      operations: REPLACE,
+      requireNonSystemPaper: true,
+      ifRevision: REV,
+    });
+  });
+
+  it("reports an unchanged apply as not committed", () => {
+    const r = editNote(
+      { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+      deps({ ...UNVERIFIED, FAKE_MODE: "edit-noop" })
+    );
+    expect(r).toMatchObject({ status: "unchanged", committed: false });
+  });
+
+  it("requires ifRevision, both switches, and the unverified opt-in to apply", () => {
+    expect(
+      thrown(() =>
+        editNote({ identifier: NOTE, dryRun: false, operations: REPLACE }, deps(UNVERIFIED))
+      )
+    ).toMatchObject({ code: "invalid_request", committed: false });
+    expect(
+      thrown(() =>
+        editNote(
+          { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+          deps(ON)
+        )
+      )
+    ).toMatchObject({ code: "not_live_validated", committed: false });
+    expect(
+      thrown(() =>
+        editNote(
+          { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+          deps({ APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" })
+        )
+      )
+    ).toMatchObject({ code: "writes_disabled", committed: false });
+  });
+
+  it("validates identifier, revision, and operations before spawning", () => {
+    const d = deps(UNVERIFIED);
+    expect(
+      thrown(() => editNote({ identifier: "x", dryRun: true, operations: REPLACE }, d))
+    ).toMatchObject({ code: "invalid_request", committed: undefined });
+    expect(
+      thrown(() =>
+        editNote(
+          { identifier: NOTE, dryRun: false, ifRevision: "sha256:x", operations: REPLACE },
+          d
+        )
+      )
+    ).toMatchObject({ code: "invalid_request", committed: false });
+    expect(
+      thrown(() => editNote({ identifier: NOTE, dryRun: false, operations: [] }, d))
+    ).toMatchObject({ code: "invalid_request", committed: false });
+    const bad = thrown(() =>
+      editNote(
+        {
+          identifier: NOTE,
+          dryRun: true,
+          operations: [
+            { op: "replace", selector: { text: "a\nb" }, replacement: { text: "x" } },
+          ] as never,
+        },
+        d
+      )
+    );
+    expect(bad.code).toBe("invalid_request");
+    expect(bad.message).toMatch(/one paragraph/);
+  });
+
+  it("passes a native refusal through; a plan failure is not a write", () => {
+    const e = thrown(() =>
+      editNote(
+        { identifier: NOTE, dryRun: true, operations: REPLACE },
+        deps({ ...ON, FAKE_MODE: "edit-side-effect" })
+      )
+    );
+    expect(e.code).toBe("unexpected_side_effect");
+    expect(e.committed).toBeUndefined();
+    expect(e.details.objects).toEqual(["updated ICAttachment (noteUsingTitleForNoteTitle)"]);
+    const applied = thrown(() =>
+      editNote(
+        { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+        deps({ ...UNVERIFIED, FAKE_MODE: "edit-side-effect" })
+      )
+    );
+    expect(applied.committed).toBe(false);
+  });
+
+  it("treats a malformed apply success as indeterminate but a malformed plan as not a write", () => {
+    const d = deps({ ...UNVERIFIED, FAKE_MODE: "malformed" });
+    expect(
+      thrown(() => editNote({ identifier: NOTE, dryRun: true, operations: REPLACE }, d)).committed
+    ).toBeUndefined();
+    expect(
+      thrown(() =>
+        editNote({ identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE }, d)
+      ).committed
+    ).toBe("unknown");
+  });
+});
+
+describe("edit operation schema", () => {
+  const ok = (op: unknown) => editOperationSchema.safeParse(op).success;
+
+  it("accepts every operation shape", () => {
+    expect(ok(REPLACE[0])).toBe(true);
+    expect(
+      ok({
+        op: "replace",
+        selector: {
+          kind: "text",
+          text: "Mixed bold",
+          scope: "all",
+          match: "equals",
+          occurrence: 2,
+        },
+        replacement: { runs: [{ text: "x", bold: true, italic: true, underline: true }] },
+        expectedCount: 2,
+      })
+    ).toBe(true);
+    expect(
+      ok({ op: "delete_paragraph", selector: { text: "Row", occurrence: 2 }, expectedCount: 2 })
+    ).toBe(true);
+    expect(ok({ op: "delete_paragraph", selector: { kind: "blank", style: "checklist" } })).toBe(
+      true
+    );
+    expect(
+      ok({
+        op: "insert_after",
+        anchor: { kind: "style", style: "subheading", occurrence: 2 },
+        expectedCount: 3,
+        blocks: [
+          { type: "heading", text: "H" },
+          { type: "checklist", text: "Done", checked: true },
+          { type: "body", text: "" },
+          { type: "body", runs: [{ text: "b", strikethrough: true }] },
+        ],
+      })
+    ).toBe(true);
+    expect(
+      ok({
+        op: "insert_before",
+        anchor: { text: "Anchor" },
+        blocks: [{ type: "dashed", text: "d" }],
+      })
+    ).toBe(true);
+    expect(ok({ op: "set_title", replacement: { text: "New title" } })).toBe(true);
+  });
+
+  it("rejects what the writer would refuse", () => {
+    expect(ok({ op: "replace", selector: { text: "" }, replacement: { text: "x" } })).toBe(false);
+    for (const bad of ["a\u2028b", "a\u2029b", "a\nb", "a\rb", "a\uFFFCb"])
+      expect(ok({ op: "replace", selector: { text: bad }, replacement: { text: "x" } })).toBe(
+        false
+      );
+    expect(ok({ op: "replace", selector: { text: "a" }, replacement: { text: "\uFFFC" } })).toBe(
+      false
+    );
+    expect(
+      ok({ op: "replace", selector: { text: "a" }, replacement: { text: "x", runs: [] } })
+    ).toBe(false);
+    expect(ok({ op: "replace", selector: { text: "a" }, replacement: { runs: [] } })).toBe(false);
+    expect(
+      ok({ op: "replace", selector: { kind: "style", style: "body" }, replacement: { text: "x" } })
+    ).toBe(false);
+    expect(ok({ op: "delete_paragraph", selector: { kind: "blank", style: "body" } })).toBe(false);
+    expect(ok({ op: "delete_paragraph", selector: { kind: "attachment", id: "x" } })).toBe(false);
+    expect(
+      ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "title", text: "t" }] })
+    ).toBe(false);
+    expect(ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "body" }] })).toBe(
+      false
+    );
+    expect(
+      ok({
+        op: "insert_after",
+        anchor: { text: "a" },
+        blocks: [{ type: "body", text: "t", checked: true }],
+      })
+    ).toBe(false);
+    expect(ok({ op: "set_title", replacement: { text: "" } })).toBe(false);
+    expect(ok({ op: "rewrite", selector: { text: "a" } })).toBe(false);
+    expect(ok({ ...REPLACE[0], extra: 1 })).toBe(false);
+  });
+});
+
+describe("writer feature table", () => {
+  it("reports edit planning without the unverified gate and gates applying", () => {
+    install();
+    expect(WRITER_FEATURES.map((row) => row.key)).toEqual([
+      "appendPlainText",
+      "planEdit",
+      "editNote",
+    ]);
+    const gated = privateWriterCapabilities(deps(ON)).features;
+    expect(gated.planEdit).toEqual({ available: true, reason: null, detail: null });
+    expect(gated.editNote).toMatchObject({ available: false, reason: "not_live_validated" });
+    expect(privateWriterCapabilities(deps(UNVERIFIED)).features.editNote.available).toBe(true);
+    expect(privateWriterCapabilities(deps()).features.planEdit.reason).toBe("disabled");
+  });
+
+  it("reports a feature the probe does not list as unavailable", () => {
+    install();
+    const old = privateWriterCapabilities(
+      deps({ ...UNVERIFIED, FAKE_MODE: "old-writer" })
+    ).features;
+    expect(old.appendPlainText.available).toBe(true);
+    expect(old.planEdit).toMatchObject({ available: false, reason: "private_api_unavailable" });
+    expect(old.editNote.detail).toMatch(/does not report editNote/);
   });
 });

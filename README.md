@@ -2378,6 +2378,43 @@ x-coredata `id`, guarded by `ifRevision` and verified by read-back. Returns
 counters for `nudgeWaitSeconds` (default 30), reported under `sync`. Refuses
 locked, shared, trashed, and still-downloading notes.
 
+#### `native-edit-note`
+
+Edits selected text inside one note in place and leaves everything outside
+the edited ranges alone: attachments, tables, checklist state, paragraph
+styles, and inline formatting. Operations, applied together against one
+snapshot of the note:
+
+- `replace`: literal text (`match: "substring"` or `"equals"`), with plain
+  `text` that inherits the replaced range's formatting, or `runs` with
+  explicit bold, italic, underline, and strikethrough.
+- `insert_after` / `insert_before`: new paragraphs (`heading`, `subheading`,
+  `body`, `monospaced`, `bulleted`, `dashed`, `numbered`, `checklist` with
+  `checked`) next to a paragraph matched by its exact text or by style and
+  position (`{kind: "style", style: "subheading", occurrence: 2}`).
+- `delete_paragraph`: a paragraph matched by its exact text, or an empty list,
+  checklist, or heading row (`{kind: "blank", style}`).
+- `set_title`: the first paragraph.
+
+`expectedCount` (default 1) must equal the number of matches, and
+`occurrence` picks one of them. Matching is case-sensitive, stays inside one
+paragraph, and never touches an attachment glyph.
+
+Always call it twice. `dryRun: true` is read-only and returns the plan
+(targets, `lengthBefore`/`lengthAfter`, `unchangedUTF16`, `wouldChange`) and
+`revisionBefore`. Then send the identical request with `dryRun: false` and
+`ifRevision` set to that `revisionBefore`. The apply re-reads the note in a
+fresh Core Data stack and returns `preservation`, which says that every
+character outside the edits kept its formatting, that the attachment glyph
+sequence is the planned one, and that the note's attachment rows did not
+change. Refusals commit nothing: `revision_conflict`, `match_count_mismatch`,
+`mixed_formatting` (use `runs`), `conflicting_operations`, `title_invariant`,
+`unsupported_selection`, and `unexpected_side_effect` (the edit would change
+another object, for example an attachment Notes uses for the title). Takes
+`nudge` like `native-append-plain-text`. Planning needs the two writer
+switches; applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until the
+edit path is live-validated.
+
 ## Usage Patterns
 
 ### Basic Workflow
