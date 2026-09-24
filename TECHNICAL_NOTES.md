@@ -891,6 +891,62 @@ compares the writer's revision token before and after (`contentUnchanged`).
 Notes' own record that the server accepted the version, not a cross-device
 check.
 
+### Highlight (`set_highlight`)
+
+Notes' highlight is the `TTEmphasis` attribute, an `NSNumber` on the
+highlighted characters, serialized as `AttributeRun` field 14. On 2026-09-23 a
+scan of a store copy on macOS 27.2 found one note with Notes-written field 14
+(value 1), and the earlier combined helper read the same run back as
+`TTEmphasis` = 1, confirming the mapping. The values follow Notes' color
+order: 1 purple, 2 pink, 3 orange, 4 mint, 5 blue. That Notes-written run also
+carried a `TTColor` attribute; whether Notes always pairs the two was not
+determined, so the writer sets only `TTEmphasis`.
+
+The action takes a `scope`. The only scope is `"text"`: every non-overlapping
+literal, case-sensitive occurrence of `match` (no newlines, U+FFFC, or control
+characters; at most 1,000 UTF-16 units), refused as `match_count_mismatch`
+with `found` unless the count equals `expectedCount` (1 to 100, default 1).
+Target selection is one function; the plan, the no-op check, the edit, and the
+verification work on any list of ranges, so a later whole-note scope adds one
+branch there and reuses the rest of the action. An unknown scope is
+`invalid_request`.
+
+For each attribute run inside each target range the writer writes the run's
+full attribute dictionary plus (or minus) `TTEmphasis` through
+`-[ICTTMergeableAttributedString setAttributes:range:]`, then calls
+`edited:range:changeInLength:` with `NSTextStorageEditedAttributes`,
+`saveNoteData`, and `updateChangeCountWithReason:`. Verification applies the
+same change to a detached copy of the pre-write attributed string and requires
+the fresh read-back's text to be identical and its complete `TTEmphasis` run
+map to equal the copy's, so an unexpected change anywhere in the note fails as
+`verification_failed` with `committed: true`. `saveNoteData` also refreshes
+the note's derived `hasEmphasis` flag (`ZHASEMPHASIS`): on a store copy on
+2026-09-24 it went from false to true after a highlight and back to false after
+removal. The read-back requires that flag to match whether any highlight
+remains, and the result reports it. `dryRun` opens the store read-only and
+reports each range with its current runs. A request every range already
+satisfies writes nothing (`status: "unchanged"`). The MCP tool is
+`native-highlight-text` (optional `nudge`, skipped when nothing was written).
+
+`scripts/test-private-writer-highlight-copy-store.sh` passed on a store copy
+on 2026-09-24: the live write gate, the count guard, a stale revision, an
+unknown scope and color, a dry run with no change, two matches highlighted
+mint and read back, a no-op repeat, a recolor to purple, removal, and the live
+note unchanged.
+
+Earlier live test (2026-09-23, macOS 27.2, Notes running), run with the same
+edit logic in the earlier combined helper, before it moved into this writer:
+on a note created in an iCloud folder, a dry run reported two matches without
+changing the revision, a stale revision was refused, the write stored orange
+(field 14 = 3) on both matches and nothing else, a repeat returned
+`unchanged`, and a second call stored purple (1) on a third word. The
+AppleScript HTML body does not show highlights, and the rendering in Notes.app
+was not inspected visually. `currentLocalVersion` went from 1 to 3 while
+`latestVersionSyncedToCloud` stayed 1 for the 12-minute read-only poll; about
+two and a half hours later both were 3, so Notes.app uploaded the change in
+between, on a trigger that was not observed. That test predates the sync
+nudge. The writer build of this action has not been live-tested yet.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

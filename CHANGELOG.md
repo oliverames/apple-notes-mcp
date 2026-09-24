@@ -26,6 +26,24 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+- `native-highlight-text` on the writer (action `set_highlight`). Applies or
+  removes Notes' highlight (purple, pink, orange, mint, blue: the
+  `TTEmphasis` attribute, protobuf AttributeRun field 14, values 1 to 5) on
+  every exact, case-sensitive occurrence of a literal string, only when it
+  occurs exactly `expectedCount` times. It supports `dryRun`, requires
+  `ifRevision` for a write, changes nothing but the highlight attribute of the
+  matched characters, and re-reads the note in a fresh Core Data stack to
+  verify the text, every highlight run, and Notes' `hasEmphasis` flag. A
+  request that is already satisfied writes nothing. The action takes a
+  `scope` (only `"text"` today) so a whole-note option can reuse it. Optional
+  `nudge`. Until it passes live validation, writes also require
+  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
+  helper branch.
+- `native-writer-status` reports every writer feature from one
+  `WRITER_FEATURES` table, each with its own live-validation gate.
+- `scripts/test-private-writer-highlight-copy-store.sh` exercises the
+  highlight action on a store copy, with shared setup in
+  `scripts/private-writer-copy-store-lib.sh`.
 
 ## [2.9.11] - 2026-09-23
 
