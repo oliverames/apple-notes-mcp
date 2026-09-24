@@ -305,6 +305,16 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Neither tool creates or changes a paragraph ID. A later edit in Notes can replace the ID and break a link
 - Requires Full Disk Access; password-protected notes are refused
 
+### Paragraph anchors (create / resolve / list / get / prune-paragraph-anchor(s))
+- When a paragraph link must keep working after edits, record an anchor: `get-paragraph-link` with `recordAnchor: true`, `list-note-paragraphs` with `recordAnchors: true`, or `create-paragraph-anchor` (which also accepts a paragraph whose ID is shared or missing). Store the `anchorId`, not only the url
+- Later, call `resolve-paragraph-anchor` and use its `url` only when `status` is `resolved`. Never build a link from `match` yourself
+- `ambiguous` and `low-confidence` are deliberate refusals, not errors to work around: report them and let the user pick the paragraph (for example with `list-note-paragraphs`), then record a new anchor
+- `needs-reminting` means the paragraph was found but has no safe ID. Report `match.blockIndex` and `match.text`; there is no public way to give it a new ID. `remint: true` only works when a paragraph-ID writer is installed and otherwise reports `writer-unavailable`
+- `refresh: true` updates the stored anchor after a confident match (0.8 or more) so later edits are tracked from the current state; it never touches Notes
+- `prune-paragraph-anchors` is a dry run unless `dryRun: false`. Show the user the `stale` list before removing. `note-deleted` (the note is in Recently Deleted) is not pruned by default
+- The registry (`APPLE_NOTES_MCP_ANCHOR_FILE`, default under `~/Library/Application Support/apple-notes-mcp/`) holds the anchored paragraphs' text; treat it as private
+- The HTTP resolver (`apple-notes-mcp anchors serve`) is a command the user runs; never suggest `--tailnet` unless they ask to open links from other devices
+
 ### get-note-structure
 - One read-only call for a note's overview by exact id: text, block summary, links with `kind` (`inline`, `card`, `note`, `section`), tags, attachments, and metadata (`deepLink`, `isShared`, `isLocked`, `inRecentlyDeleted`, `lastViewed`, word/char counts, `attachmentCount`, checklist counts, `hasDrawing`, `firstImage`)
 - Attachments use the same `kind`, body order, `previewPath` and `firstImage` as `list-attachments`, so the two tools agree about the same attachment

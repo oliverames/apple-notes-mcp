@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants10);
+          this.rhs = optimizeExpr(this.rhs, names, constants11);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants10);
+        this.rhs = optimizeExpr(this.rhs, names, constants11);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants10) {
-        this.code = optimizeExpr(this.code, names, constants10);
+      optimizeNames(names, constants11) {
+        this.code = optimizeExpr(this.code, names, constants11);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants10))
+          if (n.optimizeNames(names, constants11))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
-        if (!(super.optimizeNames(names, constants10) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants11);
+        if (!(super.optimizeNames(names, constants11) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants10);
+        this.condition = optimizeExpr(this.condition, names, constants11);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants10) {
-        if (!super.optimizeNames(names, constants10))
+      optimizeNames(names, constants11) {
+        if (!super.optimizeNames(names, constants11))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants10);
+        this.iteration = optimizeExpr(this.iteration, names, constants11);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants10) {
-        if (!super.optimizeNames(names, constants10))
+      optimizeNames(names, constants11) {
+        if (!super.optimizeNames(names, constants11))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants10);
+        this.iterable = optimizeExpr(this.iterable, names, constants11);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         var _a, _b;
-        super.optimizeNames(names, constants10);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants10);
+        super.optimizeNames(names, constants11);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants11);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants11);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants10) {
+    function optimizeExpr(expr, names, constants11) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants10[n.str];
+        const c = constants11[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants10[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants11[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -2991,7 +2991,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve9.call(this, root, ref);
+      let _sch = resolve10.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3018,7 +3018,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve9(root, ref) {
+    function resolve10(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3843,7 +3843,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve9(baseURI, relativeURI, options) {
+    function resolve10(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4205,7 +4205,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve9,
+      resolve: resolve10,
       resolveComponent,
       equal,
       serialize,
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants10 = {
+    var constants11 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants10) {
-      v = { value: constants10[c] };
+    for (c in constants11) {
+      v = { value: constants11[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join31(output, replacement);
+        return join32(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join31(output, rule.append(self.options));
+          output = join32(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join31(output, replacement) {
+    function join32(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -36608,7 +36608,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve9) => setTimeout(resolve9, pollInterval));
+        await new Promise((resolve10) => setTimeout(resolve10, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -36625,7 +36625,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -36703,7 +36703,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve9(parseResult.data);
+            resolve10(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -36964,12 +36964,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve9, interval);
+      const timeoutId = setTimeout(resolve10, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38282,7 +38282,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve9) => setTimeout(resolve9, pollInterval));
+      await new Promise((resolve10) => setTimeout(resolve10, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -38970,12 +38970,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve9) => {
+    return new Promise((resolve10) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve9();
+        resolve10();
       } else {
-        this._stdout.once("drain", resolve9);
+        this._stdout.once("drain", resolve10);
       }
     });
   }
@@ -47638,13 +47638,13 @@ var escapeSegment = escapeFolderName;
 function resolveFolders(rows) {
   const byPk = new Map(rows.map((row) => [row.pk, row]));
   const resolved = /* @__PURE__ */ new Map();
-  const resolve9 = (pk, seen) => {
+  const resolve10 = (pk, seen) => {
     const cached2 = resolved.get(pk);
     if (cached2) return cached2;
     const row = byPk.get(pk);
     if (!row || seen.has(pk)) return void 0;
     seen.add(pk);
-    const parent = row.parent !== null ? resolve9(row.parent, seen) : void 0;
+    const parent = row.parent !== null ? resolve10(row.parent, seen) : void 0;
     const name = row.name ?? "";
     const path10 = parent ? `${parent.path}/${escapeSegment(name)}` : escapeSegment(name);
     const plainPath = parent ? `${parent.plainPath}/${name}` : name;
@@ -47658,7 +47658,7 @@ function resolveFolders(rows) {
     resolved.set(pk, info);
     return info;
   };
-  for (const row of rows) resolve9(row.pk, /* @__PURE__ */ new Set());
+  for (const row of rows) resolve10(row.pk, /* @__PURE__ */ new Set());
   return resolved;
 }
 var coreDataMs = (seconds) => seconds === null || !Number.isFinite(seconds) ? void 0 : CORE_DATA_EPOCH_MS2 + seconds * 1e3;
@@ -51706,16 +51706,16 @@ var NOTE_PLACEHOLDERS = [
   "exportStem"
 ];
 var PLACEHOLDER_MODIFIERS = ["raw", "yaml"];
-var wrap2 = (before, after = "", join31) => ({
+var wrap2 = (before, after = "", join32) => ({
   mode: "wrap",
   before,
   after,
-  ...join31 ? { join: join31 } : {}
+  ...join32 ? { join: join32 } : {}
 });
-var pattern = (value, join31) => ({
+var pattern = (value, join32) => ({
   mode: "pattern",
   value,
-  ...join31 ? { join: join31 } : {}
+  ...join32 ? { join: join32 } : {}
 });
 var STANDARD = {
   schemaVersion: 1,
@@ -55390,7 +55390,7 @@ function parseXml(source, limits) {
       if (a.name === "xmlns") scope2.set("", a.value);
       else if (a.name.startsWith("xmlns:")) scope2.set(a.name.slice(6), a.value);
     }
-    const resolve9 = (qualified, isAttribute) => {
+    const resolve10 = (qualified, isAttribute) => {
       const colon = qualified.indexOf(":");
       if (colon < 0) return { local: qualified, ns: isAttribute ? null : scope2.get("") ?? null };
       const prefix = qualified.slice(0, colon);
@@ -55400,12 +55400,12 @@ function parseXml(source, limits) {
       if (ns === void 0) fail(`Undeclared namespace prefix "${prefix.slice(0, 40)}"`);
       return { local, ns };
     };
-    const resolved = resolve9(name, false);
+    const resolved = resolve10(name, false);
     const element = {
       name,
       local: resolved.local,
       ns: resolved.ns,
-      attributes: rawAttributes.filter((a) => a.name !== "xmlns" && !a.name.startsWith("xmlns:")).map((a) => ({ name: a.name, value: a.value, ...resolve9(a.name, true) })),
+      attributes: rawAttributes.filter((a) => a.name !== "xmlns" && !a.name.startsWith("xmlns:")).map((a) => ({ name: a.name, value: a.value, ...resolve10(a.name, true) })),
       children: [],
       text: "",
       line: tagLine
@@ -58727,6 +58727,815 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
   );
 }
 
+// src/services/anchorServer.ts
+import { randomBytes as randomBytes2, timingSafeEqual } from "node:crypto";
+import { createServer } from "node:http";
+import { networkInterfaces } from "node:os";
+
+// src/utils/paragraphAnchors.ts
+import { createHash as createHash8 } from "node:crypto";
+var ANCHOR_ID_PATTERN = /^pa_[0-9a-f]{24}$/;
+var DEFAULT_MIN_CONFIDENCE = 0.6;
+var textFingerprint = (normalized2) => createHash8("sha256").update(normalized2, "utf8").digest("hex").slice(0, 32);
+function textSimilarity(a, b) {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  const size = Math.min(a.length, b.length) < 3 ? 2 : 3;
+  const grams = (s) => {
+    const out = /* @__PURE__ */ new Map();
+    const padded = ` ${s} `;
+    for (let i = 0; i + size <= padded.length; i++) {
+      const g = padded.slice(i, i + size);
+      out.set(g, (out.get(g) ?? 0) + 1);
+    }
+    return out;
+  };
+  const ga = grams(a);
+  const gb = grams(b);
+  let shared = 0;
+  let total = 0;
+  for (const count of ga.values()) total += count;
+  for (const [g, count] of gb) {
+    total += count;
+    shared += Math.min(count, ga.get(g) ?? 0);
+  }
+  return total ? 2 * shared / total : 0;
+}
+var round2 = (value) => Math.round(value * 100) / 100;
+function anchorFor(note, paragraph, { anchorId, now }) {
+  if (!note.identifier)
+    throw new CodedError("The note has no stored identifier, so no anchor can be recorded", {
+      code: "unsupported"
+    });
+  const i = note.paragraphs.indexOf(paragraph);
+  if (i < 0) throw new Error("The paragraph does not belong to this note");
+  const fp = (p) => p ? textFingerprint(normalizeParagraphText(p.text)) : null;
+  const text2 = normalizeParagraphText(paragraph.text);
+  return {
+    anchorId,
+    noteIdentifier: note.identifier.toUpperCase(),
+    noteId: note.id,
+    paragraphId: paragraph.paragraphId,
+    paragraphIdStatus: paragraph.paragraphIdStatus,
+    text: text2,
+    fingerprint: textFingerprint(text2),
+    prevFingerprint: fp(note.paragraphs[i - 1]),
+    nextFingerprint: fp(note.paragraphs[i + 1]),
+    blockIndex: paragraph.blockIndex,
+    style: paragraph.style,
+    createdAt: now.toISOString()
+  };
+}
+function matchAnchor(anchor, paragraphs, { minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
+  const result = findAnchor(anchor, paragraphs);
+  return result.status === "matched" && result.confidence < minConfidence ? { ...result, status: "low-confidence" } : result;
+}
+function findAnchor(anchor, paragraphs) {
+  const normalized2 = paragraphs.map((p) => normalizeParagraphText(p.text));
+  const fps = normalized2.map(textFingerprint);
+  const neighbours = (i) => Number((fps[i - 1] ?? null) === anchor.prevFingerprint) + Number((fps[i + 1] ?? null) === anchor.nextFingerprint);
+  const all = paragraphs.map((_, i) => i);
+  const byNeighbours = (candidates) => {
+    const scored2 = candidates.map((i) => ({ i, n: neighbours(i) }));
+    const best = Math.max(...scored2.map((s) => s.n));
+    const top = scored2.filter((s) => s.n === best);
+    return best > 0 && top.length === 1 ? top[0] : void 0;
+  };
+  if (anchor.paragraphId) {
+    const owners = all.filter((i) => paragraphs[i].paragraphId === anchor.paragraphId);
+    if (owners.length === 1 && paragraphs[owners[0]].paragraphIdStatus === "unique") {
+      const i = owners[0];
+      const same = fps[i] === anchor.fingerprint;
+      const confidence = same ? 1 : 0.8 + 0.15 * Math.max(textSimilarity(anchor.text, normalized2[i]), neighbours(i) / 2);
+      return { status: "matched", index: i, method: "paragraph-id", confidence: round2(confidence) };
+    }
+    const exact2 = owners.filter((i) => fps[i] === anchor.fingerprint);
+    if (exact2.length === 1)
+      return { status: "matched", index: exact2[0], method: "paragraph-id", confidence: 0.95 };
+    if (exact2.length > 1) {
+      const pick2 = byNeighbours(exact2);
+      if (pick2)
+        return { status: "matched", index: pick2.i, method: "paragraph-id", confidence: 0.9 };
+    }
+  }
+  const exact = all.filter((i) => fps[i] === anchor.fingerprint);
+  if (exact.length === 1) {
+    const confidence = neighbours(exact[0]) > 0 ? 0.95 : 0.85;
+    return { status: "matched", index: exact[0], method: "exact-text", confidence };
+  }
+  if (exact.length > 1) {
+    const pick2 = byNeighbours(exact);
+    if (pick2) return { status: "matched", index: pick2.i, method: "exact-text", confidence: 0.8 };
+    return { status: "ambiguous", confidence: 0, candidates: exact.length };
+  }
+  const scored = all.map((i) => ({ i, sim: textSimilarity(anchor.text, normalized2[i]), n: neighbours(i) })).filter(({ sim, n }) => n === 2 && sim >= 0.5 || n === 1 && sim >= 0.8).map((s) => ({ ...s, score: 0.4 * s.sim + 0.2 * s.n })).sort((a, b) => b.score - a.score);
+  if (!scored.length) return { status: "not-found", confidence: 0 };
+  if (scored.length > 1 && scored[0].score - scored[1].score < 0.1)
+    return {
+      status: "ambiguous",
+      confidence: 0,
+      candidates: scored.filter((s) => scored[0].score - s.score < 0.1).length
+    };
+  return {
+    status: "matched",
+    index: scored[0].i,
+    method: "text-and-neighbours",
+    confidence: round2(scored[0].score)
+  };
+}
+function resolutionFor(anchor, note, options = {}) {
+  const base = {
+    anchorId: anchor.anchorId,
+    noteId: note.id,
+    needsReminting: false,
+    resolved: false
+  };
+  const result = matchAnchor(anchor, note.paragraphs, options);
+  if (result.status === "ambiguous")
+    return {
+      ...base,
+      status: "ambiguous",
+      confidence: 0,
+      candidates: result.candidates,
+      message: `${result.candidates} paragraphs match the anchor equally well; refusing to guess`
+    };
+  if (result.status === "not-found")
+    return {
+      ...base,
+      status: "not-found",
+      confidence: 0,
+      message: "The anchored paragraph is no longer in the note (deleted, or edited beyond recognition)"
+    };
+  const p = note.paragraphs[result.index];
+  const match = {
+    blockIndex: p.blockIndex,
+    text: p.text,
+    paragraphId: p.paragraphId,
+    paragraphIdStatus: p.paragraphIdStatus,
+    ...p.sharedWith !== void 0 ? { sharedWith: p.sharedWith } : {}
+  };
+  const changes = {
+    textChanged: textFingerprint(normalizeParagraphText(p.text)) !== anchor.fingerprint,
+    blockIndexChanged: p.blockIndex !== anchor.blockIndex,
+    paragraphIdChanged: p.paragraphId !== anchor.paragraphId
+  };
+  const found = { ...base, method: result.method, confidence: result.confidence, match, changes };
+  if (result.status === "low-confidence")
+    return {
+      ...found,
+      status: "low-confidence",
+      message: `The best candidate scored ${result.confidence}, below the minimum; refusing to link it`
+    };
+  if (p.paragraphIdStatus === "unique" && note.identifier)
+    return {
+      ...found,
+      status: "resolved",
+      resolved: true,
+      url: paragraphUrl(note.identifier, p.paragraphId),
+      message: `Resolved by ${result.method} (confidence ${result.confidence})`
+    };
+  return {
+    ...found,
+    status: "needs-reminting",
+    needsReminting: true,
+    message: p.paragraphIdStatus === "shared" ? `Found the paragraph by ${result.method}, but its ID is shared with ${p.sharedWith} other paragraph(s); it needs a new paragraph ID before it can be linked` : `Found the paragraph by ${result.method}, but it has no paragraph ID; it needs one before it can be linked`
+  };
+}
+function noteByIdentifierSql(columns) {
+  return `SELECT json_object('pk', n.Z_PK, 'active', CASE WHEN ${activeNoteSql(columns, "n", "f")} THEN 1 ELSE 0 END, 'store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1)) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZIDENTIFIER IN (CAST(@upper AS TEXT), CAST(@lower AS TEXT)) ORDER BY n.Z_PK;`;
+}
+function resolveAnchorDetailed(anchor, { dbPath: dbPath2 = NOTES_DB_PATH7, minConfidence } = {}) {
+  const none = { anchorId: anchor.anchorId, resolved: false, needsReminting: false, confidence: 0 };
+  const columns = readColumns(dbPath2);
+  const rows = parseJsonLines(
+    runReadOnlySql(dbPath2, noteByIdentifierSql(columns), {
+      upper: { blob: Buffer.from(anchor.noteIdentifier.toUpperCase(), "utf8") },
+      lower: { blob: Buffer.from(anchor.noteIdentifier.toLowerCase(), "utf8") }
+    })
+  );
+  if (!rows.length || !rows[0].store)
+    return {
+      resolution: {
+        ...none,
+        status: "note-not-found",
+        message: `No note with identifier ${anchor.noteIdentifier} is in the Notes database`
+      }
+    };
+  if (rows.length > 1)
+    return {
+      resolution: {
+        ...none,
+        status: "ambiguous",
+        candidates: rows.length,
+        message: `${rows.length} notes carry identifier ${anchor.noteIdentifier}; refusing to guess`
+      }
+    };
+  const noteId3 = noteIdFor(rows[0].store, rows[0].pk);
+  if (!rows[0].active)
+    return {
+      resolution: {
+        ...none,
+        noteId: noteId3,
+        status: "note-deleted",
+        message: "The note is in Recently Deleted or awaiting deletion"
+      }
+    };
+  let note;
+  try {
+    note = readNoteParagraphs({ id: noteId3 }, { dbPath: dbPath2 });
+  } catch (error2) {
+    if (error2 instanceof ParagraphLinkError)
+      return {
+        resolution: {
+          ...none,
+          noteId: noteId3,
+          status: error2.reason === "not-found" ? "note-not-found" : "note-unreadable",
+          message: error2.message
+        }
+      };
+    throw error2;
+  }
+  return { resolution: resolutionFor(anchor, note, { minConfidence }), note };
+}
+var reminter;
+function paragraphIdReminter() {
+  return reminter;
+}
+
+// src/services/anchorServer.ts
+var MIN_TOKEN_LENGTH = 32;
+var inCgnat = (address) => {
+  const [a, b] = address.split(".").map(Number);
+  return a === 100 && b >= 64 && b <= 127;
+};
+function tailnetAddress(interfaces = networkInterfaces()) {
+  const names = Object.keys(interfaces).sort(
+    (x, y) => Number(!x.startsWith("utun")) - Number(!y.startsWith("utun"))
+  );
+  for (const name of names)
+    for (const info of interfaces[name] ?? [])
+      if (info.family === "IPv4" && !info.internal && inCgnat(info.address)) return info.address;
+  return void 0;
+}
+function tokenMatches(given, token) {
+  if (!given) return false;
+  const a = Buffer.from(given, "utf8");
+  const b = Buffer.from(token, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+var STATUS_CODE = {
+  resolved: 302,
+  "needs-reminting": 409,
+  ambiguous: 409,
+  "low-confidence": 409,
+  "not-found": 404,
+  "note-not-found": 404,
+  "note-deleted": 404,
+  "note-unreadable": 409
+};
+function createAnchorServer(options) {
+  if (options.token.length < MIN_TOKEN_LENGTH)
+    throw new Error(`The resolver token must be at least ${MIN_TOKEN_LENGTH} characters`);
+  const log = options.log ?? ((line) => process.stderr.write(line + "\n"));
+  const maxFailures = options.maxAuthFailures ?? 20;
+  let failures = [];
+  const server2 = createServer((req, res) => {
+    const send = (status, body, headers = {}) => {
+      res.writeHead(status, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        ...headers
+      });
+      res.end(req.method === "HEAD" ? void 0 : body + "\n");
+      const path10 = (req.url ?? "").split("?")[0].slice(0, 64);
+      log(`${req.method} ${path10} ${status}`);
+    };
+    const now = Date.now();
+    failures = failures.filter((t) => now - t < 6e4);
+    if (failures.length >= maxFailures)
+      return send(429, "Too many failed requests; wait a minute.");
+    if (req.method !== "GET" && req.method !== "HEAD")
+      return send(405, "Method not allowed.", { Allow: "GET, HEAD" });
+    const address = server2.address();
+    const port = address && typeof address === "object" ? address.port : options.port;
+    const hosts = /* @__PURE__ */ new Set([`${options.host}:${port}`]);
+    if (options.host === "127.0.0.1") hosts.add(`localhost:${port}`);
+    if (!hosts.has((req.headers.host ?? "").toLowerCase()))
+      return send(403, "Unexpected Host header.");
+    let url;
+    try {
+      url = new URL(req.url ?? "/", "http://resolver.invalid");
+    } catch {
+      return send(400, "Bad request.");
+    }
+    const auth = req.headers.authorization;
+    const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : void 0;
+    if (!tokenMatches(url.searchParams.get("token") ?? bearer, options.token)) {
+      failures.push(now);
+      return send(401, "Missing or wrong token.");
+    }
+    const match = /^\/a\/([^/]+)$/.exec(url.pathname);
+    if (!match || !ANCHOR_ID_PATTERN.test(match[1])) return send(404, "Not found.");
+    let resolution;
+    try {
+      resolution = options.resolve(match[1]);
+    } catch (error2) {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      return send(503, `Could not read the Notes database: ${message}`);
+    }
+    if (!resolution) return send(404, "No such anchor.");
+    if (resolution.status === "resolved" && resolution.url)
+      return send(302, `Redirecting to ${resolution.url}`, { Location: resolution.url });
+    return send(STATUS_CODE[resolution.status], `${resolution.status}: ${resolution.message}`);
+  });
+  server2.requestTimeout = 3e4;
+  server2.headersTimeout = 1e4;
+  return server2;
+}
+function startAnchorServer(options) {
+  const server2 = createAnchorServer(options);
+  return new Promise((resolve10, reject) => {
+    server2.once("error", reject);
+    server2.listen(options.port, options.host, () => {
+      server2.off("error", reject);
+      const address = server2.address();
+      const port = address && typeof address === "object" ? address.port : options.port;
+      resolve10({
+        server: server2,
+        baseUrl: `http://${options.host}:${port}`,
+        close: () => new Promise((done) => {
+          server2.closeAllConnections();
+          server2.close(() => done());
+        })
+      });
+    });
+  });
+}
+var ANCHORS_USAGE = `Usage: apple-notes-mcp anchors serve [--port N] [--tailnet]
+
+Serves GET /a/<anchor-id>?token=<token>, redirecting to the paragraph's
+current applenotes:// link. Binds 127.0.0.1 unless --tailnet is given, in
+which case it binds this Mac's Tailscale address (it never changes Tailscale
+or firewall settings). The token is APPLE_NOTES_MCP_ANCHORS_TOKEN (at least
+${MIN_TOKEN_LENGTH} characters) or a random one printed at startup. The process
+that runs it needs Full Disk Access. Stop it with Ctrl-C.`;
+function parseAnchorsArgs(argv) {
+  const args = { port: 0, tailnet: false, help: false };
+  if (!argv.length || argv[0] === "--help" || argv[0] === "-h") return { ...args, help: true };
+  if (argv[0] !== "serve") throw new Error(`Unknown anchors command "${argv[0]}"`);
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--tailnet") args.tailnet = true;
+    else if (arg === "--help" || arg === "-h") args.help = true;
+    else if (arg === "--port") {
+      const value = argv[++i];
+      if (!value || !/^\d{1,5}$/.test(value) || Number(value) > 65535)
+        throw new Error("--port needs a number from 0 to 65535");
+      args.port = Number(value);
+    } else throw new Error(`Unknown option "${arg}"`);
+  }
+  return args;
+}
+async function runAnchorsCli(argv, {
+  env = process.env,
+  resolve: resolve10,
+  out = (text2) => process.stdout.write(text2),
+  interfaces,
+  signals = process
+}) {
+  let args;
+  try {
+    args = parseAnchorsArgs(argv);
+  } catch (error2) {
+    out(`${error2.message}
+
+${ANCHORS_USAGE}
+`);
+    return 2;
+  }
+  if (args.help) {
+    out(ANCHORS_USAGE + "\n");
+    return 0;
+  }
+  const host = args.tailnet ? tailnetAddress(interfaces) : "127.0.0.1";
+  if (!host) {
+    out("No Tailscale address (100.64.0.0/10) found on this Mac; is Tailscale connected?\n");
+    return 1;
+  }
+  const fromEnv = env.APPLE_NOTES_MCP_ANCHORS_TOKEN?.trim();
+  if (fromEnv !== void 0 && fromEnv !== "" && fromEnv.length < MIN_TOKEN_LENGTH) {
+    out(`APPLE_NOTES_MCP_ANCHORS_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters.
+`);
+    return 1;
+  }
+  const token = fromEnv || randomBytes2(32).toString("hex");
+  let started;
+  try {
+    started = await startAnchorServer({ host, port: args.port, token, resolve: resolve10 });
+  } catch (error2) {
+    out(`Could not listen on ${host}:${args.port}: ${error2.message}
+`);
+    return 1;
+  }
+  out(
+    `Paragraph anchor resolver listening on ${started.baseUrl}
+Links: ${started.baseUrl}/a/<anchor-id>?token=<token>
+` + (fromEnv ? "Token: from APPLE_NOTES_MCP_ANCHORS_TOKEN\n" : `Token (this run only): ${token}
+`) + "Press Ctrl-C to stop.\n"
+  );
+  await new Promise((done) => {
+    signals.once("SIGINT", () => done());
+    signals.once("SIGTERM", () => done());
+  });
+  await started.close();
+  return 0;
+}
+
+// src/services/anchorRegistry.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
+import {
+  closeSync as closeSync10,
+  constants as constants10,
+  fstatSync as fstatSync10,
+  fsyncSync,
+  lstatSync as lstatSync6,
+  mkdirSync as mkdirSync10,
+  openSync as openSync10,
+  readSync as readSync8,
+  renameSync as renameSync4,
+  statSync as statSync6,
+  unlinkSync as unlinkSync4,
+  writeSync as writeSync6
+} from "node:fs";
+import { homedir as homedir22 } from "node:os";
+import { dirname as dirname10, isAbsolute as isAbsolute6, join as join31, resolve as resolve9 } from "node:path";
+var MAX_ANCHORS = 2e4;
+var MAX_REGISTRY_BYTES = 32 * 1024 * 1024;
+var LOCK_WAIT_MS = 3e3;
+var LOCK_STALE_MS = 3e4;
+var ENVELOPE = {
+  "unsafe-path": "validation_error",
+  "corrupt-registry": "operation_failed",
+  "registry-full": "validation_error",
+  "registry-busy": "operation_failed",
+  "anchor-not-found": "not_found",
+  "invalid-anchor-id": "validation_error"
+};
+var AnchorRegistryError = class extends CodedError {
+  constructor(reason, message) {
+    super(message, { code: ENVELOPE[reason], reason });
+    this.reason = reason;
+    this.name = "AnchorRegistryError";
+  }
+  reason;
+};
+function anchorRegistryPath(env = process.env) {
+  const override = env.APPLE_NOTES_MCP_ANCHOR_FILE?.trim();
+  if (override) {
+    if (!isAbsolute6(override))
+      throw new AnchorRegistryError(
+        "unsafe-path",
+        "APPLE_NOTES_MCP_ANCHOR_FILE must be an absolute path."
+      );
+    return resolve9(override);
+  }
+  return join31(homedir22(), "Library/Application Support/apple-notes-mcp/paragraph-anchors.json");
+}
+var STRING_OR_NULL = (v) => v === null || typeof v === "string";
+function isAnchor(v) {
+  if (!v || typeof v !== "object") return false;
+  const a = v;
+  return typeof a.anchorId === "string" && ANCHOR_ID_PATTERN.test(a.anchorId) && typeof a.noteIdentifier === "string" && STRING_OR_NULL(a.noteId) && STRING_OR_NULL(a.paragraphId) && ["unique", "shared", "missing"].includes(a.paragraphIdStatus) && typeof a.text === "string" && typeof a.fingerprint === "string" && STRING_OR_NULL(a.prevFingerprint) && STRING_OR_NULL(a.nextFingerprint) && Number.isInteger(a.blockIndex) && typeof a.style === "string" && typeof a.createdAt === "string" && (a.updatedAt === void 0 || typeof a.updatedAt === "string");
+}
+var sleep2 = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+var AnchorRegistry = class _AnchorRegistry {
+  constructor(path10 = anchorRegistryPath(), lockWaitMs = LOCK_WAIT_MS) {
+    this.path = path10;
+    this.lockWaitMs = lockWaitMs;
+  }
+  path;
+  lockWaitMs;
+  /** A new random anchor id. */
+  static newId() {
+    return `pa_${randomBytes3(12).toString("hex")}`;
+  }
+  ensureDir() {
+    const dir = dirname10(this.path);
+    try {
+      if (!lstatSync6(dir).isDirectory())
+        throw new AnchorRegistryError(
+          "unsafe-path",
+          `${dir} is not a directory (symlinks are refused).`
+        );
+    } catch (error2) {
+      if (error2 instanceof AnchorRegistryError) throw error2;
+      mkdirSync10(dir, { recursive: true, mode: 448 });
+    }
+  }
+  /** Every anchor in the file, in the order recorded. A missing file is an empty registry. */
+  load() {
+    let fd;
+    try {
+      fd = openSync10(this.path, constants10.O_RDONLY | constants10.O_NOFOLLOW);
+    } catch (error2) {
+      if (error2.code === "ENOENT") return [];
+      throw new AnchorRegistryError(
+        "unsafe-path",
+        `Refusing to read ${this.path}: not a regular file.`
+      );
+    }
+    let text2;
+    try {
+      const stat = fstatSync10(fd);
+      if (!stat.isFile())
+        throw new AnchorRegistryError(
+          "unsafe-path",
+          `Refusing to read ${this.path}: not a regular file.`
+        );
+      if (stat.size > MAX_REGISTRY_BYTES)
+        throw new AnchorRegistryError(
+          "corrupt-registry",
+          `${this.path} is ${stat.size} bytes; the limit is ${MAX_REGISTRY_BYTES}.`
+        );
+      const data = Buffer.alloc(stat.size);
+      let read = 0;
+      while (read < stat.size) {
+        const n = readSync8(fd, data, read, stat.size - read, read);
+        if (n <= 0) break;
+        read += n;
+      }
+      text2 = data.subarray(0, read).toString("utf8");
+    } finally {
+      closeSync10(fd);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text2);
+    } catch {
+      throw new AnchorRegistryError(
+        "corrupt-registry",
+        `${this.path} is not valid JSON; it was left unchanged. Move it aside to start a new registry.`
+      );
+    }
+    const anchors = parsed?.anchors;
+    if (parsed?.version !== 1 || !Array.isArray(anchors) || !anchors.every(isAnchor))
+      throw new AnchorRegistryError(
+        "corrupt-registry",
+        `${this.path} is not a version 1 anchor registry; it was left unchanged.`
+      );
+    return anchors;
+  }
+  /** One anchor, or an `anchor-not-found` error. */
+  get(anchorId) {
+    if (!ANCHOR_ID_PATTERN.test(anchorId))
+      throw new AnchorRegistryError(
+        "invalid-anchor-id",
+        `Invalid anchor id "${anchorId}": expected pa_ and 24 hex digits.`
+      );
+    const anchor = this.load().find((a) => a.anchorId === anchorId);
+    if (!anchor) throw new AnchorRegistryError("anchor-not-found", `No anchor ${anchorId}.`);
+    return anchor;
+  }
+  /**
+   * Apply `change` to the current anchors under the lock and save the result.
+   * Returns what `change` returns.
+   */
+  update(change) {
+    this.ensureDir();
+    const release5 = this.lock();
+    try {
+      const { anchors, result } = change(this.load());
+      if (anchors.length > MAX_ANCHORS)
+        throw new AnchorRegistryError(
+          "registry-full",
+          `The registry holds at most ${MAX_ANCHORS} anchors; prune stale anchors first.`
+        );
+      this.write(anchors);
+      return result;
+    } finally {
+      release5();
+    }
+  }
+  write(anchors) {
+    try {
+      if (!lstatSync6(this.path).isFile())
+        throw new AnchorRegistryError(
+          "unsafe-path",
+          `Refusing to replace ${this.path}: it is not a regular file.`
+        );
+    } catch (error2) {
+      if (error2 instanceof AnchorRegistryError) throw error2;
+    }
+    const temp = join31(
+      dirname10(this.path),
+      `.paragraph-anchors.${randomBytes3(6).toString("hex")}.tmp`
+    );
+    const fd = openSync10(
+      temp,
+      constants10.O_WRONLY | constants10.O_CREAT | constants10.O_EXCL | constants10.O_NOFOLLOW,
+      384
+    );
+    try {
+      const data = Buffer.from(JSON.stringify({ version: 1, anchors }, null, 1) + "\n", "utf8");
+      let written = 0;
+      while (written < data.length) written += writeSync6(fd, data, written);
+      fsyncSync(fd);
+    } catch (error2) {
+      closeSync10(fd);
+      unlinkSync4(temp);
+      throw error2;
+    }
+    closeSync10(fd);
+    try {
+      renameSync4(temp, this.path);
+    } catch (error2) {
+      unlinkSync4(temp);
+      throw error2;
+    }
+  }
+  /** Take the lock file, waiting briefly; a lock older than 30 s is treated as abandoned. */
+  lock() {
+    const lockPath = `${this.path}.lock`;
+    const deadline = Date.now() + this.lockWaitMs;
+    for (; ; ) {
+      try {
+        const fd = openSync10(
+          lockPath,
+          constants10.O_WRONLY | constants10.O_CREAT | constants10.O_EXCL | constants10.O_NOFOLLOW,
+          384
+        );
+        writeSync6(fd, String(process.pid));
+        closeSync10(fd);
+        return () => {
+          try {
+            unlinkSync4(lockPath);
+          } catch {
+          }
+        };
+      } catch (error2) {
+        if (error2.code !== "EEXIST") throw error2;
+      }
+      try {
+        if (Date.now() - statSync6(lockPath).mtimeMs > LOCK_STALE_MS) {
+          unlinkSync4(lockPath);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() > deadline)
+        throw new AnchorRegistryError(
+          "registry-busy",
+          `Another process holds ${lockPath}; try again shortly.`
+        );
+      sleep2(25);
+    }
+  }
+  /**
+   * Record anchors, reusing an existing anchor for the same note, paragraph ID,
+   * text and block index. Each new anchor gets a fresh id (a candidate's own
+   * anchorId is ignored). Returns each anchor with whether it was new.
+   */
+  record(candidates) {
+    return this.update((anchors) => {
+      const out = [];
+      const next = [...anchors];
+      for (const candidate of candidates) {
+        const existing = next.find(
+          (a) => a.noteIdentifier === candidate.noteIdentifier && a.paragraphId === candidate.paragraphId && a.fingerprint === candidate.fingerprint && a.blockIndex === candidate.blockIndex
+        );
+        if (existing) {
+          out.push({ anchor: existing, created: false });
+          continue;
+        }
+        const anchor = { ...candidate, anchorId: _AnchorRegistry.newId() };
+        next.push(anchor);
+        out.push({ anchor, created: true });
+      }
+      return { anchors: next, result: out };
+    });
+  }
+  /** Replace one anchor's fields (not its id or creation time). */
+  replace(anchor) {
+    return this.update((anchors) => {
+      const i = anchors.findIndex((a) => a.anchorId === anchor.anchorId);
+      if (i < 0) throw new AnchorRegistryError("anchor-not-found", `No anchor ${anchor.anchorId}.`);
+      const saved = { ...anchor, createdAt: anchors[i].createdAt };
+      const next = [...anchors];
+      next[i] = saved;
+      return { anchors: next, result: saved };
+    });
+  }
+  /** Remove anchors by id; returns the ids that were present. */
+  remove(anchorIds) {
+    const wanted = new Set(anchorIds);
+    return this.update((anchors) => ({
+      anchors: anchors.filter((a) => !wanted.has(a.anchorId)),
+      result: anchors.filter((a) => wanted.has(a.anchorId)).map((a) => a.anchorId)
+    }));
+  }
+};
+
+// src/services/paragraphAnchorOps.ts
+var MAX_ANCHORS_PER_CALL = 500;
+function recordParagraphAnchors(note, paragraphs, registry2 = new AnchorRegistry(), now = /* @__PURE__ */ new Date()) {
+  const candidates = paragraphs.slice(0, MAX_ANCHORS_PER_CALL).map((p) => anchorFor(note, p, { anchorId: "", now }));
+  return candidates.length ? registry2.record(candidates) : [];
+}
+var REFRESH_MIN_CONFIDENCE = 0.8;
+async function resolveStoredAnchor(anchorId, {
+  registry: registry2 = new AnchorRegistry(),
+  dbPath: dbPath2,
+  minConfidence,
+  refresh = false,
+  remint = false,
+  now = () => /* @__PURE__ */ new Date()
+} = {}) {
+  const anchor = registry2.get(anchorId);
+  let { resolution, note } = resolveAnchorDetailed(anchor, { dbPath: dbPath2, minConfidence });
+  const out = { ...resolution };
+  if (remint) {
+    const writer = paragraphIdReminter();
+    if (resolution.status !== "needs-reminting")
+      out.remint = { attempted: false, reason: "not-needed" };
+    else if (!writer)
+      out.remint = {
+        attempted: false,
+        reason: "writer-unavailable",
+        message: "Re-minting a paragraph ID needs a writer that can set it; none is installed in this server"
+      };
+    else {
+      try {
+        const { paragraphId } = await writer({
+          anchorId,
+          noteId: resolution.noteId,
+          noteIdentifier: anchor.noteIdentifier,
+          blockIndex: resolution.match.blockIndex,
+          expectedText: resolution.match.text,
+          currentParagraphId: resolution.match.paragraphId
+        });
+        ({ resolution, note } = resolveAnchorDetailed(anchor, { dbPath: dbPath2, minConfidence }));
+        Object.assign(out, resolution, { remint: { attempted: true, paragraphId } });
+      } catch (error2) {
+        out.remint = {
+          attempted: true,
+          reason: "writer-failed",
+          message: error2 instanceof Error ? error2.message : String(error2)
+        };
+      }
+    }
+  }
+  if (refresh) {
+    if (!out.match || !note || !["resolved", "needs-reminting"].includes(out.status))
+      out.refreshSkipped = "nothing was matched";
+    else if (out.confidence < REFRESH_MIN_CONFIDENCE)
+      out.refreshSkipped = `confidence ${out.confidence} is below ${REFRESH_MIN_CONFIDENCE}`;
+    else {
+      const paragraph = note.paragraphs.find((p) => p.blockIndex === out.match.blockIndex);
+      const fresh = anchorFor(note, paragraph, { anchorId, now: now() });
+      registry2.replace({ ...fresh, updatedAt: fresh.createdAt });
+      out.refreshed = true;
+    }
+  }
+  return out;
+}
+var DEFAULT_PRUNE_STATUSES = ["not-found", "note-not-found"];
+function pruneParagraphAnchors({
+  registry: registry2 = new AnchorRegistry(),
+  dbPath: dbPath2,
+  anchorIds,
+  noteIdentifier,
+  statuses = DEFAULT_PRUNE_STATUSES,
+  dryRun = true
+} = {}) {
+  let anchors = registry2.load();
+  if (noteIdentifier)
+    anchors = anchors.filter((a) => a.noteIdentifier === noteIdentifier.toUpperCase());
+  let stale;
+  if (anchorIds) {
+    const wanted = new Set(anchorIds);
+    stale = anchors.filter((a) => wanted.has(a.anchorId)).map((a) => ({ anchorId: a.anchorId, status: "listed", message: "Listed by id" }));
+  } else {
+    const wanted = new Set(statuses);
+    stale = [];
+    for (const anchor of anchors) {
+      const r = resolveAnchorDetailed(anchor, { dbPath: dbPath2 }).resolution;
+      if (wanted.has(r.status))
+        stale.push({ anchorId: anchor.anchorId, status: r.status, message: r.message });
+    }
+  }
+  const removed = dryRun || !stale.length ? [] : registry2.remove(stale.map((s) => s.anchorId));
+  return { dryRun, examined: anchorIds ? stale.length : anchors.length, stale, removed };
+}
+function registryLookup(registry2 = new AnchorRegistry(), dbPath2) {
+  return (anchorId) => {
+    const anchor = registry2.load().find((a) => a.anchorId === anchorId);
+    return anchor ? resolveAnchorDetailed(anchor, { dbPath: dbPath2 }).resolution : void 0;
+  };
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -58745,6 +59554,11 @@ if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
   process.exit(report.ready || !report.checkOnly ? 0 : 1);
+}
+if (process.argv[2] === "anchors") {
+  process.exit(
+    await runAnchorsCli(process.argv.slice(3), { resolve: registryLookup(new AnchorRegistry()) })
+  );
 }
 var server = new McpServer({
   name: "apple-notes",
@@ -59820,6 +60634,9 @@ registerTool(
     );
   }, "Error reading note blocks")
 );
+var recordAnchorsInput = external_exports.boolean().optional().describe(
+  "Also record a paragraph anchor for each returned paragraph (at most 500 per call) so resolve-paragraph-anchor can find it after edits; each row gains anchorId (default false; writes only the local anchor registry)"
+);
 var paragraphNoteSelector = {
   id: noteIdInput.optional().describe(`Exact note ID (${NOTE_ID_FORMS}); give id or title`),
   title: external_exports.string().min(1).max(MAX.TITLE).optional().describe("Exact note title; must match one note unless folder narrows it"),
@@ -59833,29 +60650,45 @@ registerTool(
       ...paragraphNoteSelector,
       linkableOnly: external_exports.boolean().optional().describe("Return only paragraphs that have a direct url (default false)"),
       offset: external_exports.number().int().min(0).optional().describe("Index of the first paragraph to return (default 0); use page.nextOffset"),
-      limit: external_exports.number().int().min(1).max(5e3).optional().describe("Maximum paragraphs to return (default 500, max 5000)")
+      limit: external_exports.number().int().min(1).max(5e3).optional().describe("Maximum paragraphs to return (default 500, max 5000)"),
+      recordAnchors: recordAnchorsInput
     },
     outputSchema: {
       id: external_exports.string().optional(),
       identifier: external_exports.string().nullable().optional(),
       counts: external_exports.record(external_exports.unknown()).optional(),
       paragraphs: external_exports.array(external_exports.record(external_exports.unknown())).optional(),
-      page: external_exports.record(external_exports.unknown()).optional()
+      page: external_exports.record(external_exports.unknown()).optional(),
+      anchorsRecorded: external_exports.number().optional()
     },
     annotations: { readOnlyHint: true }
   },
-  withErrorHandling(({ id: id2, title, folder, linkableOnly, offset, limit }) => {
+  withErrorHandling(({ id: id2, title, folder, linkableOnly, offset, limit, recordAnchors }) => {
     const note = readNoteParagraphs({ id: id2, title, folder });
     const page = pageParagraphs(note.paragraphs, {
       offset,
-      limit,
+      limit: recordAnchors ? Math.min(limit ?? 500, MAX_ANCHORS_PER_CALL) : limit,
       linkableOnly,
       maxBytes: blocksMaxResponseBytes()
     });
+    let anchorsRecorded;
+    let paragraphs = page.paragraphs;
+    if (recordAnchors) {
+      const recorded = recordParagraphAnchors(note, page.paragraphs);
+      anchorsRecorded = recorded.filter((r) => r.created).length;
+      paragraphs = page.paragraphs.map((p, i) => ({ ...p, anchorId: recorded[i].anchor.anchorId }));
+    }
     const { unique, shared, missing } = note.counts;
     return successResponse(
-      `${note.paragraphs.length} paragraphs: ${unique} linkable, ${shared} with a shared ID, ${missing} without an ID; returned ${page.page.returned} from offset ${page.page.offset}` + (page.page.hasMore ? `; more at offset ${page.page.nextOffset}` : "") + ".",
-      { id: note.id, identifier: note.identifier, counts: note.counts, ...page }
+      `${note.paragraphs.length} paragraphs: ${unique} linkable, ${shared} with a shared ID, ${missing} without an ID; returned ${page.page.returned} from offset ${page.page.offset}` + (page.page.hasMore ? `; more at offset ${page.page.nextOffset}` : "") + (anchorsRecorded !== void 0 ? `; ${anchorsRecorded} new anchor(s) recorded` : "") + ".",
+      {
+        id: note.id,
+        identifier: note.identifier,
+        counts: note.counts,
+        paragraphs,
+        page: page.page,
+        ...anchorsRecorded !== void 0 ? { anchorsRecorded } : {}
+      }
     );
   }, "Error listing paragraphs")
 );
@@ -59870,26 +60703,205 @@ registerTool(
       ),
       match: external_exports.string().min(1).max(MAX.CONTENT).optional().describe("The whole paragraph text, compared the same way"),
       blockIndex: external_exports.number().int().min(0).optional().describe("The paragraph's blockIndex from list-note-paragraphs"),
-      occurrence: external_exports.number().int().min(1).optional().describe("Which match to use (1-based) when contains or match hits several paragraphs")
+      occurrence: external_exports.number().int().min(1).optional().describe("Which match to use (1-based) when contains or match hits several paragraphs"),
+      recordAnchor: external_exports.boolean().optional().describe(
+        "Also record a paragraph anchor for the linked paragraph so resolve-paragraph-anchor can find it after edits (default false; writes only the local anchor registry)"
+      )
     },
     outputSchema: {
       url: external_exports.string().optional(),
       id: external_exports.string().optional(),
       identifier: external_exports.string().nullable().optional(),
-      paragraph: external_exports.record(external_exports.unknown()).optional()
+      paragraph: external_exports.record(external_exports.unknown()).optional(),
+      anchorId: external_exports.string().optional()
     },
     annotations: { readOnlyHint: true }
   },
+  withErrorHandling(
+    ({ id: id2, title, folder, contains, match, blockIndex, occurrence, recordAnchor }) => {
+      const note = readNoteParagraphs({ id: id2, title, folder });
+      const result = paragraphLink(note, { contains, match, blockIndex, occurrence });
+      const anchorId = recordAnchor ? recordParagraphAnchors(note, [result.paragraph])[0].anchor.anchorId : void 0;
+      return successResponse(
+        `Paragraph link: ${result.url}` + (anchorId ? `
+Anchor: ${anchorId}` : ""),
+        {
+          url: result.url,
+          id: note.id,
+          identifier: note.identifier,
+          paragraph: { ...result.paragraph },
+          ...anchorId ? { anchorId } : {}
+        }
+      );
+    },
+    "No paragraph link"
+  )
+);
+var anchorIdInput = external_exports.string().regex(ANCHOR_ID_PATTERN, "Expected an anchor id: pa_ and 24 hex digits").describe(
+  "Anchor id (pa_ and 24 hex digits) from create-paragraph-anchor or list-paragraph-anchors"
+);
+var noteIdentifierInput = external_exports.string().regex(/^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$/, "Expected a Notes UUID").optional();
+registerTool(
+  "create-paragraph-anchor",
+  {
+    description: "Use when: you want a reference to one paragraph that can be found again after the note is edited, for example before sharing a paragraph link that should keep working.\nReturns: the anchor (anchorId, note identifier, paragraph ID and its status, normalized text, fingerprints of the paragraph and its neighbours, block index, created time), whether it is new, and the paragraph's current direct url when its ID is unique.\nDo not use when: you only need a link right now (get-paragraph-link).\nSafety: reads the NoteStore database (Full Disk Access) and never changes Notes. Writes one local file, the anchor registry (APPLE_NOTES_MCP_ANCHOR_FILE, default ~/Library/Application Support/apple-notes-mcp/paragraph-anchors.json, mode 0600), which stores the paragraph's text. Unlike get-paragraph-link, a paragraph with a shared or missing ID can be anchored. Recording the same paragraph again returns the existing anchor.",
+    inputSchema: {
+      ...paragraphNoteSelector,
+      contains: external_exports.string().min(1).max(MAX.CONTENT).optional().describe("Snippet of the paragraph; give one of contains, match, blockIndex"),
+      match: external_exports.string().min(1).max(MAX.CONTENT).optional().describe("The whole paragraph text"),
+      blockIndex: external_exports.number().int().min(0).optional().describe("The paragraph's blockIndex from list-note-paragraphs"),
+      occurrence: external_exports.number().int().min(1).optional().describe("Which match to use (1-based) when contains or match hits several paragraphs")
+    },
+    outputSchema: {
+      anchor: external_exports.record(external_exports.unknown()).optional(),
+      created: external_exports.boolean().optional(),
+      url: external_exports.string().optional()
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+  },
   withErrorHandling(({ id: id2, title, folder, contains, match, blockIndex, occurrence }) => {
     const note = readNoteParagraphs({ id: id2, title, folder });
-    const result = paragraphLink(note, { contains, match, blockIndex, occurrence });
-    return successResponse(`Paragraph link: ${result.url}`, {
-      url: result.url,
-      id: note.id,
-      identifier: note.identifier,
-      paragraph: { ...result.paragraph }
+    const paragraph = selectParagraph(note.paragraphs, { contains, match, blockIndex, occurrence });
+    const [{ anchor, created }] = recordParagraphAnchors(note, [paragraph]);
+    return successResponse(
+      `${created ? "Recorded" : "Reusing"} anchor ${anchor.anchorId} for block ${anchor.blockIndex} (paragraph ID ${paragraph.paragraphIdStatus}).`,
+      { anchor: { ...anchor }, created, ...paragraph.url ? { url: paragraph.url } : {} }
+    );
+  }, "Error recording paragraph anchor")
+);
+registerTool(
+  "resolve-paragraph-anchor",
+  {
+    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); never changes Notes. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until a writer gives it a new ID; remint asks such a writer only when one is installed (none is by default). refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
+    inputSchema: {
+      anchorId: anchorIdInput,
+      minConfidence: external_exports.number().min(0).max(1).optional().describe(`Lowest confidence accepted as a match (default ${DEFAULT_MIN_CONFIDENCE})`),
+      refresh: external_exports.boolean().optional().describe(
+        "Update the stored anchor to the matched paragraph as it is now (default false; only at confidence 0.8 or more)"
+      ),
+      remint: external_exports.boolean().optional().describe(
+        "On needs-reminting, ask the installed paragraph-ID writer for a new ID (default false; reports writer-unavailable when none is installed)"
+      )
+    },
+    outputSchema: {
+      anchorId: external_exports.string().optional(),
+      status: external_exports.string().optional(),
+      resolved: external_exports.boolean().optional(),
+      url: external_exports.string().optional(),
+      needsReminting: external_exports.boolean().optional(),
+      method: external_exports.string().optional(),
+      confidence: external_exports.number().optional(),
+      match: external_exports.record(external_exports.unknown()).optional(),
+      changes: external_exports.record(external_exports.unknown()).optional(),
+      candidates: external_exports.number().optional(),
+      noteId: external_exports.string().optional(),
+      message: external_exports.string().optional(),
+      refreshed: external_exports.boolean().optional(),
+      refreshSkipped: external_exports.string().optional(),
+      remint: external_exports.record(external_exports.unknown()).optional()
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false }
+  },
+  withAsyncErrorHandling(async ({ anchorId, minConfidence, refresh, remint }) => {
+    const result = await resolveStoredAnchor(anchorId, { minConfidence, refresh, remint });
+    return successResponse(
+      `${result.status}: ${result.message}` + (result.url ? `
+Link: ${result.url}` : ""),
+      { ...result }
+    );
+  }, "Error resolving paragraph anchor")
+);
+registerTool(
+  "list-paragraph-anchors",
+  {
+    description: "Use when: you need the recorded paragraph anchors, all of them or those of one note.\nReturns: one page of anchors in the order recorded (anchorId, noteIdentifier, paragraphId, text, blockIndex, created time), the total, and the registry path.\nDo not use when: you need an anchor's current location (resolve-paragraph-anchor).\nSafety: read-only; reads only the local anchor registry, never Notes.",
+    inputSchema: {
+      noteIdentifier: noteIdentifierInput.describe(
+        "Only anchors in the note with this Notes UUID (its identifier)"
+      ),
+      offset: external_exports.number().int().min(0).optional().describe("First anchor to return (default 0)"),
+      limit: external_exports.number().int().min(1).max(1e3).optional().describe("Maximum anchors to return (default 100, max 1000)")
+    },
+    outputSchema: {
+      anchors: external_exports.array(external_exports.record(external_exports.unknown())).optional(),
+      total: external_exports.number().optional(),
+      registry: external_exports.string().optional(),
+      page: external_exports.record(external_exports.unknown()).optional()
+    },
+    annotations: { readOnlyHint: true }
+  },
+  withErrorHandling(({ noteIdentifier, offset = 0, limit = 100 }) => {
+    const registry2 = new AnchorRegistry();
+    let anchors = registry2.load();
+    if (noteIdentifier)
+      anchors = anchors.filter((a) => a.noteIdentifier === noteIdentifier.toUpperCase());
+    const slice = anchors.slice(offset, offset + limit);
+    const next = offset + slice.length;
+    return successResponse(`${anchors.length} anchor(s); returned ${slice.length}.`, {
+      anchors: slice.map((a) => ({ ...a })),
+      total: anchors.length,
+      registry: registry2.path,
+      page: {
+        offset,
+        returned: slice.length,
+        hasMore: next < anchors.length,
+        ...next < anchors.length ? { nextOffset: next } : {}
+      }
     });
-  }, "No paragraph link")
+  }, "Error listing paragraph anchors")
+);
+registerTool(
+  "get-paragraph-anchor",
+  {
+    description: "Use when: inspecting one recorded anchor as stored.\nReturns: the stored anchor record.\nDo not use when: you need the paragraph's current location or link (resolve-paragraph-anchor).\nSafety: read-only; reads only the local anchor registry, never Notes.",
+    inputSchema: { anchorId: anchorIdInput },
+    outputSchema: { anchor: external_exports.record(external_exports.unknown()).optional() },
+    annotations: { readOnlyHint: true }
+  },
+  withErrorHandling(({ anchorId }) => {
+    const anchor = new AnchorRegistry().get(anchorId);
+    return successResponse(
+      `Anchor ${anchor.anchorId}: note ${anchor.noteIdentifier}, block ${anchor.blockIndex}, recorded ${anchor.createdAt}.`,
+      { anchor: { ...anchor } }
+    );
+  }, "Error reading paragraph anchor")
+);
+registerTool(
+  "prune-paragraph-anchors",
+  {
+    description: "Use when: cleaning up anchors that no longer resolve, or removing specific anchors.\nReturns: the stale anchors found (anchorId, status, message), how many were examined, and the ids removed (none on a dry run).\nDo not use when: an anchor is only ambiguous or needs reminting; it still points at something.\nSafety: dryRun defaults to true, so nothing is removed until you call again with dryRun false. Removes entries from the local anchor registry only; never changes Notes. Without anchorIds it resolves every anchor in scope (Full Disk Access) and treats not-found and note-not-found as stale unless statuses says otherwise. A note in Recently Deleted gives note-deleted, which is not pruned by default because the note can be restored.",
+    inputSchema: {
+      anchorIds: external_exports.array(anchorIdInput).min(1).max(1e3).optional().describe("Remove exactly these anchors instead of resolving to find stale ones"),
+      noteIdentifier: noteIdentifierInput.describe("Only anchors in the note with this Notes UUID"),
+      statuses: external_exports.array(
+        external_exports.enum([
+          "not-found",
+          "note-not-found",
+          "note-deleted",
+          "note-unreadable",
+          "ambiguous",
+          "low-confidence"
+        ])
+      ).min(1).optional().describe(
+        `Resolution statuses treated as stale (default ${DEFAULT_PRUNE_STATUSES.join(", ")})`
+      ),
+      dryRun: external_exports.boolean().optional().describe("Report without removing (default true)")
+    },
+    outputSchema: {
+      dryRun: external_exports.boolean().optional(),
+      examined: external_exports.number().optional(),
+      stale: external_exports.array(external_exports.record(external_exports.unknown())).optional(),
+      removed: external_exports.array(external_exports.string()).optional()
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true }
+  },
+  withErrorHandling(({ anchorIds, noteIdentifier, statuses, dryRun }) => {
+    const result = pruneParagraphAnchors({ anchorIds, noteIdentifier, statuses, dryRun });
+    return successResponse(
+      result.dryRun ? `Dry run: ${result.stale.length} of ${result.examined} anchor(s) would be removed.` : `Removed ${result.removed.length} of ${result.examined} anchor(s).`,
+      { ...result }
+    );
+  }, "Error pruning paragraph anchors")
 );
 registerTool(
   "get-note-structure",
