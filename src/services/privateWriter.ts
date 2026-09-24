@@ -1,5 +1,5 @@
 /**
- * Client for the opt-in native WRITE helper (fork-only layer over #181/#204).
+ * Client for the opt-in native WRITE helper (a separate layer over #181/#204).
  *
  * The read-only helper in privateHelper.ts stays exactly as it is: its own
  * source, binary, manifest, action whitelist, and setup command. Writes live

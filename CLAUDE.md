@@ -97,6 +97,7 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 - **Markdown title line:** with `format: "markdown"`, a first line that is exactly `# <title>` is removed (plus one blank line), since `title` is supplied separately. A different first heading is kept.
 - **`markdownRoute: "html"`** imports Markdown through AppleScript HTML instead of the Shortcut: any account, tags allowed, no real Heading styles. Task items (`- [ ]`, `- [x]`) become list rows starting with a visible ☐ / ☑ character. Those are text, not checkable checklist items; tell the user so. Block quotes, fenced code and inline code are refused on this route, and a `---` line stays literal text; only the Shortcut route imports these natively.
 - **`timeoutSeconds`** (1–120) on `create-note`, `update-note`, `append-to-note`, `delete-note`, and `move-note` sets the timeout of each Notes.app automation step for that call. A timed-out write is uncertain: read the note by id before retrying.
+- **Notes with large images stay readable and deletable.** A body embeds its inline images as base64, so a 40 MB image makes a body of about 110 MB. `get-note-content` accepts bodies up to 512 MB, and `delete-note` still compares the whole body before deleting. An error saying Notes.app "returned more than … of output" is a size limit, not a timeout; retrying will not help.
 - **`delete-note` checks placement.** If Notes.app accepts the delete but the note is still in its original folder, the call reports that nothing was deleted.
 - **`delete-note` and `batch-delete-notes` refuse a note already in Recently Deleted**, where a delete is permanent. The folder is read live from Notes.app; the database only identifies which folder is Recently Deleted.
 - **Copy-then-retire with `delete-note`:** after copying note A to note B and verifying B, read both with `get-note-content`, then call `delete-note` on A with `guardNoteId` = B and `expectedGuardContentHash` = B's `contentHash`. The delete stops if B changed, was locked, moved to Recently Deleted, or is a Quick Note. It needs Full Disk Access (the Quick Note flag is only in the database); a B the database has not saved yet still passes on Notes.app's live checks. It is a guard, not a transaction. `requireActiveNoteId` only requires the other note to stay active; it does not fingerprint its content.
@@ -193,6 +194,8 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Use `limit` to cap the number of results returned. **`limit` defaults to 50** — a broad query (e.g. a single common letter) reads several properties per match via AppleScript, so an unbounded search over hundreds of matches times out; the default keeps it useful. The response discloses the applied limit and warns when results were truncated — pass a higher `limit`, or narrow with `folder`/`modifiedSince`, to see more.
 - Use `folder` to restrict search to a specific folder (supports nested paths)
 - With Full Disk Access, `searchContent: true` reads the Notes database instead of asking Notes.app (`source: "database"` in the response): it matches the full plain text, title line included, scans the 5000 most recently modified notes, and excludes Recently Deleted. Without Full Disk Access it falls back to AppleScript (`source: "applescript"`), which scans every body before `limit` applies and can time out on a broad term; the timeout error then says how to fix it
+- `matchedIn` (`["title"]`, `["body"]`, or both; body = text after the first line) appears when the note text came from the database: always on a database body search, and on any search with `includeWordCount`. It is absent for locked notes and for AppleScript searches without `includeWordCount`; its absence is not evidence either way
+- `includeWordCount: true` adds `wordCount` (null = locked or unreadable). An AppleScript search reads the bodies in one batched read-only database query, never per note; without Full Disk Access the results stay unchanged and `wordCountUnavailable` says why
 
 ### query-notes
 - Boolean search read straight from the NoteStore database (read-only, needs Full Disk Access). Prefer it over `search-notes` when Full Disk Access is available: one call matches title **or** body, and it returns in well under a second instead of ~200ms per result
@@ -200,6 +203,8 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Scans the 500 most recently modified notes by default (`scanLimit` up to 5000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
 - Excludes Recently Deleted and folderless notes unless `includeDeleted: true`
 - Locked notes match on title and metadata only; body predicates never match them
+- Each hit has `matchedIn` (where the positive text terms occur: `title`, `body`, or both) when the query has a text term and the body is readable; a `title:` term only counts toward the title and a `body:` term only toward the body. An empty list means the note matched through a non-text branch (`pinned OR x`)
+- `includeWordCount: true` adds `wordCount`, the same count `words:` filters on (null = locked or unreadable). A metadata-only query reads just the returned notes' bodies in one extra query
 - Result ids chain directly into `get-note-content` and every other id-based tool
 
 ### list-notes
@@ -236,6 +241,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### move-note
 - Native move — the note is relocated in place via Notes.app's `move`, so its id, creation date, and embedded attachments are preserved
 - The destination folder must already exist (create it first with `create-folder`)
+- **Smart folders are refused as destinations** by `move-note`, `batch-move-notes`, `create-note`, `create-note-with-attachment`, and `create-folder` (any path segment): `code: "unsupported"`, `committed: false`, `reason: "smart_folder_destination"`, nothing written. Notes.app would otherwise move the note to Recently Deleted. Pick an ordinary folder from `list-folders`. Needs Full Disk Access to detect; without it the guard is off
 - Prefer using `id` parameter to avoid issues with duplicate titles
 
 ### add-attachment / create-note-with-attachment
@@ -321,6 +327,15 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `outputPath` is create-only; `[output_exists]` means choose a new path, never delete the old file on the user's behalf
 - Pass `assetsDir` to copy attachment files; without it attachments are placeholders like `\[Image: name\]`
 - Password-protected notes are listed in `skipped`; Full Disk Access is required
+- `template` (`standard-markdown`, `obsidian`) or `templateFile` (JSON, exclusive) renders through a Markdown template; the schema is in docs/markdown-templates.md. `standard-markdown` output equals the default export
+- `[invalid-template]` lists one `$.json.path: problem` per line: fix those fields, do not guess a new template
+- Templated `warnings` (for example `missing_asset`, `assets_dir_required`) do not fail the export; report them
+
+### Markdown template library
+- `list-markdown-templates`, `show-markdown-template`, `validate-markdown-template`, `save-markdown-template`, `delete-markdown-template` manage JSON templates for `export-notes-markdown` (`template: "<name>"`)
+- Library: `~/Library/Application Support/apple-notes-mcp/templates` or `APPLE_NOTES_MCP_TEMPLATE_DIR`; names are lowercase slugs; `standard-markdown` and `obsidian` are built in and reserved
+- Save is create-only: `[template-exists]` means ask before passing `force: true`
+- Start a new template from `show-markdown-template` output and validate before saving
 
 ### export-notes-html
 - Same selection as `export-notes-markdown`; `outputPath` is required (the HTML is never returned inline) and create-only
@@ -379,7 +394,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Always call `native-helper-status` first. Do not suggest enabling the helper unprompted: it is unsupported API and can break on any macOS update.
 - The helper cannot write. Write support was deliberately deferred by the maintainer (#204): a second writer beside a running Notes.app, CRDT replica identity, and the iCloud upload lag are unresolved. Use the AppleScript or Shortcuts-bridge tools for edits. `cloudSync.uploadPending` in `native-note-state` shows whether Notes has an upload queued.
 
-### Private writer tools (opt-in, fork-only)
+### Private writer tools (opt-in)
 - A separate **writer** (`apple-notes-mcp setup --native-writer`) backs `native-append-plain-text` and the other native write tools. It needs `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` **and** `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`, and unvalidated writes also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Call `native-writer-status` first; never suggest enabling it unprompted, and use it only on notes the user has agreed to risk.
 - Every write needs a fresh `revision` as `ifRevision` (from `native-note-state` or the feature's own read tool). `revision_conflict` means the note changed: read it again before retrying. `indeterminate: true` means the write may have been saved: read the note before any retry. `committed: false` means nothing was written.
 - The writer cannot upload to iCloud. After a write, `cloudSync.uploadPending` stays true until Notes.app saves the note. Pass `nudge: true` to have Notes.app save it by moving it into its own folder; `sync.targets[].uploadRecorded` says whether Notes recorded the upload.

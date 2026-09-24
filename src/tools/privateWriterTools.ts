@@ -1,5 +1,5 @@
 /**
- * MCP tools for the opt-in private WRITER (fork-only layer over #181/#204).
+ * MCP tools for the opt-in private WRITER (a separate layer over #181/#204).
  *
  * - `native-writer-status`: both switches, the writer's installation and
  *   checksum state, and its live probe.

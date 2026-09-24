@@ -257,7 +257,7 @@ describe("id inputs accept Notes UUIDs and numeric keys", () => {
     // show-account takes an account id, which the bridge does not resolve.
     // The private-helper tools take a Notes UUID in their own `identifier`
     // field, so their `id` field is x-coredata only and needs no bridge.
-    // The private-writer tools (fork-only) follow the same rule.
+    // The private-writer tools follow the same rule.
     const exempt = new Set([
       "show-account.id",
       "native-note-state.id",

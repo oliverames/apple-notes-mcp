@@ -1,11 +1,11 @@
 ## [Unreleased]
 
-## [2.10.0] - 2026-09-23
+## [2.9.18] - 2026-09-24
 
 ### Added
 
-- Opt-in private **writer**, a separate layer over the read-only helper
-  (fork-only). `native/private-helper/apple-notes-private-writer.m` is its own
+- Opt-in private **writer**, a separate layer over the read-only helper.
+  `native/private-helper/apple-notes-private-writer.m` is its own
   program with its own binary, checksum manifest (`writer-manifest.json`), and
   setup command, `apple-notes-mcp setup --native-writer`, which refuses a
   writer whose actions differ from the client's table. The read-only helper,
@@ -26,6 +26,135 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+
+## [2.9.16] - 2026-09-24
+
+### Added
+
+- Markdown template library tools: `list-markdown-templates`,
+  `show-markdown-template` (portable form, or `expanded` with every rule),
+  `validate-markdown-template` (by name, inline JSON or file; returns every
+  problem with a JSON path), `save-markdown-template` (lowercase slug names,
+  create-only unless `force`, validated first, 256 KiB cap, written to a
+  temporary file and moved into place with mode 0600 in a 0700 directory) and
+  `delete-markdown-template`. Built-in names are reserved. Listing skips
+  unreadable, invalid and symlinked entries and counts them.
+- `export-notes-markdown` `template` also accepts a saved template's name.
+- `APPLE_NOTES_MCP_TEMPLATE_DIR` sets the library directory (default
+  `~/Library/Application Support/apple-notes-mcp/templates`).
+- The capability matrix lists the library as `markdownTemplateLibrary`.
+- `validate-markdown-template` and `save-markdown-template` read
+  `templateFile` with the same rules as `export-notes-markdown` (`.json`
+  only) and return none of a file's contents when it is not a template.
+
+## [2.9.15] - 2026-09-24
+
+### Added
+
+- `export-notes-markdown` accepts `template` (built-in `standard-markdown` or
+  `obsidian`) or `templateFile` (a JSON template in an allowed location). A
+  template is portable, data-only JSON (schema version 1) with 43 rules for
+  every block style, inline format, highlight color, attachment kind,
+  per-note header and footer, and note separator; five rule modes (`wrap`,
+  `linePrefix`, `pattern`, `plain`, `omit`); line or paragraph joins; an
+  inline nesting order; `{{placeholder}}` tokens with `:raw` and `:yaml`
+  modifiers for YAML front matter (title, dates, folder, account, tags, ids);
+  rich-link images with italic captions; and asset modes `copy`,
+  `reference` and `omit` with relative or absolute links. Validation reports
+  every problem with a JSON path before any note is read
+  (`[invalid-template]`). Templated copies get stable content-hashed names,
+  are reused on repeat exports, and never replace a different file.
+  Templated receipts add `template`, `warnings` (seven codes, such as
+  `missing_asset`) and `assetFiles`. docs/markdown-templates.md documents the
+  schema.
+- Template errors never quote the template file's contents: a JSON syntax
+  error reports only its line and column, a wrong value is reported by its
+  allowed values or type, long keys and placeholders are shortened, and a
+  file without `"schemaVersion": 1` gets that one error and nothing else.
+  `templateFile` must end in `.json`.
+- Templated exports read each note's metadata (UUID, dates, folder, account)
+  only when a rule or asset setting uses one of those placeholders, so a
+  `standard-markdown` export runs no extra database reads.
+- `src/utils/markdownTemplate.ts` (schema, validation, built-ins),
+  `templateRender.ts` (renderer; `standard-markdown` output is tested equal
+  to the default renderer), `templateAssets.ts` (hashed and reference
+  writers, template file reads), and `readExportNoteMeta` in
+  `noteExportData.ts` (UUID, dates, folder and account, read-only, with
+  feature-detected columns and a bound note key).
+
+### Unchanged
+
+- `export-notes-markdown` without a template produces the same output as
+  2.9.14.
+
+## [2.9.14] - 2026-09-24
+
+### Added
+
+- `search-notes` and `query-notes` results report `matchedIn`: `["title"]`,
+  `["body"]`, or `["title", "body"]`, saying where the search text occurs
+  (the body is the text after the first line). It is computed from note text
+  the search already decoded, with no extra AppleScript call. `query-notes`
+  looks for a `title:` term only in the title and a `body:` term only in the
+  body, and returns an empty list when a note matched only through a non-text
+  branch such as `pinned OR x`. The field is omitted when the text is not
+  available: locked or undecodable notes, queries without a text term, and
+  AppleScript searches without `includeWordCount`.
+- `includeWordCount` on `search-notes` and `query-notes` adds `wordCount` per
+  result (`null` for locked or unreadable notes), the same count the
+  `words:` filter uses. When a search did not already read bodies (an
+  AppleScript title or content search, or a metadata-only query), the
+  returned notes' bodies are read in one batched read-only database query.
+  For `search-notes` that read also adds `matchedIn`; without Full Disk
+  Access the results are unchanged and `wordCountUnavailable` says why.
+- The text output appends these details to each result line, for example
+  `· matched in title, body · 245 words`.
+
+## [2.9.13] - 2026-09-24
+
+### Fixed
+
+- Smart folders are refused as destinations. AppleScript resolves a smart
+  folder by name like any other folder and Notes.app accepts `move` and
+  `make` against it: `move-note` and `batch-move-notes` sent the note to
+  Recently Deleted while reporting that the folder may not exist, and
+  `create-note` stored the new note inside the smart folder, where no folder
+  shows it, while reporting failure. `create-note` (every route),
+  `create-note-with-attachment`, `move-note`, `batch-move-notes`, and
+  `create-folder` (any path segment) now refuse a destination that names only
+  a smart folder with `Refused: "<path>" is a smart folder…` and
+  `structuredContent` `{ code: "unsupported", committed: false, reason:
+  "smart_folder_destination" }`, before anything is written. An ordinary
+  folder with the same name as a smart folder is still found. Smart folders
+  are identified read-only from the NoteStore database with the
+  `list-smart-folders` reader, so the guard needs Full Disk Access; without
+  it, destinations resolve as before.
+
+## [2.9.12] - 2026-09-24
+
+### Fixed
+
+- A note holding a large image can be read and deleted again (#237). This
+  follows up #242, which explained the failure but left it in place. Notes.app
+  returns a body with each inline image embedded as base64, so a 40 MB TIFF
+  makes a body of about 110 MB. That exceeded the 64 MB AppleScript output cap,
+  and because Node stops osascript with the same signal it uses for a timeout,
+  `get-note-content` reported a 30-second timeout and retried. Body reads now
+  accept up to 512 MB (the longest string Node.js can hold).
+- `delete-note` and `batch-delete-notes` no longer refuse a note whose body is
+  over 5 MB. They embedded the reviewed body in their AppleScript, and a single
+  5 MB image already exceeds that limit. A longer body is now written to a
+  private temporary file (mode 0600 in a fresh directory, removed afterwards)
+  that the delete script reads, so the comparison before the delete still
+  covers the whole body, including a `guardNoteId` body. The `contentHash` of
+  every note is unchanged.
+- Output past the AppleScript output cap now fails at once with an error that
+  names the cap, instead of being reported as a timeout and retried. A body
+  read that still overflows is explained by #242's message as a size limit:
+  it names the note's large attachments and says that retrying or a longer
+  `timeoutSeconds` will not help, rather than suggesting a longer timeout.
+  `APPLE_NOTES_MCP_MAX_BUFFER` values past the longest string Node.js can hold
+  are clamped to it.
 
 ## [2.9.11] - 2026-09-23
 

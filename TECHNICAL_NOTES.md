@@ -10,7 +10,7 @@ This document contains research findings on Apple Notes internals, programmatic 
 - [Protobuf Data Format](#protobuf-data-format)
 - [Alternative Approaches](#alternative-approaches)
 - [Private helper (NotesShared)](#private-helper-notesshared)
-- [Private writer (fork-only)](#private-writer-fork-only)
+- [Private writer](#private-writer)
 - [Known Issues & Limitations](#known-issues--limitations)
 - [Related Tools & Projects](#related-tools--projects)
 - [Sources](#sources)
@@ -824,11 +824,11 @@ A future write PR needs evidence on all three first.
 - Reads go through a private model; a field's meaning can change without
   notice. Treat `native-note-state` as diagnostic, not as a contract.
 
-## Private writer (fork-only)
+## Private writer
 
-This fork keeps the read-only helper above exactly as merged and adds writes
-as a **separate, opt-in layer**, ready for the day the hold in "Why writes
-were deferred" is lifted. None of it is offered upstream.
+The writer keeps the read-only helper above exactly as merged and adds writes
+as a **separate, opt-in layer**, for when the hold in "Why writes were
+deferred" is lifted.
 
 ### Separation from the read-only helper
 
@@ -879,7 +879,7 @@ running, else `queued_for_next_launch`).
 The writer's read-only `read_sync_state` action reports Notes' own counters
 (`currentLocalVersion`, `latestVersionSyncedToCloud`, `uploadPending`) for up
 to 50 notes or folders plus the library's pending-upload count. Observed on
-macOS 27.2 on 2026-09-23 on the earlier fork branches: Notes.app merges a
+macOS 27.2 on 2026-09-23 with the earlier combined helper: Notes.app merges a
 helper save and queues the note, but when it already holds that note in
 memory its upload check reads cached counters and skips it. Moving the note
 through AppleScript into the folder it is already in makes Notes.app save it

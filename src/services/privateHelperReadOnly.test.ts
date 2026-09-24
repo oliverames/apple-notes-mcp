@@ -4,7 +4,7 @@
  * source and fail if a save or write path reappears, so re-adding writes has
  * to be a deliberate, reviewed change to this file too.
  *
- * This fork adds an opt-in WRITER as a separate program
+ * An opt-in WRITER is added as a separate program
  * (apple-notes-private-writer.m, `setup --native-writer`). The read-only
  * guarantees below still apply, unchanged, to everything the read-only build
  * path touches: the helper source `setup --native-helper` compiles, the

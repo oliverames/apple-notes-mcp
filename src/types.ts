@@ -337,6 +337,13 @@ export interface AppleScriptOptions {
    * - Attempt 3: 2s delay
    */
   retryDelayMs?: number;
+
+  /**
+   * Largest osascript output, in bytes, this call accepts. Defaults to
+   * APPLE_NOTES_MCP_MAX_BUFFER or 64 MB. Note body reads raise it, because a
+   * body carries its inline images as base64 and grows with them (#237).
+   */
+  maxBufferBytes?: number;
 }
 
 /**
@@ -1259,10 +1266,35 @@ export interface SmartFolder {
 // Query Language Types
 // =============================================================================
 
+/** A part of a note where a search phrase was found. */
+export type SearchMatchLocation = "title" | "body";
+
+/**
+ * Optional per-result enrichments shared by search-notes and query-notes.
+ * Both come from note text the search already decoded, or from one batched
+ * read-only database query, never from a per-note AppleScript call.
+ */
+export interface SearchMatchDetails {
+  /**
+   * Where the search text occurs: "title", "body" (the text after the first
+   * line), or both. Absent when the note text was not available to check
+   * (locked or undecodable notes, or an AppleScript search without
+   * includeWordCount) or the query has no text term. Empty when the note
+   * matched only through a metadata branch such as `pinned OR x`.
+   */
+  matchedIn?: SearchMatchLocation[];
+  /**
+   * Words in the note's decoded text (includeWordCount only): whitespace-
+   * delimited tokens holding a letter or digit, the same count the query-notes
+   * `words:` filter uses. Null when the body is locked or unreadable.
+   */
+  wordCount?: number | null;
+}
+
 /**
  * One note matched by the query-notes tool.
  */
-export interface QueryNotesHit {
+export interface QueryNotesHit extends SearchMatchDetails {
   /** CoreData note ID, accepted by get-note-content and every other id tool */
   id: string;
   /** Note title as stored in the database */
@@ -1399,6 +1431,25 @@ export interface NotesExportRequest {
    * set). False copies them to a sidecar directory.
    */
   embedAssets?: boolean;
+  /** Render through this template: a built-in name or a saved template's name. */
+  template?: string;
+  /** Render through the template in this JSON file (exclusive with `template`). */
+  templateFile?: string;
+}
+
+/** The template an export used. */
+export interface NotesExportTemplateInfo {
+  name: string;
+  /** `builtin`, a `saved` library template, or a one-off template `file`. */
+  source: "builtin" | "saved" | "file";
+}
+
+/** A problem that did not stop a templated export. */
+export interface NotesExportWarning {
+  /** Stable code, such as `missing_asset` or `table_decode_failed`. */
+  code: string;
+  noteId: string;
+  attachmentId?: string;
 }
 
 /** Counts of how attachments were rendered in an export. */
@@ -1436,6 +1487,14 @@ export interface NotesExportReceipt {
   embedded?: number;
   stats: NotesExportAttachmentStats;
   skipped: NotesExportSkip[];
+  /** Templated exports only: the template used. */
+  template?: NotesExportTemplateInfo;
+  /** Templated exports only: problems that did not stop the export. */
+  warnings?: NotesExportWarning[];
+  /** Warnings beyond the listed ones. */
+  warningsOmitted?: number;
+  /** Templated exports only: absolute paths of asset files written or reused. */
+  assetFiles?: string[];
 }
 
 // =============================================================================

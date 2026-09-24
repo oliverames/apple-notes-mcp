@@ -257,7 +257,7 @@ Creates a new note in Apple Notes.
 | `content` | string | One of `content`/`contentPath` | The body content of the note (do not repeat the title here) |
 | `contentPath` | string | One of `content`/`contentPath` | Absolute path of a local UTF-8 file to use as the body instead of `content`. Allowed in the same places [`save-attachment`](#save-attachment) may write (home, temp, `/Volumes`); symbolic links, non-regular files, invalid UTF-8 and files over 1 MiB are refused before anything is written. A leading byte-order mark is dropped |
 | `tags` | string[] | No | Returned-only metadata — **NOT written to Notes.app**. Apple Notes tags can't be set via AppleScript, so values passed here are echoed back in the response but do not appear on the created note. Use inline `#hashtags` in `content` instead (Notes.app turns those into real tags). Refused with `format: "markdown"` |
-| `folder` | string | No | Folder to create the note in. Supports nested paths like `"Work/Clients"`. **The folder must already exist** — create it first with [`create-folder`](#create-folder). Defaults to account root |
+| `folder` | string | No | Folder to create the note in. Supports nested paths like `"Work/Clients"`. **The folder must already exist** — create it first with [`create-folder`](#create-folder). A smart folder is refused (see [`move-note`](#move-note)). Defaults to account root |
 | `account` | string | No | Account name (defaults to Notes.app's default account; matched exactly or by a *unique* prefix — an ambiguous prefix is refused). Must be an account Notes.app already has configured — see [`list-accounts`](#list-accounts) |
 | `format` | string | No | Content format: `"plaintext"` (default), `"html"`, or `"markdown"`. In all formats, the title is automatically prepended as the note's title line. In plaintext mode, newlines become `<br>`, tabs become `<br>`, and backslashes are preserved as HTML entities. `"markdown"` produces real Title/Heading/Subheading styles through a Shortcut; see [Markdown notes](#markdown-notes) |
 | `markdownRoute` | string | No | With `format: "markdown"` only: `"shortcut"` (default) or `"html"`. See [Markdown through HTML](#markdown-through-html) |
@@ -425,6 +425,7 @@ Searches for notes by title or content.
 | `folder` | string | No | Limit search to a specific folder (supports nested paths like `"Work/Clients"`) |
 | `modifiedSince` | string | No | ISO 8601 date string to filter notes modified on or after this date (e.g., `"2025-01-01"`) |
 | `limit` | number | No | Maximum number of results to return. **Defaults to 50** — a broad query reads several properties per match via AppleScript (~200ms/note), so an unbounded search over hundreds of matches can exceed Notes' 30s timeout and return an error instead of results. Pass a higher value to see more; the applied limit (and whether it truncated the results) is disclosed in the response. |
+| `includeWordCount` | boolean | No | Add `wordCount` to each result (`null` when the note is locked or its body unreadable). A database content search already has the text. Otherwise the bodies are read in one batched read-only database query, never one AppleScript call per note; that needs Full Disk Access and also adds `matchedIn`. Without it, the response carries `wordCountUnavailable` and the results are unchanged. |
 
 **Example - Search titles:**
 ```json
@@ -453,6 +454,17 @@ Searches for notes by title or content.
 
 **Returns:** List of matching notes with titles, folder names, and IDs. Use the returned ID for subsequent operations like `get-note-content`, `update-note`, etc. A content search also returns `source` (`"database"` or `"applescript"`), and `scanTruncated` when the database path left older notes unsearched.
 
+When the note text came from the database (a database content search, or any search with `includeWordCount`), each result also carries `matchedIn`: `["title"]`, `["body"]`, or `["title", "body"]`, saying where the query text occurs. The body is the text after the first line. `matchedIn` is absent for locked notes and for AppleScript searches without `includeWordCount`. The text output appends the same details to each line, for example `· matched in title, body · 245 words`.
+
+**Example - Content search with word counts:**
+```json
+{
+  "query": "budget",
+  "searchContent": true,
+  "includeWordCount": true
+}
+```
+
 ---
 
 #### `query-notes`
@@ -470,6 +482,7 @@ can match titles and bodies together.
 | `limit` | number | No | Maximum notes to return. Defaults to 50, maximum 500. The response reports the total match count. |
 | `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 5000. The response says when older notes were left unscanned. |
 | `includeDeleted` | boolean | No | Also scan notes in Recently Deleted, notes pending deletion, and folderless notes. Defaults to `false`. |
+| `includeWordCount` | boolean | No | Add `wordCount` to each returned note, the same count `words:` filters on (`null` when locked or unreadable). Free when the query already reads bodies; a metadata-only query (for example `pinned`) reads just the returned notes' bodies in one extra read-only query. Defaults to `false`. |
 
 **Syntax:**
 
@@ -514,7 +527,11 @@ Their snippets are always empty.
 
 **Returns:** Matching notes, most recently modified first, each with `id`,
 `title`, `folder`, `account`, `modified`, `created`, and a `snippet` centred on
-the first matched phrase. The ids are the same `x-coredata://…/ICNote/p…` form
+the first matched phrase. Each note also has `matchedIn` when the query has a
+positive text term: `["title"]`, `["body"]`, or both, saying where those terms
+occur (a `title:` term is only looked for in the title, a `body:` term only in
+the body). It is absent for locked or undecodable notes, and an empty list
+means the note matched through a non-text branch such as `pinned OR x`. The ids are the same `x-coredata://…/ICNote/p…` form
 every other tool accepts. `structuredContent` also reports `matched` (total
 matches), `scanned`, `eligible`, `scanTruncated`, `truncated`, and `unreadable`
 (bodies that could not be decoded). A malformed query returns an error naming
@@ -982,6 +999,13 @@ Deletes a note (moves to Recently Deleted in Notes.app).
 Title-only deletion is rejected. If the note changed after the supplied hash
 was read, deletion is also rejected.
 
+**Notes with large images.** Notes.app returns a note's body with each inline
+image embedded as base64, so a note holding one 40 MB image has a body of about
+110 MB. Body reads accept up to 512 MB of output, and `delete-note` compares a
+body longer than 5 MB against a private temporary file rather than embedding it
+in the AppleScript. The comparison still covers the whole body, and the file
+is removed when the delete finishes.
+
 **Copy-then-retire.** To delete an original only while its copy is still good,
 read both notes, verify the copy, and pass the copy as `guardNoteId` with its
 `contentHash` as `expectedGuardContentHash`. The copy's revision is re-read just
@@ -1024,6 +1048,8 @@ such a note for good, do it in Notes.app.
 #### `move-note`
 
 Moves a note to a different folder. The note is relocated in place via Notes.app's native `move`, so its id, creation date, and all embedded attachments (files, images, scans, PDFs, audio) are preserved. The destination folder must already exist — create it first with [`create-folder`](#create-folder).
+
+A smart folder is never a destination: it only gathers notes by its rules, and Notes.app would move the note to Recently Deleted or store a created note where no folder shows it. `create-note`, `create-note-with-attachment`, `move-note`, `batch-move-notes`, and `create-folder` refuse one before writing anything, with `code: "unsupported"`, `committed: false`, and `reason: "smart_folder_destination"`. An ordinary folder that shares a smart folder's name is still found. Detection reads the NoteStore database, so it needs Full Disk Access; without it, destinations resolve as before.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -1395,7 +1421,7 @@ Creates a new folder, including a whole nested hierarchy in one call.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `name` | string | Yes | Folder name, or a nested path separated by `/` (e.g. `"Retro Tech/PC/CPUs"`). Every intermediate folder is created; segments that already exist are skipped |
+| `name` | string | Yes | Folder name, or a nested path separated by `/` (e.g. `"Retro Tech/PC/CPUs"`). Every intermediate folder is created; segments that already exist are skipped. A segment that names a smart folder is refused before anything is created |
 | `account` | string | No | Account to create folder in (defaults to Notes.app's default account; exact or unique-prefix match) |
 
 **Example:**
@@ -1583,7 +1609,7 @@ Moves multiple notes to a folder.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `ids` | string[] | Yes | Array of note IDs to move (max 500 per request) |
-| `folder` | string | Yes | Destination folder name or nested path (e.g., `"Work/Clients"`). Must already exist — create it with [`create-folder`](#create-folder) |
+| `folder` | string | Yes | Destination folder name or nested path (e.g., `"Work/Clients"`). Must already exist — create it with [`create-folder`](#create-folder). A smart folder is refused for the whole call before any note moves |
 | `account` | string | No | Account containing the folder |
 
 **Returns:** Summary of successes and failures. Each success is reported only
@@ -1684,6 +1710,8 @@ single note.
 | `outputPath` | string | No | Absolute file to create. Create-only: an existing file (or symlink) is refused with `[output_exists]` |
 | `assetsDir` | string | No | Absolute directory for attachment copies. Existing files are never replaced; a taken name gets `-2`, `-3`, ... |
 | `wrap` | number | No | Hard-wrap prose at this many columns. Code, tables and headings are never wrapped |
+| `template` | string | No | Render through a template: `standard-markdown`, `obsidian`, or a saved template's name. Exclusive with `templateFile` |
+| `templateFile` | string | No | Render through the JSON template in this `.json` file (same path rules; at most 256 KiB) |
 
 Both paths follow the `save-attachment` rules (absolute, under the home
 directory, a temp directory, or `/Volumes`, no symlink escapes) and may not
@@ -1697,6 +1725,19 @@ receipt: `format`, `count`, `bytes`, `output`, and `assets` (`dir`, `files`).
 Both carry `stats` (attachments, placed, placeholders, unavailable, tables,
 unreadableTables, unreferenced) and `skipped`. Nothing already written is
 deleted if a later step fails.
+
+**Templates:** `template` or `templateFile` renders through a portable JSON
+template that sets how every block style, inline format, attachment,
+per-note header and footer (for YAML front matter with title, dates,
+folder, tags and id), and the note separator are written. The built-in
+`standard-markdown` reproduces the default output; `obsidian` adds front
+matter and copies attachments into `<file>.assets` beside `outputPath`.
+Templated asset copies get stable content-hashed names and are reused on a
+repeat export. An invalid template is refused with `[invalid-template]` and
+one JSON path per problem, before any note is read. A templated receipt adds
+`template`, `warnings` (such as `missing_asset`) and `assetFiles`. See
+[docs/markdown-templates.md](docs/markdown-templates.md) for the schema,
+every rule and placeholder, and examples.
 
 ---
 
@@ -1741,6 +1782,88 @@ HTML file, so the file and its `.assets` directory can be moved together.
 **Returns:** `format`, `count`, `bytes`, `output`, either `embedded` (assets
 embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. Nothing
 already written is deleted if a later step fails.
+
+---
+
+#### `list-markdown-templates`
+
+Lists the Markdown export templates: the built-ins (`standard-markdown`,
+`obsidian`) and every saved template in the library, with its display name,
+description, size and modification date. Unreadable, invalid or unsafe files
+in the library are skipped and counted in `skipped`. Takes no parameters.
+
+**Returns:** `builtins`, `templates`, `skipped`, and `dir` (the library
+directory).
+
+---
+
+#### `show-markdown-template`
+
+Returns one template in its portable form: a built-in, or a saved template
+exactly as stored (overrides only). Use it as the starting point for a new
+template.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | A built-in or saved template name |
+| `expanded` | boolean | No | Also return `expanded`, with every rule filled in from its base |
+
+**Returns:** `name`, `source` (`builtin` or `saved`), `template`, and
+optionally `expanded`.
+
+---
+
+#### `validate-markdown-template`
+
+Checks a template without saving it. Pass exactly one of `name`, `template`
+or `templateFile`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | One of three | A saved or built-in template |
+| `template` | object or string | One of three | The template as a JSON object or JSON text |
+| `templateFile` | string | One of three | Absolute path of a JSON template file (home, a temp directory, or `/Volumes`; at most 256 KiB) |
+
+**Returns:** `valid`, and `errors` as `{path, message}` pairs such as
+`$.rules["inline.bold"].after: is required when mode is "wrap"`. An invalid
+template is a normal result, not a tool error.
+
+---
+
+#### `save-markdown-template`
+
+Validates a template and stores it in the library so `export-notes-markdown`
+can use it by `template` name.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Lowercase `a-z`, `0-9`, `-` and `_`, 1-64 characters, starting with a letter or digit. Built-in names are reserved |
+| `template` | object or string | One of `template`/`templateFile` | The template |
+| `templateFile` | string | One of `template`/`templateFile` | A JSON template file |
+| `force` | boolean | No | Replace an existing template of this name (default `false`) |
+
+Saving is create-only: an existing name is refused with `[template-exists]`
+unless `force` is true. An invalid template is refused with
+`[invalid-template]` and one JSON path per problem. The file is written to a
+temporary name and then moved into place, with mode `0600` in a `0700`
+directory. The library is `~/Library/Application Support/apple-notes-mcp/templates`,
+or `APPLE_NOTES_MCP_TEMPLATE_DIR`. A symlinked library or template file is
+refused.
+
+**Returns:** `name`, `path`, `bytes`, and `replaced`.
+
+---
+
+#### `delete-markdown-template`
+
+Removes one saved template file from the library. Built-in templates cannot
+be deleted.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | The saved template to delete |
+
+**Returns:** `name`, `path`, and `deleted: true`.
 
 ---
 
@@ -2331,9 +2454,9 @@ title, modification date, folder identifier, lock/trash/shared/editable
 flags, iCloud version counters, and a `revision` change token (compare two
 reads to detect a change). Opens the store with Core Data's read-only option.
 
-### Private writer (opt-in, fork-only, unsupported Apple API)
+### Private writer (opt-in, unsupported Apple API)
 
-This fork adds an optional **writer** as a separate layer on top of the
+An optional **writer** adds writes as a separate layer on top of the
 read-only helper. It is a second program
 (`native/private-helper/apple-notes-private-writer.m`) with its own binary,
 checksum manifest (`writer-manifest.json`), and setup command. The read-only
@@ -2509,11 +2632,12 @@ All configuration is optional — the server works out of the box. Override beha
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APPLE_NOTES_MCP_MAX_BUFFER` | `67108864` (64 MB) | Max bytes captured from a single AppleScript invocation. Raise it if a very large export/list is truncated; lower it to cap memory. |
+| `APPLE_NOTES_MCP_MAX_BUFFER` | `67108864` (64 MB) | Max bytes captured from a single AppleScript invocation. Raise it if a very large export/list is truncated; lower it to cap memory. Reading one note body allows at least 512 MB regardless, since a body embeds its inline images. Output past the cap fails with an error naming this variable, not as a timeout. |
 | `APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES` | `26214400` (25 MB) | Max size of an attachment that [`fetch-attachment`](#fetch-attachment) will base64-encode inline. Larger attachments are rejected with an error pointing at [`save-attachment`](#save-attachment) (which streams to disk and has no such limit). Raise it to fetch bigger attachments inline; lower it to cap memory. |
 | `APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES` | `262144` (256 KB) | Per-image cap on the base64 payload kept inline in a [`get-note-content`](#get-note-content) response. Inline images over the cap are replaced with placeholders (with a warning appended) so an image-heavy note cannot exceed the MCP client's message limit and drop the connection; export the real files with [`save-attachment`](#save-attachment) or [`fetch-attachment`](#fetch-attachment). Raise it to keep bigger images inline. |
 | `APPLE_NOTES_MCP_CONFIG_FILE` | `~/Library/Application Support/apple-notes-mcp/config.json` | Path to the JSON config file (see below). |
 | `APPLE_NOTES_MCP_TIMEOUT_MS` | `30000` (30 s) | Total AppleScript operation timeout, including retry attempts and delays. Raise it if full-library operations (large searches, exports) time out on a big Notes library. Per-call `timeoutMs` options still win, and a write tool's `timeoutSeconds` argument overrides it for that call. |
+| `APPLE_NOTES_MCP_TEMPLATE_DIR` | `~/Library/Application Support/apple-notes-mcp/templates` | Absolute directory of the saved Markdown template library (`save-markdown-template` and friends). |
 | `APPLE_NOTES_MCP_EXPORT_MAX_BYTES` | `8388608` (8 MB) | Largest response `export-notes-json` sends; a page closes early to stay under it. `export-notes-markdown` returns inline Markdown up to half of it. The default sits below the 10 MB per-message limit of MCP SDK stdio clients, which drop the connection on anything larger. Raise it only if your MCP client accepts bigger messages. |
 | `APPLE_NOTES_MCP_BLOCKS_MAX_BYTES` | `4194304` (4 MB) | Largest block payload one [`get-note-blocks`](#get-note-blocks) page returns; the page closes early to stay under it, and a single oversized paragraph comes back with `textOmitted: true`. [`get-note-structure`](#get-note-structure) also omits note text larger than this. A [`list-note-paragraphs`](#list-note-paragraphs) or [`list-note-links`](#list-note-links) page also stops early to stay under it. |
 | `APPLE_NOTES_MCP_MAX_RETRIES` | `2` | Maximum attempts for a read-only AppleScript call that fails with a **transient** error (Notes.app busy / not responding / lost connection). `2` means one retry; set `1` to fail fast with no retries. Retries share the single `APPLE_NOTES_MCP_TIMEOUT_MS` budget rather than each getting a fresh one, and a retry is skipped when under a second of that budget remains — so this is a ceiling, not a guarantee. In particular a call that exhausts the budget with a **timeout** has no time left to retry by construction. Mutating operations run once because a timeout can occur after Notes.app applied the change. Non-transient errors (e.g. "note not found") never retry. |
