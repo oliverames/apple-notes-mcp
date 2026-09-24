@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+### Added
+
+- `query-notes` has three more predicates: `has:url` (a link preview card,
+  which still counts as `has:link`), `has:map` (a map attachment), and the
+  flag `quicknote` (or `is:quicknote`), read from the same Quick Note flag as
+  `list-special-notes kind=quick-notes`. A bare `quicknote` is now that flag;
+  quote it to search the word. `scanLimit` now goes up to 10000 (default
+  still 500). `search-notes`' database body search keeps its 5000-note window.
+- `export-notes-html` renders classic PencilKit drawings as SVG, decoded
+  through the public native helper as `get-note-drawings` does, instead of
+  Notes' fixed-size PNG. The SVG is embedded or written to the sidecar
+  directory under the same size limits as other assets. Paper drawings keep
+  the PNG. A drawing that cannot be decoded (helper not built, decode error,
+  stroke limit, too large) falls back to the PNG without failing the export,
+  and the new receipt field `vectorDrawings` counts SVG and PNG drawings with
+  the fallback reasons. `vectorDrawings: false` turns it off.
+
 ## [2.9.20] - 2026-09-24
 
 ### Documentation

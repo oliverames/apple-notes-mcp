@@ -199,8 +199,8 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 
 ### query-notes
 - Boolean search read straight from the NoteStore database (read-only, needs Full Disk Access). Prefer it over `search-notes` when Full Disk Access is available: one call matches title **or** body, and it returns in well under a second instead of ~200ms per result
-- Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`; `checklist:open|done`; `pinned`, `locked`, `shared`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
-- Scans the 500 most recently modified notes by default (`scanLimit` up to 5000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
+- Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag` (`has:url` = link preview card, which is also `has:link`; `has:map` = map); `checklist:open|done`; `pinned`, `locked`, `shared`, `quicknote`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
+- Scans the 500 most recently modified notes by default (`scanLimit` up to 10000; a larger scan is slower). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
 - Excludes Recently Deleted and folderless notes unless `includeDeleted: true`
 - Locked notes match on title and metadata only; body predicates never match them
 - Each hit has `matchedIn` (where the positive text terms occur: `title`, `body`, or both) when the query has a text term and the body is readable; a `title:` term only counts toward the title and a `body:` term only toward the body. An empty list means the note matched through a non-text branch (`pinned OR x`)
@@ -348,6 +348,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Same selection as `export-notes-markdown`; `outputPath` is required (the HTML is never returned inline) and create-only
 - Assets are embedded as data URLs by default. Use `embedAssets: false` (optionally with `assetsDir`) for large media: embedded assets over 10 MiB render as an unavailable marker
 - A sidecar directory defaults to `<output stem>.assets`; keep it next to the HTML when moving the file
+- Classic PencilKit drawings are rendered as SVG through the public native helper; Paper drawings keep Notes' PNG. A drawing that cannot be decoded falls back to the PNG and is counted in `vectorDrawings.fallbackReasons`; report `helper_not_installed` as "run `apple-notes-mcp setup --public-helper` for vector drawings", not as a failed export. `vectorDrawings: false` keeps every PNG
 - Presentation format only: not a backup and not something to import back
 
 ### Batch operations

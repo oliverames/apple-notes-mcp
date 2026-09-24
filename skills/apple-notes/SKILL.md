@@ -52,7 +52,7 @@ Use this skill when the user:
 | `get-selected-notes`         | Read the notes currently selected in Notes.app                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `export-notes-json`          | Export notes as JSON one page at a time (`offset`/`limit`/`modifiedSince`); repeat with `page.nextOffset` while `page.hasMore`                                                                                                                                                                                                                                                                                                                               |
 | `export-notes-markdown`      | Export one note or a folder as one Markdown document from the decoded body; optional create-only `outputPath` and `assetsDir` for attachment copies; `template`/`templateFile` render through a JSON Markdown template such as `obsidian` front matter (presentation format, not a backup)                                                                                                                                                                   |
-| `export-notes-html`          | Export one note or a folder as one standalone HTML file (semantic tables, attachments in body order); `outputPath` required and create-only; assets embedded (10 MiB each) or in a sidecar directory with `embedAssets: false`                                                                                                                                                                                                                               |
+| `export-notes-html`          | Export one note or a folder as one standalone HTML file (semantic tables, attachments in body order); `outputPath` required and create-only; assets embedded (10 MiB each) or in a sidecar directory with `embedAssets: false`; classic drawings become SVG through the public helper (Paper keeps its PNG; failures fall back to PNG)                                                                                                                       |
 | `list-markdown-templates`    | List built-in and saved Markdown export templates                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `show-markdown-template`     | Show a template's JSON (portable form; `expanded` for every rule)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `validate-markdown-template` | Check a template; returns every problem with a JSON path                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -193,12 +193,13 @@ Action: Use query-notes with query='words:>250 has:pdf -folder:Archive'
 
 Bare words and "quoted phrases" match title or body. Fields are `title:`,
 `body:`, `text:`, `folder:`, `account:`, and `tag:`; facets are
-`has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`;
-`checklist:open|done`; flags `pinned`, `locked`, `shared`; and `words:`,
+`has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag`
+(`has:url` is a link preview card, `has:map` a map);
+`checklist:open|done`; flags `pinned`, `locked`, `shared`, `quicknote`; and `words:`,
 `created:`, `modified:` take `=`, `>`, `>=`, `<`, `<=` with `YYYY-MM-DD` local
 dates. AND is implicit; use `OR`, `NOT` or a leading `-`, and parentheses.
 Quote an operator word (`"and"`) to search it literally. It scans the 500 most
-recently modified notes unless `scanLimit` is raised (max 5000), and the
+recently modified notes unless `scanLimit` is raised (max 10000), and the
 response says when older notes were left out. Recently Deleted is excluded
 unless `includeDeleted` is true. Locked notes match on title and metadata only.
 The returned ids work with every id-based tool.
