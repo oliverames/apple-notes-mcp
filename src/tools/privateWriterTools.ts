@@ -100,6 +100,9 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "nothing_to_highlight":
       return "validation_error";
     default:
+      // SVG refusals from native-add-paper (svg_unsafe, svg_analysis_required, ...)
+      // happen before the writer runs.
+      if (helperCode.startsWith("svg_")) return "validation_error";
       return envelopeCode(helperCode, message);
   }
 }

@@ -1497,6 +1497,50 @@ reader decodes those rows with SQL; the writer adds `read_smart_folder`
   recorded as uploaded by Notes.app without a relaunch (not checked on a
   second device).
 
+### Paper authoring (`add_paper`)
+
+`native-add-paper` turns stroke and shape JSON, or an SVG normalized by the
+`analyze-svg` analyzer, into `{strokes: [{ink, color, width, points}]}`
+(`utils/paperAuthoring.ts`) and sends it to the writer's `add_paper` action.
+The writer builds a public `PKDrawing` from it and hands it to NotesShared:
+
+| Format | Created by | Drawing stored in |
+|---|---|---|
+| `paper` (`com.apple.paper`) | `+[ICPaperAttachmentCreationHelper createSystemPaperAttachmentWithPKDrawing:inNote:]` | a bundle, `Accounts/<account>/Paper/Bundles/<attachment>.bundle` beside the store |
+| `drawing` (`com.apple.drawing.2`) | `-[ICNote addInlineDrawingAttachmentWithAnalytics:]` then `-[ICAttachment setMergeableData:]` | the attachment's mergeable data in the store |
+
+`format: "auto"` picks Paper when this macOS offers its creation API. The
+writer then inserts the attachment glyph (U+FFFC) as the note's last
+paragraph through the body CRDT, updates the preview when it can (best effort),
+bumps both cloud states, and saves under the write contract above.
+Verification opens a new read-only stack, checks the attachment belongs to the
+note and its glyph is in the saved text, and decodes the drawing again
+(`ICSystemPaperDrawingsHelper` for Paper, the inline drawing model for a
+classic drawing): the stroke and point counts must equal what was written. A
+live Paper bundle is decoded from a private temporary copy.
+
+Findings, macOS 27.2, on copy stores:
+
+- PencilKit traps when building a drawing in a process with no bundle
+  identifier. The writer embeds an Info.plist (`__TEXT,__info_plist`) with
+  `io.github.apple-notes-mcp.private-writer`; PencilKit keeps its replica
+  identity in that preferences domain.
+- The monoline ink is serialized as pen and the reed ink is not recognized,
+  so the writer offers only inks whose identifier survives a serialization
+  round trip, and refuses any stroke that comes back as a different ink.
+- A copy-store run redirects every `ICAccount` directory method into
+  `Accounts/` beside the copy before the store opens, so the bundle and
+  previews never reach the live container. The redirect replaces all eleven
+  methods or none. `scripts/test-private-writer-paper-copy-store.sh` checks
+  both formats, the replay refusal, and the live container.
+- Shapes are traced as strokes. Notes' typed shapes live in the Paper bundle's
+  own model, which no stable entry point exposes, so none are created.
+
+This branch ports only the write path. Stroke decoding as a read tool
+(`native-read-paper` on the earlier fork branches) is not part of it;
+`get-note-drawings` decodes classic drawings, and `list-paper-attachments`
+and `export-paper-image` read Paper's own rendering.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

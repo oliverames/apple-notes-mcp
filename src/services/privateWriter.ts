@@ -94,6 +94,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   create_smart_folder: "write",
   update_smart_folder: "write",
   delete_smart_folder: "write",
+  add_paper: "write",
 };
 
 /**
@@ -101,6 +102,12 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
  * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
  */
 export const APPEND_LIVE_VALIDATED = false;
+/**
+ * Paper authoring (`add_paper`) has not passed live end-to-end validation,
+ * including iCloud sync, on this writer. Until it has, a write (not a dry run)
+ * also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ */
+export const PAPER_WRITE_LIVE_VALIDATED = false;
 
 /**
  * Applying an in-place edit (edit_note) has passed the copy-store
@@ -315,6 +322,7 @@ export const writerProbeSchema = z
         tables: featureSchema.optional(),
         pruneOrphanTable: featureSchema.optional(),
         smartFolders: featureSchema.optional(),
+        addPaper: featureSchema.extend({ formats: z.array(z.string()) }).optional(),
       })
       .passthrough(),
   })
@@ -1017,6 +1025,7 @@ export const WRITER_FEATURES = [
     probeKey: "smartFolders",
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED,
   },
+  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

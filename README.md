@@ -2907,6 +2907,35 @@ not offered, because it moves notes and a folder has no equivalent; check
 need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; the read and the delete's dry run
 do not.
 
+#### `native-add-paper`
+
+Adds one drawing to the end of a note as editable ink: a Paper drawing
+(`com.apple.paper`), or a classic drawing (`com.apple.drawing.2`) with
+`format: "drawing"` or when this macOS cannot create Paper. Pass exactly one
+source:
+
+- `drawing`: `strokes` (each with `points` as `[x, y]` or `[x, y, width]`,
+  plus optional `ink`, `color` as sRGB `[r, g, b, a]` from 0 to 1, and
+  `width`) and `shapes` (`rectangle`, `ellipse`, `line`, `arrow`, `polygon`,
+  `star`, `chatBubble`, `polyline`). Shapes are written as strokes that trace
+  them (`shapePersistence: "stroke-fallback"`), not as Notes shape objects.
+- `svgPath`: an SVG file, converted by the same analyzer as `analyze-svg` and
+  analyzed again at write time. A `safe` SVG needs nothing more. A `lossy` one
+  needs `ifSvgAnalysis` equal to its `analysisDigest` and `allowSvgLosses`
+  equal to its `requiredLosses`, no more and no less.
+
+Inks are `pen` (default), `pencil`, `marker`, `fountainpen`, `watercolor`, and
+`crayon`; the writer refuses an ink that PencilKit would store as a different
+one. Guarded by `ifRevision` like every write; `dryRun: true` validates and
+reports the plan (format, stroke and point counts, bounds) without writing and
+without `APPLE_NOTES_MCP_ALLOW_UNVERIFIED`. A write is verified by decoding
+the saved drawing in a fresh Core Data stack (`decodedStrokeCount`,
+`decodedPointCount`) and returns `attachmentIdentifier` and the usual sync
+fields; `nudge` works as for `native-append-plain-text`. The writer embeds a
+bundle identifier because PencilKit needs one to build a drawing, so the
+first Paper write creates
+`~/Library/Preferences/io.github.apple-notes-mcp.private-writer.plist`.
+
 ## Usage Patterns
 
 ### Basic Workflow

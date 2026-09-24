@@ -9,7 +9,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { compileArguments } from "./privateHelperBuild.js";
+import { writerCompileArguments } from "./privateWriterBuild.js";
 import { packageRoot } from "./privateHelper.js";
 import { WRITER_SOURCE_RELATIVE } from "./privateWriter.js";
 
@@ -20,7 +20,7 @@ let binary: string;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "private-writer-native-"));
   binary = join(dir, "writer");
-  const args = compileArguments(join(packageRoot(), WRITER_SOURCE_RELATIVE), binary, "test");
+  const args = writerCompileArguments(join(packageRoot(), WRITER_SOURCE_RELATIVE), binary, "test");
   execFileSync("/usr/bin/xcrun", args, { stdio: "pipe", timeout: 120_000 });
 }, 150_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
