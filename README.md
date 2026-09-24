@@ -1922,6 +1922,20 @@ be deleted.
 
 **Returns:** `name`, `path`, and `deleted: true`.
 
+#### Template editor (command line)
+
+`apple-notes-mcp templates edit [name]` starts a local web editor for
+templates: edit the JSON on one side and see it validated and rendered
+against built-in sample notes on the other, then save it to the library
+(create-only unless you tick "replace"). It prints one address with a
+per-run token, listens on `127.0.0.1` only, refuses cross-origin requests,
+and stops on Ctrl-C or after 30 idle minutes (`--idle-minutes`). It reads a
+real note only when you pass `--note <id>`, and then read-only. `--tailnet`
+listens on this Mac's Tailscale address instead, so another device on your
+tailnet can open it; it never changes Tailscale or firewall settings. See
+[docs/markdown-templates.md](docs/markdown-templates.md#editing-in-a-browser)
+for options and exactly what it exposes.
+
 ---
 
 #### `get-checklist-state`

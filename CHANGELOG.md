@@ -32,6 +32,21 @@
   Recognition status without prompting. Changing the helper source means an
   installed helper reports stale until `apple-notes-mcp setup --public-helper`
   runs again.
+- `apple-notes-mcp templates edit [name]` starts a local web editor for
+  Markdown export templates. It validates the template JSON as you type with
+  the same validator as `validate-markdown-template`, previews it with the
+  export renderer against built-in sample notes, and saves through the
+  template library (create-only unless "replace" is ticked). A real note is
+  read only with `--note <id>`, once and read-only. The server listens on
+  `127.0.0.1` on a free port, requires a per-run token on every request,
+  refuses foreign `Host` headers and cross-origin requests, serves one page
+  with no external resources, and stops on Ctrl-C or after 30 idle minutes
+  (`--idle-minutes`).
+- `templates edit --tailnet` listens on this Mac's Tailscale IPv4 address
+  instead, with the same token and origin checks, so the editor can be used
+  from another device on the tailnet. It is off unless the flag is given,
+  refuses to start without a Tailscale address, and never changes Tailscale,
+  Serve/Funnel or firewall settings.
 
 ## [2.9.22] - 2026-09-24
 

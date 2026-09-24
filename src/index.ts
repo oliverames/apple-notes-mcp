@@ -181,6 +181,7 @@ import {
   runPermissionsWindow,
 } from "@/services/permissionsWindow.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
+import { runTemplatesCommand } from "@/services/templateEditorCli.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -231,6 +232,10 @@ if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
   process.exit(report.ready || !report.checkOnly ? 0 : 1);
+}
+if (process.argv[2] === "templates") {
+  // Local template editor (templates edit): a token-gated web page on loopback.
+  process.exit(await runTemplatesCommand(process.argv.slice(3)));
 }
 // =============================================================================
 // Server Initialization

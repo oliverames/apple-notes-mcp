@@ -59513,6 +59513,712 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
   );
 }
 
+// src/utils/tailnetAddress.ts
+import { networkInterfaces } from "node:os";
+function isTailnetIPv4(address) {
+  const match = /^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
+  if (!match) return false;
+  const [second, third, fourth] = match.slice(1).map(Number);
+  return second >= 64 && second <= 127 && third <= 255 && fourth <= 255;
+}
+function findTailnetAddress(interfaces = networkInterfaces()) {
+  const candidates = [];
+  for (const [name, infos] of Object.entries(interfaces)) {
+    for (const info of infos ?? []) {
+      if (info.family === "IPv4" && !info.internal && isTailnetIPv4(info.address))
+        candidates.push({ address: info.address, interface: name });
+    }
+  }
+  return candidates.find((c) => c.interface.startsWith("utun")) ?? candidates[0];
+}
+
+// src/services/templateEditor.ts
+import { randomBytes as randomBytes2, timingSafeEqual } from "node:crypto";
+import { createServer } from "node:http";
+
+// src/utils/templateSamples.ts
+function sampleBlock(text2, style = "body", extra = {}, runs = [{ text: text2 }]) {
+  return {
+    index: 0,
+    start: 0,
+    length: runs.reduce((sum, run) => sum + run.text.length, 0),
+    text: runs.map((run) => run.text).join(""),
+    style,
+    styleType: null,
+    indent: 0,
+    alignment: "left",
+    blockQuote: false,
+    ...extra,
+    runs: runs.map((run) => ({ start: 0, length: run.text.length, ...run })),
+    attachments: []
+  };
+}
+var sampleAttachmentRun = (id2, uti) => ({
+  text: "\uFFFC",
+  attachment: { id: id2, uti }
+});
+function sampleAttachment(id2, uti, extra = {}) {
+  return { id: id2, pk: 0, uti, kind: classifyUti(uti), children: [], ...extra };
+}
+function sampleNote(pk, blocks, attachments = []) {
+  let offset = 0;
+  const indexed = blocks.map((b, index) => {
+    const start = offset;
+    offset += b.length + 1;
+    let at = start;
+    const runs = b.runs.map((run) => {
+      const shifted = { ...run, start: at };
+      at += run.length;
+      return shifted;
+    });
+    const markers2 = runs.flatMap(
+      (run) => run.attachment ? [{ ...run.attachment, start: run.start, blockIndex: index }] : []
+    );
+    return { ...b, index, start, runs, attachments: markers2 };
+  });
+  const markers = indexed.flatMap((b) => b.attachments);
+  return {
+    id: `x-coredata://SAMPLE/ICNote/p${pk}`,
+    title: indexed[0]?.text ?? "",
+    doc: {
+      text: indexed.map((b) => b.text).join("\n"),
+      textLength: offset,
+      blocks: indexed,
+      attachments: markers,
+      undecodedFields: { attributeRun: {}, paragraphStyle: {} },
+      summary: summarize(indexed, markers)
+    },
+    attachments: new Map(attachments.map((a) => [a.id, a])),
+    ordered: attachments.map((a, i) => ({ ...a, pk: i + 1 }))
+  };
+}
+function sampleMeta(uuid2) {
+  return {
+    uuid: uuid2,
+    created: "2026-01-05T14:30:00.000Z",
+    modified: "2026-02-10T09:15:00.000Z",
+    folder: "Sample Folder",
+    account: "iCloud"
+  };
+}
+function templateSamples() {
+  return [
+    {
+      id: "structure",
+      label: "Headings, lists and checklists",
+      meta: sampleMeta("00000000-0000-4000-8000-000000000001"),
+      note: sampleNote(1, [
+        sampleBlock("Weekly Plan", "title"),
+        sampleBlock("Goals", "heading"),
+        sampleBlock("Details", "subheading"),
+        sampleBlock("A plain paragraph with *characters* that need escaping."),
+        sampleBlock("First step", "numbered"),
+        sampleBlock("Second step", "numbered"),
+        sampleBlock("Nested step", "numbered", { indent: 1 }),
+        sampleBlock("A bullet", "bulleted"),
+        sampleBlock("A dash", "dashed"),
+        sampleBlock("Nested bullet", "bulleted", { indent: 1 }),
+        sampleBlock("Done task", "checklist", { checklist: { id: "sample-a", done: true } }),
+        sampleBlock("Open task", "checklist", { checklist: { id: "sample-b", done: false } }),
+        sampleBlock("A quoted line", "body", { blockQuote: true }),
+        sampleBlock("const answer = 42;", "monospaced"),
+        sampleBlock('console.log("sample");', "monospaced")
+      ])
+    },
+    {
+      id: "inline",
+      label: "Inline formatting and links",
+      meta: sampleMeta("00000000-0000-4000-8000-000000000002"),
+      note: sampleNote(2, [
+        sampleBlock("Formatting Sample", "title"),
+        sampleBlock("", "body", {}, [
+          { text: "Bold", bold: true },
+          { text: ", " },
+          { text: "italic", italic: true },
+          { text: ", " },
+          { text: "both", bold: true, italic: true },
+          { text: ", " },
+          { text: "struck", strikethrough: true },
+          { text: ", " },
+          { text: "underlined", underline: true },
+          { text: "." }
+        ]),
+        sampleBlock("", "body", {}, [
+          { text: "Highlighted", highlight: "purple" },
+          { text: ", x" },
+          { text: "2", superscript: true },
+          { text: ", H" },
+          { text: "2", subscript: true },
+          { text: "O, and " },
+          { text: "red text", color: "#FF3B30" },
+          { text: "." }
+        ]),
+        sampleBlock("", "body", {}, [
+          { text: "A " },
+          { text: "web link", link: "https://example.com/page", linkSafe: true },
+          { text: " and a " },
+          { text: "bold link", link: "https://example.com/bold", linkSafe: true, bold: true },
+          { text: "." }
+        ])
+      ])
+    },
+    {
+      id: "attachments",
+      label: "Attachments and tags",
+      meta: sampleMeta("00000000-0000-4000-8000-000000000003"),
+      note: sampleNote(
+        3,
+        [
+          sampleBlock("Trip Notes", "title"),
+          sampleBlock("", "body", {}, [
+            { text: "Tagged " },
+            sampleAttachmentRun("SAMPLE-TAG", "com.apple.notes.inlinetextattachment.hashtag"),
+            { text: " for later." }
+          ]),
+          sampleBlock("", "body", {}, [sampleAttachmentRun("SAMPLE-IMG", "public.jpeg")]),
+          sampleBlock("", "body", {}, [sampleAttachmentRun("SAMPLE-PDF", "com.adobe.pdf")]),
+          sampleBlock("", "body", {}, [
+            sampleAttachmentRun("SAMPLE-DIV", "com.apple.notes.inlinetextattachment.dividerline")
+          ]),
+          sampleBlock("", "body", {}, [sampleAttachmentRun("SAMPLE-URL", "public.url")]),
+          sampleBlock("", "body", {}, [sampleAttachmentRun("SAMPLE-IMGURL", "public.url")])
+        ],
+        [
+          sampleAttachment("SAMPLE-TAG", "com.apple.notes.inlinetextattachment.hashtag", {
+            altText: "#travel"
+          }),
+          sampleAttachment("SAMPLE-IMG", "public.jpeg", { title: "harbor.jpg" }),
+          sampleAttachment("SAMPLE-PDF", "com.adobe.pdf", { title: "itinerary.pdf" }),
+          sampleAttachment("SAMPLE-DIV", "com.apple.notes.inlinetextattachment.dividerline"),
+          sampleAttachment("SAMPLE-URL", "public.url", {
+            title: "Example Domain",
+            url: "https://example.com/"
+          }),
+          sampleAttachment("SAMPLE-IMGURL", "public.url", {
+            title: "Harbor at dusk",
+            url: "https://example.com/photos/harbor.jpg"
+          })
+        ]
+      )
+    }
+  ];
+}
+
+// src/services/templateEditorPage.ts
+var EDITOR_STYLE = `
+:root { color-scheme: light dark; --bg: #fafafa; --fg: #1d1d1f; --muted: #6e6e73;
+  --panel: #ffffff; --border: #d2d2d7; --accent: #0a66d8; --bad: #c1272d; --ok: #1f7a3a; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f2f2f7; --muted: #a1a1a6;
+  --panel: #2c2c2e; --border: #3a3a3c; --accent: #4c9bff; --bad: #ff6b6b; --ok: #4cd07d; } }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  background: var(--bg); color: var(--fg); }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px;
+  border-bottom: 1px solid var(--border); background: var(--panel); }
+header h1 { font-size: 15px; margin: 0 12px 0 0; }
+label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+select, input, button, textarea { font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 16px;
+  height: calc(100vh - 110px); min-height: 360px; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; height: auto; } }
+section { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+h2 { font-size: 13px; margin: 0 0 6px; color: var(--muted); font-weight: 600; }
+textarea { flex: 1; min-height: 300px; width: 100%; resize: none;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { flex: 1; margin: 0; overflow: auto; padding: 8px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; min-height: 300px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+ul { margin: 6px 0 0; padding-left: 18px; max-height: 120px; overflow: auto; }
+.bad { color: var(--bad); } .ok { color: var(--ok); } .muted { color: var(--muted); }
+footer { padding: 0 16px 12px; }
+`;
+var EDITOR_SCRIPT = `
+"use strict";
+const token = new URLSearchParams(location.search).get("token") || "";
+const $ = (id) => document.getElementById(id);
+const api = async (path, body) => {
+  const res = await fetch(path, body === undefined
+    ? { headers: { Authorization: "Bearer " + token } }
+    : { method: "POST", headers: { Authorization: "Bearer " + token,
+        "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error((data.error && data.error.message) || res.statusText);
+    e.detail = data.error; throw e; }
+  return data;
+};
+const setText = (id, text, cls) => { const el = $(id); el.textContent = text;
+  el.className = cls || ""; };
+const list = (id, items) => { const ul = $(id); ul.replaceChildren();
+  for (const item of items) { const li = document.createElement("li");
+    li.textContent = item; ul.append(li); } };
+let timer;
+async function refresh() {
+  try {
+    const out = await api("/api/preview", { template: $("json").value, sample: $("sample").value });
+    if (out.valid) setText("status", "Valid template.", "ok");
+    else setText("status", out.errors.length + " problem(s):", "bad");
+    list("errors", out.errors.map((e) => e.path + ": " + e.message));
+    list("warnings", out.warnings.map((w) => w.code + (w.attachmentId ? " (" + w.attachmentId + ")" : "")));
+    $("preview").textContent = out.valid ? out.markdown : "";
+  } catch (e) { setText("status", "Preview failed: " + e.message, "bad"); }
+}
+const schedule = () => { clearTimeout(timer); timer = setTimeout(refresh, 250); };
+async function load(name) {
+  try {
+    const out = await api("/api/template?name=" + encodeURIComponent(name));
+    $("json").value = JSON.stringify(out.template, null, 2) + "\\n";
+    $("name").value = out.source === "saved" ? out.name : "";
+    refresh();
+  } catch (e) { setText("status", "Could not open " + name + ": " + e.message, "bad"); }
+}
+async function save() {
+  try {
+    const out = await api("/api/save", { name: $("name").value.trim(),
+      template: $("json").value, force: $("force").checked });
+    setText("saved", (out.replaced ? "Replaced " : "Saved ") + out.name + " at " + out.path, "ok");
+    $("force").checked = false;
+    await fillPicker(out.name);
+  } catch (e) {
+    const errors = (e.detail && e.detail.errors) || [];
+    setText("saved", e.message + (errors.length ? " " + errors.map((x) => x.path + ": " + x.message).join("; ") : ""), "bad");
+  }
+}
+async function fillPicker(selected) {
+  const state = await api("/api/state");
+  const picker = $("picker"); picker.replaceChildren();
+  const group = (label, names) => { const g = document.createElement("optgroup");
+    g.label = label; for (const n of names) { const o = document.createElement("option");
+      o.value = n; o.textContent = n; g.append(o); } picker.append(g); };
+  group("Built-in", state.builtins);
+  if (state.saved.length) group("Saved", state.saved);
+  picker.value = selected;
+  setText("dir", "Library: " + state.dir, "muted");
+  return state;
+}
+(async () => {
+  try {
+    const state = await fillPicker("");
+    const sample = $("sample");
+    for (const s of state.samples) { const o = document.createElement("option");
+      o.value = s.id; o.textContent = s.label; sample.append(o); }
+    $("picker").value = state.initial.name;
+    $("json").value = JSON.stringify(state.initial.template, null, 2) + "\\n";
+    $("name").value = state.initial.source === "saved" ? state.initial.name : "";
+    $("json").addEventListener("input", schedule);
+    sample.addEventListener("change", refresh);
+    $("picker").addEventListener("change", () => load($("picker").value));
+    $("save").addEventListener("click", save);
+    refresh();
+  } catch (e) { setText("status", "Could not start: " + e.message, "bad"); }
+})();
+`;
+var EDITOR_BODY = `
+<header>
+  <h1>Markdown template editor</h1>
+  <label>Open <select id="picker"></select></label>
+  <label>Preview <select id="sample"></select></label>
+  <span id="dir" class="muted"></span>
+</header>
+<main>
+  <section>
+    <h2>Template JSON</h2>
+    <textarea id="json" spellcheck="false" aria-label="Template JSON"></textarea>
+    <div id="status" role="status"></div>
+    <ul id="errors" class="bad"></ul>
+  </section>
+  <section>
+    <h2>Markdown preview</h2>
+    <pre id="preview" aria-label="Markdown preview"></pre>
+    <ul id="warnings" class="muted" aria-label="Warnings"></ul>
+  </section>
+</main>
+<footer>
+  <label>Save as <input id="name" placeholder="my-template" maxlength="64" autocomplete="off"></label>
+  <label><input id="force" type="checkbox"> Replace an existing template</label>
+  <button id="save" type="button">Save</button>
+  <span id="saved" role="status"></span>
+</footer>
+`;
+function templateEditorPage(nonce) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>Template Editor</title><style nonce="${nonce}">${EDITOR_STYLE}</style></head><body>${EDITOR_BODY}<script nonce="${nonce}">${EDITOR_SCRIPT}</script></body></html>`;
+}
+
+// src/services/templateEditor.ts
+var DEFAULT_EDITOR_IDLE_MS = 30 * 60 * 1e3;
+var MAX_EDITOR_BODY_BYTES = MAX_TEMPLATE_BYTES * 2 + 4096;
+var EditorHttpError = class extends Error {
+  constructor(status, code, message, errors) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.errors = errors;
+  }
+  status;
+  code;
+  errors;
+};
+var editorTokenMatches = (given, token) => {
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
+function editorPresentedToken(req, url) {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
+  return url.searchParams.get("token") ?? void 0;
+}
+async function readEditorJson(req) {
+  const type = req.headers["content-type"] ?? "";
+  if (!/^application\/json(?:\s*;|$)/i.test(type))
+    throw new EditorHttpError(415, "unsupported-media-type", "Send JSON (application/json).");
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_EDITOR_BODY_BYTES)
+      throw new EditorHttpError(413, "too-large", "Request body too large.");
+    chunks.push(chunk);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new EditorHttpError(400, "bad-request", "Request body is not valid JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new EditorHttpError(400, "bad-request", "Request body must be a JSON object.");
+  return parsed;
+}
+var editorStringField = (body, key) => {
+  const value = body[key];
+  if (typeof value !== "string")
+    throw new EditorHttpError(400, "bad-request", `"${key}" must be a string.`);
+  return value;
+};
+async function startTemplateEditor(options = {}) {
+  const host = options.host ?? "127.0.0.1";
+  const idleMs = options.idleMs ?? DEFAULT_EDITOR_IDLE_MS;
+  const store = options.store ?? new TemplateStore();
+  const token = options.token ?? randomBytes2(32).toString("hex");
+  const samples = templateSamples();
+  const initialName = options.name ?? "standard-markdown";
+  const initial = isBuiltinTemplate(initialName) ? builtinTemplate(initialName) : store.get(initialName);
+  const initialSource = isBuiltinTemplate(initialName) ? "builtin" : "saved";
+  let origin = "";
+  let hostHeader = "";
+  let idleTimer;
+  let closeReason = "closed";
+  const sockets = /* @__PURE__ */ new Set();
+  const loadTemplate = (name) => {
+    if (isBuiltinTemplate(name))
+      return { name, source: "builtin", template: builtinTemplate(name) };
+    return { name, source: "saved", template: store.get(name) };
+  };
+  const state = () => {
+    const listing = store.list();
+    return {
+      builtins: BUILTIN_TEMPLATE_NAMES,
+      saved: listing.templates.map((t) => t.name),
+      dir: listing.dir,
+      samples: [
+        ...samples.map((s) => ({ id: s.id, label: s.label })),
+        ...options.note ? [{ id: "note", label: `Note: ${options.note.note.title}` }] : []
+      ],
+      initial: { name: initialName, source: initialSource, template: initial }
+    };
+  };
+  const preview = (body) => {
+    const text2 = editorStringField(body, "template");
+    const sampleId = typeof body.sample === "string" ? body.sample : samples[0].id;
+    const source = sampleId === "note" && options.note ? options.note : samples.find((s) => s.id === sampleId);
+    if (!source) throw new EditorHttpError(400, "bad-request", `Unknown sample "${sampleId}".`);
+    let portable;
+    try {
+      portable = parseTemplate(text2);
+    } catch (error2) {
+      if (error2 instanceof TemplateValidationError)
+        return { valid: false, errors: error2.errors, markdown: "", warnings: [] };
+      throw error2;
+    }
+    const result = renderNotesWithTemplate(
+      [source.note],
+      { stats: emptyStats() },
+      {
+        template: resolveTemplate(portable),
+        exportStem: "preview",
+        metaFor: () => source.meta
+      }
+    );
+    return { valid: true, errors: [], markdown: result.markdown, warnings: result.warnings };
+  };
+  const save = (body) => {
+    const name = editorStringField(body, "name");
+    const text2 = editorStringField(body, "template");
+    const force = body.force === true;
+    try {
+      const saved = store.save(name, text2, { force });
+      return { name, path: saved.path, bytes: saved.bytes, replaced: saved.replaced };
+    } catch (error2) {
+      if (error2 instanceof TemplateValidationError)
+        throw new EditorHttpError(
+          422,
+          "invalid-template",
+          "The template is invalid.",
+          error2.errors
+        );
+      if (error2 instanceof TemplateStoreError && error2.code === "template-exists")
+        throw new EditorHttpError(
+          409,
+          error2.code,
+          `A template named "${name}" already exists. Tick "Replace an existing template" to replace it.`
+        );
+      if (error2 instanceof TemplateStoreError)
+        throw new EditorHttpError(400, error2.code, error2.message);
+      throw error2;
+    }
+  };
+  const send = (res, status, type, body, extra = {}) => {
+    res.writeHead(status, {
+      "Content-Type": type,
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      ...extra
+    });
+    res.end(body);
+  };
+  const sendJson = (res, status, value) => send(res, status, "application/json; charset=utf-8", JSON.stringify(value));
+  const touch = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (idleMs > 0)
+      idleTimer = setTimeout(() => {
+        closeReason = "idle";
+        void close();
+      }, idleMs);
+  };
+  const handle = async (req, res) => {
+    if (req.headers.host !== hostHeader)
+      throw new EditorHttpError(421, "wrong-host", "Unexpected Host header.");
+    const url = new URL(req.url ?? "/", origin);
+    if (!editorTokenMatches(editorPresentedToken(req, url), token))
+      throw new EditorHttpError(401, "unauthorized", "Missing or wrong token.");
+    const site = req.headers["sec-fetch-site"];
+    if (site && site !== "same-origin" && site !== "none")
+      throw new EditorHttpError(403, "cross-origin", "Cross-site requests are refused.");
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin !== void 0 && requestOrigin !== origin)
+      throw new EditorHttpError(403, "cross-origin", "Cross-origin requests are refused.");
+    if (req.method === "POST" && requestOrigin !== origin)
+      throw new EditorHttpError(403, "cross-origin", "POST requires the editor's own Origin.");
+    touch();
+    const route = `${req.method} ${url.pathname}`;
+    switch (route) {
+      case "GET /": {
+        const nonce = randomBytes2(16).toString("base64");
+        return send(res, 200, "text/html; charset=utf-8", templateEditorPage(nonce), {
+          "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+        });
+      }
+      case "GET /api/state":
+        return sendJson(res, 200, state());
+      case "GET /api/template": {
+        const name = url.searchParams.get("name") ?? "";
+        try {
+          return sendJson(res, 200, loadTemplate(name));
+        } catch (error2) {
+          if (error2 instanceof TemplateStoreError)
+            throw new EditorHttpError(404, error2.code, error2.message);
+          if (error2 instanceof TemplateValidationError)
+            throw new EditorHttpError(
+              422,
+              "invalid-template",
+              "The saved template is invalid.",
+              error2.errors
+            );
+          throw error2;
+        }
+      }
+      case "POST /api/preview":
+        return sendJson(res, 200, preview(await readEditorJson(req)));
+      case "POST /api/save":
+        return sendJson(res, 200, save(await readEditorJson(req)));
+      default:
+        throw new EditorHttpError(404, "not-found", "Not found.");
+    }
+  };
+  const server2 = createServer((req, res) => {
+    handle(req, res).catch((error2) => {
+      const http = error2 instanceof EditorHttpError ? error2 : new EditorHttpError(
+        500,
+        "internal-error",
+        "The editor could not complete the request."
+      );
+      if (!res.headersSent)
+        sendJson(res, http.status, {
+          error: {
+            code: http.code,
+            message: http.message,
+            ...http.errors ? { errors: http.errors } : {}
+          }
+        });
+      else res.end();
+    });
+  });
+  server2.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+  });
+  let resolveClosed;
+  const closed = new Promise((resolve9) => resolveClosed = resolve9);
+  let closing;
+  const close = () => {
+    closing ??= new Promise((resolve9) => {
+      if (idleTimer) clearTimeout(idleTimer);
+      server2.close(() => {
+        resolveClosed(closeReason);
+        resolve9();
+      });
+      for (const socket of sockets) socket.destroy();
+    });
+    return closing;
+  };
+  await new Promise((resolve9, reject) => {
+    server2.once("error", reject);
+    server2.listen({ host, port: options.port ?? 0, exclusive: true }, () => {
+      server2.off("error", reject);
+      resolve9();
+    });
+  });
+  const port = server2.address().port;
+  const authority = host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+  origin = `http://${authority}`;
+  hostHeader = authority;
+  touch();
+  return { url: `${origin}/?token=${token}`, host, port, token, closed, close };
+}
+
+// src/services/templateEditorCli.ts
+var TEMPLATES_USAGE = `Usage: apple-notes-mcp templates edit [name] [options]
+
+Open a local web editor for Markdown export templates. The editor validates
+and previews as you type, against built-in sample notes, and saves into the
+template library (create-only unless you tick "replace").
+
+  name                 Template to open: standard-markdown, obsidian, or a saved name
+  --port N             Port to listen on (default: a free port)
+  --idle-minutes N     Stop after N minutes without a request (default 30; 0: never)
+  --note ID            Also preview one real note (x-coredata://.../ICNote/pN), read-only
+  --tailnet            Listen on this Mac's Tailscale address instead of 127.0.0.1,
+                       so other devices on your tailnet can open the editor.
+                       Anyone on the tailnet who has the printed URL can save templates.
+
+Every request needs the per-run token in the printed URL. Press Ctrl-C to stop.
+`;
+function parseTemplatesArgs(argv) {
+  if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) return "help";
+  const [command, ...rest] = argv;
+  if (command !== "edit") throw new Error(`Unknown templates command "${command}".`);
+  const args = {
+    idleMinutes: DEFAULT_EDITOR_IDLE_MS / 6e4,
+    tailnet: false
+  };
+  const number3 = (flag3, value, max) => {
+    if (value === void 0 || !/^\d+$/.test(value) || Number(value) > max)
+      throw new Error(`${flag3} needs a whole number from 0 to ${max}.`);
+    return Number(value);
+  };
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--port") args.port = number3(arg, rest[++i], 65535);
+    else if (arg === "--idle-minutes") args.idleMinutes = number3(arg, rest[++i], 24 * 60);
+    else if (arg === "--note") {
+      const id2 = rest[++i];
+      if (!id2 || !/^x-coredata:\/\/[^/\s]+\/ICNote\/p[0-9]{1,18}$/.test(id2))
+        throw new Error("--note needs a note id such as x-coredata://\u2026/ICNote/p123.");
+      args.noteId = id2;
+    } else if (arg === "--tailnet") args.tailnet = true;
+    else if (arg.startsWith("-")) throw new Error(`Unknown option ${arg}.`);
+    else if (args.name === void 0) args.name = arg;
+    else throw new Error(`Unexpected argument "${arg}".`);
+  }
+  return args;
+}
+var editorSignals = (stop) => {
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  return () => {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  };
+};
+async function runTemplatesCommand(argv, deps = {}) {
+  const out = deps.out ?? ((text2) => process.stdout.write(text2));
+  const err = deps.err ?? ((text2) => process.stderr.write(text2));
+  let args;
+  try {
+    args = parseTemplatesArgs(argv);
+  } catch (error2) {
+    err(`${error2.message}
+
+${TEMPLATES_USAGE}`);
+    return 2;
+  }
+  if (args === "help") {
+    out(TEMPLATES_USAGE);
+    return 0;
+  }
+  let host = "127.0.0.1";
+  if (args.tailnet) {
+    const found = (deps.tailnetAddress ?? findTailnetAddress)();
+    if (!found) {
+      err(
+        "No Tailscale address found (no 100.64.0.0/10 IPv4 address on this Mac). Connect Tailscale first, or run without --tailnet.\n"
+      );
+      return 1;
+    }
+    host = found.address;
+  }
+  let handle;
+  try {
+    const note = args.noteId ? (deps.readNote ?? ((id2) => ({ note: readExportNote(id2), meta: readExportNoteMeta(id2) })))(args.noteId) : void 0;
+    handle = await (deps.start ?? startTemplateEditor)({
+      host,
+      port: args.port,
+      idleMs: args.idleMinutes * 6e4,
+      name: args.name,
+      note
+    });
+  } catch (error2) {
+    err(`Could not start the template editor: ${error2.message}
+`);
+    return 1;
+  }
+  out(`Template editor: ${handle.url}
+`);
+  if (args.tailnet)
+    err(
+      `Listening on the tailnet address ${handle.host}. Any device on your tailnet that has this URL can read and save templates. Keep the URL private.
+`
+    );
+  err(
+    args.idleMinutes > 0 ? `Press Ctrl-C to stop. Stops by itself after ${args.idleMinutes} idle minute(s).
+` : "Press Ctrl-C to stop.\n"
+  );
+  const unregister = (deps.onSignal ?? editorSignals)(() => void handle.close());
+  const reason = await handle.closed;
+  unregister();
+  err(
+    reason === "idle" ? "Template editor stopped after the idle timeout.\n" : "Template editor stopped.\n"
+  );
+  return 0;
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -59556,6 +60262,9 @@ if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
   process.exit(report.ready || !report.checkOnly ? 0 : 1);
+}
+if (process.argv[2] === "templates") {
+  process.exit(await runTemplatesCommand(process.argv.slice(3)));
 }
 var server = new McpServer({
   name: "apple-notes",
