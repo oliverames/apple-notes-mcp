@@ -16,6 +16,22 @@
   stroke limit, too large) falls back to the PNG without failing the export,
   and the new receipt field `vectorDrawings` counts SVG and PNG drawings with
   the fallback reasons. `vectorDrawings: false` turns it off.
+- `apple-notes-mcp setup --permissions` checks Full Disk Access, Automation of
+  Notes.app, the Shortcut bridges, and Speech Recognition for the app that
+  launched it, with the same read-only probes as `doctor` and
+  `get-capabilities`. For each missing grant it names the System Settings pane
+  and its `x-apple.systempreferences:` URL, opens the pane only with `--open`,
+  and checks again each time the user presses Enter (`--once` and `--json` for
+  scripts). It never changes a setting or a grant.
+- An optional checklist window with Open Settings and Re-check buttons:
+  `apple-notes-mcp setup --permissions-window` compiles it from the packaged
+  Swift source, signs it ad hoc and installs it in Application Support like the
+  public helper; `setup --permissions --window` opens it. The window probes
+  nothing itself, and the server never uses it.
+- The public native helper gains a `speech_status` action that reads the Speech
+  Recognition status without prompting. Changing the helper source means an
+  installed helper reports stale until `apple-notes-mcp setup --public-helper`
+  runs again.
 
 ## [2.9.22] - 2026-09-24
 
