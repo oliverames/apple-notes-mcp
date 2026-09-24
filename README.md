@@ -2397,6 +2397,17 @@ match already has the requested state it writes nothing
 `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated in a release; dry
 runs do not.
 
+`scope: "note"` targets the whole body after the title instead of `match`
+(which, like `expectedCount`, is refused with it). It skips the title
+paragraph through its newline and every attachment glyph (images, files,
+tables, drawings, inline tags), whose contents are never changed, and keeps
+paragraph separators in the body. Every result reports `rangeCount` and
+`characterCount` (UTF-16 units targeted), and for this scope `skipped`:
+`titleUTF16`, `attachmentGlyphs`, and `highlightedAttachmentGlyphs` (glyphs
+that already carry a highlight, which keep `hasEmphasis` true after a
+removal). A note with no text after its title outside attachments is refused
+as `nothing_to_highlight` (envelope code `validation_error`).
+
 ## Usage Patterns
 
 ### Basic Workflow

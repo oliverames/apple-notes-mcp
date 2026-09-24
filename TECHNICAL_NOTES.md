@@ -902,14 +902,39 @@ order: 1 purple, 2 pink, 3 orange, 4 mint, 5 blue. That Notes-written run also
 carried a `TTColor` attribute; whether Notes always pairs the two was not
 determined, so the writer sets only `TTEmphasis`.
 
-The action takes a `scope`. The only scope is `"text"`: every non-overlapping
-literal, case-sensitive occurrence of `match` (no newlines, U+FFFC, or control
-characters; at most 1,000 UTF-16 units), refused as `match_count_mismatch`
-with `found` unless the count equals `expectedCount` (1 to 100, default 1).
-Target selection is one function; the plan, the no-op check, the edit, and the
-verification work on any list of ranges, so a later whole-note scope adds one
-branch there and reuses the rest of the action. An unknown scope is
-`invalid_request`.
+The action takes a `scope`. Target selection is one function; the plan, the
+no-op check, the edit, and the verification work on any list of ranges, so the
+scopes differ only there. An unknown scope is `invalid_request`.
+
+- `"text"` (default): every non-overlapping literal, case-sensitive occurrence
+  of `match` (no newlines, U+FFFC, or control characters; at most 1,000 UTF-16
+  units), refused as `match_count_mismatch` with `found` unless the count
+  equals `expectedCount` (1 to 100, default 1).
+- `"note"`: the whole body after the title paragraph. `match` and
+  `expectedCount` are `invalid_request` with this scope. The title paragraph
+  runs through the first `\n`, so the title's paragraph mark, which carries
+  its paragraph style, is not touched. The rest is split around every U+FFFC
+  attachment glyph, and each non-empty stretch between glyphs is one range.
+  A glyph stands for an object Notes draws itself (image, file, table,
+  drawing, or an inline hashtag or mention). Text such as table cells lives in
+  the attachment's own model, which this action never opens, and emphasis on
+  the glyph would only rewrite the attachment's attribute run, so glyphs are
+  skipped in both directions. Paragraph separators inside the body are
+  included. That follows how Notes applies emphasis to a selection: the
+  NotesEditor method that sets it,
+  `ic_setAttributeWithName:enabled:withEmphasisColorType:`, enumerates the
+  selection's attribute runs through one block, with no separate newline path
+  visible in its signature. That is an inference from the method and block
+  signatures, not from reading its body. A 2026-09-24 scan of a store copy
+  found six notes with Notes-written highlights, all within one line, so it
+  neither confirms nor contradicts it. Results report `skipped`
+  (`titleUTF16`, `attachmentGlyphs`, and `highlightedAttachmentGlyphs`, the
+  glyphs that already carry emphasis and therefore keep `hasEmphasis` true
+  after a removal). A note with nothing left (title only, or only attachments
+  after it) is refused as `nothing_to_highlight`, `committed: false`.
+
+Both scopes report `rangeCount` and `characterCount` (UTF-16 units across the
+target ranges), in dry runs and writes.
 
 For each attribute run inside each target range the writer writes the run's
 full attribute dictionary plus (or minus) `TTEmphasis` through
@@ -932,7 +957,12 @@ satisfies writes nothing (`status: "unchanged"`). The MCP tool is
 on 2026-09-24: the live write gate, the count guard, a stale revision, an
 unknown scope and color, a dry run with no change, two matches highlighted
 mint and read back, a no-op repeat, a recolor to purple, removal, and the live
-note unchanged.
+note unchanged. The same script's whole-note section passed on a fresh copy
+on 2026-09-24 on a note with two attachment glyphs: `match` and
+`expectedCount` refused with scope note, a dry run of 2 ranges and 46 UTF-16
+units starting right after a 21-unit title with no change, the whole body
+highlighted blue and read back with `hasEmphasis` false to true, a no-op
+repeat, and removal read back with `hasEmphasis` false.
 
 Earlier live test (2026-09-23, macOS 27.2, Notes running), run with the same
 edit logic in the earlier combined helper, before it moved into this writer:
