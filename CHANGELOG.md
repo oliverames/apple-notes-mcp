@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-## [2.9.18] - 2026-09-24
+## [2.9.21] - 2026-09-24
 
 ### Added
 
@@ -26,6 +26,89 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+
+## [2.9.19] - 2026-09-24
+
+### Fixed
+
+- `create-table`, `append-native`, `create-checklist-item(s)`,
+  `set-note-pinned` and the native-tag tools no longer report a Background
+  Operations Shortcut that ran nothing as an uncertain write (#248). The
+  Shortcut ends in `…_REFUSED` when its Find Notes step does not return
+  exactly one note with the exact title and scope text, and exits 0, so the
+  server ignored it and `create-table` said only "Native table cells not
+  verified" with `indeterminate: true`. The refusal is now read from the
+  Shortcut's output and named in the error, and a Shortcut that stops with its
+  own action error (for example "The action “Find Notes” could not run") is
+  passed through the same way. When either happens and the note reads back
+  unchanged, the result is `code: "operation_failed"`, `committed: false`,
+  `indeterminate: false`, so a caller knows a retry is safe;
+  `create-checklist-items` reports that item as `not-written`. A timeout, or a
+  failed readback on a note that did change, is still indeterminate.
+- The same tools no longer call a write "uncertain" when the Background
+  Operations Shortcut is not installed at all: the Shortcut never ran, so the
+  error is now `code: "shortcut_not_installed"`, `committed: false`,
+  `indeterminate: false`, instead of `verification_failed` with a
+  "Native table cells not verified" prefix (found while live-testing #248).
+
+## [2.9.18] - 2026-09-24
+
+### Fixed
+
+- `add-attachment`, `create-note-with-attachment`, and
+  `add-attachment-from-pasteboard` no longer report a written file between
+  25 and 64 MiB as `verification_failed` / `indeterminate` (#243). The
+  post-write check read Notes' copy through the base64 fetch path, capped at
+  `APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES` (25 MiB by default), below the
+  64 MiB the tools accept, so an agent could attach the same file twice. The
+  check now saves Notes' copy and compares its size and a streamed SHA-256
+  with the source through one `O_NOFOLLOW` descriptor, with no cap of its
+  own. The NoteStore fallback (#236) streams its hash the same way.
+- `list-folders` marks smart folders with `smartFolder: true` (and
+  `(smart folder)` in the text list) when Full Disk Access lets it read the
+  Notes database (#247). Notes' AppleScript lists smart folders like ordinary
+  folders, at least on macOS 27, and has no folder-type property, so they were
+  indistinguishable there. The `folderStore.ts` module comment, which said
+  `folders of account` omits smart folders, now says the opposite, and the
+  `list-smart-folders` description and smart-folder refusal text no longer
+  imply `list-folders` shows only ordinary folders.
+
+## [2.9.17] - 2026-09-24
+
+### Added
+
+- `add-attachment-from-pasteboard` attaches the image, PDF, or file on the
+  pasteboard to an exact note. The pasteboard is read once through AppKit's
+  public `NSPasteboard` (a constant JXA script with inputs passed as argv, no
+  native build) and frozen into a private 0700 temporary directory: a copied
+  file's bytes are copied with `O_NOFOLLOW`, and image or PDF data is written
+  from the preferred type (PNG, JPEG, HEIC, GIF, TIFF, PDF). The change count
+  is compared before and after the read, and the pasteboard is never written.
+  The frozen file goes through `add-attachment`'s verified path, including its
+  `filename` override; a name without an extension gets the pasted type's
+  extension. The result adds `source` (kind, type, default filename).
+  `APPLE_NOTES_MCP_PASTEBOARD_NAME` points the tool at a private named
+  pasteboard for testing, so live tests never touch the user's clipboard.
+- Paste privacy (macOS 15.4+): before reading the general pasteboard the tool
+  checks `NSPasteboard.accessBehavior` and reads only when it is
+  `alwaysAllow`, or `default`/`ask` with the `allowPasteAlert: true`
+  argument (which lets macOS show its paste alert). Otherwise it reads nothing
+  and returns `permission_denied` with `pasteboardCode:
+"pasteboard_access_denied"` and the `accessBehavior`. `alwaysDeny` is never
+  overridden. macOS before 15.4 has no such property and reads as before.
+- The note is resolved and `expectedContentHash` checked (and a malformed
+  `filename` refused) before the pasteboard is read, so an invalid request
+  never captures the clipboard.
+- Several copied files are refused with `pasteboardCode: "multiple_files"`
+  and a `count`, rather than attaching only one.
+- Pasteboard errors use the coded error envelope (`code`, `pasteboardCode`,
+  `committed: false`); `unsupported_content` lists the pasteboard types it
+  found and the supported ones. The read honors the per-call automation
+  timeout and `APPLE_NOTES_MCP_TIMEOUT_MS`, and a timeout is reported as
+  `pasteboard_timeout`.
+- Known limitation (#236): a pasted PDF, like one sent to `add-attachment`,
+  is inserted but reported as uncertain on macOS 27, because AppleScript does
+  not list PDF attachments.
 
 ## [2.9.16] - 2026-09-24
 
@@ -124,7 +207,7 @@
   `create-folder` (any path segment) now refuse a destination that names only
   a smart folder with `Refused: "<path>" is a smart folder…` and
   `structuredContent` `{ code: "unsupported", committed: false, reason:
-  "smart_folder_destination" }`, before anything is written. An ordinary
+"smart_folder_destination" }`, before anything is written. An ordinary
   folder with the same name as a smart folder is still found. Smart folders
   are identified read-only from the NoteStore database with the
   `list-smart-folders` reader, so the guard needs Full Disk Access; without

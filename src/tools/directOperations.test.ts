@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
@@ -12,9 +12,22 @@ vi.mock("../utils/noteRichText.js", async (original) => ({
   readRichNote: rich.read,
   richContentHash: rich.hash,
 }));
+const pasteboard = vi.hoisted(() => ({ freeze: vi.fn() }));
+vi.mock("../utils/pasteboardFreeze.js", async (original) => ({
+  ...(await original<typeof import("../utils/pasteboardFreeze.js")>()),
+  freezePasteboard: pasteboard.freeze,
+}));
 import { registerDirectOperations } from "./directOperations.js";
+import { PasteboardError } from "../utils/pasteboardFreeze.js";
 
 const directories: string[] = [];
+/** A saveAttachmentById mock that writes `content` where the caller asked. */
+const savesAs = (content: Buffer) =>
+  vi.fn((_note: string, _attachment: string, dest: string) => {
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, content);
+    return { success: true, savedPath: dest };
+  });
 afterEach(() => {
   vi.resetAllMocks();
   while (directories.length) rmSync(directories.pop()!, { recursive: true, force: true });
@@ -108,9 +121,7 @@ describe("direct Notes operations", () => {
         .mockReturnValueOnce([{ id: "existing" }])
         .mockReturnValue([{ id: "existing" }, { id: attachmentId }, { id: attachmentId }]),
       addAttachmentById: vi.fn(() => attachmentId),
-      getAttachmentBase64ById: vi.fn(() => ({
-        base64: Buffer.from(valid ? bytes : Buffer.from("wrong")).toString("base64"),
-      })),
+      saveAttachmentById: savesAs(valid ? bytes : Buffer.from("wrong")),
     };
     const registerTool = vi.fn();
     registerDirectOperations(
@@ -120,9 +131,102 @@ describe("direct Notes operations", () => {
     const handler = registerTool.mock.calls.find((call) => call[0] === "add-attachment")![2];
     const result = await handler({ id, expectedContentHash: "revision", path });
     expect(manager.addAttachmentById).toHaveBeenCalledTimes(1);
-    expect(manager.getAttachmentBase64ById).toHaveBeenCalledWith(id, attachmentId);
+    expect(manager.saveAttachmentById).toHaveBeenCalledWith(id, attachmentId, expect.any(String));
     if (valid) expect(result.structuredContent).toMatchObject({ ok: true, attachmentId });
     else expect(result).toMatchObject({ isError: true });
+  });
+
+  it("verifies a file over the 25 MiB base64 fetch cap (#243)", async () => {
+    const id = "x-coredata://ABC/ICNote/p1";
+    const attachmentId = "x-coredata://ABC/ICAttachment/p3";
+    const bytes = Buffer.alloc(25 * 1024 * 1024 + 1, 7);
+    const directory = mkdtempSync(join(tmpdir(), "direct-operation-large-test-"));
+    directories.push(directory);
+    const path = join(directory, "large.png");
+    writeFileSync(path, bytes);
+    rich.enrich.mockReturnValue({ complete: true, revision: "rich" });
+    rich.read.mockReturnValue({
+      text: "existing",
+      links: [],
+      nativeTags: [],
+      nativeObjectIds: [],
+      hasNativeObjects: false,
+      hasChecklist: false,
+      revision: "rich",
+      objects: [],
+      checklistItems: [],
+      styleRuns: [],
+      objectData: [],
+    });
+    rich.hash.mockReturnValue("revision");
+    const manager = {
+      getNoteById: vi.fn(() => ({ id, title: "Example", passwordProtected: false })),
+      getNoteContentById: vi.fn(() => "existing"),
+      listAttachmentsById: vi
+        .fn()
+        .mockReturnValueOnce([])
+        .mockReturnValue([{ id: attachmentId, name: "large.png" }]),
+      addAttachmentById: vi.fn(() => attachmentId),
+      saveAttachmentById: savesAs(bytes),
+      // The capped base64 path must not be used for verification.
+      getAttachmentBase64ById: vi.fn(() => ({ success: false, error: "too large" })),
+    };
+    const registerTool = vi.fn();
+    registerDirectOperations(
+      { registerTool } as unknown as McpServer,
+      manager as unknown as AppleNotesManager
+    );
+    const handler = registerTool.mock.calls.find((call) => call[0] === "add-attachment")![2];
+    const result = await handler({ id, expectedContentHash: "revision", path });
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      attachmentId,
+      bytes: bytes.length,
+    });
+    expect(manager.getAttachmentBase64ById).not.toHaveBeenCalled();
+  });
+
+  it("rejects a saved copy one byte short of a large file (#243)", async () => {
+    const id = "x-coredata://ABC/ICNote/p1";
+    const attachmentId = "x-coredata://ABC/ICAttachment/p3";
+    const bytes = Buffer.alloc(25 * 1024 * 1024 + 1, 7);
+    const directory = mkdtempSync(join(tmpdir(), "direct-operation-large-test-"));
+    directories.push(directory);
+    const path = join(directory, "large.png");
+    writeFileSync(path, bytes);
+    rich.enrich.mockReturnValue({ complete: true, revision: "rich" });
+    rich.read.mockReturnValue({
+      text: "existing",
+      links: [],
+      nativeTags: [],
+      nativeObjectIds: [],
+      hasNativeObjects: false,
+      hasChecklist: false,
+      revision: "rich",
+      objects: [],
+      checklistItems: [],
+      styleRuns: [],
+      objectData: [],
+    });
+    rich.hash.mockReturnValue("revision");
+    const manager = {
+      getNoteById: vi.fn(() => ({ id, title: "Example", passwordProtected: false })),
+      getNoteContentById: vi.fn(() => "existing"),
+      listAttachmentsById: vi
+        .fn()
+        .mockReturnValueOnce([])
+        .mockReturnValue([{ id: attachmentId, name: "large.png" }]),
+      addAttachmentById: vi.fn(() => attachmentId),
+      saveAttachmentById: savesAs(bytes.subarray(1)),
+    };
+    const registerTool = vi.fn();
+    registerDirectOperations(
+      { registerTool } as unknown as McpServer,
+      manager as unknown as AppleNotesManager
+    );
+    const handler = registerTool.mock.calls.find((call) => call[0] === "add-attachment")![2];
+    const result = await handler({ id, expectedContentHash: "revision", path });
+    expect(result).toMatchObject({ isError: true });
   });
 });
 
@@ -163,7 +267,7 @@ describe("attachment filename override and create-then-attach", () => {
         .mockReturnValueOnce([])
         .mockReturnValue([{ id: attachmentId, name: reportedName }]),
       addAttachmentById: vi.fn(() => attachmentId),
-      getAttachmentBase64ById: vi.fn(() => ({ base64: bytes.toString("base64") })),
+      saveAttachmentById: savesAs(bytes),
     };
     const registerTool = vi.fn();
     registerDirectOperations(
@@ -178,6 +282,194 @@ describe("attachment filename override and create-then-attach", () => {
       }>;
     return { manager, handler };
   };
+
+  /** A frozen pasteboard copy named like the real one would be. */
+  const frozen = (name: string, kind: "data" | "file" = "data", type = "public.png") => {
+    const directory = mkdtempSync(join(tmpdir(), "direct-operation-pasteboard-test-"));
+    directories.push(directory);
+    const path = join(directory, name);
+    writeFileSync(path, bytes);
+    const cleanup = vi.fn();
+    pasteboard.freeze.mockReturnValue({
+      kind,
+      type,
+      path,
+      filename: name,
+      bytes: bytes.length,
+      cleanup,
+    });
+    return cleanup;
+  };
+
+  it("attaches the frozen pasteboard copy through add-attachment's verified path", async () => {
+    const cleanup = frozen("Pasted image.png");
+    const { manager, handler } = setup("Pasted image.png");
+    const result = await handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+    });
+    expect(manager.addAttachmentById).toHaveBeenCalledTimes(1);
+    expect(manager.addAttachmentById.mock.calls[0][2]).toMatch(/\/Pasted image\.png$/);
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      attachmentId,
+      bytes: bytes.length,
+      name: "Pasted image.png",
+      source: { kind: "data", type: "public.png", filename: "Pasted image.png" },
+    });
+    expect(result.structuredContent).not.toHaveProperty("filenameVerified");
+    expect(pasteboard.freeze).toHaveBeenCalledWith({
+      pasteboardName: undefined,
+      allowPasteAlert: false,
+    });
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a named pasteboard when the testing variable is set", async () => {
+    frozen("Pasted image.png");
+    const { handler } = setup("Pasted image.png");
+    vi.stubEnv("APPLE_NOTES_MCP_PASTEBOARD_NAME", " live-test-board ");
+    try {
+      await handler("add-attachment-from-pasteboard")({ id, expectedContentHash: "revision" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(pasteboard.freeze).toHaveBeenCalledWith({
+      pasteboardName: "live-test-board",
+      allowPasteAlert: false,
+    });
+  });
+
+  it("applies a filename override, adding the pasted type's extension when missing", async () => {
+    const cleanup = frozen("report.pdf", "file", "public.file-url");
+    const { manager, handler } = setup("Q3 receipt.pdf");
+    const result = await handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+      filename: "Q3 receipt",
+    });
+    expect(manager.addAttachmentById.mock.calls[0][2]).toMatch(/\/Q3 receipt\.pdf$/);
+    expect(result.structuredContent).toMatchObject({
+      name: "Q3 receipt.pdf",
+      filenameVerified: true,
+      source: { kind: "file", filename: "report.pdf" },
+    });
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an override whose extension does not match the pasted type, then cleans up", async () => {
+    const cleanup = frozen("Pasted image.png");
+    const { manager, handler } = setup("x");
+    const result = await handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+      filename: "photo.jpg",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/extension/);
+    expect(manager.addAttachmentById).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a pasteboard failure with its code and never inserts", async () => {
+    pasteboard.freeze.mockImplementation(() => {
+      throw new PasteboardError("unsupported_content", "no image on the pasteboard");
+    });
+    const { manager, handler } = setup("x");
+    const result = await handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("no image on the pasteboard");
+    expect(result.structuredContent).toMatchObject({
+      code: "validation_error",
+      pasteboardCode: "unsupported_content",
+      committed: false,
+    });
+    expect(manager.addAttachmentById).not.toHaveBeenCalled();
+  });
+
+  it("passes allowPasteAlert through and reports an access refusal as permission_denied", async () => {
+    pasteboard.freeze.mockImplementation(() => {
+      throw new PasteboardError("pasteboard_access_denied", "macOS would ask", {
+        accessBehavior: "default",
+      });
+    });
+    const { manager, handler } = setup("x");
+    const result = await handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+      allowPasteAlert: true,
+    });
+    expect(pasteboard.freeze).toHaveBeenCalledWith({
+      pasteboardName: undefined,
+      allowPasteAlert: true,
+    });
+    expect(result.structuredContent).toMatchObject({
+      code: "permission_denied",
+      pasteboardCode: "pasteboard_access_denied",
+      accessBehavior: "default",
+      committed: false,
+    });
+    expect(manager.addAttachmentById).not.toHaveBeenCalled();
+  });
+
+  it("checks the note, revision, and filename before reading the pasteboard", async () => {
+    frozen("Pasted image.png");
+    const stale = setup("x");
+    const staleResult = await stale.handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "stale",
+    });
+    expect(staleResult.structuredContent).toMatchObject({ code: "revision_conflict" });
+
+    const missing = setup("x");
+    missing.manager.getNoteById.mockReturnValue(null as never);
+    const missingResult = await missing.handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+    });
+    expect(missingResult.structuredContent).toMatchObject({ code: "not_found" });
+
+    const badName = setup("x");
+    const badNameResult = await badName.handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+      filename: "a/b",
+    });
+    expect(badNameResult.isError).toBe(true);
+    expect(badName.manager.getNoteById).not.toHaveBeenCalled();
+
+    expect(pasteboard.freeze).not.toHaveBeenCalled();
+  });
+
+  it("reads the note once before freezing and re-checks it before inserting", async () => {
+    const order: string[] = [];
+    const cleanup = frozen("Pasted image.png");
+    const { manager, handler } = setup("Pasted image.png");
+    manager.getNoteById.mockImplementation(() => {
+      order.push("note");
+      return { id, title: "New", passwordProtected: false };
+    });
+    const frozenValue = pasteboard.freeze();
+    pasteboard.freeze.mockImplementation(() => {
+      order.push("freeze");
+      return frozenValue;
+    });
+    manager.addAttachmentById.mockImplementation(() => {
+      order.push("insert");
+      return attachmentId;
+    });
+    const result = await handler("add-attachment-from-pasteboard")({
+      id,
+      expectedContentHash: "revision",
+    });
+    expect(result.structuredContent).toMatchObject({ ok: true });
+    expect(order.slice(0, 3)).toEqual(["note", "freeze", "note"]);
+    expect(order.indexOf("insert")).toBeGreaterThan(2);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
 
   it("names the private copy after the override and verifies the reported name", async () => {
     const { manager, handler } = setup("Renamed Report.txt");
@@ -291,7 +583,7 @@ describe("attachment filename override and create-then-attach", () => {
 
   it("names the created note when the attachment step fails", async () => {
     const { manager, handler } = setup("x");
-    manager.getAttachmentBase64ById.mockReturnValue({ base64: "d3Jvbmc=" });
+    manager.saveAttachmentById.mockImplementation(savesAs(Buffer.from("wrong")));
     const result = await handler("create-note-with-attachment")({ title: "New", path: source() });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(
@@ -347,7 +639,7 @@ describe("add-attachment verifies through NoteStore when AppleScript lists nothi
       // Notes' AppleScript on macOS 27 never lists the PDF.
       listAttachmentsById: vi.fn(() => []),
       addAttachmentById: vi.fn(() => returnedId),
-      getAttachmentBase64ById: vi.fn(),
+      saveAttachmentById: vi.fn(),
       getAttachmentAssetsById: vi.fn(stored),
     };
     const registerTool = vi.fn();
@@ -393,7 +685,7 @@ describe("add-attachment verifies through NoteStore when AppleScript lists nothi
       bytes: bytes.length,
     });
     expect(manager.addAttachmentById).toHaveBeenCalledTimes(1);
-    expect(manager.getAttachmentBase64ById).not.toHaveBeenCalled();
+    expect(manager.saveAttachmentById).not.toHaveBeenCalled();
   });
 
   it("refuses a new row whose file bytes differ, and says not to attach again", async () => {

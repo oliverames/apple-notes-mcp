@@ -173,6 +173,13 @@ export interface Folder {
    * Whether the folder is shared with collaborators.
    */
   shared?: boolean;
+
+  /**
+   * True for a smart folder. AppleScript lists smart folders like ordinary
+   * ones, so this comes from the NoteStore database and is absent when that
+   * cannot be read (no Full Disk Access). A smart folder cannot hold notes.
+   */
+  smartFolder?: boolean;
 }
 
 /**
@@ -1495,6 +1502,18 @@ export interface NotesExportReceipt {
   warningsOmitted?: number;
   /** Templated exports only: absolute paths of asset files written or reused. */
   assetFiles?: string[];
+}
+
+/**
+ * What add-attachment-from-pasteboard took from the pasteboard.
+ */
+export interface PasteboardAttachmentSource {
+  /** "file" = a copied file's bytes; "data" = image or PDF bytes. */
+  kind: "file" | "data";
+  /** Pasteboard type (UTI) that was read, e.g. "public.png" or "public.file-url". */
+  type: string;
+  /** Default attachment name for the pasted content, before any filename override. */
+  filename: string;
 }
 
 // =============================================================================

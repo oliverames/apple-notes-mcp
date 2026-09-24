@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -29,6 +30,12 @@ import {
   richContentHash,
   type RichNote,
 } from "../utils/noteRichText.js";
+import {
+  freezePasteboard,
+  PASTEBOARD_NAME_ENV,
+  pasteboardFilename,
+} from "../utils/pasteboardFreeze.js";
+import type { PasteboardAttachmentSource } from "../types.js";
 
 // Accepts the x-coredata id as before, plus the note's Notes UUID or numeric
 // Core Data key, resolved to the x-coredata id before the handler runs.
@@ -99,7 +106,7 @@ function localAttachment(path: string): Buffer {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024)
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ADD_ATTACHMENT_BYTES)
       throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
     const bytes = readFileSync(descriptor);
     if (bytes.length !== stat.size)
@@ -107,6 +114,38 @@ function localAttachment(path: string): Buffer {
     return bytes;
   } finally {
     closeSync(descriptor);
+  }
+}
+
+/** Largest file add-attachment accepts; verification must never cap lower (#243). */
+const MAX_ADD_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Whether the regular file at `path` has exactly `size` bytes with SHA-256
+ * `expected`. Streams the file in chunks through one O_NOFOLLOW descriptor, so
+ * it has no read cap of its own and never holds the whole file twice (#243).
+ */
+function fileMatches(path: string, size: number, expected: string): boolean {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size !== size) return false;
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    let total = 0;
+    for (;;) {
+      const read = readSync(descriptor, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      total += read;
+      if (total > size) return false;
+      hash.update(chunk.subarray(0, read));
+    }
+    return total === size && hash.digest("hex") === expected;
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -251,17 +290,61 @@ export function registerDirectOperations(server: McpServer, manager: AppleNotesM
       }
     }
   );
+
+  tool(
+    "add-attachment-from-pasteboard",
+    "Use when: the user copied an image, a PDF, or a file (screenshot, Copy Image, Finder Copy) and wants it attached to an exact note.\nReturns: the add-attachment result (attachment id, bytes, name, content hash) plus source: what was taken from the pasteboard (kind, type, default filename).\nDo not use when: the pasteboard holds text (use append-to-note), several copied files (refused; use add-attachment per file), or you have a file path (use add-attachment).\nSafety: checks the note and revision before reading the pasteboard; reads nothing when macOS would show its paste alert unless allowPasteAlert is true (error pasteboardCode pasteboard_access_denied); reads the pasteboard once and freezes its bytes into a private temporary file before attaching, never writes to the pasteboard, then runs add-attachment's checks: fresh rich revision, at most 64 MiB, no insertion retry, existing content and exact bytes verified. Needs the MCP host to run in the logged-in GUI session.",
+    {
+      id: noteId,
+      expectedContentHash: revision,
+      filename: attachmentInput.filename.describe(
+        'Name the attachment gets in Notes (default: the copied file\'s name, or "Pasted image.png" / "Pasted document.pdf"). Without an extension, the pasted type\'s extension is added; with one, it must match the pasted type. Same rules as add-attachment otherwise.'
+      ),
+      allowPasteAlert: z
+        .boolean()
+        .optional()
+        .describe(
+          "Read the pasteboard even if macOS will show its paste alert (macOS 15.4+ paste privacy). Default false: when pasting is not already always allowed, the tool reads nothing and returns pasteboardCode pasteboard_access_denied. Set true only after the user agrees to answer the alert. Never overrides a Deny setting."
+        ),
+    },
+    ({ id, expectedContentHash, filename, allowPasteAlert }) => {
+      // Check the request and the note first, so an invalid call never reads the clipboard.
+      if (filename !== undefined) checkAttachmentFilename(filename);
+      const before = readSnapshot(manager, id);
+      if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
+      // A named pasteboard lets live tests run without touching the user's clipboard.
+      const frozen = freezePasteboard({
+        pasteboardName: process.env[PASTEBOARD_NAME_ENV]?.trim() || undefined,
+        allowPasteAlert: allowPasteAlert === true,
+      });
+      try {
+        const source: PasteboardAttachmentSource = {
+          kind: frozen.kind,
+          type: frozen.type,
+          filename: frozen.filename,
+        };
+        return {
+          ...attachFile(
+            manager,
+            {
+              id,
+              expectedContentHash,
+              path: frozen.path,
+              filename: pasteboardFilename(filename, frozen.filename),
+            },
+            before
+          ),
+          source,
+        };
+      } finally {
+        frozen.cleanup();
+      }
+    }
+  );
 }
 
-/**
- * Validate an attachment name override and return the name Notes will show.
- * Notes names a file attachment after the file it received, so the override is
- * applied by naming the private temporary copy. Keeping the source extension
- * keeps the file type Notes infers from the name consistent with the bytes.
- */
-export function attachmentName(path: string, filename?: string): string {
-  const source = basename(path);
-  if (filename === undefined) return source;
+/** Checks a requested attachment name's form, independent of the source file. */
+export function checkAttachmentFilename(filename: string): void {
   if (Buffer.byteLength(filename, "utf8") > 255)
     throw new Error("filename must be at most 255 bytes");
   if (
@@ -273,6 +356,18 @@ export function attachmentName(path: string, filename?: string): string {
     throw new Error(
       "filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces"
     );
+}
+
+/**
+ * Validate an attachment name override and return the name Notes will show.
+ * Notes names a file attachment after the file it received, so the override is
+ * applied by naming the private temporary copy. Keeping the source extension
+ * keeps the file type Notes infers from the name consistent with the bytes.
+ */
+export function attachmentName(path: string, filename?: string): string {
+  const source = basename(path);
+  if (filename === undefined) return source;
+  checkAttachmentFilename(filename);
   if (extname(filename).toLowerCase() !== extname(source).toLowerCase())
     throw new Error(
       `filename must keep the source file's extension (${extname(source) || "none"})`
@@ -336,21 +431,7 @@ function storedInsertion(
   if (returnedId && /\/ICAttachment\/p\d+$/.test(returnedId) && returnedId !== attachmentId)
     throw new Error(UNCERTAIN);
   const expected = sha256(bytes);
-  const matches = row.assetPaths.some((path) => {
-    // One descriptor for the size check and the read, so both see the same file.
-    let descriptor: number | undefined;
-    try {
-      descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const stat = fstatSync(descriptor);
-      return (
-        stat.isFile() && stat.size === bytes.length && sha256(readFileSync(descriptor)) === expected
-      );
-    } catch {
-      return false;
-    } finally {
-      if (descriptor !== undefined) closeSync(descriptor);
-    }
-  });
+  const matches = row.assetPaths.some((path) => fileMatches(path, bytes.length, expected));
   if (!matches)
     throw new Error(
       `Notes' database shows new attachment ${attachmentId} on this note, but its file bytes could not be verified; read the exact note and do not attach the file again`
@@ -358,14 +439,22 @@ function storedInsertion(
   return { attachmentId, name: row.filename };
 }
 
-/** Insert one verified local file into an exact, unchanged note. */
+/**
+ * Insert one verified local file into an exact, unchanged note.
+ *
+ * `checked` is a snapshot the caller already read and compared with
+ * `expectedContentHash` (add-attachment-from-pasteboard reads the note before
+ * it touches the pasteboard). The revision is still compared again here and
+ * re-read right before insertion.
+ */
 function attachFile(
   manager: AppleNotesManager,
-  args: { id: string; expectedContentHash: string; path: string; filename?: string }
+  args: { id: string; expectedContentHash: string; path: string; filename?: string },
+  checked?: Snapshot
 ): Record<string, unknown> {
   const { id, expectedContentHash, path } = args;
   const name = attachmentName(path, args.filename);
-  const before = readSnapshot(manager, id);
+  const before = checked ?? readSnapshot(manager, id);
   if (before.hash !== expectedContentHash) throw new Error("Note revision changed");
   const bytes = localAttachment(path);
   const beforeAttachments = manager.listAttachmentsById(id);
@@ -405,10 +494,15 @@ function attachFile(
     if (inserted.length === 1 && !(persistentReturnedId && returnedId !== inserted[0].id)) {
       attachmentId = inserted[0].id;
       reportedName = inserted[0].name;
-      const fetched = manager.getAttachmentBase64ById(id, attachmentId);
-      const actual =
-        typeof fetched.base64 === "string" ? Buffer.from(fetched.base64, "base64") : null;
-      if (!actual || sha256(actual) !== sha256(bytes))
+      // Export Notes' copy and hash it in place. The base64 fetch path is
+      // capped at APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES (25 MiB by default),
+      // below the 64 MiB this tool accepts, so it cannot verify large files (#243).
+      const verifyPath = join(directory, "verify", "attachment.bin");
+      const saved = manager.saveAttachmentById(id, attachmentId, verifyPath);
+      if (
+        !saved.success ||
+        !fileMatches(saved.savedPath ?? verifyPath, bytes.length, sha256(bytes))
+      )
         throw new Error("Attachment bytes were not verified; read the exact note before retrying");
     } else {
       // AppleScript saw nothing usable. On macOS 27 it never lists a PDF
