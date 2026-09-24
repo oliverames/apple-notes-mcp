@@ -51,6 +51,14 @@
   attachment row still belongs to the note with the same stored values
   (`preservation.otherAttachmentRowsUnchanged`) and reports what became of
   each removed attachment's row. The copy-store script adds attachment steps.
+- `native-edit-note` operation `trim_blank_lines`: removes redundant empty
+  paragraphs (`mode: "runs"` keeps the first `keep` of every run of blank
+  lines, `"end"` trims trailing blank lines, `"around"` trims the blank lines
+  before and/or after one anchored paragraph). Only whitespace-only title,
+  heading, subheading, and body paragraphs are removed, each with its own
+  newline; the title paragraph, list, checklist, monospaced, and attachment
+  rows are never touched. The dry run lists every paragraph it would remove.
+  The copy-store script adds a trim round trip.
 - `native-writer-status` reports `planEdit` and `editNote` beside
   `appendPlainText`; the features come from one `WRITER_FEATURES` table.
 - The copy-store script runs a plan, apply, and restore round trip on up to

@@ -213,8 +213,13 @@ UNCAPTION_OPS='[{"op":"replace","selector":{"kind":"text","text":" copy-store at
 ATTACHMENT_ANCHOR_OPS='[{"op":"insert_after","anchor":{"kind":"attachment","ordinal":1},"blocks":[{"type":"body","text":"copy-store attachment anchor"}]}]'
 ATTACHMENT_ANCHOR_UNDO_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store attachment anchor"}}]'
 REMOVE_ATTACHMENT_OPS='[{"op":"replace","selector":{"kind":"attachment","ordinal":1},"replacement":{"text":""}}]'
-EDITED=0
 ATTACHMENT_EDITED=0
+TRIM_MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","occurrence":1},"expectedCount":COUNT,"blocks":[{"type":"body","text":"copy-store trim start"},{"type":"body","text":""},{"type":"body","text":" "},{"type":"body","text":""},{"type":"body","text":"copy-store trim end"}]}]'
+TRIM_AROUND_OPS='[{"op":"trim_blank_lines","mode":"around","anchor":{"kind":"text","text":"copy-store trim start"},"side":"after","expectedCount":3}]'
+TRIM_UNMARK_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store trim start"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store trim end"}}]'
+TRIM_RUNS_OPS='[{"op":"trim_blank_lines","mode":"runs"}]'
+TRIMMED=0
+EDITED=0
 REFUSED_NOTES=0
 EDIT_LIVE_BEFORE=""
 for EDIT_NOTE in $EDIT_NOTES; do
@@ -254,7 +259,32 @@ for EDIT_NOTE in $EDIT_NOTES; do
     fail "the round trip did not restore the original text and runs"
   EDITED=$((EDITED + 1))
 
-  # 4c. Attachment selectors on notes whose body holds an attachment: add a
+  # 4c. trim_blank_lines: insert a marker, three empty body paragraphs (one
+  # holding a space), and a second marker; trim the blank run after
+  # the first marker (exactly 3 removed); delete the markers. The note must
+  # be restored exactly. Then trim the note's own runs of blank lines on the
+  # copy (not undoable, so it runs last); the plan must list each removed
+  # paragraph, and the independent check proves nothing else changed.
+  snap "$EDIT_NOTE" original
+  edit_step "$EDIT_NOTE" "insert blank lines between markers" "${TRIM_MARK_OPS/COUNT/$COUNT}"
+  edit_step "$EDIT_NOTE" "trim the blank lines after a marker" "$TRIM_AROUND_OPS"
+  [ "$(field "$OUT" operations.0.matchedCount)" = "3" ] || fail "trim around removed $(field "$OUT" operations.0.matchedCount), not 3"
+  [ "$(field "$OUT" operations.0.targets.1.blankUTF16)" = "1" ] || fail "trim did not report the whitespace paragraph"
+  edit_step "$EDIT_NOTE" "delete the trim markers" "$TRIM_UNMARK_OPS"
+  snap "$EDIT_NOTE" final
+  node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
+    fail "the trim round trip did not restore the original text and runs"
+  PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$TRIM_RUNS_OPS")" || true)"
+  [ "$(field "$PLAN" status)" = "planned" ] || fail "trim runs plan: $(field "$PLAN" code) $(field "$PLAN" message)"
+  if [ "$(field "$PLAN" targetCount)" != "0" ]; then
+    edit_step "$EDIT_NOTE" "trim the note's own blank runs" "$TRIM_RUNS_OPS"
+    [ "$(field "$OUT" targetCount)" = "$(field "$PLAN" targetCount)" ] || fail "trim runs removed a different number than planned"
+  else
+    echo "ok: no redundant blank lines to trim in this note"
+  fi
+  TRIMMED=$((TRIMMED + 1))
+
+  # 4d. Attachment selectors on notes whose body holds an attachment: add a
   # caption inline after the first attachment and remove it, insert and
   # delete a paragraph anchored on it (both must restore the note exactly),
   # then remove the attachment from the body. The removal cannot be undone,
@@ -287,6 +317,7 @@ done
 echo "ok: edit_note round trip restored $EDITED note(s) exactly; $REFUSED_NOTES refused at plan"
 [ "$ATTACHMENT_EDITED" -gt 0 ] || fail "the attachment selector steps ran on no note (EDIT_NOTES needs a note with an attachment in its body)"
 echo "ok: attachment selector steps passed on $ATTACHMENT_EDITED note(s)"
+echo "ok: trim_blank_lines steps passed on $TRIMMED note(s)"
 
 # 5. The live notes are untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"

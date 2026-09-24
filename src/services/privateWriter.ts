@@ -557,9 +557,8 @@ const replacementSchema = z.union([
 ]);
 
 /**
- * Selectors are keyed by `kind` so a later kind (a run of blank lines for
- * line-break trimming) is one more union member here and one more branch in
- * the writer's ResolveSelector().
+ * Selectors are keyed by `kind` so a later kind is one more union member here
+ * and one more branch in the writer's ResolveSelector().
  */
 const textSelector = z
   .object({
@@ -641,7 +640,33 @@ const insertSchema = (op: "insert_after" | "insert_before") =>
     })
     .strict();
 
-export const editOperationSchema = z.discriminatedUnion("op", [
+export const MAX_TRIM_KEEP = 10;
+
+/**
+ * Removes redundant empty paragraphs, each with its own newline, so no
+ * non-empty paragraph loses a character, its terminator, or its style. An
+ * empty paragraph is one with only whitespace, no attachment or inline
+ * object, and a text style (title, heading, subheading, body); empty list,
+ * checklist, and monospaced rows are never trimmed, and the title paragraph
+ * never is. mode "runs" keeps the first `keep` (default 1) of every run,
+ * "end" trims the run that ends the note (keep default 0), and "around"
+ * trims the runs directly before and/or after (`side`) the one paragraph
+ * `anchor` names (keep default 0). `expectedCount`, when given, must equal
+ * the number of paragraphs removed.
+ */
+const trimSchema = z
+  .object({
+    op: z.literal("trim_blank_lines"),
+    id: operationId,
+    mode: z.enum(["runs", "end", "around"]),
+    keep: z.number().int().min(0).max(MAX_TRIM_KEEP).optional(),
+    anchor: z.union([textSelector, styleSelector]).optional(),
+    side: z.enum(["before", "after", "both"]).optional(),
+    expectedCount: count.optional(),
+  })
+  .strict();
+
+const editOperationUnion = z.discriminatedUnion("op", [
   z
     .object({
       op: z.literal("replace"),
@@ -674,7 +699,26 @@ export const editOperationSchema = z.discriminatedUnion("op", [
       ]),
     })
     .strict(),
+  trimSchema,
 ]);
+
+/** The operation union plus the one cross-field rule a union member cannot carry. */
+export const editOperationSchema = editOperationUnion.superRefine((operation, context) => {
+  if (operation.op !== "trim_blank_lines") return;
+  const around = operation.mode === "around";
+  if (around && !operation.anchor)
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["anchor"],
+      message: "mode around needs an anchor",
+    });
+  if (!around && (operation.anchor || operation.side))
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [operation.anchor ? "anchor" : "side"],
+      message: "anchor and side are only valid with mode around",
+    });
+});
 export type EditOperation = z.infer<typeof editOperationSchema>;
 
 const editTargetSchema = z
@@ -684,6 +728,8 @@ const editTargetSchema = z
     location: z.number().int(),
     length: z.number().int(),
     newLength: z.number().int(),
+    /** For a trimmed empty paragraph: how many whitespace characters it held. */
+    blankUTF16: z.number().int().optional(),
   })
   .passthrough();
 

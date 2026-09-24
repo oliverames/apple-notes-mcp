@@ -774,6 +774,63 @@ describe("attachment selector schema", () => {
   });
 });
 
+describe("trim_blank_lines schema", () => {
+  const ok = (op: unknown) => editOperationSchema.safeParse(op).success;
+
+  it("accepts each mode with its own fields", () => {
+    expect(ok({ op: "trim_blank_lines", mode: "runs" })).toBe(true);
+    expect(ok({ op: "trim_blank_lines", mode: "runs", keep: 0, expectedCount: 4 })).toBe(true);
+    expect(ok({ op: "trim_blank_lines", mode: "end", id: "tail" })).toBe(true);
+    expect(
+      ok({ op: "trim_blank_lines", mode: "around", anchor: { text: "Agenda" }, side: "after" })
+    ).toBe(true);
+    expect(
+      ok({
+        op: "trim_blank_lines",
+        mode: "around",
+        anchor: { kind: "style", style: "heading", occurrence: 2 },
+        keep: 1,
+      })
+    ).toBe(true);
+  });
+
+  it("rejects what the writer would refuse", () => {
+    expect(ok({ op: "trim_blank_lines" })).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "all" })).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "runs", keep: 11 })).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "runs", keep: -1 })).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "around" })).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "runs", anchor: { text: "A" } })).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "end", side: "before" })).toBe(false);
+    expect(
+      ok({ op: "trim_blank_lines", mode: "around", anchor: { text: "A" }, side: "middle" })
+    ).toBe(false);
+    expect(ok({ op: "trim_blank_lines", mode: "runs", selector: { text: "A" } })).toBe(false);
+  });
+
+  it("refuses an around trim without an anchor before spawning, and passes a valid one through", () => {
+    install();
+    expect(
+      thrown(() =>
+        editNote(
+          {
+            identifier: NOTE,
+            dryRun: true,
+            operations: [{ op: "trim_blank_lines", mode: "around" }] as never,
+          },
+          deps(ON)
+        )
+      )
+    ).toMatchObject({ code: "invalid_request" });
+    const operations = [{ op: "trim_blank_lines" as const, mode: "end" as const }];
+    const plan = editNote({ identifier: NOTE, dryRun: true, operations }, deps(ON));
+    expect((plan as Record<string, unknown>).echo).toMatchObject({
+      action: "plan_edit",
+      operations,
+    });
+  });
+});
+
 describe("writer feature table", () => {
   it("reports edit planning without the unverified gate and gates applying", () => {
     install();
