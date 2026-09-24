@@ -95,6 +95,9 @@ export const highlightResultSchema = z
       .optional(),
     /** Notes' derived "note has a highlight" flag after the call; null when not modeled. */
     hasEmphasis: z.boolean().nullable(),
+    /** Dry run only: whether this macOS offers the write the plan describes. */
+    writeAvailable: z.boolean().optional(),
+    writeMissing: z.array(z.string()).optional(),
     modificationDate: z.string().nullable(),
     ...writeSyncFields,
   })

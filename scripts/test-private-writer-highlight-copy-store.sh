@@ -58,8 +58,22 @@ OUT="$(copy_run "$(highlight_request "$MARK" teal 2 "$REV")" || true)"
 OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$REV" ',"dryRun":true')" || true)"
 [ "$(field "$OUT" status)" = "planned" ] && [ "$(field "$OUT" wouldChange)" = "true" ] &&
   [ "$(field "$OUT" plan.1.changes)" = "true" ] || fail "dry run did not plan: $(field "$OUT" code)"
+[ "$(field "$OUT" writeAvailable)" = "true" ] || fail "dry run did not report writeAvailable"
 [ "$(field "$(copy_run "$READ")" revision)" = "$REV" ] || fail "dry run changed the note"
 echo "ok: count guard, stale revision, unknown scope and color, and dry run (no write) behave"
+
+# 3b. A match that ends inside a composed character (a letter and its
+#     combining accent) is refused; the whole character matches.
+CMARK="cm-$(date +%s)"
+OUT="$(copy_run "{\"protocol\":1,\"action\":\"append_plain_text\",\"identifier\":\"$NOTE\",\"text\":\"${CMARK}e\\u0301\",\"ifRevision\":\"$REV\"}")"
+[ "$(field "$OUT" verified)" = "true" ] || fail "could not add the composed-character fixture"
+REV="$(field "$OUT" revisionAfter)"
+OUT="$(copy_run "$(highlight_request "${CMARK}e" mint 1 "$REV")" || true)"
+[ "$(field "$OUT" code)" = "invalid_request" ] && [ "$(field "$OUT" splittingMatches)" = "1" ] &&
+  [ "$(field "$OUT" committed)" = "false" ] || fail "a match splitting a composed character was not refused: $(field "$OUT" code)"
+OUT="$(copy_run "$(highlight_request "${CMARK}e\\u0301" mint 1 "$REV" ',"dryRun":true')" || true)"
+[ "$(field "$OUT" status)" = "planned" ] || fail "the whole composed character did not match: $(field "$OUT" code)"
+echo "ok: a match inside a composed character is refused; the whole character matches"
 
 # 4. Highlight both matches, repeat (no-op), then remove.
 OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$REV")" || true)"

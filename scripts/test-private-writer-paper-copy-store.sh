@@ -1,7 +1,7 @@
 #!/bin/bash
-# Exercise the private WRITER's Paper authoring (add_paper) against a COPY of
-# the Notes store. Sibling of test-private-helper-copy-store.sh, which covers
-# the foundation's append path.
+# Exercise the private WRITER's Paper authoring (add_paper) and Paper reading
+# (read_paper) against a COPY of the Notes store. Sibling of
+# test-private-helper-copy-store.sh, which covers the foundation's append path.
 #
 # The live NoteStore.sqlite is only ever opened read-only: once by sqlite3's
 # online backup (to make the copy) and by the writer's read-only
@@ -141,6 +141,59 @@ BUNDLES="$(find "$WORK/store/Accounts" -mindepth 4 -maxdepth 4 -path "*/Paper/Bu
 [ "$BUNDLES" = "1" ] || fail "expected the new Paper bundle beside the copy, found $BUNDLES"
 echo "ok: the Paper bundle was written beside the copy"
 
+# 3b. read_paper decodes the new Paper drawing read-only: the two strokes and
+#     five points just written, PaperKit's element list on macOS 27, and no
+#     fallback PDF yet. Then a fallback PDF fixture (a stroked line, a filled
+#     rectangle, and a filled and stroked triangle) is placed where Notes keeps
+#     one, and its painted geometry is read back.
+read_paper() { printf '{"protocol":1,"action":"read_paper","identifier":"%s"%s}' "$1" "${2:-}"; }
+REV="$(field "$(copy_run "$READ")" revision)"
+OUT="$(copy_run "$(read_paper "$NOTE" ",\"attachmentIdentifier\":\"$PAPER_ATT\"")" || true)"
+[ "$(field "$OUT" status)" = "ok" ] || fail "read_paper failed: $(field "$OUT" code) $(field "$OUT" message)"
+[ "$(field "$OUT" strokeCount)" = "2" ] && [ "$(field "$OUT" pointCount)" = "5" ] ||
+  fail "read_paper decoded $(field "$OUT" strokeCount) strokes / $(field "$OUT" pointCount) points"
+[ "$(field "$OUT" strokes.1.ink)" = "watercolor" ] && [ -n "$(field "$OUT" strokes.0.points.2.0)" ] ||
+  fail "read_paper stroke inks or points are missing"
+[ "$(field "$OUT" revision)" = "$REV" ] || fail "read_paper changed or misreported the note revision"
+[ "$(field "$OUT" fallbackGeometry.available)" = "false" ] || fail "a new drawing reported fallback geometry"
+if [ "$(field "$OUT" shapeDecode.available)" = "true" ]; then
+  [ "$(field "$OUT" shapeDecode.elementKinds.stroke)" = "2" ] && [ "$(field "$OUT" shapes)" = "0" ] ||
+    fail "PaperKit reported $(field "$OUT" shapeDecode.elementKinds.stroke) strokes and $(field "$OUT" shapes) shapes"
+  echo "ok: read_paper: 2 strokes / 5 points, PaperKit element list agrees, no shapes"
+else
+  echo "ok: read_paper: 2 strokes / 5 points; shapes unavailable here ($(field "$OUT" shapeDecode.reason))"
+fi
+OUT="$(copy_run "$(read_paper "$NOTE" ",\"includePoints\":false")" || true)"
+[ "$(field "$OUT" code)" = "ambiguous_attachment" ] || [ "$(field "$OUT" status)" = "ok" ] ||
+  fail "read_paper by note: $(field "$OUT" code)"
+ACCOUNT_DIR="$(dirname "$(dirname "$(dirname "$(find "$WORK/store/Accounts" -mindepth 4 -maxdepth 4 -path "*/Paper/Bundles/$PAPER_ATT.bundle" -type d)")")")"
+GEN="1_$(uuidgen)"
+mkdir -p "$ACCOUNT_DIR/FallbackPDFs/$PAPER_ATT/$GEN"
+node -e '
+const c = "q 1 0 0 1 10 10 cm 1 0 0 RG 2 w 0 0 m 100 50 l S Q\n0 0 1 rg 20 20 50 30 re f\n0.5 g 0 G 200 200 m 250 200 l 225 250 l h B*\n";
+const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+  "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 300] /Contents 4 0 R >>",
+  `<< /Length ${c.length} >>\nstream\n${c}endstream`];
+let pdf = "%PDF-1.4\n"; const at = [];
+objs.forEach((o, i) => { at.push(pdf.length); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+const x = pdf.length;
+pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + at.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`;
+require("fs").writeFileSync(process.argv[1], pdf, "latin1");' "$ACCOUNT_DIR/FallbackPDFs/$PAPER_ATT/$GEN/FallbackPDF.pdf"
+/usr/bin/sqlite3 "$COPY" "UPDATE ZICCLOUDSYNCINGOBJECT SET ZFALLBACKPDFGENERATION='$GEN' WHERE ZIDENTIFIER='$PAPER_ATT';"
+OUT="$(copy_run "$(read_paper "$NOTE" ",\"attachmentIdentifier\":\"$PAPER_ATT\",\"includePoints\":false,\"includeShapes\":false")" || true)"
+[ "$(field "$OUT" fallbackGeometry.available)" = "true" ] ||
+  fail "fallback PDF not read: $(field "$OUT" fallbackGeometry.reason) $(field "$OUT" code)"
+[ "$(field "$OUT" fallbackGeometry.paths)" = "3" ] || fail "fallback PDF: $(field "$OUT" fallbackGeometry.paths) paths, expected 3"
+[ "$(field "$OUT" fallbackGeometry.paths.0.d)" = "M 10 10 L 110 60" ] &&
+  [ "$(field "$OUT" fallbackGeometry.paths.0.paint)" = "stroke" ] || fail "fallback PDF line differs"
+[ "$(field "$OUT" fallbackGeometry.paths.1.kind)" = "rectangle" ] &&
+  [ "$(field "$OUT" fallbackGeometry.paths.1.fillColor.2)" = "1" ] || fail "fallback PDF rectangle differs"
+[ "$(field "$OUT" fallbackGeometry.paths.2.paint)" = "fillStroke" ] &&
+  [ "$(field "$OUT" fallbackGeometry.paths.2.fillRule)" = "evenodd" ] || fail "fallback PDF triangle differs"
+[ "$(field "$OUT" shapeDecode.reason)" = "not_requested" ] || fail "includeShapes false still decoded shapes"
+echo "ok: read_paper reads the fallback PDF's painted geometry (line, rectangle, triangle)"
+
 # 4. The live container and the live note are untouched.
 for ATT in $ATTS; do
   LEAKED="$(find "$LIVE_DIR" -name "*$ATT*" 2>/dev/null | wc -l | tr -d ' ')"
@@ -154,4 +207,27 @@ echo "info: $NEW_LIVE live Notes account files changed during the test (Notes.ap
 LIVE_AFTER="$(field "$(run "$READ")" revision)"
 [ "$LIVE_BEFORE" = "$LIVE_AFTER" ] || fail "live note revision changed during the copy test"
 echo "ok: live note revision unchanged"
+
+# 5. read_paper on the live store, when a live note has a Paper drawing: it
+#    opens the store read-only and reads a private copy of the bundle, so the
+#    note's revision and the bundle's files stay as they were.
+LIVE_PAPER="$(/usr/bin/sqlite3 -readonly "$LIVE" "SELECT n.ZIDENTIFIER || ' ' || a.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT a
+  JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = a.ZNOTE
+  WHERE a.ZTYPEUTI = 'com.apple.paper' AND IFNULL(a.ZMARKEDFORDELETION,0)=0 AND IFNULL(n.ZISPASSWORDPROTECTED,0)=0
+  LIMIT 1;")"
+if [ -z "$LIVE_PAPER" ]; then
+  echo "skip: no live note with a Paper drawing for the live read"
+else
+  read -r LNOTE LATT <<<"$LIVE_PAPER"
+  LREV="$(field "$(run "$(read_request "$LNOTE")")" revision)"
+  LBUNDLE="$(find "$LIVE_DIR/Accounts" -mindepth 4 -maxdepth 4 -path "*/Paper/Bundles/$LATT.bundle" -type d | head -1)"
+  LSTAMP="$(find "$LBUNDLE" -type f -exec stat -f '%N %z %m' {} + 2>/dev/null | sort | shasum)"
+  OUT="$(run "$(read_paper "$LNOTE" ",\"attachmentIdentifier\":\"$LATT\",\"includePoints\":false")" || true)"
+  [ "$(field "$OUT" status)" = "ok" ] && [ "$(field "$OUT" storeKind)" = "live" ] ||
+    fail "live read_paper failed: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$(run "$(read_request "$LNOTE")")" revision)" = "$LREV" ] || fail "live read_paper changed the note"
+  [ "$(find "$LBUNDLE" -type f -exec stat -f '%N %z %m' {} + 2>/dev/null | sort | shasum)" = "$LSTAMP" ] ||
+    fail "live read_paper changed the live bundle"
+  echo "ok: live read_paper: $(field "$OUT" strokeCount) strokes, shapes $(field "$OUT" shapeDecode.available) ($(field "$OUT" shapes) typed), fallback PDF $(field "$OUT" fallbackGeometry.available); note and bundle unchanged"
+fi
 echo "PASS"

@@ -126,6 +126,13 @@ export const updateSmartFolderResultSchema = smartFolderStateSchema
     committed: z.boolean(),
     revisionBefore: z.string().regex(FOLDER_REVISION),
     revisionAfter: z.string().regex(FOLDER_REVISION),
+    /**
+     * Applied updates only: title or parent timestamps the folder already
+     * lacked. The update changes the query alone and does not stamp them.
+     */
+    timestampsMissing: z
+      .array(z.enum(["dateForLastTitleModification", "parentModificationDate"]))
+      .optional(),
     ...resolutionFields,
     ...pushFields,
   })

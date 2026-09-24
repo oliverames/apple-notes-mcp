@@ -381,6 +381,35 @@ else
   fi
 fi
 
+# 4a3. Two chips on the last two lines of the append note, then one more that
+#    clears every chip: the removal ranges of the two end lines overlap and
+#    must be merged. Self-links to the note's first non-empty paragraph by
+#    blockIndex, which the chips at the end never move.
+if [ "$(field "$(copy_run '{"protocol":1,"action":"probe"}')" features.addSectionLink.available)" != "true" ]; then
+  echo "skip: two chips at the end (section-link chips need macOS 27)"
+else
+  EPARAS="$(paragraphs_on_copy "$NOTE")"
+  EI=0
+  while [ -n "$(field "$EPARAS" "paragraphs.$EI.blockIndex")" ] && [ -z "$(field "$EPARAS" "paragraphs.$EI.text")" ]; do
+    EI=$((EI + 1))
+  done
+  end_chip() { # revision clear
+    printf '{"protocol":1,"action":"add_section_link","identifier":"%s","ifRevision":"%s","position":"end","clearExistingSectionLinks":%s,"blockIndex":%s,"expectedText":%s}' \
+      "$NOTE" "$1" "$2" "$(field "$EPARAS" "paragraphs.$EI.blockIndex")" "$(json_string "$EPARAS" "paragraphs.$EI.text")"
+  }
+  E1="$(copy_run "$(end_chip "$(field "$(copy_run "$READ")" revision)" false)" || true)"
+  [ "$(field "$E1" status)" = "updated" ] || fail "first end chip: $(field "$E1" code) $(field "$E1" message)"
+  E2="$(copy_run "$(end_chip "$(field "$E1" revisionAfter)" false)" || true)"
+  [ "$(field "$E2" status)" = "updated" ] || fail "second end chip: $(field "$E2" code) $(field "$E2" message)"
+  E3="$(copy_run "$(end_chip "$(field "$E2" revisionAfter)" true)" || true)"
+  [ "$(field "$E3" status)" = "updated" ] && [ "$(field "$E3" verified)" = "true" ] ||
+    fail "clearing two chips at the end: $(field "$E3" code) $(field "$E3" message)"
+  [ "$(field "$E3" clearedSectionLinks)" -ge 2 ] || fail "cleared $(field "$E3" clearedSectionLinks) chips, expected at least 2"
+  check_chip "$E3" "$NOTE"
+  [ "$LAST_SECTION_COUNT" = "1" ] || fail "cleared end chips are still listed ($LAST_SECTION_COUNT)"
+  echo "ok: two chips on the last lines cleared together ($(field "$E3" clearedSectionLinks) cleared); one chip remains"
+fi
+
 # 4b. plan_edit / edit_note on the copy, checked by an independent decoder
 # (scripts/check-edit-preservation.mjs decodes the stored protobuf itself, with
 # no writer and no NotesShared). Each note gets a content-free round trip:
@@ -677,6 +706,9 @@ table_checks() {
       AND n.ZFOLDER IS NOT NULL AND IFNULL(n.ZISPASSWORDPROTECTED,0)=0
       AND IFNULL(n.ZMARKEDFORDELETION,0)=0
     GROUP BY n.Z_PK ORDER BY MAX(n.ZMODIFICATIONDATE1) DESC LIMIT 40;"); do
+    # The append note got its table from the compose step above, on the copy
+    # only, so the live comparison below could not find it.
+    [ "$CANDIDATE" != "$NOTE" ] || continue
     STATE="$(copy_run "$(read_request "$CANDIDATE")" || true)"
     if [ "$(field "$STATE" editable)" != "true" ] || [ "$(field "$STATE" sharedViaICloud)" != "false" ] ||
       [ "$(field "$STATE" deletedOrInTrash)" != "false" ]; then
@@ -892,6 +924,19 @@ smart_folder_checks() {
   OUT="$(copy_run "$(smart_update "$SMART" "$Q2" "$REVF")" || true)"
   [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed update not refused: $(field "$OUT" code)"
   echo "ok: stale update refused; guarded update verified; replay refused"
+
+  # A folder whose title timestamp is missing (cleared with SQL on the copy):
+  # the update changes only the query, reports the gap, and stamps nothing.
+  /usr/bin/sqlite3 "$COPY" "UPDATE ZICCLOUDSYNCINGOBJECT SET ZDATEFORLASTTITLEMODIFICATION = NULL WHERE ZIDENTIFIER = '$SMART';"
+  REVF="$(field "$(copy_run "$(smart_read "$SMART")")" revision)"
+  OUT="$(copy_run "$(smart_update "$SMART" "$Q1" "$REVF")" || true)"
+  [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "update of an unstamped folder failed: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$OUT" timestampsMissing.0)" = "dateForLastTitleModification" ] &&
+    [ "$(field "$OUT" titleDurability)" = "missing" ] ||
+    fail "a missing title timestamp was stamped or not reported"
+  REVU="$(field "$OUT" revisionAfter)"
+  echo "ok: an unstamped folder's query updated; the missing title timestamp reported, not stamped"
 
   OUT="$(copy_run "$(smart_delete "$SMART" true)" || true)"
   [ "$(field "$OUT" status)" = "planned" ] && [ "$(field "$OUT" committed)" = "false" ] ||

@@ -1,6 +1,12 @@
 /**
- * `native-add-paper`: author a drawing into one exact note through the opt-in
- * private WRITER (#181).
+ * Paper tools on the opt-in private WRITER (#181):
+ *
+ * - `native-add-paper` authors a drawing into one exact note;
+ * - `native-read-paper` decodes one Paper drawing read-only: strokes, typed
+ *   shapes (macOS 27 or later), and the painted geometry of Notes' fallback
+ *   PDF when it keeps one (services/privatePaperWriter.ts `readPaper`).
+ *
+ * `native-add-paper`:
  *
  * Input is stroke and shape JSON, or an SVG file converted by the same
  * analyzer `analyze-svg` runs. A lossy SVG is written only when the caller
@@ -12,9 +18,8 @@
  * `committed` on every failure. `nudge: true` runs the move-in-place sync
  * nudge after a verified write, as `native-append-plain-text` does.
  *
- * Reading drawings is out of scope here: `get-note-drawings` decodes classic
- * drawings, and `list-paper-attachments` / `export-paper-image` cover Paper's
- * own rendering.
+ * `get-note-drawings` decodes classic drawings, and `list-paper-attachments` /
+ * `export-paper-image` cover Paper's own raster rendering without the writer.
  *
  * @module tools/privatePaperWriterTools
  */
@@ -22,7 +27,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { MAX_NUDGE_WAIT_SECONDS } from "../services/privateSyncNudge.js";
-import { PAPER_FORMATS, addPaper } from "../services/privatePaperWriter.js";
+import {
+  MAX_PAPER_READ_POINTS,
+  PAPER_FORMATS,
+  addPaper,
+  readPaper,
+} from "../services/privatePaperWriter.js";
 import { PrivateWriteError } from "../services/privateWriter.js";
 import { assertReadableInRoots } from "../utils/attachmentFs.js";
 import {
@@ -332,5 +342,47 @@ export function registerPrivatePaperWriterTools(
         sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge),
       };
     }
+  );
+
+  registerWriterTool(
+    server,
+    depsFactory,
+    "native-read-paper",
+    "Use when: you need the vector content of one Paper drawing (com.apple.paper) in a note: its pen strokes, its typed shapes (rectangles, ellipses, lines and arrows, stars, polygons, speech bubbles, text boxes), and the painted geometry of the fallback PDF Notes keeps for older devices.\n" +
+      "Returns: `strokes` (ink, sRGB color, width, transform, pointCount, renderBounds, and compact `points` in `pointFields` order until `maxPoints` is used up); `shapes` (kind, frame, rotation in radians, lineWidth, opacity, fillColor, strokeColor, line markers, `path` as SVG path data in drawing coordinates, pathBounds, and `text`) with `shapeDecode` saying whether that layer ran and why not; `fallbackGeometry` (each painted path as SVG path data in PDF page space, with paint, fill rule, colors, and line width) or its `reason` (usually no_fallback_pdf); the note `revision`; `truncated` and `warnings`.\n" +
+      "Do not use when: you only need a picture (export-paper-image), the drawing is a classic drawing (get-note-drawings), or you want to change the drawing (native-add-paper adds a new one).\n" +
+      "Safety: read-only. The writer opens the store with Core Data's read-only option and decodes a private copy of the drawing's bundle, never the live one. Typed shapes come from PaperKit through internal entry points and are offered only on macOS 27 or later (shapeDecode.reason requires_macos_27 or private_api_unavailable elsewhere). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
+    {
+      identifier: notesUuid.optional().describe("Notes UUID of the note that holds the drawing"),
+      id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      attachmentIdentifier: notesUuid
+        .optional()
+        .describe("The drawing's attachment UUID; required when the note has more than one"),
+      includePoints: z.boolean().optional().describe("Include each stroke's points (default true)"),
+      maxPoints: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_PAPER_READ_POINTS)
+        .optional()
+        .describe("Most points to return across all strokes (default 20000)"),
+      includeShapes: z
+        .boolean()
+        .optional()
+        .describe("Decode typed shapes through PaperKit (default true; macOS 27 or later)"),
+    },
+    { readOnlyHint: true, openWorldHint: false },
+    (args, deps) => ({
+      ...readPaper(
+        {
+          identifier: resolveIdentifier(manager, args),
+          attachmentIdentifier: args.attachmentIdentifier,
+          includePoints: args.includePoints,
+          maxPoints: args.maxPoints,
+          includeShapes: args.includeShapes,
+        },
+        deps.writer
+      ),
+    })
   );
 }

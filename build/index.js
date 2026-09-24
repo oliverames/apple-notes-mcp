@@ -54660,8 +54660,8 @@ function parsePaint(value) {
   if (/^currentcolor$/i.test(v)) return { kind: "current" };
   const url = /^url\(\s*['"]?([^'")]*)['"]?\s*\)/i.exec(v);
   if (url) return { kind: "url", target: url[1].trim() };
-  const rgba = parseColor(v);
-  return rgba ? { kind: "color", rgba } : { kind: "invalid" };
+  const rgba2 = parseColor(v);
+  return rgba2 ? { kind: "color", rgba: rgba2 } : { kind: "invalid" };
 }
 
 // src/utils/svgGeometry.ts
@@ -58774,7 +58774,8 @@ var WRITER_ACTIONS = {
   create_smart_folder: "write",
   update_smart_folder: "write",
   delete_smart_folder: "write",
-  add_paper: "write"
+  add_paper: "write",
+  read_paper: "read"
 };
 var APPEND_LIVE_VALIDATED = false;
 var PAPER_WRITE_LIVE_VALIDATED = false;
@@ -58896,7 +58897,9 @@ var writerProbeSchema = external_exports.object({
     tables: featureSchema2.optional(),
     pruneOrphanTable: featureSchema2.optional(),
     smartFolders: featureSchema2.optional(),
-    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional()
+    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional(),
+    readPaper: featureSchema2.optional(),
+    readPaperShapes: featureSchema2.optional()
   }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
@@ -59370,7 +59373,9 @@ var WRITER_FEATURES = [
     probeKey: "smartFolders",
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED
   },
-  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED }
+  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  { key: "readPaper", probeKey: "readPaper", liveValidated: true },
+  { key: "readPaperShapes", probeKey: "readPaperShapes", liveValidated: true }
 ];
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
@@ -61092,6 +61097,9 @@ var highlightResultSchema = external_exports.object({
   ).optional(),
   /** Notes' derived "note has a highlight" flag after the call; null when not modeled. */
   hasEmphasis: external_exports.boolean().nullable(),
+  /** Dry run only: whether this macOS offers the write the plan describes. */
+  writeAvailable: external_exports.boolean().optional(),
+  writeMissing: external_exports.array(external_exports.string()).optional(),
   modificationDate: external_exports.string().nullable(),
   ...writeSyncFields
 }).passthrough();
@@ -61252,6 +61260,11 @@ var urlCardResultSchema = external_exports.object({
   insertedAtUTF16: external_exports.number().int().nonnegative(),
   glyphIndexUTF16: external_exports.number().int().nonnegative(),
   separatorInserted: external_exports.boolean(),
+  /** A body-style newline after the card, when text follows it. */
+  terminatorInserted: external_exports.boolean().optional(),
+  /** Dry run only: whether this macOS offers the write the plan describes. */
+  writeAvailable: external_exports.boolean().optional(),
+  writeMissing: external_exports.array(external_exports.string()).optional(),
   revisionBefore: revision6,
   revisionAfter: revision6,
   attachment: external_exports.object({
@@ -62027,6 +62040,11 @@ var updateSmartFolderResultSchema = smartFolderStateSchema.extend({
   committed: external_exports.boolean(),
   revisionBefore: external_exports.string().regex(FOLDER_REVISION),
   revisionAfter: external_exports.string().regex(FOLDER_REVISION),
+  /**
+   * Applied updates only: title or parent timestamps the folder already
+   * lacked. The update changes the query alone and does not stamp them.
+   */
+  timestampsMissing: external_exports.array(external_exports.enum(["dateForLastTitleModification", "parentModificationDate"])).optional(),
   ...resolutionFields,
   ...pushFields
 }).passthrough();
@@ -62276,7 +62294,7 @@ function addPaper(request, deps = defaultWriterDeps()) {
   try {
     return parseWriterResult(
       addPaperPlannedSchema,
-      callPrivateWriter("add_paper", fields, deps),
+      callPrivateWriter("add_paper", fields, deps, { dryRun: true }),
       false
     );
   } catch (error2) {
@@ -62284,6 +62302,129 @@ function addPaper(request, deps = defaultWriterDeps()) {
       throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
     throw error2;
   }
+}
+var MAX_PAPER_READ_POINTS = 4e4;
+var PAPER_POINT_FIELDS = [
+  "x",
+  "y",
+  "width",
+  "height",
+  "opacity",
+  "force",
+  "azimuth",
+  "altitude",
+  "timeOffset"
+];
+var finite = external_exports.number().finite();
+var rgba = external_exports.tuple([finite, finite, finite, finite]);
+var rectOrNull = external_exports.tuple([finite, finite, finite, finite]).nullable();
+var layerStatus = {
+  available: external_exports.boolean(),
+  reason: external_exports.string().nullable()
+};
+var paperStrokeSchema = external_exports.object({
+  ink: external_exports.string(),
+  inkIdentifier: external_exports.string(),
+  /** sRGB red, green, blue, alpha, each 0..1; null when the ink color has no sRGB form. */
+  color: rgba.nullable(),
+  /** Mean point width. */
+  width: finite,
+  /** [a, b, c, d, tx, ty] from point space to drawing space. */
+  transform: external_exports.tuple([finite, finite, finite, finite, finite, finite]).nullable(),
+  pointCount: external_exports.number().int().nonnegative(),
+  renderBounds: rectOrNull,
+  masked: external_exports.boolean(),
+  points: external_exports.array(external_exports.array(finite).length(PAPER_POINT_FIELDS.length)).optional(),
+  pointsOmitted: external_exports.literal(true).optional()
+}).passthrough();
+var paperShapeSchema = external_exports.object({
+  /** Position in PaperKit's element order (drawing order, back to front). */
+  index: external_exports.number().int().nonnegative(),
+  kind: external_exports.string(),
+  /** [x, y, width, height] before rotation. */
+  frame: rectOrNull,
+  /** Bounds of everything the shape paints, stroke included. */
+  renderFrame: rectOrNull,
+  /** Radians about the frame's center. */
+  rotation: finite.nullable(),
+  lineWidth: finite.nullable(),
+  opacity: finite.nullable(),
+  fillColor: rgba.nullable(),
+  strokeColor: rgba.nullable(),
+  startLineMarker: external_exports.string().nullable(),
+  endLineMarker: external_exports.string().nullable(),
+  /** SVG path data in drawing coordinates, frame and rotation applied. */
+  path: external_exports.string().nullable(),
+  pathBounds: rectOrNull,
+  /** Text inside the shape (a text box is a rectangle with text). */
+  text: external_exports.string().nullable()
+}).passthrough();
+var paperFallbackPathSchema = external_exports.object({
+  page: external_exports.number().int().nonnegative(),
+  paint: external_exports.enum(["stroke", "fill", "fillStroke"]),
+  kind: external_exports.enum(["path", "rectangle"]),
+  /** SVG path data in PDF page space (points, origin at the bottom left). */
+  d: external_exports.string(),
+  bounds: rectOrNull,
+  fillRule: external_exports.enum(["nonzero", "evenodd"]).optional(),
+  fillColor: external_exports.array(finite.nullable()).length(4).optional(),
+  strokeColor: external_exports.array(finite.nullable()).length(4).optional(),
+  lineWidth: finite.nullable().optional()
+}).passthrough();
+var paperReadSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  storeKind: external_exports.enum(["live", "copy"]),
+  identifier: external_exports.string(),
+  revision: external_exports.string(),
+  attachmentIdentifier: external_exports.string(),
+  typeUTI: external_exports.string(),
+  drawingCount: external_exports.number().int().nonnegative(),
+  strokeCount: external_exports.number().int().nonnegative(),
+  returnedStrokeCount: external_exports.number().int().nonnegative(),
+  pointCount: external_exports.number().int().nonnegative(),
+  bounds: rectOrNull,
+  inks: external_exports.array(external_exports.string()),
+  pointFields: external_exports.array(external_exports.string()),
+  strokes: external_exports.array(paperStrokeSchema),
+  shapeDecode: external_exports.object({
+    ...layerStatus,
+    missing: external_exports.array(external_exports.string()),
+    elementCount: external_exports.number().int().nonnegative().nullable(),
+    elementKinds: external_exports.record(external_exports.string(), external_exports.number().int().nonnegative()).nullable()
+  }).passthrough(),
+  shapes: external_exports.array(paperShapeSchema),
+  fallbackGeometry: external_exports.object({
+    ...layerStatus,
+    generation: external_exports.string().optional(),
+    pageCount: external_exports.number().int().nonnegative().optional(),
+    paths: external_exports.array(paperFallbackPathSchema).optional(),
+    skipped: external_exports.record(external_exports.string(), external_exports.number().int().nonnegative()).optional(),
+    truncated: external_exports.boolean().optional()
+  }).passthrough(),
+  truncated: external_exports.boolean(),
+  warnings: external_exports.array(external_exports.string())
+}).passthrough();
+function readPaper(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  const fields = { identifier: request.identifier };
+  if (request.attachmentIdentifier !== void 0) {
+    try {
+      assertNoteIdentifier2(request.attachmentIdentifier);
+    } catch {
+      throw new PrivateWriteError("invalid_request", "attachmentIdentifier must be a UUID", false);
+    }
+    fields.attachmentIdentifier = request.attachmentIdentifier;
+  }
+  if (request.maxPoints !== void 0 && (!Number.isInteger(request.maxPoints) || request.maxPoints < 1 || request.maxPoints > MAX_PAPER_READ_POINTS))
+    throw new PrivateWriteError(
+      "invalid_request",
+      `maxPoints must be an integer from 1 to ${MAX_PAPER_READ_POINTS}`,
+      false
+    );
+  if (request.includePoints !== void 0) fields.includePoints = request.includePoints;
+  if (request.maxPoints !== void 0) fields.maxPoints = request.maxPoints;
+  if (request.includeShapes !== void 0) fields.includeShapes = request.includeShapes;
+  return parseWriterResult(paperReadSchema, callPrivateWriter("read_paper", fields, deps), false);
 }
 
 // src/utils/paperAuthoring.ts
@@ -62720,6 +62861,33 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
         sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
       };
     }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-read-paper",
+    "Use when: you need the vector content of one Paper drawing (com.apple.paper) in a note: its pen strokes, its typed shapes (rectangles, ellipses, lines and arrows, stars, polygons, speech bubbles, text boxes), and the painted geometry of the fallback PDF Notes keeps for older devices.\nReturns: `strokes` (ink, sRGB color, width, transform, pointCount, renderBounds, and compact `points` in `pointFields` order until `maxPoints` is used up); `shapes` (kind, frame, rotation in radians, lineWidth, opacity, fillColor, strokeColor, line markers, `path` as SVG path data in drawing coordinates, pathBounds, and `text`) with `shapeDecode` saying whether that layer ran and why not; `fallbackGeometry` (each painted path as SVG path data in PDF page space, with paint, fill rule, colors, and line width) or its `reason` (usually no_fallback_pdf); the note `revision`; `truncated` and `warnings`.\nDo not use when: you only need a picture (export-paper-image), the drawing is a classic drawing (get-note-drawings), or you want to change the drawing (native-add-paper adds a new one).\nSafety: read-only. The writer opens the store with Core Data's read-only option and decodes a private copy of the drawing's bundle, never the live one. Typed shapes come from PaperKit through internal entry points and are offered only on macOS 27 or later (shapeDecode.reason requires_macos_27 or private_api_unavailable elsewhere). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID of the note that holds the drawing"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      attachmentIdentifier: notesUuid2.optional().describe("The drawing's attachment UUID; required when the note has more than one"),
+      includePoints: external_exports.boolean().optional().describe("Include each stroke's points (default true)"),
+      maxPoints: external_exports.number().int().min(1).max(MAX_PAPER_READ_POINTS).optional().describe("Most points to return across all strokes (default 20000)"),
+      includeShapes: external_exports.boolean().optional().describe("Decode typed shapes through PaperKit (default true; macOS 27 or later)")
+    },
+    { readOnlyHint: true, openWorldHint: false },
+    (args, deps) => ({
+      ...readPaper(
+        {
+          identifier: resolveIdentifier(manager, args),
+          attachmentIdentifier: args.attachmentIdentifier,
+          includePoints: args.includePoints,
+          maxPoints: args.maxPoints,
+          includeShapes: args.includeShapes
+        },
+        deps.writer
+      )
+    })
   );
 }
 

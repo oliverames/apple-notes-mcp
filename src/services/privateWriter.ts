@@ -95,6 +95,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   update_smart_folder: "write",
   delete_smart_folder: "write",
   add_paper: "write",
+  read_paper: "read",
 };
 
 /**
@@ -323,6 +324,8 @@ export const writerProbeSchema = z
         pruneOrphanTable: featureSchema.optional(),
         smartFolders: featureSchema.optional(),
         addPaper: featureSchema.extend({ formats: z.array(z.string()) }).optional(),
+        readPaper: featureSchema.optional(),
+        readPaperShapes: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -1026,6 +1029,8 @@ export const WRITER_FEATURES = [
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED,
   },
   { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  { key: "readPaper", probeKey: "readPaper", liveValidated: true },
+  { key: "readPaperShapes", probeKey: "readPaperShapes", liveValidated: true },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

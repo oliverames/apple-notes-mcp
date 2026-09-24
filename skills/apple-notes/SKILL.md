@@ -168,6 +168,7 @@ before retrying.
 | `native-create-smart-folder` | Create a smart folder from a query Notes validates; idempotent                                                                                                                                                 |
 | `native-update-smart-folder` | Replace a smart folder's query, guarded by its revision                                                                                                                                                        |
 | `native-delete-smart-folder` | Delete one empty smart folder; dry run first, then apply with its revision                                                                                                                                     |
+| `native-read-paper`          | Decode one Paper drawing: strokes, typed shapes (macOS 27; check `shapeDecode`), and fallback-PDF geometry (read-only)                                                                                         |
 
 ## Usage Patterns
 

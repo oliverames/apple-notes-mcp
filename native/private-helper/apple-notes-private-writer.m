@@ -203,7 +203,7 @@ static const ModelRequirement kSmartFolderModelProperties[] = {
     {"ICFolder",
      "identifier,title,folderType,smartFolderQueryJSON,markedForDeletion,account,parent,"
      "dateForLastTitleModification,parentModificationDate,cloudState"},
-    {"ICAccount", "identifier,name"},
+    {"ICAccount", "identifier,name,markedForDeletion"},
     {"ICHashtag", "identifier,standardizedContent,displayText,account,markedForDeletion"},
     {"ICNote", "folder"},
 };
@@ -297,6 +297,9 @@ static const APIRequirement kLinkCardAPI[] = {
     {"ICTTAttachment", "setAttachmentIdentifier:", NO},
     {"ICTTAttachment", "setAttachmentUTI:", NO},
     {"ICTTAttachment", "attachmentIdentifier", NO},
+    {"ICTTParagraphStyle", "defaultParagraphStyle", YES},
+    {"ICTTParagraphStyle", "style", NO},
+    {"ICTTParagraphStyle", "todo", NO},
 };
 
 // Paragraph identifiers: the UUID on a paragraph style (attribute key
@@ -821,7 +824,9 @@ static NSDictionary *HandleCreateSmartFolder(NSDictionary *request);
 static NSDictionary *HandleUpdateSmartFolder(NSDictionary *request);
 static NSDictionary *HandleDeleteSmartFolder(NSDictionary *request);
 static NSDictionary *HandleAddPaper(NSDictionary *request);
+static NSDictionary *HandleReadPaper(NSDictionary *request);
 static NSDictionary *PaperWriteFeatureReport(BOOL contextOK, NSString *contextReason);
+static NSDictionary *PaperReadFeatureReport(BOOL contextOK, NSString *contextReason, BOOL shapes);
 
 typedef struct {
   const char *name;
@@ -863,6 +868,7 @@ static const ActionSpec kActions[] = {
     {"update_smart_folder", "identifier,queryJSON,ifRevision", HandleUpdateSmartFolder},
     {"delete_smart_folder", "identifier,dryRun,ifRevision", HandleDeleteSmartFolder},
     {"add_paper", "identifier,ifRevision,drawing,format,dryRun", HandleAddPaper},
+    {"read_paper", "identifier,attachmentIdentifier,includePoints,maxPoints,includeShapes", HandleReadPaper},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -967,6 +973,8 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"pruneOrphanTable" : FeatureReport(FeaturePruneTable, contextOK, contextReason),
       @"smartFolders" : FeatureReport(FeatureSmartFolders, contextOK, contextReason),
       @"addPaper" : PaperWriteFeatureReport(contextOK, contextReason),
+      @"readPaper" : PaperReadFeatureReport(contextOK, contextReason, NO),
+      @"readPaperShapes" : PaperReadFeatureReport(contextOK, contextReason, YES),
     },
   };
 }
@@ -3578,6 +3586,19 @@ static NSDictionary *PublicItem(NSDictionary *item) {
   };
 }
 
+// YES when the item's characters, ignoring newlines at either end (a run may
+// hold the newline that ends the previous line, and the item's own
+// terminator), still contain a line break: two or more lines share one todo
+// identity, so a toggle cannot name just one of them.
+static BOOL ItemSpansLines(NSString *text, NSDictionary *item) {
+  NSRange span = [item[@"span"] rangeValue];
+  NSUInteger start = span.location, end = NSMaxRange(span);
+  while (start < end && [text characterAtIndex:start] == '\n') start++;
+  while (end > start && [text characterAtIndex:end - 1] == '\n') end--;
+  return [text rangeOfString:@"\n" options:NSLiteralSearch range:NSMakeRange(start, end - start)].location !=
+         NSNotFound;
+}
+
 static NSDictionary *ItemWithTodo(NSArray<NSDictionary *> *items, NSString *hex) {
   for (NSDictionary *item in items)
     if ([item[@"todoIdentifier"] isEqualToString:hex]) return item;
@@ -3643,6 +3664,9 @@ static NSDictionary *HandleSetChecklistItem(NSDictionary *request) {
     Fail(@"not_found", @"No checklist item in this note has that todoIdentifier", @{@"committed" : @NO});
   if (![item[@"contiguous"] boolValue])
     Fail(@"ambiguous_target", @"That todoIdentifier appears in more than one place in the note",
+         @{@"committed" : @NO});
+  if (ItemSpansLines(body.string, item))
+    Fail(@"ambiguous_target", @"That todoIdentifier is shared by more than one checklist line",
          @{@"committed" : @NO});
   BOOL previousDone = [item[@"done"] boolValue];
 
@@ -3751,6 +3775,13 @@ static NSDictionary *HandleSetChecklistItem(NSDictionary *request) {
 // Notes' color order: 1 purple, 2 pink, 3 orange, 4 mint, 5 blue.
 #define MAX_MATCH_UTF16 1000
 #define MAX_HIGHLIGHT_RANGES 100
+
+// For a dry run that only needed read access: whether the write it plans
+// could run here, from the same feature probe `probe` reports.
+static NSDictionary *WriteAvailability(Feature feature) {
+  NSArray *missing = MissingForFeature(feature);
+  return @{@"writeAvailable" : @((BOOL)(missing.count == 0)), @"writeMissing" : missing};
+}
 
 static NSNumber *EmphasisForColor(NSString *color) {
   NSDictionary *codes = @{@"purple" : @1, @"pink" : @2, @"orange" : @3, @"mint" : @4, @"blue" : @5};
@@ -3920,6 +3951,18 @@ static NSArray<NSValue *> *HighlightTargets(HighlightTarget target, NSAttributed
     return ranges;
   }
   NSArray<NSValue *> *ranges = Occurrences(body.string, target.match);
+  // A literal hit can start or end inside a composed character (a base letter
+  // and its combining mark, an emoji sequence); highlighting it would split
+  // what the reader sees as one character.
+  NSUInteger splitting = 0;
+  for (NSValue *value in ranges)
+    if (!NSEqualRanges([body.string rangeOfComposedCharacterSequencesForRange:value.rangeValue], value.rangeValue))
+      splitting++;
+  if (splitting)
+    Fail(@"invalid_request",
+         @"`match` starts or ends inside a composed character (such as a letter and its accent); include the "
+         @"whole character",
+         @{@"committed" : @NO, @"splittingMatches" : @(splitting), @"revision" : revision});
   if (ranges.count != target.expectedCount)
     Fail(@"match_count_mismatch",
          [NSString stringWithFormat:@"`match` occurs %lu times, not the expected %lu",
@@ -3998,6 +4041,7 @@ static NSDictionary *HandleSetHighlight(NSDictionary *request) {
       @"hasEmphasis" : OrNull(HasEmphasisFlag(note)),
     }];
     if (!dryRun) result[@"verified"] = @YES;
+    if (dryRun) [result addEntriesFromDictionary:WriteAvailability(FeatureHighlight)];
     [result addEntriesFromDictionary:SyncFields(NoteState(note), store)];
     return result;
   }
@@ -4099,11 +4143,16 @@ static NSURL *CardURL(NSString *value) {
   return parts.URL;
 }
 
-// Where the card goes: at the end of one paragraph's text, so it becomes the
-// next paragraph. With no anchor that is the note's last paragraph. Returns
-// the insertion index and fills `styleSource` with the index whose paragraph
-// style the separating newline copies (NSNotFound for none) and `found` with
-// how many paragraphs matched the anchor.
+// Where the card goes: its own paragraph right after one paragraph. With no
+// anchor that is the end of the note. Returns the insertion index and fills
+// `styleSource` with the index whose paragraph style a separating newline
+// copies (NSNotFound for none) and `found` with how many paragraphs matched
+// the anchor. When the anchor paragraph ends in a newline, the card goes
+// after that newline, so the anchor keeps its own terminator and the card
+// never inherits its paragraph style (a checklist anchor's todo, for one).
+// When the anchor is the last paragraph and has no newline, the index is the
+// end of its text and a separator carrying its style is needed, as at the end
+// of a note.
 static NSUInteger CardInsertionIndex(NSString *text, NSString *anchor, NSUInteger *styleSource,
                                      NSUInteger *found) {
   *styleSource = NSNotFound;
@@ -4130,16 +4179,18 @@ static NSUInteger CardInsertionIndex(NSString *text, NSString *anchor, NSUIntege
   }
   *found = hits;
   if (hits != 1) return NSNotFound;
+  if (end < text.length) return end + 1;  // after the anchor's own newline
   *styleSource = end > 0 && [text characterAtIndex:end - 1] != '\n' ? end - 1 : NSNotFound;
   return end;
 }
 
-// The inserted text: an optional newline that carries the anchor paragraph's
-// style, then the card glyph. A Notes-made card is one U+FFFC whose only
-// attribute is the NSAttachment (an ICTTAttachment naming the ICAttachment);
-// its paragraph is body text.
+// The inserted text: an optional newline that carries the previous
+// paragraph's style, the card glyph, and an optional terminating newline in
+// body style (when text follows the card). A Notes-made card is one U+FFFC
+// whose only attribute is the NSAttachment (an ICTTAttachment naming the
+// ICAttachment); its paragraph is body text.
 static NSAttributedString *CardInsertion(NSAttributedString *body, NSUInteger styleSource,
-                                         BOOL separator, id ttAttachment) {
+                                         BOOL separator, BOOL terminator, id ttAttachment) {
   NSMutableAttributedString *insertion = [NSMutableAttributedString new];
   if (separator) {
     NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
@@ -4154,7 +4205,28 @@ static NSAttributedString *CardInsertion(NSAttributedString *body, NSUInteger st
   [insertion appendAttributedString:[[NSAttributedString alloc]
                                         initWithString:glyph
                                             attributes:@{NSAttachmentAttributeName : ttAttachment}]];
+  if (terminator) {
+    id bodyStyle = [Send(objc_getClass("ICTTParagraphStyle"), "defaultParagraphStyle") mutableCopy];
+    [insertion appendAttributedString:[[NSAttributedString alloc]
+                                          initWithString:@"\n"
+                                              attributes:bodyStyle ? @{@"TTStyle" : bodyStyle} : @{}]];
+  }
   return insertion;
+}
+
+// The card's line must be plain body text: the glyph and its terminating
+// newline (if any) carry no paragraph style, or a body style with no todo.
+static BOOL CardLineIsBody(NSAttributedString *text, NSUInteger glyphIndex) {
+  NSUInteger last = glyphIndex + 1 < text.length && [text.string characterAtIndex:glyphIndex + 1] == '\n'
+                        ? glyphIndex + 1
+                        : glyphIndex;
+  for (NSUInteger i = glyphIndex; i <= last; i++) {
+    id style = [text attribute:@"TTStyle" atIndex:i effectiveRange:NULL];
+    if (!style) continue;
+    if (StyleValueOf(style) != kStyleBody) return NO;
+    if ([style respondsToSelector:sel_registerName("todo")] && Send(style, "todo")) return NO;
+  }
+  return YES;
 }
 
 static NSManagedObject *FetchAttachment(NSManagedObjectContext *context, NSString *identifier) {
@@ -4203,7 +4275,11 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
          [NSString stringWithFormat:@"`afterParagraph` matches %lu paragraphs, not exactly one",
                                     (unsigned long)found],
          @{@"committed" : @NO, @"found" : @(found), @"revision" : revisionBefore});
-  BOOL separator = anchor ? YES : (body.length > 0 && ![body.string hasSuffix:@"\n"]);
+  // A separator ends the previous paragraph when the card goes right after
+  // its text. After an anchor's own newline none is needed, and the card gets
+  // its own body-style terminator when text follows it.
+  BOOL separator = at > 0 && [body.string characterAtIndex:at - 1] != '\n';
+  BOOL terminator = at < body.length;
   NSUInteger glyphIndex = at + (separator ? 1 : 0);
 
   NSMutableDictionary *result = [@{
@@ -4213,6 +4289,7 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
     @"insertedAtUTF16" : @(at),
     @"glyphIndexUTF16" : @(glyphIndex),
     @"separatorInserted" : @(separator),
+    @"terminatorInserted" : @(terminator),
     @"revisionBefore" : revisionBefore,
   } mutableCopy];
   if (dryRun) {
@@ -4222,6 +4299,7 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
       @"dryRun" : @YES,
       @"revisionAfter" : revisionBefore,
     }];
+    [result addEntriesFromDictionary:WriteAvailability(FeatureLinkCard)];
     [result addEntriesFromDictionary:SyncFields(NoteState(note), store)];
     return result;
   }
@@ -4251,7 +4329,7 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
   id tt = [objc_getClass("ICTTAttachment") new];
   ((void (*)(id, SEL, id))objc_msgSend)(tt, sel_registerName("setAttachmentIdentifier:"), attachmentID);
   ((void (*)(id, SEL, id))objc_msgSend)(tt, sel_registerName("setAttachmentUTI:"), kURLCardUTI);
-  NSAttributedString *insertion = CardInsertion(body, styleSource, separator, tt);
+  NSAttributedString *insertion = CardInsertion(body, styleSource, separator, terminator, tt);
   NSString *before = [body.string copy];
 
   SendVoid(ms, "beginEditing");
@@ -4313,6 +4391,8 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
       verifyDetail = @"The persisted text is not the previous text plus the card glyph";
     else if (glyphsForAttachment != 1 || glyphAt != glyphIndex)
       verifyDetail = @"The card glyph is not present exactly once at the expected position";
+    else if (!CardLineIsBody(persisted, glyphAt))
+      verifyDetail = @"The card's line does not have the body paragraph style";
     else if (!row || ![[row valueForKey:@"typeUTI"] isEqual:kURLCardUTI])
       verifyDetail = @"The attachment row is missing or is not a public.url attachment";
     else if (![[row valueForKey:@"note"] isEqual:reread])
@@ -4660,10 +4740,14 @@ static NSString *GlyphAttachmentIdentifier(id value) {
 
 static NSManagedObject *InlineAttachmentNamed(NSManagedObject *note, NSString *identifier) {
   if (!identifier) return nil;
-  for (NSManagedObject *inlineAttachment in [note valueForKey:@"inlineAttachments"])
-    if ([[inlineAttachment valueForKey:@"identifier"] caseInsensitiveCompare:identifier] ==
-        NSOrderedSame)
+  for (NSManagedObject *inlineAttachment in [note valueForKey:@"inlineAttachments"]) {
+    // A row without a string identifier never matches (messaging nil would
+    // compare as NSOrderedSame).
+    NSString *candidate = [inlineAttachment valueForKey:@"identifier"];
+    if ([candidate isKindOfClass:[NSString class]] &&
+        [candidate caseInsensitiveCompare:identifier] == NSOrderedSame)
       return inlineAttachment;
+  }
   return nil;
 }
 
@@ -4688,6 +4772,46 @@ static NSUInteger GlyphCount(NSAttributedString *body, NSString *attachmentIdent
                     if ([body.string characterAtIndex:i] == 0xFFFC) count++;
                 }];
   return count;
+}
+
+// Merges the widened removal ranges of SectionLinkGlyphs into disjoint
+// ranges in body order. Two chip lines at the end of a note widen into
+// overlapping ranges (the second takes the newline before it), and deleting
+// both one after the other would run past the end of the text. A merged
+// range that reaches the end and starts a line also takes the newline before
+// it, as a single chip there would.
+static NSArray<NSValue *> *MergedRemovalRanges(NSArray<NSDictionary *> *entries, NSString *text) {
+  NSMutableArray<NSValue *> *sorted = [NSMutableArray array];
+  for (NSDictionary *entry in entries) [sorted addObject:entry[@"range"]];
+  [sorted sortUsingComparator:^NSComparisonResult(NSValue *a, NSValue *b) {
+    return a.rangeValue.location < b.rangeValue.location   ? NSOrderedAscending
+           : a.rangeValue.location > b.rangeValue.location ? NSOrderedDescending
+                                                           : NSOrderedSame;
+  }];
+  NSMutableArray<NSValue *> *merged = [NSMutableArray array];
+  for (NSValue *value in sorted) {
+    NSRange range = value.rangeValue;
+    NSRange last = merged.count ? merged.lastObject.rangeValue : NSMakeRange(NSNotFound, 0);
+    if (merged.count && range.location <= NSMaxRange(last))
+      merged[merged.count - 1] = [NSValue valueWithRange:NSUnionRange(last, range)];
+    else
+      [merged addObject:value];
+  }
+  if (merged.count) {
+    NSRange tail = merged.lastObject.rangeValue;
+    if (NSMaxRange(tail) == text.length && tail.location > 0 && tail.length &&
+        [text characterAtIndex:tail.location] != '\n' && [text characterAtIndex:tail.location - 1] == '\n') {
+      NSRange widened = NSMakeRange(tail.location - 1, tail.length + 1);
+      NSRange before = merged.count > 1 ? merged[merged.count - 2].rangeValue : NSMakeRange(NSNotFound, 0);
+      if (merged.count > 1 && widened.location <= NSMaxRange(before)) {
+        [merged removeLastObject];
+        merged[merged.count - 1] = [NSValue valueWithRange:NSUnionRange(before, widened)];
+      } else {
+        merged[merged.count - 1] = [NSValue valueWithRange:widened];
+      }
+    }
+  }
+  return merged;
 }
 
 // Glyphs whose inline attachment is a section link, each widened to its whole
@@ -4879,9 +5003,10 @@ static NSDictionary *HandleAddSectionLink(NSDictionary *request) {
   NSAttributedString *sourceBefore = [LoadBody(source, NULL) copy];
   NSMutableAttributedString *expected = [sourceBefore mutableCopy];
   NSArray *cleared = clearExisting ? SectionLinkGlyphs(sourceBefore, source) : @[];
+  NSArray<NSValue *> *removals = MergedRemovalRanges(cleared, sourceBefore.string);
   SendVoid(sourceMs, "beginEditing");
-  for (NSDictionary *entry in cleared.reverseObjectEnumerator) {
-    NSRange range = [entry[@"range"] rangeValue];
+  for (NSValue *value in removals.reverseObjectEnumerator) {
+    NSRange range = value.rangeValue;
     ((void (*)(id, SEL, NSRange, id))objc_msgSend)(
         sourceMs, sel_registerName("replaceCharactersInRange:withAttributedString:"), range,
         [[NSAttributedString alloc] initWithString:@""]);
@@ -4904,12 +5029,19 @@ static NSDictionary *HandleAddSectionLink(NSDictionary *request) {
   NSUInteger at;
   if ([position isEqualToString:@"belowTitle"]) {
     at = IndexAfterTitleAndSectionChips(expected, source);
-    if (at == expected.length && expected.length && ![expected.string hasSuffix:@"\n"])
-      [insertion appendAttributedString:
-                     [[NSAttributedString alloc]
-                         initWithString:@"\n"
-                             attributes:[expected attributesAtIndex:expected.length - 1
-                                                     effectiveRange:NULL]]];
+    if (at == expected.length && expected.length && ![expected.string hasSuffix:@"\n"]) {
+      // The separator ends the old last paragraph, so it keeps only that
+      // paragraph's style: never the last character's other attributes,
+      // which on a chip line include its NSAttachment.
+      id lastStyle = [expected attribute:kParagraphStyleKey
+                                 atIndex:expected.length - 1
+                          effectiveRange:NULL];
+      [insertion
+          appendAttributedString:[[NSAttributedString alloc]
+                                     initWithString:@"\n"
+                                         attributes:lastStyle ? @{kParagraphStyleKey : lastStyle}
+                                                              : @{}]];
+    }
     [insertion appendAttributedString:glyph];
     [insertion appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
                                                                       attributes:bodyAttrs]];
@@ -5333,9 +5465,12 @@ static TableTarget ResolveTableTarget(NSDictionary *request, BOOL readOnly, BOOL
   if (!body) Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
   target.bodyText = [body.string copy];
   target.attachment = nil;
-  for (NSManagedObject *attachment in [target.note valueForKey:@"attachments"])
-    if ([[attachment valueForKey:@"identifier"] caseInsensitiveCompare:tableIdentifier] == NSOrderedSame)
+  for (NSManagedObject *attachment in [target.note valueForKey:@"attachments"]) {
+    NSString *candidate = [attachment valueForKey:@"identifier"];
+    if ([candidate isKindOfClass:[NSString class]] &&
+        [candidate caseInsensitiveCompare:tableIdentifier] == NSOrderedSame)
       target.attachment = attachment;
+  }
   if (!target.attachment) Fail(@"not_found", @"The note has no attachment with that tableIdentifier", nil);
   if (![[target.attachment valueForKey:@"typeUTI"] isEqual:kTableUTI])
     Fail(@"invalid_request", @"That attachment is not a table", nil);
@@ -5598,6 +5733,26 @@ static NSDictionary *HandleSetTableCell(NSDictionary *request) {
 // glyph names: invisible in Notes, but still synced and still counted.
 // Tombstoning it is Notes' own deletion path, so CloudKit removes it on other
 // devices. The body is never edited.
+static void RequireExpectedChanges(NSManagedObjectContext *context, NSArray<NSManagedObject *> *allowed,
+                                   NSSet<NSString *> *allowedInsertedEntities);
+
+// Attachment glyphs (U+FFFC) whose attachment cannot be identified: no
+// attachment attribute, or one without a string identifier. Any such glyph
+// could be the table's, so an orphan decision cannot rest on the rest.
+static NSUInteger UnidentifiedAttachmentGlyphs(NSAttributedString *body) {
+  NSUInteger count = 0;
+  NSString *text = body.string;
+  for (NSUInteger i = 0; i < text.length; i++) {
+    if ([text characterAtIndex:i] != 0xFFFC) continue;
+    id value = [body attribute:@"NSAttachment" atIndex:i effectiveRange:NULL];
+    id named = value && [value respondsToSelector:sel_registerName("attachmentIdentifier")]
+                   ? Send(value, "attachmentIdentifier")
+                   : nil;
+    if (![named isKindOfClass:[NSString class]] || ![named length]) count++;
+  }
+  return count;
+}
+
 static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
   gWriteRequest = YES;
   BOOL dryRun = RequireBool(request, @"dryRun");
@@ -5605,6 +5760,12 @@ static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
   BOOL apply = RequireGuards(request, dryRun, &ifRevision, &ifTableDigest);
   TableTarget target = ResolveTableTarget(request, !apply, NO, FeaturePruneTable);
   if (apply) CompareTableGuards(target, ifRevision, ifTableDigest);
+  NSUInteger unidentified = UnidentifiedAttachmentGlyphs(BodyAttributedString(target.note));
+  if (unidentified)
+    Fail(@"unsupported_attachment",
+         @"The body has attachment glyphs whose attachment cannot be identified, so the table cannot be "
+         @"shown to be an orphan",
+         @{@"committed" : @NO, @"unidentifiedGlyphs" : @(unidentified)});
   NSRange range = ((NSRange(*)(id, SEL, id))objc_msgSend)(
       target.note, sel_registerName("rangeForAttachment:"), target.attachment);
   if (range.location != NSNotFound && range.length != 0)
@@ -5649,6 +5810,9 @@ static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
   // puts the note row in the save, so a concurrent Notes save conflicts.
   ((void (*)(id, SEL, id))objc_msgSend)(target.note, sel_registerName("updateChangeCountWithReason:"),
                                         @"apple-notes-mcp prune_orphan_table");
+  // Only the note and the table row may change; anything else NotesShared
+  // staged is refused before the save.
+  RequireExpectedChanges(target.context, @[ target.note, target.attachment ], [NSSet set]);
   SaveOrFail(target.context);
 
   NSString *verifyDetail = nil;
@@ -5661,7 +5825,9 @@ static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
     activeAfter = ActiveTables(note).count;
     if (![BodyAttributedString(note).string isEqualToString:target.bodyText])
       verifyDetail = @"The note body changed during the prune";
-    else if (attachment && ![[attachment valueForKey:@"markedForDeletion"] boolValue])
+    else if (!attachment)
+      verifyDetail = @"The pruned table's attachment row is missing after the save";
+    else if (![[attachment valueForKey:@"markedForDeletion"] boolValue])
       verifyDetail = @"The table is not marked for deletion after the save";
     else if (activeAfter + 1 != activeBefore)
       verifyDetail = @"The active table count did not drop by exactly one";
@@ -6436,6 +6602,47 @@ static NSDictionary *VerifySmartFolder(StoreLocation store, NSString *identifier
   }
 }
 
+// The update read-back for a folder whose title or parent timestamp was
+// already missing: every VerifySmartFolder fact except those stamps, which
+// must be exactly as they were before.
+static NSDictionary *VerifySmartFolderUnstamped(StoreLocation store, NSString *identifier, NSDictionary *before,
+                                                NSString *queryJSON, NSString **errorOut) {
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *folder = FetchByIdentifier(fresh, @"ICFolder", identifier);
+    NSDictionary *state = FolderState(folder, fresh);
+    NSString *problem = nil;
+    if (![state[@"title"] isEqual:before[@"title"]])
+      problem = @"title";
+    else if ([state[@"folderType"] integerValue] != 2)
+      problem = @"folderType";
+    else if (![state[@"queryJSON"] isEqual:queryJSON])
+      problem = @"query";
+    else if (![state[@"accountIdentifier"] isEqual:before[@"accountIdentifier"]])
+      problem = @"account";
+    else if (![state[@"parentIdentifier"] isEqual:before[@"parentIdentifier"]])
+      problem = @"parent";
+    else if ([state[@"markedForDeletion"] boolValue])
+      problem = @"deletion flag";
+    else if (![state[@"titleDurability"] isEqual:before[@"titleDurability"]] ||
+             ![state[@"parentDurability"] isEqual:before[@"parentDurability"]])
+      problem = @"timestamps";
+    if (!problem) {
+      id query = Send(folder, "smartFolderQueryObjC");
+      if (!query || !Send(query, "predicate")) problem = @"native parse of the stored query";
+    }
+    if (problem) {
+      *errorOut = [NSString stringWithFormat:@"The persisted smart folder does not match the request (%@)", problem];
+      return nil;
+    }
+    return state;
+  } @catch (NSException *e) {
+    // Runs after a successful save: any failure is a committed, unverified write.
+    *errorOut = e.reason ?: e.name;
+    return nil;
+  }
+}
+
 static void FailFolderVerification(NSString *message, NSString *identifier, NSString *revisionBefore) {
   Fail(@"verification_failed", message ?: @"Read-back failed", @{
     @"committed" : @YES,
@@ -6609,21 +6816,30 @@ static NSDictionary *HandleUpdateSmartFolder(NSDictionary *request) {
     return response;
   }
   SendVoid1(folder, "setSmartFolderQueryJSON:", queryJSON);
-  if (![[folder valueForKey:@"dateForLastTitleModification"] isKindOfClass:[NSDate class]])
-    [folder setValue:[NSDate date] forKey:@"dateForLastTitleModification"];
+  // A query update changes only the query. A missing title or parent
+  // timestamp belongs to whoever wrote the folder; stamping it here would
+  // claim a title or parent change that did not happen, so it is reported
+  // (titleDurability / parentDurability, timestampsMissing) instead.
   id parent = [folder valueForKey:@"parent"];
-  if (parent && ![[folder valueForKey:@"parentModificationDate"] isKindOfClass:[NSDate class]])
-    [folder setValue:[NSDate date] forKey:@"parentModificationDate"];
+  NSMutableArray *timestampsMissing = [NSMutableArray array];
+  if (![before[@"titleDurability"] isEqual:@"stamped"]) [timestampsMissing addObject:@"dateForLastTitleModification"];
+  if (parent && ![before[@"parentDurability"] isEqual:@"stamped"]) [timestampsMissing addObject:@"parentModificationDate"];
   SendVoid1(folder, "updateChangeCountWithReason:", kSmartUpdateReason);
   RequireExpectedChanges(context, @[ folder ], [NSSet set]);
   SaveOrFailFor(context, @"folder");
 
   NSString *error = nil;
-  NSDictionary *state = VerifySmartFolder(store, identifier, before[@"title"], queryJSON,
-                                          before[@"accountIdentifier"],
-                                          parent ? before[@"parentIdentifier"] : nil, &error);
+  // VerifySmartFolder requires both stamps, which this update never writes; a
+  // folder that lacked one is checked with the same facts, and its stamps
+  // must be exactly as they were.
+  NSDictionary *state = timestampsMissing.count
+                            ? VerifySmartFolderUnstamped(store, identifier, before, queryJSON, &error)
+                            : VerifySmartFolder(store, identifier, before[@"title"], queryJSON,
+                                                before[@"accountIdentifier"],
+                                                parent ? before[@"parentIdentifier"] : nil, &error);
   if (!state) FailFolderVerification(error, identifier, revisionBefore);
   [response addEntriesFromDictionary:state];
+  response[@"timestampsMissing"] = timestampsMissing;
   response[@"status"] = @"updated";
   response[@"changed"] = @YES;
   response[@"committed"] = @YES;
@@ -7214,6 +7430,30 @@ static NSUInteger PlaceGlyph(id note, id attachment) {
   return insertion.length;
 }
 
+// The saved text is the previous text plus exactly the new glyph: appended
+// with its separator when the writer placed it (`inserted` UTF-16 units), or,
+// when NotesShared placed it, with that one glyph (and at most one newline
+// beside it) removed, nothing else differs.
+static BOOL PaperBodyKeptExceptGlyph(NSString *after, NSString *before, NSUInteger glyph, NSUInteger inserted) {
+  if (!before || glyph >= after.length) return NO;
+  if (inserted) {
+    NSString *added = inserted == 2 ? @"\n\uFFFC" : @"\uFFFC";
+    return inserted <= 2 && glyph == after.length - 1 &&
+           [after isEqualToString:[before stringByAppendingString:added]];
+  }
+  NSMutableString *without = [after mutableCopy];
+  [without deleteCharactersInRange:NSMakeRange(glyph, 1)];
+  if ([without isEqualToString:before]) return YES;
+  for (NSInteger offset = -1; offset <= 0; offset++) {
+    NSInteger at = (NSInteger)glyph + offset;
+    if (at < 0 || (NSUInteger)at >= without.length || [without characterAtIndex:(NSUInteger)at] != '\n') continue;
+    NSMutableString *trimmed = [without mutableCopy];
+    [trimmed deleteCharactersInRange:NSMakeRange((NSUInteger)at, 1)];
+    if ([trimmed isEqualToString:before]) return YES;
+  }
+  return NO;
+}
+
 // Decode the persisted drawing for verification. A live Paper bundle is read
 // from a private copy; on a copy store the sandbox already points beside it.
 static NSArray<PKDrawing *> *VerifiedDrawings(NSManagedObject *attachment, StoreLocation store, NSString *accountId) {
@@ -7270,6 +7510,7 @@ static NSDictionary *HandleAddPaper(NSDictionary *request) {
          @{@"committed" : @NO, @"currentRevision" : revisionBefore});
   id account = [note valueForKey:@"account"];
   NSString *accountId = account ? [account valueForKey:@"identifier"] : nil;
+  NSString *bodyBefore = [BodyText(Send(note, "mergeableString")) copy];
   NSDictionary *plan = @{
     @"format" : chosen,
     @"availableFormats" : formats,
@@ -7347,10 +7588,16 @@ static NSDictionary *HandleAddPaper(NSDictionary *request) {
     NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"ICAttachment"];
     fetch.predicate = [NSPredicate predicateWithFormat:@"identifier == %@", attachmentId];
     NSManagedObject *freshAttachment = [[fresh executeFetchRequest:fetch error:NULL] firstObject];
+    NSAttributedString *persisted = BodyAttributedString(reread);
     if (!freshAttachment || [freshAttachment valueForKey:@"note"] != reread)
       verifyDetail = @"The new attachment is not attached to the note after saving";
     else if (AttachmentRange(reread, freshAttachment).location == NSNotFound)
       verifyDetail = @"The attachment glyph is not in the saved note text";
+    else if (!persisted || GlyphCountFor(persisted, attachmentId) != 1)
+      verifyDetail = @"The attachment glyph is not in the saved note text exactly once";
+    else if (!PaperBodyKeptExceptGlyph(persisted.string, bodyBefore, AttachmentRange(reread, freshAttachment).location,
+                                       glyphLength))
+      verifyDetail = @"The saved note text differs from the previous text by more than the new glyph";
     else {
       decodedPoints = PointTotal(VerifiedDrawings(freshAttachment, store, accountId), &decodedStrokes);
       if (decodedStrokes != drawing.strokes.count || decodedPoints != inputPoints)
@@ -7390,6 +7637,996 @@ static NSDictionary *HandleAddPaper(NSDictionary *request) {
     @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",
   }];
   return out;
+}
+
+#pragma mark - Paper reading
+
+// read_paper decodes one Paper drawing (com.apple.paper) read-only, in three
+// layers, each reported with its own availability:
+//
+// 1. Strokes, from NotesShared's ICSystemPaperDrawingsHelper, which returns
+//    the drawing as public PKDrawing objects (ink, color, width, transform,
+//    points).
+// 2. Typed shapes (rectangles, ellipses, lines, arrows, stars, polygons,
+//    speech bubbles, text boxes), from PaperKit's own model. macOS 27's
+//    PaperKit describes them publicly (ShapeMarkup), but only for a
+//    PaperMarkup value, and the only way from a Notes bundle to a PaperMarkup
+//    is two internal Swift entry points: Coherence's
+//    CRDataStoreBundle<Paper>.readPaper(_:url:) and PaperMarkup(model:).
+//    PaperDecodeShapes below calls them, and then only public PaperKit
+//    accessors, through the Swift calling convention (clang's swiftcall).
+//    Every symbol is resolved with dlsym at run time and every type's size
+//    comes from its runtime metadata, so a missing symbol or type is reported
+//    as unavailable instead of failing the load; the layer is only offered on
+//    macOS 27 or later, the release it was written against.
+// 3. Painted geometry from Notes' fallback PDF, the vector rendering Notes
+//    stores beside the drawing for clients that cannot read the bundle
+//    (FallbackPDFs/<attachment>/<generation>/FallbackPDF.pdf). Present only
+//    when the attachment records a fallback PDF generation. It is parsed with
+//    CGPDFScanner; nothing is drawn or rasterized.
+//
+// Like add_paper's verification, the bundle is copied into a private
+// temporary directory and every ICAccount directory method is redirected
+// there first, so neither NotesShared nor Coherence opens the live bundle.
+// The store is opened read-only. Swift values this action creates are not
+// released: the writer handles one request and exits.
+
+#define DEFAULT_READ_PAPER_POINTS 20000
+#define MAX_READ_PAPER_POINTS 40000
+#define MAX_READ_PAPER_STROKES 4096
+#define MAX_PAPER_SHAPES 10000
+#define MAX_PAPER_PATH_ELEMENTS 200000
+#define MAX_SHAPE_TEXT_UTF16 10000
+#define MAX_FALLBACK_PDF_BYTES (16LL * 1024 * 1024)
+#define MAX_FALLBACK_PDF_PAGES 16
+#define MAX_FALLBACK_PATHS 10000
+
+static const APIRequirement kPaperReadAPI[] = {
+    {"ICSystemPaperDrawingsHelper", "drawingsForAttachment:", YES},
+    {"ICAttachment", "typeUTIIsSystemPaper:", YES},
+    {"PKDrawing", "strokes", NO},
+    {"PKStroke", "path", NO},
+    {"PKStroke", "ink", NO},
+    {"PKStroke", "renderBounds", NO},
+    {"PKStrokePath", "pointAtIndex:", NO},
+    {"PKInk", "inkType", NO},
+    {"CRContext", "newTransientContextObjC", YES},
+};
+
+static const ModelRequirement kPaperReadModelProperties[] = {
+    {"ICNote", "attachments,account"},
+    {"ICAttachment", "identifier,typeUTI,note,markedForDeletion,needsInitialFetchFromCloud"},
+    {"ICAccount", "identifier"},
+};
+
+static NSArray<NSString *> *MissingForPaperRead(void) {
+  NSMutableArray *missing = [MissingForFeature(FeatureRead) mutableCopy];
+  if (!gFrameworkLoaded) return missing;
+  // Coherence is where CRContext lives; NotesShared links it, so this only
+  // makes the class resolvable before the first NotesShared call.
+  dlopen("/System/Library/PrivateFrameworks/Coherence.framework/Coherence", RTLD_NOW | RTLD_LOCAL);
+  [missing addObjectsFromArray:MissingAPI(kPaperReadAPI, COUNT(kPaperReadAPI))];
+  [missing addObjectsFromArray:MissingModelProperties(kPaperReadModelProperties, COUNT(kPaperReadModelProperties))];
+  Class account = objc_getClass("ICAccount");
+  for (size_t i = 0; i < COUNT(kAccountDirectories); i++)
+    if (!account || ![account instancesRespondToSelector:sel_registerName(kAccountDirectories[i].sel)])
+      [missing addObject:[NSString stringWithFormat:@"-[ICAccount %s]", kAccountDirectories[i].sel]];
+  return [[NSOrderedSet orderedSetWithArray:missing] array];
+}
+
+#pragma mark Paper shapes through PaperKit
+
+#define SWIFTCALL __attribute__((swiftcall))
+#define SWIFT_INDIRECT __attribute__((swift_indirect_result))
+#define SWIFT_SELF __attribute__((swift_context))
+#define SWIFT_ERROR __attribute__((swift_error_result))
+
+// Every Swift symbol the shape layer calls. Order matters: PaperKitSymbol()
+// indexes this table with the PKSym values below.
+static const char *const kPaperKitSymbols[] = {
+    "swift_getTypeByMangledNameInContext",
+    "swift_projectBox",
+    "swift_getTypeName",
+    "swift_getObjCClassMetadata",
+    // Foundation.URL(_unconditionallyBridgeFromObjectiveC:)
+    "$s10Foundation3URLV36_unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ",
+    // Coherence.CRDataStoreBundle<PaperKit.Paper>.readPaper(_:url:) (internal)
+    "$s9Coherence17CRDataStoreBundleC8PaperKitAD0E0VRszrlE04readE0_3urlAA7CapsuleVyAFGAA9CRContextC_10Foundation3URLVtKFZ",
+    // PaperKit.PaperMarkup.init(model:) (internal)
+    "$s8PaperKit0A6MarkupV5modelAC9Coherence7CapsuleVyAA0A0VG_tcfC",
+    // The rest is public PaperKit API (macOS 27).
+    "$s8PaperKit0A6MarkupV11subelementsAA0C10OrderedSetVvg",
+    "$s8PaperKit16MarkupOrderedSetV5countSivg",
+    "$s8PaperKit16MarkupOrderedSetVyAA0C0_pSicig",
+    "$s8PaperKit11ShapeMarkupV5frameSo6CGRectVvg",
+    "$s8PaperKit11ShapeMarkupV11renderFrameSo6CGRectVvg",
+    "$s8PaperKit11ShapeMarkupV8rotation12CoreGraphics7CGFloatVvg",
+    "$s8PaperKit11ShapeMarkupV9lineWidth12CoreGraphics7CGFloatVvg",
+    "$s8PaperKit11ShapeMarkupV7opacity12CoreGraphics7CGFloatVvg",
+    "$s8PaperKit11ShapeMarkupV9fillColorSo10CGColorRefaSgvg",
+    "$s8PaperKit11ShapeMarkupV11strokeColorSo10CGColorRefaSgvg",
+    "$s8PaperKit11ShapeMarkupV5shapeAC0C0Ovg",
+    "$s8PaperKit11ShapeMarkupV0C0O4pathSo9CGPathRefavg",
+    "$s8PaperKit11ShapeMarkupV0C0O17configurationTypeAA0C13ConfigurationVADOvg",
+    "$s8PaperKit11ShapeMarkupV15startLineMarkerAC0fG0Ovg",
+    "$s8PaperKit11ShapeMarkupV13endLineMarkerAC0fG0Ovg",
+    "$s8PaperKit11ShapeMarkupV14attributedText10Foundation16AttributedStringVvg",
+    // NSAttributedString.init(_: AttributedString)
+    "$sSo18NSAttributedStringC10FoundationEyAbC010AttributedB0VcfC",
+};
+
+typedef NS_ENUM(NSUInteger, PKSym) {
+  PKSymTypeByName,
+  PKSymProjectBox,
+  PKSymTypeName,
+  PKSymObjCClassMetadata,
+  PKSymURLBridge,
+  PKSymReadPaper,
+  PKSymMarkupFromModel,
+  PKSymSubelements,
+  PKSymCount,
+  PKSymElement,
+  PKSymFrame,
+  PKSymRenderFrame,
+  PKSymRotation,
+  PKSymLineWidth,
+  PKSymOpacity,
+  PKSymFillColor,
+  PKSymStrokeColor,
+  PKSymShape,
+  PKSymShapePath,
+  PKSymShapeKind,
+  PKSymStartMarker,
+  PKSymEndMarker,
+  PKSymText,
+  PKSymNSAttributed,
+};
+
+// Runtime type names (swift_getTypeByMangledNameInContext form) for every
+// value the shape layer holds, so buffers are sized from metadata.
+static const char *const kPaperKitTypes[] = {
+    "10Foundation3URLV",
+    "9Coherence7CapsuleVy8PaperKit5PaperVG",
+    "9Coherence17CRDataStoreBundleCy8PaperKit5PaperVG",
+    "8PaperKit11PaperMarkupV",
+    "8PaperKit16MarkupOrderedSetV",
+    "8PaperKit11ShapeMarkupV",
+    "8PaperKit11ShapeMarkupV5ShapeO",
+    "8PaperKit18ShapeConfigurationV5ShapeO",
+    "8PaperKit11ShapeMarkupV10LineMarkerO",
+    "10Foundation16AttributedStringV",
+};
+
+typedef NS_ENUM(NSUInteger, PKType) {
+  PKTypeURL,
+  PKTypeCapsule,
+  PKTypeBundle,
+  PKTypePaperMarkup,
+  PKTypeOrderedSet,
+  PKTypeShapeMarkup,
+  PKTypeShape,
+  PKTypeShapeKind,
+  PKTypeLineMarker,
+  PKTypeAttributedString,
+};
+
+// ShapeConfiguration.Shape and ShapeMarkup.LineMarker cases, in declaration
+// order, which is their enum tag order (both are payload-free).
+static const char *const kPaperShapeKinds[] = {"rectangle",        "ellipse",        "line", "chatBubble",
+                                               "roundedRectangle", "regularPolygon", "star", "arrowShape"};
+static const char *const kPaperLineMarkers[] = {"none", "arrow"};
+
+typedef SWIFTCALL const void *(*SwiftTypeByNameFn)(const char *, size_t, const void *, const void *const *);
+typedef void *(*SwiftProjectBoxFn)(void *);
+typedef struct {
+  const char *data;
+  uintptr_t length;
+} SwiftTypeNamePair;
+typedef SWIFTCALL SwiftTypeNamePair (*SwiftTypeNameFn)(const void *, bool);
+typedef const void *(*SwiftObjCClassMetadataFn)(const void *);
+typedef SWIFTCALL void (*SwiftURLBridgeFn)(SWIFT_INDIRECT void *, id);
+typedef SWIFTCALL void (*SwiftReadPaperFn)(SWIFT_INDIRECT void *, id, const void *, SWIFT_SELF const void *,
+                                           SWIFT_ERROR void **);
+typedef SWIFTCALL void (*SwiftFromModelFn)(SWIFT_INDIRECT void *, void *);
+typedef SWIFTCALL void (*SwiftIndirectGetterFn)(SWIFT_INDIRECT void *, SWIFT_SELF const void *);
+typedef SWIFTCALL intptr_t (*SwiftIntGetterFn)(SWIFT_SELF const void *);
+typedef SWIFTCALL void (*SwiftElementFn)(SWIFT_INDIRECT void *, intptr_t, SWIFT_SELF const void *);
+typedef SWIFTCALL CGRect (*SwiftRectGetterFn)(SWIFT_SELF const void *);
+typedef SWIFTCALL double (*SwiftFloatGetterFn)(SWIFT_SELF const void *);
+typedef SWIFTCALL CFTypeRef (*SwiftCFGetterFn)(SWIFT_SELF const void *);
+typedef SWIFTCALL id (*SwiftNSAttributedFn)(void *, SWIFT_SELF const void *);
+typedef SWIFTCALL unsigned (*SwiftEnumTagFn)(const void *, const void *);
+
+// A Swift existential `any Markup`: three words of inline storage, the
+// dynamic type's metadata, and its protocol witness table.
+typedef struct {
+  void *buffer[3];
+  const void *type;
+  const void *witnesses;
+} SwiftExistential;
+
+// Value witness table layout (Swift ABI): eight functions, then size,
+// stride, flags, and extra inhabitants; an enum's table continues with
+// getEnumTag.
+#define VWT_SIZE_OFFSET 64
+#define VWT_FLAGS_OFFSET 80
+#define VWT_ENUM_TAG_OFFSET 88
+#define VWT_FLAG_NON_INLINE 0x00020000u
+#define VWT_FLAG_HAS_ENUM_WITNESSES 0x00200000u
+
+static void *gPaperKitSymbols[COUNT(kPaperKitSymbols)];
+static const void *gPaperKitTypes[COUNT(kPaperKitTypes)];
+
+static BOOL PaperShapesOSSupported(void) {
+  return NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27;
+}
+
+// Resolves every symbol and type; returns what is missing (empty = ready).
+static NSArray<NSString *> *MissingForPaperShapes(void) {
+  static NSArray *cached = nil;
+  if (cached) return cached;
+  NSMutableArray *missing = [NSMutableArray array];
+  if (!PaperShapesOSSupported()) return (cached = @[ @"macOS 27 or later" ]);
+  dlopen("/System/Library/Frameworks/PaperKit.framework/PaperKit", RTLD_NOW | RTLD_LOCAL);
+  dlopen("/System/Library/PrivateFrameworks/Coherence.framework/Coherence", RTLD_NOW | RTLD_LOCAL);
+  for (size_t i = 0; i < COUNT(kPaperKitSymbols); i++) {
+    gPaperKitSymbols[i] = dlsym(RTLD_DEFAULT, kPaperKitSymbols[i]);
+    if (!gPaperKitSymbols[i]) [missing addObject:[NSString stringWithFormat:@"symbol %s", kPaperKitSymbols[i]]];
+  }
+  if (!missing.count) {
+    SwiftTypeByNameFn byName = (SwiftTypeByNameFn)gPaperKitSymbols[PKSymTypeByName];
+    for (size_t i = 0; i < COUNT(kPaperKitTypes); i++) {
+      gPaperKitTypes[i] = byName(kPaperKitTypes[i], strlen(kPaperKitTypes[i]), NULL, NULL);
+      if (!gPaperKitTypes[i]) [missing addObject:[NSString stringWithFormat:@"type %s", kPaperKitTypes[i]]];
+    }
+  }
+  return (cached = [missing copy]);
+}
+
+static const uint8_t *ValueWitnesses(const void *type) { return *(const uint8_t *const *)((const uint8_t *)type - 8); }
+static size_t SwiftSize(const void *type) { return *(const size_t *)(ValueWitnesses(type) + VWT_SIZE_OFFSET); }
+static uint32_t SwiftFlags(const void *type) { return *(const uint32_t *)(ValueWitnesses(type) + VWT_FLAGS_OFFSET); }
+
+// A zeroed, 16-byte aligned buffer for one value of `type`. Never freed (see
+// the section comment).
+static void *SwiftBuffer(PKType type) {
+  size_t size = SwiftSize(gPaperKitTypes[type]);
+  return calloc(1, size > 16 ? size : 16);
+}
+
+// The case index of a payload-free enum value, or -1.
+static NSInteger SwiftEnumTag(const void *value, PKType type) {
+  const void *metadata = gPaperKitTypes[type];
+  if (!(SwiftFlags(metadata) & VWT_FLAG_HAS_ENUM_WITNESSES)) return -1;
+  SwiftEnumTagFn tag = *(SwiftEnumTagFn const *)(ValueWitnesses(metadata) + VWT_ENUM_TAG_OFFSET);
+  return (NSInteger)tag(value, metadata);
+}
+
+static NSString *SwiftTypeNameOf(const void *type) {
+  SwiftTypeNamePair name = ((SwiftTypeNameFn)gPaperKitSymbols[PKSymTypeName])(type, true);
+  if (!name.data) return @"unknown";
+  return [[NSString alloc] initWithBytes:name.data length:name.length encoding:NSUTF8StringEncoding] ?: @"unknown";
+}
+
+static id FiniteNumber(double value) { return isfinite(value) ? @(Round4(value)) : [NSNull null]; }
+
+static id PaperRectJSON(CGRect rect) {
+  if (CGRectIsNull(rect) || CGRectIsInfinite(rect)) return [NSNull null];
+  double v[4] = {rect.origin.x, rect.origin.y, rect.size.width, rect.size.height};
+  for (int i = 0; i < 4; i++)
+    if (!isfinite(v[i])) return [NSNull null];
+  return RectArray(rect);
+}
+
+static id ColorJSON(CGColorRef color) {
+  if (!color) return [NSNull null];
+  CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+  CGColorRef converted = CGColorCreateCopyByMatchingToColorSpace(srgb, kCGRenderingIntentDefault, color, NULL);
+  CGColorSpaceRelease(srgb);
+  if (!converted) return [NSNull null];
+  id out = [NSNull null];
+  if (CGColorGetNumberOfComponents(converted) == 4) {
+    const CGFloat *c = CGColorGetComponents(converted);
+    if (isfinite(c[0]) && isfinite(c[1]) && isfinite(c[2]) && isfinite(c[3]))
+      out = @[ @(Round4(c[0])), @(Round4(c[1])), @(Round4(c[2])), @(Round4(c[3])) ];
+  }
+  CGColorRelease(converted);
+  return out;
+}
+
+static NSString *SVGNumber(double value) {
+  double rounded = Round4(value);
+  if (rounded == 0) rounded = 0;  // no "-0"
+  return [NSString stringWithFormat:@"%.10g", rounded];
+}
+
+// A CGPath as SVG path data, after `transform`, counting elements against
+// `*budget`. Returns nil when the budget runs out or a coordinate is not
+// finite.
+static NSString *SVGPathData(CGPathRef path, CGAffineTransform transform, NSUInteger *budget) {
+  NSMutableString *d = [NSMutableString string];
+  __block BOOL ok = YES;
+  __block NSUInteger used = 0;
+  CGPathApplyWithBlock(path, ^(const CGPathElement *element) {
+    if (!ok) return;
+    if (++used > *budget) {
+      ok = NO;
+      return;
+    }
+    int n = 0;
+    const char *op = "";
+    switch (element->type) {
+      case kCGPathElementMoveToPoint: op = "M", n = 1; break;
+      case kCGPathElementAddLineToPoint: op = "L", n = 1; break;
+      case kCGPathElementAddQuadCurveToPoint: op = "Q", n = 2; break;
+      case kCGPathElementAddCurveToPoint: op = "C", n = 3; break;
+      case kCGPathElementCloseSubpath: op = "Z", n = 0; break;
+    }
+    [d appendFormat:@"%s%s", d.length ? " " : "", op];
+    for (int i = 0; i < n; i++) {
+      CGPoint p = CGPointApplyAffineTransform(element->points[i], transform);
+      if (!isfinite(p.x) || !isfinite(p.y)) {
+        ok = NO;
+        return;
+      }
+      [d appendFormat:@" %@ %@", SVGNumber(p.x), SVGNumber(p.y)];
+    }
+  });
+  if (!ok) return nil;
+  *budget -= used;
+  return d;
+}
+
+// Everything the shape layer reports: {available, reason, missing, shapes,
+// elementCounts, markupStrokeCount, truncated}. Never throws for a decode
+// problem; it reports it.
+static NSDictionary *PaperDecodeShapes(NSURL *bundleURL, NSMutableArray *warnings) {
+  NSArray *missing = MissingForPaperShapes();
+  if (missing.count)
+    return @{
+      @"available" : @NO,
+      @"reason" : PaperShapesOSSupported() ? @"private_api_unavailable" : @"requires_macos_27",
+      @"missing" : missing,
+      @"shapes" : @[],
+    };
+  void **sym = gPaperKitSymbols;
+  id context = Send(objc_getClass("CRContext"), "newTransientContextObjC");
+  if (!context)
+    return @{@"available" : @NO, @"reason" : @"private_api_unavailable", @"missing" : @[], @"shapes" : @[]};
+
+  void *url = SwiftBuffer(PKTypeURL);
+  ((SwiftURLBridgeFn)sym[PKSymURLBridge])(url, bundleURL);
+  void *capsule = SwiftBuffer(PKTypeCapsule);
+  void *error = NULL;
+  ((SwiftReadPaperFn)sym[PKSymReadPaper])(capsule, context, url, gPaperKitTypes[PKTypeBundle], &error);
+  if (error)
+    return @{@"available" : @NO, @"reason" : @"bundle_unreadable", @"missing" : @[], @"shapes" : @[]};
+  void *markup = SwiftBuffer(PKTypePaperMarkup);
+  ((SwiftFromModelFn)sym[PKSymMarkupFromModel])(markup, capsule);  // consumes the capsule
+  void *elements = SwiftBuffer(PKTypeOrderedSet);
+  ((SwiftIndirectGetterFn)sym[PKSymSubelements])(elements, markup);
+  intptr_t count = ((SwiftIntGetterFn)sym[PKSymCount])(elements);
+  if (count < 0)
+    return @{@"available" : @NO, @"reason" : @"bundle_unreadable", @"missing" : @[], @"shapes" : @[]};
+
+  const void *shapeType = gPaperKitTypes[PKTypeShapeMarkup];
+  BOOL shapeInline = !(SwiftFlags(shapeType) & VWT_FLAG_NON_INLINE);
+  const void *attributedClass =
+      ((SwiftObjCClassMetadataFn)sym[PKSymObjCClassMetadata])((__bridge const void *)[NSAttributedString class]);
+  NSMutableArray *shapes = [NSMutableArray array];
+  NSMutableDictionary<NSString *, NSNumber *> *kinds = [NSMutableDictionary dictionary];
+  NSUInteger pathBudget = MAX_PAPER_PATH_ELEMENTS, markupStrokes = 0;
+  BOOL truncated = NO;
+  for (intptr_t i = 0; i < count; i++) {
+    SwiftExistential element = {{0}, NULL, NULL};
+    ((SwiftElementFn)sym[PKSymElement])(&element, i, elements);
+    if (!element.type) continue;
+    if (element.type != shapeType) {
+      NSString *name = SwiftTypeNameOf(element.type);
+      NSString *kind = [name isEqualToString:@"__C.PKStroke"] || [name hasSuffix:@".PKStroke"]
+                           ? @"stroke"
+                           : [name isEqualToString:@"PaperKit.ImageMarkup"]  ? @"image"
+                           : [name isEqualToString:@"PaperKit.LinkMarkup"]   ? @"link"
+                           : [name isEqualToString:@"PaperKit.LoupeMarkup"]  ? @"loupe"
+                                                                            : name;
+      if ([kind isEqualToString:@"stroke"]) markupStrokes++;
+      kinds[kind] = @(kinds[kind].unsignedIntegerValue + 1);
+      continue;
+    }
+    kinds[@"shape"] = @(kinds[@"shape"].unsignedIntegerValue + 1);
+    if (shapes.count >= MAX_PAPER_SHAPES) {
+      truncated = YES;
+      continue;
+    }
+    const void *value =
+        shapeInline ? (const void *)element.buffer : ((SwiftProjectBoxFn)sym[PKSymProjectBox])(element.buffer[0]);
+    CGRect frame = ((SwiftRectGetterFn)sym[PKSymFrame])(value);
+    CGRect renderFrame = ((SwiftRectGetterFn)sym[PKSymRenderFrame])(value);
+    double rotation = ((SwiftFloatGetterFn)sym[PKSymRotation])(value);
+    CGColorRef fill = (CGColorRef)((SwiftCFGetterFn)sym[PKSymFillColor])(value);
+    CGColorRef stroke = (CGColorRef)((SwiftCFGetterFn)sym[PKSymStrokeColor])(value);
+    void *shape = SwiftBuffer(PKTypeShape);
+    ((SwiftIndirectGetterFn)sym[PKSymShape])(shape, value);
+    void *kindValue = SwiftBuffer(PKTypeShapeKind);
+    ((SwiftIndirectGetterFn)sym[PKSymShapeKind])(kindValue, shape);
+    NSInteger kindTag = SwiftEnumTag(kindValue, PKTypeShapeKind);
+    void *startMarker = SwiftBuffer(PKTypeLineMarker);
+    void *endMarker = SwiftBuffer(PKTypeLineMarker);
+    ((SwiftIndirectGetterFn)sym[PKSymStartMarker])(startMarker, value);
+    ((SwiftIndirectGetterFn)sym[PKSymEndMarker])(endMarker, value);
+    NSInteger startTag = SwiftEnumTag(startMarker, PKTypeLineMarker);
+    NSInteger endTag = SwiftEnumTag(endMarker, PKTypeLineMarker);
+    CGPathRef path = (CGPathRef)((SwiftCFGetterFn)sym[PKSymShapePath])(shape);
+    // The shape's path is in unit space: (0,0)-(1,1) maps onto the frame,
+    // which is then rotated about its center.
+    CGAffineTransform placement = CGAffineTransformIdentity;
+    placement = CGAffineTransformTranslate(placement, CGRectGetMidX(frame), CGRectGetMidY(frame));
+    placement = CGAffineTransformRotate(placement, isfinite(rotation) ? rotation : 0);
+    placement = CGAffineTransformTranslate(placement, -frame.size.width / 2, -frame.size.height / 2);
+    placement = CGAffineTransformScale(placement, frame.size.width, frame.size.height);
+    CGPathRef placed = path ? CGPathCreateCopyByTransformingPath(path, &placement) : NULL;
+    NSString *d = placed ? SVGPathData(placed, CGAffineTransformIdentity, &pathBudget) : nil;
+    if (placed && !d) truncated = YES;
+    void *attributed = SwiftBuffer(PKTypeAttributedString);
+    ((SwiftIndirectGetterFn)sym[PKSymText])(attributed, value);
+    NSAttributedString *text = ((SwiftNSAttributedFn)sym[PKSymNSAttributed])(attributed, attributedClass);
+    NSString *plain = [text isKindOfClass:[NSAttributedString class]] ? text.string : nil;
+    if (plain.length > MAX_SHAPE_TEXT_UTF16) {
+      plain = [plain substringToIndex:MAX_SHAPE_TEXT_UTF16];
+      truncated = YES;
+    }
+    [shapes addObject:@{
+      @"index" : @(i),
+      @"kind" : kindTag >= 0 && (NSUInteger)kindTag < COUNT(kPaperShapeKinds) ? @(kPaperShapeKinds[kindTag])
+                                                                             : @"unknown",
+      @"frame" : PaperRectJSON(frame),
+      @"renderFrame" : PaperRectJSON(renderFrame),
+      @"rotation" : FiniteNumber(rotation),
+      @"lineWidth" : FiniteNumber(((SwiftFloatGetterFn)sym[PKSymLineWidth])(value)),
+      @"opacity" : FiniteNumber(((SwiftFloatGetterFn)sym[PKSymOpacity])(value)),
+      @"fillColor" : ColorJSON(fill),
+      @"strokeColor" : ColorJSON(stroke),
+      @"startLineMarker" : startTag >= 0 && (NSUInteger)startTag < COUNT(kPaperLineMarkers)
+                               ? @(kPaperLineMarkers[startTag])
+                               : [NSNull null],
+      @"endLineMarker" : endTag >= 0 && (NSUInteger)endTag < COUNT(kPaperLineMarkers) ? @(kPaperLineMarkers[endTag])
+                                                                                     : [NSNull null],
+      @"path" : OrNull(d),
+      @"pathBounds" : placed ? PaperRectJSON(CGPathGetPathBoundingBox(placed)) : [NSNull null],
+      @"text" : plain.length ? plain : [NSNull null],
+    }];
+    if (fill) CGColorRelease(fill);
+    if (stroke) CGColorRelease(stroke);
+    if (path) CGPathRelease(path);
+    if (placed) CGPathRelease(placed);
+  }
+  if (truncated) [warnings addObject:@"Some shapes, paths, or shape text exceeded the reader's limits and were cut"];
+  return @{
+    @"available" : @YES,
+    @"reason" : [NSNull null],
+    @"missing" : @[],
+    @"elementCount" : @(count),
+    @"elementKinds" : kinds,
+    @"markupStrokeCount" : @(markupStrokes),
+    @"shapes" : shapes,
+    @"truncated" : @(truncated),
+  };
+}
+
+#pragma mark Paper fallback PDF geometry
+
+// Painted geometry from a PDF content stream: every path that is stroked or
+// filled, in PDF page space (points, origin at the bottom left), after the
+// current transformation matrix. Text, images, shadings, and form XObjects
+// are counted, not decoded.
+typedef struct {
+  CGAffineTransform ctm;
+  double lineWidth;
+  double stroke[4];
+  double fill[4];
+} PDFGraphicsState;
+
+@interface ANMPDFGeometry : NSObject {
+ @public
+  PDFGraphicsState state;
+  NSMutableArray<NSValue *> *stack;
+  CGMutablePathRef path;
+  BOOL pathIsSingleRect;
+  NSUInteger subpaths;
+  NSMutableArray *paths;
+  NSMutableDictionary<NSString *, NSNumber *> *skipped;
+  NSUInteger pageIndex;
+  NSUInteger budget;
+  BOOL truncated;
+}
+@end
+@implementation ANMPDFGeometry
+@end
+
+static ANMPDFGeometry *PDFInfo(void *info) { return (__bridge ANMPDFGeometry *)info; }
+
+static BOOL PopNumbers(CGPDFScannerRef scanner, double *out, int count) {
+  for (int i = count - 1; i >= 0; i--) {
+    CGPDFReal value = 0;
+    if (!CGPDFScannerPopNumber(scanner, &value)) return NO;
+    out[i] = value;
+  }
+  return YES;
+}
+
+static void PDFResetPath(ANMPDFGeometry *g) {
+  if (g->path) CGPathRelease(g->path);
+  g->path = CGPathCreateMutable();
+  g->pathIsSingleRect = NO;
+  g->subpaths = 0;
+}
+
+static void PDFMoveTo(CGPDFScannerRef s, void *info) {
+  double v[2];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 2)) return;
+  CGPathMoveToPoint(g->path, &g->state.ctm, v[0], v[1]);
+  g->subpaths++;
+  g->pathIsSingleRect = NO;
+}
+static void PDFLineTo(CGPDFScannerRef s, void *info) {
+  double v[2];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 2) || CGPathIsEmpty(g->path)) return;
+  CGPathAddLineToPoint(g->path, &g->state.ctm, v[0], v[1]);
+  g->pathIsSingleRect = NO;
+}
+static void PDFCurveTo(CGPDFScannerRef s, void *info) {
+  double v[6];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 6) || CGPathIsEmpty(g->path)) return;
+  CGPathAddCurveToPoint(g->path, &g->state.ctm, v[0], v[1], v[2], v[3], v[4], v[5]);
+  g->pathIsSingleRect = NO;
+}
+static void PDFCurveV(CGPDFScannerRef s, void *info) {  // first control point = current point
+  double v[4];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 4) || CGPathIsEmpty(g->path)) return;
+  CGAffineTransform inverse = CGAffineTransformInvert(g->state.ctm);
+  CGPoint current = CGPointApplyAffineTransform(CGPathGetCurrentPoint(g->path), inverse);
+  CGPathAddCurveToPoint(g->path, &g->state.ctm, current.x, current.y, v[0], v[1], v[2], v[3]);
+  g->pathIsSingleRect = NO;
+}
+static void PDFCurveY(CGPDFScannerRef s, void *info) {  // second control point = end point
+  double v[4];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 4) || CGPathIsEmpty(g->path)) return;
+  CGPathAddCurveToPoint(g->path, &g->state.ctm, v[0], v[1], v[2], v[3], v[2], v[3]);
+  g->pathIsSingleRect = NO;
+}
+static void PDFClose(CGPDFScannerRef s, void *info) {
+  (void)s;
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!CGPathIsEmpty(g->path)) CGPathCloseSubpath(g->path);
+}
+static void PDFRect(CGPDFScannerRef s, void *info) {
+  double v[4];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 4)) return;
+  BOOL first = CGPathIsEmpty(g->path);
+  CGPathAddRect(g->path, &g->state.ctm, CGRectMake(v[0], v[1], v[2], v[3]));
+  g->subpaths++;
+  g->pathIsSingleRect = first;
+}
+
+static void PDFPaint(ANMPDFGeometry *g, BOOL fill, BOOL stroke, BOOL evenOdd, BOOL close) {
+  if (close && !CGPathIsEmpty(g->path)) CGPathCloseSubpath(g->path);
+  if (CGPathIsEmpty(g->path)) return;
+  if (g->paths.count >= MAX_FALLBACK_PATHS) {
+    g->truncated = YES;
+    PDFResetPath(g);
+    return;
+  }
+  NSString *d = SVGPathData(g->path, CGAffineTransformIdentity, &g->budget);
+  if (!d) {
+    g->truncated = YES;
+    PDFResetPath(g);
+    return;
+  }
+  CGAffineTransform m = g->state.ctm;
+  double scale = sqrt(fabs(m.a * m.d - m.b * m.c));
+  NSMutableDictionary *entry = [@{
+    @"page" : @(g->pageIndex),
+    @"paint" : fill && stroke ? @"fillStroke" : fill ? @"fill" : @"stroke",
+    @"kind" : g->pathIsSingleRect ? @"rectangle" : @"path",
+    @"d" : d,
+    @"bounds" : PaperRectJSON(CGPathGetPathBoundingBox(g->path)),
+  } mutableCopy];
+  if (fill) {
+    entry[@"fillRule"] = evenOdd ? @"evenodd" : @"nonzero";
+    entry[@"fillColor"] = @[ FiniteNumber(g->state.fill[0]), FiniteNumber(g->state.fill[1]),
+                             FiniteNumber(g->state.fill[2]), FiniteNumber(g->state.fill[3]) ];
+  }
+  if (stroke) {
+    entry[@"lineWidth"] = FiniteNumber(g->state.lineWidth * scale);
+    entry[@"strokeColor"] = @[ FiniteNumber(g->state.stroke[0]), FiniteNumber(g->state.stroke[1]),
+                               FiniteNumber(g->state.stroke[2]), FiniteNumber(g->state.stroke[3]) ];
+  }
+  [g->paths addObject:entry];
+  PDFResetPath(g);
+}
+static void PDFStroke(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), NO, YES, NO, NO); }
+static void PDFCloseStroke(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), NO, YES, NO, YES); }
+static void PDFFill(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), YES, NO, NO, NO); }
+static void PDFFillEO(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), YES, NO, YES, NO); }
+static void PDFFillStroke(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), YES, YES, NO, NO); }
+static void PDFFillStrokeEO(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), YES, YES, YES, NO); }
+static void PDFCloseFillStroke(CGPDFScannerRef s, void *info) { (void)s, PDFPaint(PDFInfo(info), YES, YES, NO, YES); }
+static void PDFCloseFillStrokeEO(CGPDFScannerRef s, void *info) {
+  (void)s, PDFPaint(PDFInfo(info), YES, YES, YES, YES);
+}
+static void PDFEndPath(CGPDFScannerRef s, void *info) {  // `n`: a clip or no-op path, never painted
+  (void)s;
+  PDFResetPath(PDFInfo(info));
+}
+static void PDFSave(CGPDFScannerRef s, void *info) {
+  (void)s;
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (g->stack.count < 256) [g->stack addObject:[NSValue valueWithBytes:&g->state objCType:@encode(PDFGraphicsState)]];
+}
+static void PDFRestore(CGPDFScannerRef s, void *info) {
+  (void)s;
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!g->stack.count) return;
+  [g->stack.lastObject getValue:&g->state];
+  [g->stack removeLastObject];
+}
+static void PDFConcat(CGPDFScannerRef s, void *info) {
+  double v[6];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (!PopNumbers(s, v, 6)) return;
+  g->state.ctm = CGAffineTransformConcat(CGAffineTransformMake(v[0], v[1], v[2], v[3], v[4], v[5]), g->state.ctm);
+}
+static void PDFLineWidth(CGPDFScannerRef s, void *info) {
+  double v[1];
+  if (PopNumbers(s, v, 1)) PDFInfo(info)->state.lineWidth = v[0];
+}
+static void PDFSetColor(double *target, const double *v, int n) {
+  if (n == 1) target[0] = target[1] = target[2] = v[0];
+  if (n == 3) target[0] = v[0], target[1] = v[1], target[2] = v[2];
+  if (n == 4) {  // CMYK, naive conversion
+    target[0] = (1 - v[0]) * (1 - v[3]);
+    target[1] = (1 - v[1]) * (1 - v[3]);
+    target[2] = (1 - v[2]) * (1 - v[3]);
+  }
+}
+static void PDFColorOp(CGPDFScannerRef s, void *info, BOOL fill, int n) {
+  double v[4];
+  ANMPDFGeometry *g = PDFInfo(info);
+  if (PopNumbers(s, v, n)) PDFSetColor(fill ? g->state.fill : g->state.stroke, v, n);
+}
+static void PDFStrokeGray(CGPDFScannerRef s, void *info) { PDFColorOp(s, info, NO, 1); }
+static void PDFFillGray(CGPDFScannerRef s, void *info) { PDFColorOp(s, info, YES, 1); }
+static void PDFStrokeRGB(CGPDFScannerRef s, void *info) { PDFColorOp(s, info, NO, 3); }
+static void PDFFillRGB(CGPDFScannerRef s, void *info) { PDFColorOp(s, info, YES, 3); }
+static void PDFStrokeCMYK(CGPDFScannerRef s, void *info) { PDFColorOp(s, info, NO, 4); }
+static void PDFFillCMYK(CGPDFScannerRef s, void *info) { PDFColorOp(s, info, YES, 4); }
+static void PDFSkip(ANMPDFGeometry *g, NSString *what) { g->skipped[what] = @(g->skipped[what].unsignedIntegerValue + 1); }
+static void PDFText(CGPDFScannerRef s, void *info) { (void)s, PDFSkip(PDFInfo(info), @"textObjects"); }
+static void PDFXObject(CGPDFScannerRef s, void *info) { (void)s, PDFSkip(PDFInfo(info), @"xObjects"); }
+static void PDFShading(CGPDFScannerRef s, void *info) { (void)s, PDFSkip(PDFInfo(info), @"shadings"); }
+static void PDFInlineImage(CGPDFScannerRef s, void *info) { (void)s, PDFSkip(PDFInfo(info), @"inlineImages"); }
+
+static NSDictionary *PDFGeometry(NSData *data) {
+  CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
+  CGPDFDocumentRef document = provider ? CGPDFDocumentCreateWithProvider(provider) : NULL;
+  CGDataProviderRelease(provider);
+  if (!document) return @{@"available" : @NO, @"reason" : @"fallback_pdf_unreadable"};
+  if (CGPDFDocumentIsEncrypted(document)) {
+    CGPDFDocumentRelease(document);
+    return @{@"available" : @NO, @"reason" : @"fallback_pdf_unreadable"};
+  }
+  size_t pageCount = CGPDFDocumentGetNumberOfPages(document);
+  CGPDFOperatorTableRef table = CGPDFOperatorTableCreate();
+  struct {
+    const char *op;
+    CGPDFOperatorCallback callback;
+  } ops[] = {
+      {"m", PDFMoveTo},      {"l", PDFLineTo},        {"c", PDFCurveTo},         {"v", PDFCurveV},
+      {"y", PDFCurveY},      {"h", PDFClose},         {"re", PDFRect},           {"S", PDFStroke},
+      {"s", PDFCloseStroke}, {"f", PDFFill},          {"F", PDFFill},            {"f*", PDFFillEO},
+      {"B", PDFFillStroke},  {"B*", PDFFillStrokeEO}, {"b", PDFCloseFillStroke}, {"b*", PDFCloseFillStrokeEO},
+      {"n", PDFEndPath},     {"q", PDFSave},          {"Q", PDFRestore},         {"cm", PDFConcat},
+      {"w", PDFLineWidth},   {"G", PDFStrokeGray},    {"g", PDFFillGray},        {"RG", PDFStrokeRGB},
+      {"rg", PDFFillRGB},    {"K", PDFStrokeCMYK},    {"k", PDFFillCMYK},        {"BT", PDFText},
+      {"Do", PDFXObject},    {"sh", PDFShading},      {"BI", PDFInlineImage},
+  };
+  for (size_t i = 0; i < COUNT(ops); i++) CGPDFOperatorTableSetCallback(table, ops[i].op, ops[i].callback);
+  ANMPDFGeometry *g = [ANMPDFGeometry new];
+  g->paths = [NSMutableArray array];
+  g->skipped = [NSMutableDictionary dictionary];
+  g->budget = MAX_PAPER_PATH_ELEMENTS;
+  NSMutableArray *pages = [NSMutableArray array];
+  for (size_t p = 1; p <= pageCount && p <= MAX_FALLBACK_PDF_PAGES; p++) {
+    CGPDFPageRef page = CGPDFDocumentGetPage(document, p);
+    if (!page) continue;
+    g->state = (PDFGraphicsState){CGAffineTransformIdentity, 1, {0, 0, 0, 1}, {0, 0, 0, 1}};
+    g->stack = [NSMutableArray array];
+    g->pageIndex = p - 1;
+    PDFResetPath(g);
+    [pages addObject:@{@"index" : @(p - 1), @"mediaBox" : PaperRectJSON(CGPDFPageGetBoxRect(page, kCGPDFMediaBox))}];
+    CGPDFContentStreamRef stream = CGPDFContentStreamCreateWithPage(page);
+    CGPDFScannerRef scanner = CGPDFScannerCreate(stream, table, (__bridge void *)g);
+    CGPDFScannerScan(scanner);
+    CGPDFScannerRelease(scanner);
+    CGPDFContentStreamRelease(stream);
+  }
+  if (g->path) CGPathRelease(g->path);
+  CGPDFOperatorTableRelease(table);
+  CGPDFDocumentRelease(document);
+  return @{
+    @"available" : @YES,
+    @"reason" : [NSNull null],
+    @"pageCount" : @(pageCount),
+    @"pages" : pages,
+    @"coordinateSpace" : @"pdf-page",
+    @"paths" : g->paths,
+    @"skipped" : g->skipped,
+    @"truncated" : @((BOOL)(g->truncated || pageCount > MAX_FALLBACK_PDF_PAGES)),
+  };
+}
+
+// Reads Notes' stored fallback PDF for the attachment, when it records one,
+// without following links: Accounts/<account>/FallbackPDFs/<attachment>/
+// <generation>/FallbackPDF.pdf beside the store.
+static NSDictionary *PaperFallbackGeometry(NSManagedObject *attachment, StoreLocation store, NSString *accountId) {
+  if (!attachment.entity.propertiesByName[@"fallbackPDFGeneration"])
+    return @{@"available" : @NO, @"reason" : @"not_modeled"};
+  NSString *generation = [attachment valueForKey:@"fallbackPDFGeneration"];
+  if (![generation isKindOfClass:[NSString class]] || !generation.length)
+    return @{@"available" : @NO, @"reason" : @"no_fallback_pdf"};
+  NSString *attachmentId = [attachment valueForKey:@"identifier"];
+  if (!IsSafePathComponent(accountId) || !IsSafePathComponent(attachmentId) || !IsSafePathComponent(generation))
+    return @{@"available" : @NO, @"reason" : @"fallback_pdf_unreadable"};
+  NSString *container = [[store.path stringByDeletingLastPathComponent] stringByResolvingSymlinksInPath];
+  NSString *file = [container
+      stringByAppendingPathComponent:[NSString stringWithFormat:@"Accounts/%@/FallbackPDFs/%@/%@/FallbackPDF.pdf",
+                                                                accountId, attachmentId, generation]];
+  if (![[[file stringByDeletingLastPathComponent] stringByResolvingSymlinksInPath]
+          isEqualToString:[file stringByDeletingLastPathComponent]])
+    return @{@"available" : @NO, @"reason" : @"fallback_pdf_unreadable"};
+  int fd = open(file.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) return @{@"available" : @NO, @"reason" : @"fallback_pdf_missing", @"generation" : generation};
+  struct stat info;
+  NSMutableData *data = nil;
+  if (fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0 && info.st_size <= MAX_FALLBACK_PDF_BYTES) {
+    data = [NSMutableData dataWithLength:(NSUInteger)info.st_size];
+    ssize_t total = 0;
+    while (total < info.st_size) {
+      ssize_t n = read(fd, (uint8_t *)data.mutableBytes + total, (size_t)(info.st_size - total));
+      if (n <= 0) break;
+      total += n;
+    }
+    if (total != info.st_size) data = nil;
+  }
+  close(fd);
+  if (!data) return @{@"available" : @NO, @"reason" : @"fallback_pdf_unreadable", @"generation" : generation};
+  NSMutableDictionary *out = [PDFGeometry(data) mutableCopy];
+  out[@"generation"] = generation;
+  out[@"bytes"] = @(data.length);
+  return out;
+}
+
+#pragma mark Paper read action
+
+// One stroke as JSON; points are compact arrays in `pointFields` order.
+// `budget` is the number of points still allowed. The strokes that carry
+// points are always a prefix of the drawing's stroke order.
+static NSDictionary *PaperStrokeJSON(PKStroke *stroke, BOOL includePoints, NSUInteger *budget,
+                                     NSMutableArray *warnings) {
+  PKInk *ink = stroke.ink;
+  NSString *inkType = ink.inkType ?: @"";
+  NSString *prefix = @"com.apple.ink.";
+  id color = ColorJSON(ink.color.CGColor);
+  if (color == [NSNull null]) [warnings addObject:@"A stroke color could not be converted to sRGB"];
+  CGAffineTransform t = stroke.transform;
+  double tv[6] = {t.a, t.b, t.c, t.d, t.tx, t.ty};
+  BOOL transformFinite = YES;
+  for (int k = 0; k < 6; k++)
+    if (!isfinite(tv[k])) transformFinite = NO;
+  PKStrokePath *path = stroke.path;
+  NSUInteger count = path.count;
+  double widthSum = 0;
+  BOOL emit = includePoints && count <= *budget;
+  NSMutableArray *points = [NSMutableArray array];
+  for (NSUInteger i = 0; i < count; i++) {
+    PKStrokePoint *p = [path pointAtIndex:i];
+    double v[9] = {p.location.x, p.location.y, p.size.width, p.size.height, p.opacity,
+                   p.force,      p.azimuth,    p.altitude,   p.timeOffset};
+    for (int k = 0; k < 9; k++)
+      if (!isfinite(v[k])) {
+        [warnings addObject:@"A stroke with a non-finite point was skipped"];
+        return nil;
+      }
+    widthSum += v[2];
+    if (emit) {
+      NSMutableArray *row = [NSMutableArray arrayWithCapacity:9];
+      for (int k = 0; k < 9; k++) [row addObject:@(Round4(v[k]))];
+      [points addObject:row];
+    }
+  }
+  *budget = emit ? *budget - count : 0;
+  NSMutableDictionary *out = [@{
+    @"ink" : [inkType hasPrefix:prefix] ? [inkType substringFromIndex:prefix.length] : inkType,
+    @"inkIdentifier" : inkType,
+    @"color" : color,
+    @"width" : @(Round4(count ? widthSum / count : 0)),
+    @"transform" : transformFinite ? @[ @(tv[0]), @(tv[1]), @(tv[2]), @(tv[3]), @(Round4(tv[4])), @(Round4(tv[5])) ]
+                                   : [NSNull null],
+    @"pointCount" : @(count),
+    @"renderBounds" : PaperRectJSON(stroke.renderBounds),
+    @"masked" : @((BOOL)(stroke.mask != nil)),
+  } mutableCopy];
+  if (emit)
+    out[@"points"] = points;
+  else if (includePoints)
+    out[@"pointsOmitted"] = @YES;
+  return out;
+}
+
+// The one Paper attachment the request names: `attachmentIdentifier`, or the
+// note's only Paper drawing.
+static NSManagedObject *PaperAttachmentFor(NSManagedObject *note, NSString *attachmentId) {
+  NSMutableArray *papers = [NSMutableArray array];
+  NSManagedObject *named = nil;
+  for (NSManagedObject *candidate in [note valueForKey:@"attachments"]) {
+    NSString *identifier = [candidate valueForKey:@"identifier"];
+    if (![identifier isKindOfClass:[NSString class]]) continue;
+    if (attachmentId && [identifier caseInsensitiveCompare:attachmentId] == NSOrderedSame) named = candidate;
+    if (IsPaperAttachment(candidate) && ![[candidate valueForKey:@"markedForDeletion"] boolValue])
+      [papers addObject:candidate];
+  }
+  if (attachmentId) {
+    if (!named) Fail(@"not_found", @"The note has no attachment with that attachmentIdentifier", nil);
+    if (!IsPaperAttachment(named))
+      Fail(@"unsupported_attachment", @"That attachment is not a Paper drawing (com.apple.paper)",
+           @{@"typeUTI" : OrNull([named valueForKey:@"typeUTI"])});
+    if ([[named valueForKey:@"markedForDeletion"] boolValue])
+      Fail(@"unsupported_attachment", @"That Paper drawing is deleted", nil);
+    return named;
+  }
+  if (!papers.count) Fail(@"not_found", @"The note has no Paper drawing", nil);
+  if (papers.count > 1) {
+    NSMutableArray *ids = [NSMutableArray array];
+    for (NSManagedObject *paper in papers) [ids addObject:[paper valueForKey:@"identifier"]];
+    [ids sortUsingSelector:@selector(compare:)];
+    Fail(@"ambiguous_attachment", @"The note has more than one Paper drawing; pass attachmentIdentifier",
+         @{@"attachmentIdentifiers" : ids});
+  }
+  return papers.firstObject;
+}
+
+// `probe` rows: readPaper (strokes and fallback geometry) and
+// readPaperShapes (the PaperKit layer, which also needs readPaper).
+static NSDictionary *PaperReadFeatureReport(BOOL contextOK, NSString *contextReason, BOOL shapes) {
+  NSMutableArray *missing = [MissingForPaperRead() mutableCopy];
+  NSString *reason = @"private_api_unavailable";
+  if (shapes && gFrameworkLoaded) {
+    NSArray *shapeMissing = MissingForPaperShapes();
+    if (shapeMissing.count && !PaperShapesOSSupported()) reason = @"requires_macos_27";
+    [missing addObjectsFromArray:shapeMissing];
+  }
+  if (missing.count) return @{@"available" : @NO, @"reason" : reason, @"missing" : missing};
+  if (!contextOK)
+    return @{@"available" : @NO, @"reason" : contextReason ?: @"store_unavailable", @"missing" : @[]};
+  return @{@"available" : @YES, @"reason" : [NSNull null], @"missing" : @[]};
+}
+
+static NSDictionary *HandleReadPaper(NSDictionary *request) {
+  NSString *identifier = RequireIdentifier(request);
+  NSString *attachmentId = nil;
+  if (request[@"attachmentIdentifier"]) {
+    attachmentId = RequireString(request, @"attachmentIdentifier");
+    if (!IsUUID(attachmentId)) Fail(@"invalid_request", @"`attachmentIdentifier` must be a UUID", nil);
+  }
+  id includeValue = request[@"includePoints"];
+  if (includeValue && !IsJSONBool(includeValue)) Fail(@"invalid_request", @"`includePoints` must be a boolean", nil);
+  BOOL includePoints = includeValue ? [includeValue boolValue] : YES;
+  id maxValue = request[@"maxPoints"];
+  if (maxValue && (!IsJSONNumber(maxValue) || [maxValue doubleValue] != floor([maxValue doubleValue]) ||
+                   [maxValue doubleValue] < 1 || [maxValue doubleValue] > MAX_READ_PAPER_POINTS))
+    Fail(@"invalid_request", @"`maxPoints` must be an integer from 1 to 40000", nil);
+  NSUInteger budget = maxValue ? (NSUInteger)[maxValue integerValue] : DEFAULT_READ_PAPER_POINTS;
+  id shapesValue = request[@"includeShapes"];
+  if (shapesValue && !IsJSONBool(shapesValue)) Fail(@"invalid_request", @"`includeShapes` must be a boolean", nil);
+  BOOL includeShapes = shapesValue ? [shapesValue boolValue] : YES;
+  LoadFramework();
+  NSArray *missing = MissingForPaperRead();
+  if (missing.count)
+    Fail(@"private_api_unavailable", @"Required NotesShared or PencilKit API is not available on this macOS",
+         @{@"missing" : missing});
+
+  StoreLocation store = ResolveStore();
+  NSString *sandbox = MakePrivateTempDir(@"apple-notes-paper-read");
+  @try {
+    // Before the store opens: from here on no ICAccount directory method can
+    // point into the live container.
+    InstallAccountSandbox(sandbox);
+    NSManagedObjectContext *context = OpenContext(store, YES);
+    NSManagedObject *note = FetchNote(context, identifier);
+    if (SendBool(note, "isPasswordProtected"))
+      Fail(@"unsupported_note", @"Drawings in locked notes are encrypted and are not supported", nil);
+    NSManagedObject *attachment = PaperAttachmentFor(note, attachmentId);
+    if ([[attachment valueForKey:@"needsInitialFetchFromCloud"] boolValue])
+      Fail(@"bundle_unavailable", @"The drawing has not finished downloading from iCloud", nil);
+    id account = [note valueForKey:@"account"];
+    NSString *accountId = account ? [account valueForKey:@"identifier"] : nil;
+    NSString *paperId = [attachment valueForKey:@"identifier"];
+    SnapshotPaperBundle(store.path, accountId, paperId, sandbox);
+
+    NSMutableArray *warnings = [NSMutableArray array];
+    NSArray<PKDrawing *> *drawings = DrawingsForAttachment(attachment);
+    NSMutableArray *strokes = [NSMutableArray array];
+    NSMutableSet *inks = [NSMutableSet set];
+    NSUInteger totalPoints = 0, strokeTotal = 0;
+    CGRect bounds = CGRectNull;
+    BOOL truncated = NO;
+    for (PKDrawing *drawing in drawings) {
+      if (!CGRectIsEmpty(drawing.bounds)) bounds = CGRectUnion(bounds, drawing.bounds);
+      for (PKStroke *stroke in drawing.strokes) {
+        strokeTotal++;
+        if (strokes.count >= MAX_READ_PAPER_STROKES) {
+          truncated = YES;
+          continue;
+        }
+        NSDictionary *json = PaperStrokeJSON(stroke, includePoints, &budget, warnings);
+        if (!json) continue;
+        if (json[@"pointsOmitted"]) truncated = YES;
+        totalPoints += [json[@"pointCount"] unsignedIntegerValue];
+        [inks addObject:json[@"ink"]];
+        [strokes addObject:json];
+      }
+    }
+
+    NSDictionary *shapes = @{@"available" : @NO, @"reason" : @"not_requested", @"missing" : @[], @"shapes" : @[]};
+    if (includeShapes) {
+      NSString *bundle = [sandbox
+          stringByAppendingPathComponent:[NSString stringWithFormat:@"Accounts/%@/Paper/Bundles/%@.bundle", accountId,
+                                                                    paperId]];
+      shapes = PaperDecodeShapes([NSURL fileURLWithPath:bundle isDirectory:YES], warnings);
+      if ([shapes[@"truncated"] boolValue]) truncated = YES;
+      if ([shapes[@"available"] boolValue] && [shapes[@"markupStrokeCount"] unsignedIntegerValue] != strokeTotal)
+        [warnings addObject:@"PaperKit and NotesShared report different stroke counts for this drawing"];
+    }
+    NSDictionary *fallback = PaperFallbackGeometry(attachment, store, accountId);
+    if ([fallback[@"truncated"] boolValue]) truncated = YES;
+
+    return @{
+      @"status" : @"ok",
+      @"storeKind" : store.isCopy ? @"copy" : @"live",
+      @"identifier" : [note valueForKey:@"identifier"],
+      @"revision" : RevisionToken(note),
+      @"attachmentIdentifier" : paperId,
+      @"typeUTI" : [attachment valueForKey:@"typeUTI"],
+      @"drawingCount" : @(drawings.count),
+      @"strokeCount" : @(strokeTotal),
+      @"returnedStrokeCount" : @(strokes.count),
+      @"pointCount" : @(totalPoints),
+      @"bounds" : CGRectIsNull(bounds) ? [NSNull null] : PaperRectJSON(bounds),
+      @"inks" : [[inks allObjects] sortedArrayUsingSelector:@selector(compare:)],
+      @"pointFields" :
+          @[ @"x", @"y", @"width", @"height", @"opacity", @"force", @"azimuth", @"altitude", @"timeOffset" ],
+      @"strokes" : strokes,
+      @"shapeDecode" : @{
+        @"available" : shapes[@"available"],
+        @"reason" : shapes[@"reason"],
+        @"missing" : shapes[@"missing"],
+        @"elementCount" : OrNull(shapes[@"elementCount"]),
+        @"elementKinds" : OrNull(shapes[@"elementKinds"]),
+      },
+      @"shapes" : shapes[@"shapes"],
+      @"fallbackGeometry" : fallback,
+      @"truncated" : @(truncated),
+      @"warnings" : warnings,
+    };
+  } @finally {
+    [NSFileManager.defaultManager removeItemAtPath:sandbox error:NULL];
+  }
 }
 
 #pragma mark - Sync state
