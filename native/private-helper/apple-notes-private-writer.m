@@ -864,7 +864,7 @@ static NSInteger StyleValue(id style) {
 // Text used to compare a caller's expectedText: attachment glyphs removed,
 // surrounding whitespace trimmed.
 static NSString *ComparableText(NSString *text) {
-  NSString *stripped = [text stringByReplacingOccurrencesOfString:@"￼" withString:@""];
+  NSString *stripped = [text stringByReplacingOccurrencesOfString:@"\uFFFC" withString:@""];
   return [stripped stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 

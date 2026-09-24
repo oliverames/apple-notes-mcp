@@ -57201,7 +57201,7 @@ function setParagraphId(request, deps = defaultWriterDeps()) {
   assertNoteIdentifier2(request.identifier);
   if (!Number.isInteger(request.blockIndex) || request.blockIndex < 0)
     invalid3("blockIndex must be a non-negative integer from list-note-paragraphs");
-  if (!request.expectedText.replace(/￼/g, "").trim())
+  if (!request.expectedText.replace(/\ufffc/g, "").trim())
     invalid3("expectedText must be the paragraph text from list-note-paragraphs");
   assertRevision(request.ifRevision);
   if (request.paragraphId !== void 0 && !UUID_PATTERN.test(request.paragraphId))

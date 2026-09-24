@@ -82,7 +82,7 @@ describe("setParagraphId", () => {
       { ...base, identifier: "nope" },
       { ...base, blockIndex: -1 },
       { ...base, blockIndex: 1.5 },
-      { ...base, expectedText: " ￼ " },
+      { ...base, expectedText: " \ufffc " },
       { ...base, ifRevision: "r1:x" },
       { ...base, paragraphId: "nope" },
     ])

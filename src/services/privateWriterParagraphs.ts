@@ -93,7 +93,7 @@ export function setParagraphId(
   assertNoteIdentifier(request.identifier);
   if (!Number.isInteger(request.blockIndex) || request.blockIndex < 0)
     invalid("blockIndex must be a non-negative integer from list-note-paragraphs");
-  if (!request.expectedText.replace(/￼/g, "").trim())
+  if (!request.expectedText.replace(/\ufffc/g, "").trim())
     invalid("expectedText must be the paragraph text from list-note-paragraphs");
   assertRevision(request.ifRevision);
   if (request.paragraphId !== undefined && !UUID_PATTERN.test(request.paragraphId))
