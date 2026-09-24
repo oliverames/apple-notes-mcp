@@ -4,7 +4,7 @@
  * real spawn, checksum, gating, and response-validation paths run.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "./privateHelper.js";
@@ -26,7 +26,9 @@ import {
   crossCheckWithDatabase,
   markdownToBlocks,
   noteLinkUrl,
+  notesLinkTargets,
   parseInline,
+  type WireEntry,
   type WireParagraph,
 } from "./privateCompose.js";
 
@@ -201,6 +203,121 @@ describe("blocksToParagraphs", () => {
         .message
     ).toMatch(/UTF-16/);
   });
+
+  it("counts table cell text toward the UTF-16 limit and caps each cell", () => {
+    const cell = "x".repeat(10_000);
+    expect(
+      caught(() => blocksToParagraphs([{ type: "table", rows: [["x".repeat(10_001)]] }])).message
+    ).toMatch(/at most 10000 UTF-16/);
+    const wide = Array.from({ length: 21 }, () => [cell]);
+    expect(caught(() => blocksToParagraphs([{ type: "table", rows: wide }])).message).toMatch(
+      /text and table cells/
+    );
+    expect(blocksToParagraphs([{ type: "table", rows: wide.slice(0, 19) }])).toHaveLength(1);
+  });
+
+  it("caps the run count at the writer's limit", () => {
+    const runs = Array.from({ length: 101 }, () => ({ text: "x" }));
+    const blocks = Array.from({ length: 200 }, () => ({ type: "body" as const, runs }));
+    expect(caught(() => blocksToParagraphs(blocks)).message).toMatch(/20000 runs/);
+  });
+
+  it("refuses links the writer's URL parser would re-encode", () => {
+    for (const link of [
+      "https://example.com/a b",
+      "https://example.com/é",
+      'https://example.com/"q"',
+    ])
+      expect(
+        caught(() => blocksToParagraphs([{ type: "body", runs: [{ text: "x", link }] }])).message
+      ).toMatch(/well-formed/);
+    expect(
+      blocksToParagraphs([
+        { type: "body", runs: [{ text: "x", link: "https://example.com/a%20b?q=1#f" }] },
+      ])
+    ).toHaveLength(1);
+  });
+
+  describe("file and link-card blocks", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "compose-file-"));
+      writeFileSync(join(dir, "report.pdf"), "%PDF-1.4\n");
+      writeFileSync(join(dir, "empty.txt"), "");
+      symlinkSync(join(dir, "report.pdf"), join(dir, "link.pdf"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+    it("flattens files and cards in order", () => {
+      expect(
+        blocksToParagraphs([
+          { type: "body", text: "See" },
+          { type: "file", path: join(dir, "report.pdf"), filename: "Q3 Report.PDF" },
+          { type: "urlCard", url: "https://example.com/" },
+        ])
+      ).toEqual([
+        { style: "body", runs: [{ text: "See" }] },
+        { kind: "file", path: join(dir, "report.pdf"), filename: "Q3 Report.PDF" },
+        { kind: "url", url: "https://example.com/" },
+      ]);
+    });
+
+    it.each([
+      ["a relative path", { type: "file", path: "report.pdf" }],
+      ["a missing file", { type: "file", path: "/nonexistent/compose/file.pdf" }],
+      ["an empty file", { type: "file", path: "EMPTY" }],
+      ["a symbolic link", { type: "file", path: "LINK" }],
+      ["a directory", { type: "file", path: "DIR" }],
+      ["a changed extension", { type: "file", path: "PDF", filename: "report.txt" }],
+      ["a name with a slash", { type: "file", path: "PDF", filename: "a/b.pdf" }],
+      ["a hidden name", { type: "file", path: "PDF", filename: ".pdf" }],
+      ["a non-http card", { type: "urlCard", url: "notes://showNote?identifier=x" }],
+      ["a card without a host", { type: "urlCard", url: "https://" }],
+      ["a card URL with a space", { type: "urlCard", url: "https://example.com/a b" }],
+    ])("rejects %s", (_label, block) => {
+      const paths: Record<string, string> = {
+        EMPTY: join(dir, "empty.txt"),
+        LINK: join(dir, "link.pdf"),
+        DIR: dir,
+        PDF: join(dir, "report.pdf"),
+      };
+      const resolved =
+        "path" in block ? { ...block, path: paths[block.path as string] ?? block.path } : block;
+      expect(caught(() => blocksToParagraphs([resolved]))).toMatchObject({
+        code: "invalid_request",
+        committed: false,
+      });
+    });
+
+    it("caps the number of file and link-card blocks", () => {
+      const cards = Array.from({ length: 21 }, () => ({
+        type: "urlCard" as const,
+        url: "https://example.com/",
+      }));
+      expect(caught(() => blocksToParagraphs(cards)).message).toMatch(/at most 20/);
+    });
+  });
+
+  it("lists every Notes link with its target, from any run", () => {
+    expect(
+      notesLinkTargets([
+        { style: "body", runs: [{ text: "a", link: `notes://showNote?identifier=${NOTE}` }] },
+        { kind: "divider" },
+        {
+          style: "body",
+          runs: [
+            { text: "b", link: `applenotes://showNote?identifier=${NOTE.toLowerCase()}` },
+            { text: "c", link: "applenotes:note" },
+            { text: "d", link: "https://example.com/" },
+          ],
+        },
+      ])
+    ).toEqual([
+      { link: `notes://showNote?identifier=${NOTE}`, target: NOTE },
+      { link: `applenotes://showNote?identifier=${NOTE.toLowerCase()}`, target: NOTE },
+      { link: "applenotes:note", target: null },
+    ]);
+  });
 });
 
 describe("parseInline", () => {
@@ -365,8 +482,45 @@ describe("markdownToBlocks", () => {
       },
       { type: "body", runs: [{ text: "after" }] },
     ]);
+    expect(markdownToBlocks(md).warnings).toEqual([
+      "line 5: table row has 3 cells but the header has 2; the extra cells were dropped",
+    ]);
     expect(markdownToBlocks("a | b\nnot a separator").blocks).toEqual([
       { type: "body", runs: [{ text: "a | b not a separator" }] },
+    ]);
+  });
+
+  it("accepts only a GFM delimiter row with pipes and the header's cell count", () => {
+    // One dash per cell is enough, as in GFM.
+    expect(markdownToBlocks("a | b\n-|-\n1 | 2").blocks).toEqual([
+      {
+        type: "table",
+        rows: [
+          ["a", "b"],
+          ["1", "2"],
+        ],
+      },
+    ]);
+    // A bare dash line is a setext-style rule, not a delimiter row.
+    expect(markdownToBlocks("a | b\n---").blocks).toEqual([
+      { type: "body", runs: [{ text: "a | b" }] },
+      { type: "divider" },
+    ]);
+    // A delimiter row with a different cell count is not a table.
+    expect(markdownToBlocks("a | b | c\n|---|---|").blocks[0]).toMatchObject({ type: "body" });
+    expect(markdownToBlocks("a | b\n| --- | x |").blocks[0]).toMatchObject({ type: "body" });
+  });
+
+  it("turns an image alone on a line into a file block or a link card", () => {
+    expect(
+      markdownToBlocks(
+        '![chart](/tmp/chart.png)\n\n![](</tmp/my chart.png> "t")\n\n![site](https://example.com/)\n\ninline ![x](/tmp/a.png) stays'
+      ).blocks
+    ).toEqual([
+      { type: "file", path: "/tmp/chart.png" },
+      { type: "file", path: "/tmp/my chart.png" },
+      { type: "urlCard", url: "https://example.com/" },
+      { type: "body", runs: [{ text: "inline ![x](/tmp/a.png) stays" }] },
     ]);
   });
 
@@ -396,7 +550,10 @@ process.stdin.on("end", () => {
   const req = JSON.parse(input);
   const mode = process.env.FAKE_MODE || "ok";
   const out = (obj, code = 0) => { process.stdout.write(JSON.stringify(obj) + "\\n"); process.exit(code); };
-  const summary = (req.paragraphs || []).map((p) => ({ style: p.style, indent: p.indent || 0, blockQuote: !!p.blockQuote, ...(p.checked === undefined ? {} : { checked: p.checked }), lengthUTF16: 1, runs: [] }));
+  const UTI = { divider: "com.apple.notes.inlinetextattachment.dividerline", table: "com.apple.notes.table", url: "public.url", file: "public.png" };
+  const attrs = (r) => { const a = {}; for (const k of ["bold", "italic", "underline", "strikethrough", "link", "highlight", "color"]) if (r[k] !== undefined) a[k] = r[k]; if (mode === "wrong-color" && a.color) a.color = "#000000"; return a; };
+  const summary = (req.paragraphs || []).map((p, i) => p.kind ? { style: "body", indent: 0, blockQuote: false, lengthUTF16: 1, runs: [{ length: 1, attributes: { attachment: { uti: UTI[p.kind], identifier: "obj-" + i } } }] } : { style: p.style, indent: p.indent || 0, blockQuote: !!p.blockQuote, ...(p.checked === undefined ? {} : { checked: p.checked }), lengthUTF16: p.runs.reduce((n, r) => n + r.text.length, 0), runs: p.runs.map((r) => ({ length: r.text.length, attributes: attrs(r) })) });
+  const objects = (req.paragraphs || []).flatMap((p, i) => p.kind ? [{ kind: p.kind, identifier: "OBJ-" + i, uti: mode === "wrong-type" ? "public.data" : UTI[p.kind], ...(p.url ? { url: p.url } : {}), ...(p.path ? { filename: p.filename || p.path.split("/").pop() } : {}) }] : []);
   const feature = { available: mode !== "no-compose", reason: mode === "no-compose" ? "private_api_unavailable" : null, missing: mode === "no-compose" ? ["-[ICTTTodo done]"] : [] };
   if (req.action === "probe") out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: true, os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature, appendPlainText: feature, ...(mode === "old-writer" ? {} : { composeNote: feature }) } });
   if (req.action !== "compose_note") out({ status: "error", code: "unknown_action", message: "no" }, 1);
@@ -406,7 +563,7 @@ process.stdin.on("end", () => {
   if (mode === "malformed") out({ status: "updated" });
   const base = { identifier: req.identifier, mode: req.mode, paragraphs: summary.length, insertedUTF16: 9, insertAt: 4, unitStart: 5, objectURI: "x-coredata://S/ICNote/p1", revisionBefore: "r1:" + "a".repeat(64), requiredNonSystemPaper: !!req.requireNonSystemPaper, storeKind: "live", echo: req };
   if (req.dryRun) out({ ...base, status: "planned", dryRun: true, committed: false, plan: summary });
-  out({ ...base, status: "updated", committed: true, verified: true, placementVerified: true, revisionAfter: "r1:" + "c".repeat(64), modificationDate: null, title: "t", readBack: summary, cloudSync: { available: true, inICloudAccount: true, uploadPending: true }, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true });
+  out({ ...base, status: "updated", committed: true, verified: true, placementVerified: true, revisionAfter: "r1:" + "c".repeat(64), modificationDate: null, title: "t", readBack: summary, objects, cloudSync: { available: true, inICloudAccount: true, uploadPending: true }, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true });
 });
 `;
 
@@ -539,6 +696,61 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
     const failed = caught(() => composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "verify-failed" })));
     expect(failed).toMatchObject({ code: "verification_failed", committed: true });
     expect(failed.details).toMatchObject({ indeterminate: true });
+  });
+
+  it("checks what the writer stored against the request, run values and objects included", () => {
+    const paragraphs: WireEntry[] = [
+      { style: "body", runs: [{ text: "red", color: "#FF0000" }, { text: "!" }] },
+      { kind: "url", url: "https://example.com/" },
+      { kind: "divider" },
+    ];
+    const apply = { identifier: NOTE, mode: "append" as const, paragraphs, ifRevision: REV };
+    expect(composeNote(apply, deps(ALLOW))).toMatchObject({ committed: true, verified: true });
+    const wrongColor = caught(() =>
+      composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "wrong-color" }))
+    );
+    expect(wrongColor).toMatchObject({ code: "verification_failed", committed: true });
+    expect(wrongColor.details.indeterminate).toBe(true);
+    expect(wrongColor.details.requestMismatches).toEqual([
+      'paragraph 0 runs: stored [{"length":3,"values":{"color":"#000000"}},{"length":1,"values":{}}], requested [{"length":3,"values":{"color":"#FF0000"}},{"length":1,"values":{}}]',
+    ]);
+    const wrongType = caught(() => composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "wrong-type" })));
+    expect(wrongType.details.requestMismatches).toEqual(
+      expect.arrayContaining([
+        "paragraph 1: the url has type public.data, not public.url",
+        "paragraph 2: the divider has type public.data, not com.apple.notes.inlinetextattachment.dividerline",
+      ])
+    );
+  });
+
+  it("refuses a request over the writer's 1 MiB input cap before spawning", () => {
+    const long = "x".repeat(9_000);
+    const paragraphs: WireParagraph[] = Array.from({ length: 130 }, () => ({
+      style: "body",
+      runs: [{ text: long }],
+    }));
+    const error = caught(() =>
+      composeNote(
+        { identifier: NOTE, mode: "append", paragraphs, dryRun: true },
+        deps({ FAKE_MODE: "conflict" })
+      )
+    );
+    expect(error).toMatchObject({ code: "invalid_request", committed: false });
+    expect(error.message).toMatch(/at most 1048576/);
+    expect(
+      caught(() =>
+        composeNote(
+          {
+            identifier: NOTE,
+            mode: "append",
+            paragraphs: PARAGRAPHS,
+            dryRun: true,
+            insertBeforeHeading: { text: "a b" },
+          },
+          deps()
+        )
+      ).message
+    ).toMatch(/one line/);
   });
 
   it("refuses every call, dry runs included, without both switches", () => {
@@ -681,13 +893,67 @@ describe("crossCheckWithDatabase", () => {
     expect(check.matches).toBe(false);
     expect(check.mismatches).toEqual([
       "paragraph 1 checked: database false, writer true",
-      'paragraph 1 attributes: database {"bold":4}, writer {"bold":2,"link":2}',
+      'paragraph 1 runs: database [{"length":4,"values":{"bold":true}}], writer [{"length":2,"values":{"bold":true}},{"length":2,"values":{"link":"https://x.test/"}}]',
     ]);
     expect(crossCheckWithDatabase(result, doc(matching.slice(0, 2))).mismatches).toEqual([
       "paragraph 1: missing",
     ]);
     expect(crossCheckWithDatabase(result, doc([block({ start: 0 })])).mismatches).toEqual([
       "no paragraph starts at unitStart",
+    ]);
+  });
+
+  it("compares attribute values, not how many characters carry each attribute", () => {
+    const changed = [...matching];
+    changed[2] = {
+      ...matching[2],
+      runs: [
+        { length: 2, bold: true },
+        { length: 2, link: "https://other.test/", linkSafe: true },
+      ],
+    };
+    expect(crossCheckWithDatabase(result, doc(changed)).mismatches).toEqual([
+      'paragraph 1 runs: database [{"length":2,"values":{"bold":true}},{"length":2,"values":{"link":"https://other.test/"}}], writer [{"length":2,"values":{"bold":true}},{"length":2,"values":{"link":"https://x.test/"}}]',
+    ]);
+    const colored = [...matching];
+    colored[1] = { ...matching[1], runs: [{ length: 1, color: "#FF0000" }] };
+    expect(crossCheckWithDatabase(result, doc(colored)).mismatches?.[0]).toMatch(
+      /paragraph 0 runs: database .*#FF0000/
+    );
+  });
+
+  it("merges storage-level run splits and compares the requested text", () => {
+    const split = [...matching];
+    split[1] = { ...matching[1], text: "H", runs: [{ length: 1, font: { size: 12 } }] };
+    split[2] = {
+      ...matching[2],
+      text: "done",
+      runs: [
+        { length: 1, bold: true },
+        { length: 1, bold: true, font: { size: 12 } },
+        { length: 2, link: "https://x.test/", linkSafe: true },
+      ],
+    };
+    const requested: WireParagraph[] = [
+      { style: "heading", runs: [{ text: "H" }] },
+      {
+        style: "checklist",
+        indent: 1,
+        checked: true,
+        runs: [
+          { text: "do", bold: true },
+          { text: "ne", link: "https://x.test/" },
+        ],
+      },
+    ];
+    expect(crossCheckWithDatabase(result, doc(split), requested)).toEqual({
+      checked: true,
+      matches: true,
+    });
+    const other = [...requested];
+    other[0] = { style: "heading", runs: [{ text: "X" }] };
+    expect(crossCheckWithDatabase(result, doc(split), other).mismatches).toEqual([
+      "paragraph 0 text: the database text differs from the requested text",
     ]);
   });
 

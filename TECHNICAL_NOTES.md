@@ -1084,10 +1084,44 @@ After a successful apply on the live store, the server adds a check that
 does not go through NotesShared: `readNoteBlocks` (utils/noteBlocks) decodes
 the note's `ZICNOTEDATA.ZDATA` by the writer's `objectURI`, and the blocks
 from the one starting at `unitStart` on are compared with `readBack` (style,
-indent, block quote, checklist done state, length, and how many UTF-16 units
-carry each inline attribute), returned as `databaseReadBack`. It only
-reports; the writer's own verification decides success. On a store copy it
-reports `checked: false`.
+indent, block quote, checklist done state, length, and each run's attribute
+values: link URL, highlight, color, styles, and the attachment a glyph names;
+adjacent runs with equal values are merged on both sides so storage-level
+splits do not matter) and with the requested text, returned as
+`databaseReadBack`. It only reports; the writer's own verification decides
+success. On a store copy it reports `checked: false`.
+
+The writer's verification compares the persisted note with its own rendering
+of the request, so a mistake in that rendering would pass it. Before
+returning a success, the server (`verifyAgainstRequest` in
+privateCompose.ts) therefore compares `readBack` with the request it sent:
+each paragraph's style, indent, block quote, checklist state, and length,
+each run's attribute values, and, for each object paragraph, the created
+object's kind, type, card URL, or file name. A difference is
+`verification_failed` with `committed: true`, `indeterminate: true`, and
+`requestMismatches`. Links must already be in the form `NSURL` keeps
+(`-absoluteString` equal to the request; the server allows only RFC 3986
+characters and `%`), so the stored link can be compared exactly.
+
+**Limits checked before anything is created.** `create` mode makes the note
+through Notes.app before the writer runs, so a writer refusal after that
+would leave a stray title-only note. The server therefore applies every
+content and character rule the writer applies (the writer's forbidden set,
+link and color forms, table shape), and every size limit: 2,000 paragraphs,
+200,000 UTF-16 units with table cell text included, 10,000 units per cell,
+20,000 runs, 20 file and link-card blocks, 128 MiB of files, and the writer's
+1 MiB stdin cap measured on the serialized request with placeholder
+identifier and revision values. The writer enforces the same limits itself.
+If a create-mode compose still fails with `committed: false`, the server
+reads the note's writer revision again; when it still equals the revision
+read right after the create, it moves the note to Recently Deleted with
+`deleteNoteByIdIfUnchanged` (body compared in the same AppleScript as the
+delete) and reports `createdNote: "moved_to_recently_deleted"`, else
+`createdNote: "kept"` with the note's `id` and `identifier`.
+
+A note whose body is empty has no title paragraph, so an append or prepend
+would write the unit into the title position. The writer refuses such a note
+(`unsupported_note`, `committed: false`) rather than invent a title.
 
 **Dividers and tables.** A wire entry `{kind:"divider"}` or
 `{kind:"table", rows}` becomes one U+FFFC glyph in its own body paragraph. The
@@ -1099,12 +1133,26 @@ glyph at it with an `ICTTAttachment` (`attachmentIdentifier`,
 - divider: `+[ICInlineAttachment newDividerLineAttachmentWithIdentifier:note:parentAttachment:]`
   (UTI `com.apple.notes.inlinetextattachment.dividerline`);
 - table: `+[ICTable registerWithICCRCoder]` (Notes.app does this at launch;
-  without it the table CRDT has no root type), `-[ICNote addTableAttachment]`
-  (UTI `com.apple.notes.table`), rows and columns resized with
+  without it the table CRDT has no root type),
+  `-[ICNote addAttachmentWithUTI:]` with `com.apple.notes.table`, rows and
+  columns resized with
   `-insertRowAtIndex:`/`-removeRowAtIndex:` and the column equivalents, every
   cell written with `-setAttributedString:columnIndex:rowIndex:`, then
   `-[ICAttachmentTableModel writeMergeableData]`,
   `-regenerateTextContentInNote`, and `-[ICAttachment saveMergeableDataIfNeeded]`.
+
+The table is not made with `-[ICNote addTableAttachment]`: on macOS 27.2
+(store copy, 2026-09-24) that method saves the note's whole context itself,
+through `-[NSManagedObjectContext ic_saveWithLogDescription:]` inside
+`-addTableAttachmentWithTableData:`. A compose that failed after creating a
+table therefore left the table row, every object created before it, and the
+note's own changes saved while reporting `committed: false`.
+`-addAttachmentWithUTI:` creates the same row without saving, and the table
+model builds the empty table on first access. As a safety net the compose
+handler also counts `NSManagedObjectContextDidSaveNotification` on its
+context before its own save; if NotesShared saves by itself and the compose
+then fails, the error is reported with `committed: true`, `indeterminate: true`,
+and `earlySaves`, and no file is deleted.
 
 Each object gets `updateChangeCountWithReason:`. The writer refuses
 (`materialization_failed`, `committed: false`) if a factory changes the note
@@ -1125,6 +1173,88 @@ Copy-store run, 2026-09-24, macOS 27.2: two dividers, a 2 x 2 table, and a
 note link were created on the copy in one save and verified; the copy's
 table and divider rows grew by 3; a replay was refused with
 `committed: false`.
+
+`noteLink` blocks are not the only note links: any run link with a `notes:`
+or `applenotes:` scheme, from blocks or Markdown, must be a
+`showNote?identifier=` link whose target `read_note_state` finds, and the
+target must be neither locked nor deleted or in Recently Deleted.
+
+**Files and link cards.** A wire entry `{kind:"file", path, filename?}` or
+`{kind:"url", url}` is placed like a table: one U+FFFC glyph in its own body
+paragraph, created only on apply. The writer validates a file before it
+loads NotesShared, with `add-attachment`'s rules: an absolute path opened
+with `O_NOFOLLOW`, a nonempty regular file of at most 64 MiB, and a
+`filename` of one path component that keeps the source extension. It reads
+the bytes once, hashes them, and takes the type from Launch Services'
+reading of the source file (`NSURLTypeIdentifierKey`; an unregistered or
+dynamic type becomes `public.data`). A request takes at most 20 file and
+link-card entries and 128 MiB of files. The dry run reports each file's
+name, size, SHA-256, and type under `objects`.
+
+- file: `-[ICNote addAttachmentWithUTI:data:filename:]` creates the
+  attachment row, its `ICMedia` row, and the media file at
+  `Accounts/<account>/Media/<media identifier>/<generation>/<filename>`.
+- link card: `-[ICNote addURLAttachmentWithURL:]`, as in `add_url_card`
+  (`public.url`, the URL rules of `CardURL`, and the URL must already be in
+  `NSURL`'s form). Notes fetches the title and preview later.
+
+Before the save, each media file must sit under the store's `Accounts`
+directory and hold exactly the bytes read (size and SHA-256). Every failure
+between creating the first object and the save runs `DiscardComposeObjects`:
+it deletes each new file attachment's preview images, its exportable media,
+and its media directory (only the directory named after the media row, and
+only inside `Accounts`), then rolls the context back. After the save, the
+fresh read-back fetches each attachment by identifier and checks its note,
+type, card URL, media row file name, and the media file's size and SHA-256.
+On a store copy the writer points every `ICAccount` directory method at the
+copy's directory before it creates a file (`InstallAccountSandbox`, as
+`add_paper` does), so no file lands in the live container. The probe reports
+the extra selectors (`addAttachmentWithUTI:data:filename:`,
+`addURLAttachmentWithURL:`, `-[ICMedia mediaURL]`) and model properties
+(`ICAttachment.media`, `ICMedia.filename`) as the `composeAttachments`
+feature.
+
+The copy-store tests set `APPLE_NOTES_MCP_WRITER_FAULT=compose_before_save`
+to fail a compose after every object exists and just before the save. The
+writer honors it only when `APPLE_NOTES_MCP_PRIVATE_STORE` names a copy.
+
+**Frozen attachments.** Appending to a note that holds attachments must not
+change them. The writer fingerprints them three times: after the revision
+check, just before the save (in the write context), and after the save (in
+the fresh read-only context). A fingerprint holds, per existing
+`ICAttachment` row, a digest of every stored attribute (data values hashed;
+transient and transformed attributes skipped; the owning note included), the
+same digest of its `ICMedia` row, and the media file's size and SHA-256 when
+the file is on this Mac (up to 512 MiB of hashing per fingerprint, then size
+and modification time); per inline attachment row, the same row digest; and
+the order of the attachment glyphs already in the body. Objects the compose
+created are left out. A difference before the save refuses with
+`attachment_drift`, `committed: false`, and the drifted keys in
+`attachmentDrift`; nothing is saved and created files are removed. A
+difference after the save is `verification_failed` with `committed: true`.
+Before the save, any deleted object also counts as drift.
+
+The version floor (`minimumSupportedNotesVersion`) is compared separately:
+it may rise but not fall. Inserting a divider on a store copy (macOS 27.2,
+2026-09-24) raised it on every existing image attachment and media row of
+the note, from 0 or 2 to 6, inside Notes' own model code. Those rows are
+listed in `frozenAttachments.versionFloorRaised`.
+
+Copy-store run, 2026-09-24, macOS 27.2
+(`scripts/test-private-writer-compose-copy-store.sh`, on a note with one
+existing attachment): the live compose was refused with `writes_disabled`; a
+relative file path was refused with `committed: false`; the dry run listed
+four objects with the PNG's SHA-256 and changed nothing; the injected failure
+left the revision, the note's attachment rows, and the files under
+`Accounts` unchanged; the apply created two files, a link card, and a table
+in one save (rows +4, both files found by SHA-256) with the existing
+attachment unchanged; the replay was refused; no file appeared under the live
+Notes container; the live note's revision was unchanged. In a separate run on
+a copy, the server's `composeNote` (with `verifyAgainstRequest`) applied every
+run attribute, a checklist, a quote, a divider, a table, a file, and a link
+card through the real writer and accepted its `readBack`, and
+`crossCheckWithDatabase` pointed at the copy decoded the same paragraphs with
+matching text and attribute values.
 
 `create` mode does not create notes in the writer. Notes.app creates the
 note through the same AppleScript as `create-note`, the server resolves its

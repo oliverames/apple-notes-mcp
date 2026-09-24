@@ -323,6 +323,7 @@ export const writerProbeSchema = z
         pruneOrphanTable: featureSchema.optional(),
         smartFolders: featureSchema.optional(),
         addPaper: featureSchema.extend({ formats: z.array(z.string()) }).optional(),
+        composeAttachments: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -1026,6 +1027,11 @@ export const WRITER_FEATURES = [
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED,
   },
   { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  {
+    key: "composeAttachments",
+    probeKey: "composeAttachments",
+    liveValidated: COMPOSE_LIVE_VALIDATED,
+  },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

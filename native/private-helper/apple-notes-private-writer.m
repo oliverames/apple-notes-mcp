@@ -46,6 +46,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -251,7 +252,7 @@ static const APIRequirement kComposeObjectAPI[] = {
     {"ICTTAttachment", "attachmentUTI", NO},
     {"ICInlineAttachment", "newDividerLineAttachmentWithIdentifier:note:parentAttachment:", YES},
     {"ICTable", "registerWithICCRCoder", YES},
-    {"ICNote", "addTableAttachment", NO},
+    {"ICNote", "addAttachmentWithUTI:", NO},
     {"ICAttachment", "tableModel", NO},
     {"ICAttachment", "saveMergeableDataIfNeeded", NO},
     {"ICAttachment", "updateChangeCountWithReason:", NO},
@@ -266,6 +267,27 @@ static const APIRequirement kComposeObjectAPI[] = {
     {"ICTable", "removeColumnAtIndex:", NO},
     {"ICTable", "rowCount", NO},
     {"ICTable", "columnCount", NO},
+};
+
+// Compose file and link-card blocks: NotesShared creates the attachment row
+// (and, for a file, its media row and media file); the compose unit places
+// the glyph, as it does for tables. Reported by the probe as
+// `composeAttachments`.
+static const APIRequirement kComposeAttachmentAPI[] = {
+    {"ICNote", "addAttachmentWithUTI:data:filename:", NO},
+    {"ICNote", "addURLAttachmentWithURL:", NO},
+    {"ICAttachment", "updateChangeCountWithReason:", NO},
+    {"ICMedia", "mediaURL", NO},
+    {"ICTTAttachment", "setAttachmentIdentifier:", NO},
+    {"ICTTAttachment", "setAttachmentUTI:", NO},
+    {"ICTTAttachment", "attachmentIdentifier", NO},
+    {"ICTTAttachment", "attachmentUTI", NO},
+};
+
+static const ModelRequirement kComposeAttachmentModel[] = {
+    {"ICNote", "attachments"},
+    {"ICAttachment", "identifier,typeUTI,urlString,note,media"},
+    {"ICMedia", "identifier,filename,attachment"},
 };
 
 // Checklist toggling rewrites the paragraph style of one existing checklist
@@ -468,6 +490,7 @@ typedef NS_ENUM(NSInteger, Feature) {
   FeatureTables,
   FeaturePruneTable,
   FeatureSmartFolders,
+  FeatureComposeAttachments,
 };
 
 // Features that edit the body text need the append editing surface.
@@ -530,6 +553,14 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
     [missing addObjectsFromArray:MissingModelProperties(kSmartFolderModelProperties,
                                                           COUNT(kSmartFolderModelProperties))];
     [missing addObjectsFromArray:MissingAPI(kSmartFolderAPI, COUNT(kSmartFolderAPI))];
+  }
+  // File and link-card blocks in compose: the compose surface plus their own.
+  if (feature == FeatureComposeAttachments) {
+    [missing addObjectsFromArray:MissingAPI(kAppendAPI, COUNT(kAppendAPI))];
+    [missing addObjectsFromArray:MissingAPI(kComposeAPI, COUNT(kComposeAPI))];
+    [missing addObjectsFromArray:MissingAPI(kComposeAttachmentAPI, COUNT(kComposeAttachmentAPI))];
+    [missing addObjectsFromArray:MissingModelProperties(kComposeAttachmentModel,
+                                                        COUNT(kComposeAttachmentModel))];
   }
   return missing;
 }
@@ -967,6 +998,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"pruneOrphanTable" : FeatureReport(FeaturePruneTable, contextOK, contextReason),
       @"smartFolders" : FeatureReport(FeatureSmartFolders, contextOK, contextReason),
       @"addPaper" : PaperWriteFeatureReport(contextOK, contextReason),
+      @"composeAttachments" : FeatureReport(FeatureComposeAttachments, contextOK, contextReason),
     },
   };
 }
@@ -2753,6 +2785,12 @@ static NSURL *ValidatedLink(NSString *value) {
   if (!url || value.length > 4096 || ![allowed containsObject:scheme])
     Fail(@"invalid_request",
          @"Run `link` must be an absolute http, https, mailto, tel, notes, or applenotes URL", nil);
+  // The stored link must be the requested string: NSURL percent-encodes
+  // spaces and non-ASCII characters, which would make the read-back differ.
+  if (![url.absoluteString isEqualToString:value])
+    Fail(@"invalid_request",
+         @"Run `link` must already be a well-formed URL (percent-encode spaces and non-ASCII characters)",
+         nil);
   return url;
 }
 
@@ -2829,9 +2867,14 @@ typedef struct {
 #define MAX_TABLE_ROWS 1000
 #define MAX_TABLE_COLUMNS 100
 #define MAX_TABLE_CELLS 10000
+#define MAX_TABLE_CELL_UTF16 10000
+#define MAX_COMPOSE_ATTACHMENTS 20
+#define MAX_COMPOSE_FILE_BYTES (64LL * 1024 * 1024)
+#define MAX_COMPOSE_FILE_TOTAL (128LL * 1024 * 1024)
 
 // A divider or table paragraph: one attachment glyph on its own line.
 // Table rows must be rectangular arrays of one-line strings (empty allowed).
+// Cell text counts toward the request's UTF-16 budget (`cellUTF16`).
 static NSDictionary *ValidateObjectParagraph(NSDictionary *paragraph, NSString *kind) {
   if ([kind isEqualToString:@"divider"]) {
     RequireOnlyKeys(paragraph, @"kind", @"divider paragraph");
@@ -2841,7 +2884,7 @@ static NSDictionary *ValidateObjectParagraph(NSDictionary *paragraph, NSString *
   id rows = paragraph[@"rows"];
   if (![rows isKindOfClass:[NSArray class]] || [rows count] == 0 || [rows count] > MAX_TABLE_ROWS)
     Fail(@"invalid_request", @"Table `rows` must be an array of 1 to 1000 rows", nil);
-  NSUInteger columns = 0;
+  NSUInteger columns = 0, cellUTF16 = 0;
   for (id row in rows) {
     if (![row isKindOfClass:[NSArray class]] || [row count] == 0 || [row count] > MAX_TABLE_COLUMNS)
       Fail(@"invalid_request", @"Each table row must be an array of 1 to 100 cells", nil);
@@ -2849,12 +2892,107 @@ static NSDictionary *ValidateObjectParagraph(NSDictionary *paragraph, NSString *
     if ([row count] != columns) Fail(@"invalid_request", @"Table rows must all have the same number of cells", nil);
     for (id cell in row) {
       if (![cell isKindOfClass:[NSString class]]) Fail(@"invalid_request", @"Table cells must be strings", nil);
+      if ([cell length] > MAX_TABLE_CELL_UTF16)
+        Fail(@"invalid_request", @"A table cell may hold at most 10000 UTF-16 code units", nil);
       if ([cell length]) ValidateRunText(cell);
+      cellUTF16 += [cell length];
     }
   }
   if ([rows count] * columns > MAX_TABLE_CELLS)
     Fail(@"invalid_request", @"A table may have at most 10000 cells", nil);
-  return @{@"kind" : kind, @"rows" : rows};
+  return @{@"kind" : kind, @"rows" : rows, @"cellUTF16" : @(cellUTF16)};
+}
+
+static NSURL *CardURL(NSString *value);
+static void InstallAccountSandbox(NSString *root);
+
+// Fault injection for the copy-store tests (compose_before_save); honored only
+// when APPLE_NOTES_MCP_PRIVATE_STORE names a store copy.
+static NSString *const kFaultEnv = @"APPLE_NOTES_MCP_WRITER_FAULT";
+
+// The name a file attachment gets, with add-attachment's rules: one path
+// component of at most 255 UTF-8 bytes, no slash, colon, backslash, control
+// character, leading dot, or surrounding spaces, and the source file's
+// extension.
+static NSString *ComposeFileName(NSString *source, id requested) {
+  if (!requested) return source;
+  if (![requested isKindOfClass:[NSString class]] || [requested length] == 0 ||
+      [requested lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 255)
+    Fail(@"invalid_request", @"File `filename` must be a string of 1 to 255 UTF-8 bytes", nil);
+  NSString *name = requested;
+  NSMutableCharacterSet *bad = [ForbiddenTextCharacters(NO) mutableCopy];
+  [bad addCharactersInString:@"/:\\\t"];
+  if ([name hasPrefix:@"."] || [name rangeOfCharacterFromSet:bad].location != NSNotFound ||
+      ![name isEqualToString:[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]])
+    Fail(@"invalid_request",
+         @"File `filename` must be one path component with no slash, colon, backslash, control character, "
+         @"leading dot, or surrounding spaces",
+         nil);
+  if ([name.pathExtension caseInsensitiveCompare:source.pathExtension] != NSOrderedSame)
+    Fail(@"invalid_request", @"File `filename` must keep the source file's extension", nil);
+  return name;
+}
+
+// A file paragraph names one local file by absolute path. The writer reads it
+// once, through a descriptor opened without following a final symbolic link,
+// and keeps those bytes: the attachment is created from exactly the bytes it
+// hashed, so a file that changes afterwards cannot slip in.
+static NSDictionary *ValidateFileParagraph(NSDictionary *paragraph) {
+  RequireOnlyKeys(paragraph, @"kind,path,filename", @"file paragraph");
+  NSString *path = paragraph[@"path"];
+  if (![path isKindOfClass:[NSString class]] || path.length == 0 || path.length > 4096 || ![path isAbsolutePath] ||
+      [path rangeOfCharacterFromSet:ForbiddenTextCharacters(NO)].location != NSNotFound)
+    Fail(@"invalid_request", @"File `path` must be an absolute path of at most 4096 characters", nil);
+  NSString *filename = ComposeFileName(path.lastPathComponent, paragraph[@"filename"]);
+  int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0)
+    Fail(@"invalid_request", @"File `path` cannot be opened (missing, unreadable, or a symbolic link)", nil);
+  struct stat info;
+  if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size <= 0 ||
+      info.st_size > MAX_COMPOSE_FILE_BYTES) {
+    close(fd);
+    Fail(@"invalid_request", @"File `path` must be a nonempty regular file of at most 64 MiB", nil);
+  }
+  NSMutableData *data = [NSMutableData dataWithCapacity:(NSUInteger)info.st_size];
+  char buffer[65536];
+  ssize_t n;
+  while ((n = read(fd, buffer, sizeof buffer)) > 0) {
+    [data appendBytes:buffer length:(NSUInteger)n];
+    if ((long long)data.length > info.st_size) break;
+  }
+  close(fd);
+  if (n < 0 || (long long)data.length != info.st_size)
+    Fail(@"invalid_request", @"The file changed while it was read; try again", nil);
+  // The type Notes records, from Launch Services' reading of the source file;
+  // `filename` keeps its extension. An unregistered type becomes generic data.
+  NSString *uti = nil;
+  [[NSURL fileURLWithPath:path] getResourceValue:&uti forKey:NSURLTypeIdentifierKey error:NULL];
+  if (![uti isKindOfClass:[NSString class]] || !uti.length || [uti hasPrefix:@"dyn."]) uti = @"public.data";
+  return @{
+    @"kind" : @"file",
+    @"path" : path,
+    @"filename" : filename,
+    @"data" : data,
+    @"bytes" : @(data.length),
+    @"sha256" : SHA256Hex(data),
+    @"uti" : uti,
+  };
+}
+
+// A link-card paragraph: the same URL rules as add_url_card.
+static NSDictionary *ValidateCardParagraph(NSDictionary *paragraph) {
+  RequireOnlyKeys(paragraph, @"kind,url", @"url paragraph");
+  id value = paragraph[@"url"];
+  if (![value isKindOfClass:[NSString class]]) Fail(@"invalid_request", @"Card `url` must be a string", nil);
+  NSString *url = CardURL(value).absoluteString;
+  if (![url isEqualToString:value])
+    Fail(@"invalid_request", @"Card `url` must already be a well-formed URL (percent-encode spaces and non-ASCII)",
+         nil);
+  return @{@"kind" : @"url", @"url" : url};
+}
+
+static BOOL IsObjectKind(id kind) {
+  return [kind isEqual:@"divider"] || [kind isEqual:@"table"] || [kind isEqual:@"file"] || [kind isEqual:@"url"];
 }
 
 // Validates the whole request and builds the text with its inline runs. Pure
@@ -2867,15 +3005,29 @@ static ComposedUnit BuildUnit(id paragraphsValue) {
   if (paragraphs.count > MAX_COMPOSE_PARAGRAPHS)
     Fail(@"invalid_request", @"`paragraphs` exceeds 2000 entries", nil);
   ComposedUnit unit = {[NSMutableAttributedString new], [NSMutableArray array], [NSMutableArray array]};
-  NSUInteger runCount = 0;
+  NSUInteger runCount = 0, cellUTF16 = 0, attachmentCount = 0;
+  long long fileBytes = 0;
   for (NSUInteger index = 0; index < paragraphs.count; index++) {
     id value = paragraphs[index];
     if (![value isKindOfClass:[NSDictionary class]])
       Fail(@"invalid_request", @"Each paragraph must be an object", nil);
     NSDictionary *paragraph = value;
     id kind = paragraph[@"kind"] ?: @"text";
-    if ([kind isEqual:@"divider"] || [kind isEqual:@"table"]) {
-      NSDictionary *object = ValidateObjectParagraph(paragraph, kind);
+    if (IsObjectKind(kind)) {
+      NSDictionary *object;
+      if ([kind isEqual:@"file"] || [kind isEqual:@"url"]) {
+        if (++attachmentCount > MAX_COMPOSE_ATTACHMENTS)
+          Fail(@"invalid_request", @"A compose may hold at most 20 file and link-card paragraphs", nil);
+        object = [kind isEqual:@"file"] ? ValidateFileParagraph(paragraph) : ValidateCardParagraph(paragraph);
+        fileBytes += [object[@"bytes"] longLongValue];
+        if (fileBytes > MAX_COMPOSE_FILE_TOTAL)
+          Fail(@"invalid_request", @"The files in one compose may total at most 128 MiB", nil);
+      } else {
+        object = ValidateObjectParagraph(paragraph, kind);
+      }
+      cellUTF16 += [object[@"cellUTF16"] unsignedIntegerValue];
+      if (unit.text.length + cellUTF16 > MAX_COMPOSE_UTF16)
+        Fail(@"invalid_request", @"Composed text and table cells exceed 200000 UTF-16 code units", nil);
       if (unit.text.length) [unit.text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
       [unit.ranges addObject:[NSValue valueWithRange:NSMakeRange(unit.text.length, 1)]];
       // A placeholder glyph; MaterializeObjects gives it a real attachment.
@@ -2884,7 +3036,7 @@ static ComposedUnit BuildUnit(id paragraphsValue) {
       continue;
     }
     if (![kind isEqual:@"text"])
-      Fail(@"invalid_request", @"Paragraph `kind` must be text, divider, or table", nil);
+      Fail(@"invalid_request", @"Paragraph `kind` must be text, divider, table, file, or url", nil);
     RequireOnlyKeys(paragraph, @"kind,style,indent,blockQuote,checked,runs", @"paragraph");
     id styleName = paragraph[@"style"];
     const StyleSpec *spec = [styleName isKindOfClass:[NSString class]] ? StyleNamed(styleName) : NULL;
@@ -2922,8 +3074,8 @@ static ComposedUnit BuildUnit(id paragraphsValue) {
       ValidateRunText(text);
       [unit.text appendAttributedString:[[NSAttributedString alloc] initWithString:text
                                                                        attributes:RunAttributes(run)]];
-      if (unit.text.length > MAX_COMPOSE_UTF16)
-        Fail(@"invalid_request", @"Composed text exceeds 200000 UTF-16 code units", nil);
+      if (unit.text.length + cellUTF16 > MAX_COMPOSE_UTF16)
+        Fail(@"invalid_request", @"Composed text and table cells exceed 200000 UTF-16 code units", nil);
     }
     [unit.ranges addObject:[NSValue valueWithRange:NSMakeRange(start, unit.text.length - start)]];
     [unit.styles addObject:@{
@@ -2964,7 +3116,12 @@ static id NewTable(NSManagedObject *note, NSArray<NSArray<NSString *> *> *rows) 
   // Notes.app registers the table CRDT type at launch; without it the
   // serialized table has no root type and renders empty.
   SendVoid(objc_getClass("ICTable"), "registerWithICCRCoder");
-  id attachment = Send(note, "addTableAttachment");
+  // -addTableAttachment saves the note's whole context by itself
+  // (-[NSManagedObjectContext ic_saveWithLogDescription:], observed on macOS
+  // 27.2), which would commit the table, and every object created before it,
+  // ahead of the compose's one guarded save. -addAttachmentWithUTI: creates
+  // the same row without saving; the table model builds an empty table.
+  id attachment = Send1(note, "addAttachmentWithUTI:", @"com.apple.notes.table");
   id table = Send(Send(attachment, "tableModel"), "table");
   if (!table) Fail(@"materialization_failed", @"NotesShared did not create a table", @{@"committed" : @NO});
   NSUInteger wantRows = rows.count, wantColumns = rows.firstObject.count;
@@ -3001,6 +3158,154 @@ static id NewDivider(NSManagedObject *note) {
       nil);
 }
 
+// Attachments a compose created in this process, in creation order, so a
+// failure before the save can remove the media files NotesShared already
+// wrote (DiscardComposeObjects).
+static NSMutableArray *gComposeCreated = nil;
+
+// A file attachment from the bytes the writer read. NotesShared creates the
+// attachment row, its media row, and the media file under the account's
+// Media directory; the glyph is placed by the unit.
+static id NewComposeFile(NSManagedObject *note, NSDictionary *p) {
+  id attachment = ((id(*)(id, SEL, id, id, id))objc_msgSend)(
+      note, sel_registerName("addAttachmentWithUTI:data:filename:"), p[@"uti"], p[@"data"], p[@"filename"]);
+  if (attachment) [gComposeCreated addObject:attachment];
+  return attachment;
+}
+
+// A link card, as add_url_card makes it: a public.url attachment row with the
+// URL and no glyph of its own. Notes fetches the title and preview later.
+static id NewComposeCard(NSManagedObject *note, NSDictionary *p) {
+  id attachment = ((id(*)(id, SEL, id))objc_msgSend)(note, sel_registerName("addURLAttachmentWithURL:"),
+                                                     [NSURL URLWithString:p[@"url"]]);
+  if (attachment) [gComposeCreated addObject:attachment];
+  if (attachment && ![[attachment valueForKey:@"typeUTI"] isEqual:@"public.url"])
+    Fail(@"materialization_failed", @"NotesShared did not create a public.url attachment", @{@"committed" : @NO});
+  return attachment;
+}
+
+static id NewComposeObject(NSManagedObject *note, NSDictionary *p) {
+  NSString *kind = p[@"kind"];
+  if ([kind isEqualToString:@"table"]) return NewTable(note, p[@"rows"]);
+  if ([kind isEqualToString:@"file"]) return NewComposeFile(note, p);
+  if ([kind isEqualToString:@"url"]) return NewComposeCard(note, p);
+  return NewDivider(note);
+}
+
+static BOOL UnitHasKind(ComposedUnit unit, NSArray<NSString *> *kinds) {
+  for (NSDictionary *p in unit.styles)
+    if (p[@"kind"] && [kinds containsObject:p[@"kind"]]) return YES;
+  return NO;
+}
+
+// Where every attachment file of this store lives: `Accounts/` beside the
+// store (the live Notes container, or the copy's directory, where the account
+// sandbox points NotesShared on a copy).
+static NSString *AttachmentFilesRoot(StoreLocation store) {
+  return [[[store.path stringByDeletingLastPathComponent] stringByResolvingSymlinksInPath]
+      stringByAppendingPathComponent:@"Accounts"];
+}
+
+static BOOL PathIsInside(NSString *path, NSString *root) {
+  NSString *resolved = [path stringByResolvingSymlinksInPath];
+  return [resolved hasPrefix:[root stringByAppendingString:@"/"]];
+}
+
+// The media file of a file attachment, or nil. Never throws.
+static NSString *MediaFilePath(NSManagedObject *attachment) {
+  @try {
+    if (!attachment.entity.relationshipsByName[@"media"]) return nil;
+    id media = [attachment valueForKey:@"media"];
+    if (!media || ![media respondsToSelector:sel_registerName("mediaURL")]) return nil;
+    NSURL *url = Send(media, "mediaURL");
+    return [url isKindOfClass:[NSURL class]] && url.isFileURL ? url.path : nil;
+  } @catch (NSException *e) {
+    return nil;
+  }
+}
+
+// Size and SHA-256 of a regular file read without following a final link, or
+// nil when it cannot be read.
+static NSString *FileDigest(NSString *path, long long *sizeOut) {
+  int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) return nil;
+  struct stat info;
+  if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
+    close(fd);
+    return nil;
+  }
+  CC_SHA256_CTX ctx;
+  CC_SHA256_Init(&ctx);
+  char buffer[65536];
+  ssize_t n;
+  long long total = 0;
+  while ((n = read(fd, buffer, sizeof buffer)) > 0) {
+    CC_SHA256_Update(&ctx, buffer, (CC_LONG)n);
+    total += n;
+  }
+  close(fd);
+  if (n < 0) return nil;
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256_Final(digest, &ctx);
+  NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+  for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) [hex appendFormat:@"%02x", digest[i]];
+  if (sizeOut) *sizeOut = total;
+  return hex;
+}
+
+// Before the save: each new file attachment's media file must sit under the
+// store's Accounts directory and hold exactly the bytes the writer read.
+static void VerifyNewFilesBeforeSave(ComposedUnit unit, NSArray<NSDictionary *> *created, NSString *filesRoot) {
+  NSUInteger next = 0;
+  for (NSDictionary *p in unit.styles) {
+    if (!p[@"kind"]) continue;
+    NSDictionary *object = created[next++];
+    if (![p[@"kind"] isEqual:@"file"]) continue;
+    NSString *path = MediaFilePath(object[@"attachment"]);
+    long long size = -1;
+    NSString *digest = path ? FileDigest(path, &size) : nil;
+    if (!path || !PathIsInside(path, filesRoot))
+      Fail(@"materialization_failed", @"NotesShared did not store the file under the Notes attachment directory",
+           @{@"committed" : @NO});
+    if (!digest || size != [p[@"bytes"] longLongValue] || ![digest isEqualToString:p[@"sha256"]])
+      Fail(@"materialization_failed", @"The stored attachment file does not hold the bytes that were read",
+           @{@"committed" : @NO});
+  }
+}
+
+// Undoes a compose that never reached the store: removes the preview images
+// and the media directory NotesShared wrote for each new file attachment
+// (only a directory inside `filesRoot` named after the media row), then rolls
+// the context back. Never throws.
+static void DiscardComposeObjects(NSManagedObjectContext *context, NSString *filesRoot) {
+  for (NSManagedObject *attachment in gComposeCreated) {
+    @try {
+      if ([attachment respondsToSelector:sel_registerName("deleteAttachmentPreviewImages")])
+        SendVoid(attachment, "deleteAttachmentPreviewImages");
+      NSString *path = MediaFilePath(attachment);
+      id media = attachment.entity.relationshipsByName[@"media"] ? [attachment valueForKey:@"media"] : nil;
+      NSString *mediaId = media ? [media valueForKey:@"identifier"] : nil;
+      if (media && [media respondsToSelector:sel_registerName("deleteExportableMedia")])
+        SendVoid(media, "deleteExportableMedia");
+      if (!path || !IsUUID(mediaId)) continue;
+      // The media directory is the ancestor named after the media row.
+      NSString *dir = path;
+      while (dir.length > filesRoot.length && ![dir.lastPathComponent isEqualToString:mediaId])
+        dir = dir.stringByDeletingLastPathComponent;
+      if ([dir.lastPathComponent isEqualToString:mediaId] && PathIsInside(dir, filesRoot))
+        [NSFileManager.defaultManager removeItemAtPath:dir error:NULL];
+    } @catch (NSException *e) {
+      (void)e;
+    }
+  }
+  [gComposeCreated removeAllObjects];
+  @try {
+    [context rollback];
+  } @catch (NSException *e) {
+    (void)e;
+  }
+}
+
 static BOOL UnitHasObjects(ComposedUnit unit) {
   for (NSDictionary *p in unit.styles)
     if (p[@"kind"]) return YES;
@@ -3018,7 +3323,7 @@ static NSArray<NSDictionary *> *MaterializeObjects(ComposedUnit unit, NSManagedO
     NSUInteger lengthBefore = [BodyText(Send(note, "mergeableString")) length];
     id attachment = nil;
     @try {
-      attachment = [p[@"kind"] isEqual:@"table"] ? NewTable(note, p[@"rows"]) : NewDivider(note);
+      attachment = NewComposeObject(note, p);
     } @catch (HelperError *e) {
       @throw;
     } @catch (NSException *e) {
@@ -3034,24 +3339,81 @@ static NSArray<NSDictionary *> *MaterializeObjects(ComposedUnit unit, NSManagedO
     ((void (*)(id, SEL, id))objc_msgSend)(attachment, sel_registerName("updateChangeCountWithReason:"),
                                           @"apple-notes-mcp compose_note");
     AttachGlyph(unit.text, unit.ranges[i].rangeValue, attachment);
-    [created addObject:@{
+    NSMutableDictionary *entry = [@{
       @"kind" : p[@"kind"],
       @"identifier" : [attachment valueForKey:@"identifier"],
       @"uti" : OrNull(Send(attachment, "typeUTI")),
-    }];
+      @"attachment" : attachment,
+    } mutableCopy];
+    if ([p[@"kind"] isEqual:@"file"])
+      [entry addEntriesFromDictionary:@{@"filename" : p[@"filename"], @"bytes" : p[@"bytes"], @"sha256" : p[@"sha256"]}];
+    if ([p[@"kind"] isEqual:@"url"]) entry[@"url"] = p[@"url"];
+    [created addObject:entry];
   }
   return created;
 }
 
+// The created objects as the result reports them (without the model objects).
+static NSArray<NSDictionary *> *PublicObjects(NSArray<NSDictionary *> *created) {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *object in created) {
+    NSMutableDictionary *entry = [object mutableCopy];
+    [entry removeObjectForKey:@"attachment"];
+    [out addObject:entry];
+  }
+  return out;
+}
+
+// What a dry run would create, in body order. Files report the bytes the
+// writer read (size and SHA-256), so a caller can check the plan.
+static NSArray<NSDictionary *> *PlannedObjects(ComposedUnit unit) {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *p in unit.styles) {
+    NSString *kind = p[@"kind"];
+    if (!kind) continue;
+    if ([kind isEqualToString:@"file"])
+      [out addObject:@{
+        @"kind" : kind,
+        @"filename" : p[@"filename"],
+        @"bytes" : p[@"bytes"],
+        @"sha256" : p[@"sha256"],
+        @"uti" : p[@"uti"],
+      }];
+    else if ([kind isEqualToString:@"url"])
+      [out addObject:@{@"kind" : kind, @"url" : p[@"url"]}];
+    else if ([kind isEqualToString:@"table"])
+      [out addObject:@{@"kind" : kind, @"rows" : @([p[@"rows"] count]), @"columns" : @([[p[@"rows"] firstObject] count])}];
+    else
+      [out addObject:@{@"kind" : kind}];
+  }
+  return out;
+}
+
+// A persisted file attachment: its media row names the requested file, and
+// the media file holds exactly the bytes that were read.
+static NSString *VerifyPersistedFile(NSManagedObject *row, NSDictionary *p) {
+  id media = [row valueForKey:@"media"];
+  if (!media) return @"The file attachment has no media row";
+  if (![[media valueForKey:@"filename"] isEqual:p[@"filename"]])
+    return @"The file attachment's media row names another file";
+  NSString *path = MediaFilePath(row);
+  long long size = -1;
+  NSString *digest = path ? FileDigest(path, &size) : nil;
+  if (!digest || size != [p[@"bytes"] longLongValue] || ![digest isEqualToString:p[@"sha256"]])
+    return @"The persisted attachment file does not hold the bytes that were read";
+  return nil;
+}
+
 // Fresh-context proof that each created object exists, belongs to the note,
-// and, for tables, holds exactly the requested cells.
+// has the created type, and, for tables, holds exactly the requested cells,
+// for link cards the URL, and for files the exact bytes.
 static NSString *VerifyObjects(NSManagedObjectContext *fresh, ComposedUnit unit, NSArray *created,
                                NSString *noteIdentifier) {
   NSUInteger next = 0;
   for (NSDictionary *p in unit.styles) {
     if (!p[@"kind"]) continue;
     NSDictionary *object = created[next++];
-    NSString *entity = [p[@"kind"] isEqual:@"table"] ? @"ICAttachment" : @"ICInlineAttachment";
+    NSString *entity = [p[@"kind"] isEqual:@"divider"] ? @"ICInlineAttachment" : @"ICAttachment";
     NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:entity];
     request.predicate = [NSPredicate predicateWithFormat:@"identifier == %@", object[@"identifier"]];
     NSArray *rows = [fresh executeFetchRequest:request error:nil];
@@ -3059,6 +3421,14 @@ static NSString *VerifyObjects(NSManagedObjectContext *fresh, ComposedUnit unit,
     id note = [rows.firstObject valueForKey:@"note"];
     if (![[note valueForKey:@"identifier"] isEqual:noteIdentifier])
       return [NSString stringWithFormat:@"The %@ does not belong to the note", p[@"kind"]];
+    if (![[rows.firstObject valueForKey:@"typeUTI"] isEqual:object[@"uti"]])
+      return [NSString stringWithFormat:@"The persisted %@ has another type", p[@"kind"]];
+    if ([p[@"kind"] isEqual:@"url"] && ![[rows.firstObject valueForKey:@"urlString"] isEqual:p[@"url"]])
+      return @"The persisted link card does not carry the requested URL";
+    if ([p[@"kind"] isEqual:@"file"]) {
+      NSString *detail = VerifyPersistedFile(rows.firstObject, p);
+      if (detail) return detail;
+    }
     if (![p[@"kind"] isEqual:@"table"]) continue;
     SendVoid(objc_getClass("ICTable"), "registerWithICCRCoder");
     id table = Send(Send(rows.firstObject, "tableModel"), "table");
@@ -3077,6 +3447,154 @@ static NSString *VerifyObjects(NSManagedObjectContext *fresh, ComposedUnit unit,
       }
   }
   return nil;
+}
+
+#pragma mark Frozen attachments
+
+// Hashing budget for existing attachment files, per fingerprint. Files past
+// it are fingerprinted by size and modification time instead.
+#define MAX_FROZEN_HASH_BYTES (512LL * 1024 * 1024)
+
+typedef struct {
+  NSUInteger attachments, inlineAttachments, filesHashed, filesBySize, filesUnreachable;
+} FrozenStats;
+
+// Size and content (or size and modification time, past the budget) of one
+// attachment's media file; "none" without media, "unreachable" when the file
+// is not on this Mac.
+static NSString *FrozenFile(NSManagedObject *attachment, long long *budget, FrozenStats *stats) {
+  if (!attachment.entity.relationshipsByName[@"media"] || ![attachment valueForKey:@"media"]) return @"none";
+  NSString *path = MediaFilePath(attachment);
+  struct stat info;
+  if (!path || lstat(path.fileSystemRepresentation, &info) != 0 || !S_ISREG(info.st_mode)) {
+    stats->filesUnreachable++;
+    return @"unreachable";
+  }
+  if (info.st_size > *budget) {
+    stats->filesBySize++;
+    return [NSString stringWithFormat:@"size:%lld:mtime:%ld.%09ld", (long long)info.st_size,
+                                      (long)info.st_mtimespec.tv_sec, (long)info.st_mtimespec.tv_nsec];
+  }
+  long long size = 0;
+  NSString *digest = FileDigest(path, &size);
+  if (!digest) {
+    stats->filesUnreachable++;
+    return @"unreadable";
+  }
+  *budget -= size;
+  stats->filesHashed++;
+  return [NSString stringWithFormat:@"%lld:%@", size, digest];
+}
+
+static NSString *const kVersionFloorKey = @"minimumSupportedNotesVersion";
+
+// AttachmentRowDigest's canonical form without the version floor
+// (minimumSupportedNotesVersion), which is recorded in `out` under
+// "version:<key>" instead. Notes' model raises the floor of every attachment
+// of a note, and of each attachment's media row, when new content needs a
+// newer Notes: on a store copy (macOS 27.2, 2026-09-24) inserting a divider
+// raised existing image rows from 0 or 2 to 6. FrozenDrift accepts a raised
+// floor and refuses a lowered one.
+static NSString *FrozenRowDigest(NSManagedObject *row, NSString *key, NSMutableDictionary *out) {
+  NSMutableArray *parts = [NSMutableArray array];
+  NSDictionary *attributes = row.entity.attributesByName;
+  for (NSString *name in [attributes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+    NSAttributeDescription *attribute = attributes[name];
+    if (attribute.isTransient || attribute.valueTransformerName ||
+        attribute.attributeType == NSTransformableAttributeType)
+      continue;
+    id value = [row valueForKey:name];
+    if ([name isEqualToString:kVersionFloorKey]) {
+      out[[@"version:" stringByAppendingString:key]] = [value isKindOfClass:[NSNumber class]] ? value : @0;
+      continue;
+    }
+    NSString *canonical;
+    if (!value)
+      canonical = @"nil";
+    else if ([value isKindOfClass:[NSData class]])
+      canonical = [@"d:" stringByAppendingString:SHA256Hex(value)];
+    else
+      canonical = CanonicalValue(value);
+    [parts addObject:[NSString stringWithFormat:@"%@=%@", name, canonical]];
+  }
+  id owner = row.entity.relationshipsByName[@"note"] ? [row valueForKey:@"note"] : nil;
+  id ownerIdentifier = owner ? ([owner valueForKey:@"identifier"] ?: @"?") : @"nil";
+  [parts addObject:[NSString stringWithFormat:@"note=%@", ownerIdentifier]];
+  return SHA256Hex([[parts componentsJoinedByString:@"\x1f"] dataUsingEncoding:NSUTF8StringEncoding]);
+}
+
+// One fingerprint per existing attachment of the note: every ICAttachment row
+// (identifier, type, payload metadata, mergeable data such as a table's
+// cells, owning note; see AttachmentRowDigest), its media row, and its file
+// bytes where the file is on this Mac; every inline attachment row (tags,
+// mentions, dividers, links); and the order of the attachment glyphs in the
+// body. Objects this compose created (`exclude`, lowercased identifiers) are
+// left out, so the same call proves before and after that nothing else moved.
+static NSDictionary<NSString *, NSString *> *FrozenAttachments(NSManagedObject *note, NSAttributedString *body,
+                                                               NSSet<NSString *> *exclude, FrozenStats *stats) {
+  NSMutableDictionary *out = [NSMutableDictionary dictionary];
+  FrozenStats local = {0, 0, 0, 0, 0};
+  long long budget = MAX_FROZEN_HASH_BYTES;
+  NSDictionary<NSString *, NSManagedObject *> *rows = AttachmentRows(note);
+  for (NSString *key in [rows.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+    if ([exclude containsObject:key]) continue;
+    NSManagedObject *row = rows[key];
+    id media = row.entity.relationshipsByName[@"media"] ? [row valueForKey:@"media"] : nil;
+    NSString *rowKey = [@"attachment:" stringByAppendingString:key];
+    out[rowKey] = [NSString
+        stringWithFormat:@"%@|%@|%@", FrozenRowDigest(row, rowKey, out),
+                         media ? FrozenRowDigest(media, [@"media:" stringByAppendingString:key], out) : @"-",
+                         FrozenFile(row, &budget, &local)];
+    local.attachments++;
+  }
+  if (note.entity.relationshipsByName[@"inlineAttachments"]) {
+    for (NSManagedObject *inlineRow in [note valueForKey:@"inlineAttachments"]) {
+      id identifier = [inlineRow valueForKey:@"identifier"];
+      NSString *key = [identifier isKindOfClass:[NSString class]] ? [identifier lowercaseString]
+                                                                   : inlineRow.objectID.URIRepresentation.absoluteString;
+      if ([exclude containsObject:key]) continue;
+      NSString *inlineKey = [@"inline:" stringByAppendingString:key];
+      out[inlineKey] = FrozenRowDigest(inlineRow, inlineKey, out);
+      local.inlineAttachments++;
+    }
+  }
+  NSMutableArray *glyphs = [NSMutableArray array];
+  for (NSDictionary *entry in AttachmentGlyphEntries(body)) {
+    NSString *identifier = [entry[@"identifier"] lowercaseString];
+    if (![exclude containsObject:identifier]) [glyphs addObject:identifier];
+  }
+  out[@"glyphs"] = [glyphs componentsJoinedByString:@","];
+  if (stats) *stats = local;
+  return out;
+}
+
+// Keys whose fingerprint differs between two FrozenAttachments results. A
+// version floor may rise (added to `raised` when given) but not fall.
+static NSArray<NSString *> *FrozenDrift(NSDictionary *before, NSDictionary *after, NSMutableArray *raised) {
+  NSMutableSet *keys = [NSMutableSet setWithArray:before.allKeys];
+  [keys addObjectsFromArray:after.allKeys];
+  NSMutableArray *drift = [NSMutableArray array];
+  for (NSString *key in keys) {
+    if ([before[key] isEqual:after[key]]) continue;
+    if ([key hasPrefix:@"version:"] && before[key] && after[key] &&
+        [after[key] longLongValue] > [before[key] longLongValue]) {
+      [raised addObject:[key substringFromIndex:8]];
+      continue;
+    }
+    [drift addObject:key];
+  }
+  [raised sortUsingSelector:@selector(compare:)];
+  return [drift sortedArrayUsingSelector:@selector(compare:)];
+}
+
+static NSDictionary *FrozenReport(FrozenStats stats) {
+  return @{
+    @"attachments" : @(stats.attachments),
+    @"inlineAttachments" : @(stats.inlineAttachments),
+    @"filesHashed" : @(stats.filesHashed),
+    @"filesBySizeAndDate" : @(stats.filesBySize),
+    @"filesNotOnThisMac" : @(stats.filesUnreachable),
+  };
 }
 
 #pragma mark Read-back signatures
@@ -3304,9 +3822,16 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
   }
   ComposedUnit unit = BuildUnit(request[@"paragraphs"]);
   RequireFeature(FeatureCompose);
+  BOOL hasCards = UnitHasKind(unit, @[ @"file", @"url" ]);
+  if (hasCards) RequireFeature(FeatureComposeAttachments);
   ApplyParagraphStyles(unit);
 
   StoreLocation store = ResolveStore();
+  // On a copy store every file NotesShared writes (media, previews) goes
+  // beside the copy, never into the live container.
+  if (store.isCopy && UnitHasKind(unit, @[ @"file" ]))
+    InstallAccountSandbox([store.path stringByDeletingLastPathComponent]);
+  NSString *filesRoot = AttachmentFilesRoot(store);
   NSManagedObjectContext *context = OpenContext(store, dryRun);
   NSManagedObject *note = FetchNote(context, identifier);
   RequireAppendableNote(note);
@@ -3322,71 +3847,144 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
   if (![existing isKindOfClass:[NSAttributedString class]])
     Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
   existing = [existing copy];
+  // A note's first paragraph is its title. With no body at all, the composed
+  // unit would become the title paragraph, so compose refuses instead.
+  if (existing.length == 0)
+    Fail(@"unsupported_note", @"The note has no title paragraph; compose writes only below the title",
+         @{@"committed" : @NO});
   Placement placement = ResolvePlacement(existing, mode, beforeHeading);
   BOOL hasObjects = UnitHasObjects(unit);
   if (hasObjects) {
-    NSArray *missing = MissingAPI(kComposeObjectAPI, COUNT(kComposeObjectAPI));
+    NSArray *missing = UnitHasKind(unit, @[ @"divider", @"table" ])
+                           ? MissingAPI(kComposeObjectAPI, COUNT(kComposeObjectAPI))
+                           : @[];
     if (missing.count)
       Fail(@"private_api_unavailable", @"Dividers and tables need NotesShared API missing on this macOS",
            @{@"missing" : missing, @"committed" : @NO});
     if ([note respondsToSelector:sel_registerName("canAddAttachment")] && !SendBool(note, "canAddAttachment"))
       Fail(@"unsupported_note", @"Notes does not allow attachments in this note", @{@"committed" : @NO});
   }
-  // Objects are created only on apply, after the revision check.
-  NSArray *created = (!dryRun && hasObjects) ? MaterializeObjects(unit, note) : @[];
-  NSMutableAttributedString *insertion = Insertion(unit, placement);
+  // Every attachment the note already has, fingerprinted before anything
+  // changes; the same fingerprint is taken again before and after the save.
+  FrozenStats frozenStats;
+  NSDictionary *frozenBefore = FrozenAttachments(note, existing, [NSSet set], &frozenStats);
+
+  NSArray *created = @[];
+  NSMutableAttributedString *insertion = nil;
   NSUInteger unitOffset = placement.prefix ? placement.prefix.length : 0;
-  NSArray *expected = UnitSignatures(insertion, unitOffset, unit.ranges, placement.trailingTerminator);
+  NSArray *expected = nil;
+  NSMutableSet *createdKeys = [NSMutableSet set];
+  NSMutableDictionary *result = nil;
+  gComposeCreated = [NSMutableArray array];
+  // Every save of this context before the compose's own one. NotesShared can
+  // save by itself (-addTableAttachment did; see NewTable), and anything it
+  // saved is committed whatever happens next.
+  __block NSUInteger earlySaves = 0;
+  id saveObserver = [NSNotificationCenter.defaultCenter
+      addObserverForName:NSManagedObjectContextDidSaveNotification
+                  object:context
+                   queue:nil
+              usingBlock:^(NSNotification *note) {
+                (void)note;
+                if (!gSaveAttempted) earlySaves++;
+              }];
+  @try {
+    // Objects are created only on apply, after the revision check.
+    created = (!dryRun && hasObjects) ? MaterializeObjects(unit, note) : @[];
+    for (NSDictionary *object in created) [createdKeys addObject:[object[@"identifier"] lowercaseString]];
+    insertion = Insertion(unit, placement);
+    expected = UnitSignatures(insertion, unitOffset, unit.ranges, placement.trailingTerminator);
 
-  NSMutableDictionary *result = [@{
-    @"identifier" : identifier,
-    @"mode" : mode,
-    @"paragraphs" : @(unit.ranges.count),
-    @"insertedUTF16" : @(insertion.length),
-    @"insertAt" : @(placement.index),
-    // UTF-16 offset of the first composed paragraph in the new body (after
-    // any separator), so a caller can locate the unit in an independent read.
-    @"unitStart" : @(placement.index + unitOffset),
-    @"objectURI" : note.objectID.URIRepresentation.absoluteString,
-    @"revisionBefore" : revisionBefore,
-    @"requiredNonSystemPaper" : @(requireNonSystemPaper),
-    @"storeKind" : store.isCopy ? @"copy" : @"live",
-  } mutableCopy];
-  if (beforeHeading) result[@"insertBeforeHeading"] = beforeHeading;
-  if (dryRun) {
-    [result addEntriesFromDictionary:@{
-      @"status" : @"planned",
-      @"dryRun" : @YES,
-      @"committed" : @NO,
-      @"plan" : ReadBackSummary(expected),
-    }];
-    return result;
+    result = [@{
+      @"identifier" : identifier,
+      @"mode" : mode,
+      @"paragraphs" : @(unit.ranges.count),
+      @"insertedUTF16" : @(insertion.length),
+      @"insertAt" : @(placement.index),
+      // UTF-16 offset of the first composed paragraph in the new body (after
+      // any separator), so a caller can locate the unit in an independent read.
+      @"unitStart" : @(placement.index + unitOffset),
+      @"objectURI" : note.objectID.URIRepresentation.absoluteString,
+      @"revisionBefore" : revisionBefore,
+      @"requiredNonSystemPaper" : @(requireNonSystemPaper),
+      @"storeKind" : store.isCopy ? @"copy" : @"live",
+      @"frozenAttachments" : FrozenReport(frozenStats),
+    } mutableCopy];
+    if (beforeHeading) result[@"insertBeforeHeading"] = beforeHeading;
+    if (dryRun) {
+      [result addEntriesFromDictionary:@{
+        @"status" : @"planned",
+        @"dryRun" : @YES,
+        @"committed" : @NO,
+        @"plan" : ReadBackSummary(expected),
+        @"objects" : PlannedObjects(unit),
+      }];
+      [NSNotificationCenter.defaultCenter removeObserver:saveObserver];
+      return result;
+    }
+
+    SendVoid(ms, "beginEditing");
+    ((void (*)(id, SEL, id, NSUInteger))objc_msgSend)(ms, sel_registerName("insertAttributedString:atIndex:"),
+                                                      insertion, placement.index);
+    SendVoid(ms, "endEditing");
+    ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+        note, sel_registerName("edited:range:changeInLength:"),
+        NSTextStorageEditedCharacters | NSTextStorageEditedAttributes,
+        NSMakeRange(placement.index, insertion.length), (NSInteger)insertion.length);
+    ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(note, sel_registerName("regenerateTitle:snippet:"), YES, YES);
+    if (!SendBool(note, "saveNoteData"))
+      Fail(@"save_failed", @"NotesShared did not serialize the edited body", @{@"committed" : @NO});
+    [note setValue:[NSDate date] forKey:@"modificationDate"];
+    ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"),
+                                          @"apple-notes-mcp compose_note");
+
+    // Before the save: the new files hold exactly the bytes read, nothing is
+    // being deleted, and every existing attachment keeps its fingerprint.
+    VerifyNewFilesBeforeSave(unit, created, filesRoot);
+    NSArray *drift = context.deletedObjects.count ? @[ @"deleted objects" ] : @[];
+    if (!drift.count)
+      drift = FrozenDrift(frozenBefore, FrozenAttachments(note, LoadBody(note, NULL), createdKeys, NULL), nil);
+    if (drift.count)
+      Fail(@"attachment_drift", @"An existing attachment would change; nothing was saved",
+           @{@"committed" : @NO, @"attachmentDrift" : drift});
+    // Test hook, honored only on a store copy: fail as late as possible
+    // before the save, to prove the rollback removes every created file.
+    if (store.isCopy &&
+        [NSProcessInfo.processInfo.environment[kFaultEnv] isEqualToString:@"compose_before_save"])
+      Fail(@"injected_fault", @"Injected failure before the save (copy store only)", @{@"committed" : @NO});
+
+    SaveOrFail(context);
+  } @catch (NSException *e) {
+    // Nothing reached the store (the save was never tried, or it failed and
+    // rolled back): remove the files NotesShared already wrote.
+    [NSNotificationCenter.defaultCenter removeObserver:saveObserver];
+    BOOL nothingSaved = !gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
+                                            [e.userInfo[@"committed"] isEqual:@NO]);
+    // Part of the change was saved before the failure: report it as a
+    // committed, indeterminate write and keep every file a saved row names.
+    if (earlySaves)
+      Fail([e isKindOfClass:[HelperError class]] ? e.userInfo[@"code"] : @"internal_error",
+           [NSString stringWithFormat:@"%@ (NotesShared saved part of the change before the failure; read the "
+                                      @"note before any retry)",
+                                      e.reason ?: e.name],
+           @{@"committed" : @YES, @"indeterminate" : @YES, @"earlySaves" : @(earlySaves)});
+    if (nothingSaved) DiscardComposeObjects(context, filesRoot);
+    @throw;
   }
-
-  SendVoid(ms, "beginEditing");
-  ((void (*)(id, SEL, id, NSUInteger))objc_msgSend)(ms, sel_registerName("insertAttributedString:atIndex:"),
-                                                    insertion, placement.index);
-  SendVoid(ms, "endEditing");
-  ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
-      note, sel_registerName("edited:range:changeInLength:"),
-      NSTextStorageEditedCharacters | NSTextStorageEditedAttributes,
-      NSMakeRange(placement.index, insertion.length), (NSInteger)insertion.length);
-  ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(note, sel_registerName("regenerateTitle:snippet:"), YES, YES);
-  if (!SendBool(note, "saveNoteData"))
-    Fail(@"save_failed", @"NotesShared did not serialize the edited body", @{@"committed" : @NO});
-  [note setValue:[NSDate date] forKey:@"modificationDate"];
-  ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"),
-                                        @"apple-notes-mcp compose_note");
-
-  SaveOrFail(context);
+  [NSNotificationCenter.defaultCenter removeObserver:saveObserver];
+  [gComposeCreated removeAllObjects];
 
   // Fresh read-back through a new coordinator: the full text must equal the
-  // old body with the insertion spliced in, and every composed paragraph must
-  // carry the expected style, checklist state, and inline runs.
+  // old body with the insertion spliced in, every composed paragraph must
+  // carry the expected style, checklist state, and inline runs, each created
+  // object must be the requested one, and every attachment the note already
+  // had must keep its fingerprint.
   NSMutableString *expectedText = [existing.string mutableCopy];
   [expectedText insertString:insertion.string atIndex:placement.index];
   NSDictionary *after = nil;
   NSArray *persisted = nil;
+  NSArray *drift = nil;
+  NSMutableArray *versionRaised = [NSMutableArray array];
   NSString *verifyDetail = nil;
   BOOL placementVerified = !beforeHeading;
   @try {
@@ -3402,6 +4000,10 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
         verifyDetail = @"A composed paragraph's persisted style, checklist state, or runs differ from the request";
       else if (hasObjects)
         verifyDetail = VerifyObjects(fresh, unit, created, identifier);
+      if (!verifyDetail) {
+        drift = FrozenDrift(frozenBefore, FrozenAttachments(reread, body, createdKeys, NULL), versionRaised);
+        if (drift.count) verifyDetail = @"An existing attachment changed during the write";
+      }
       if (beforeHeading) {
         NSUInteger headingAt = placement.index + insertion.length;
         NSString *line = nil;
@@ -3420,15 +4022,24 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     verifyDetail = e.reason ?: e.name;
   }
   if (verifyDetail) {
-    NSMutableDictionary *extra = [@{@"committed" : @YES, @"indeterminate" : @YES, @"revisionBefore" : revisionBefore}
-        mutableCopy];
+    NSMutableDictionary *extra = [@{
+      @"committed" : @YES,
+      @"indeterminate" : @YES,
+      @"revisionBefore" : revisionBefore,
+      @"objects" : PublicObjects(created),
+    } mutableCopy];
     if (persisted) {
       extra[@"expected"] = ReadBackSummary(expected);
       extra[@"persisted"] = ReadBackSummary(persisted);
     }
+    if (drift.count) extra[@"attachmentDrift"] = drift;
     Fail(@"verification_failed", verifyDetail, extra);
   }
 
+  NSMutableDictionary *frozen = [FrozenReport(frozenStats) mutableCopy];
+  frozen[@"verified"] = @YES;
+  // Rows whose version floor Notes' model raised (see FrozenRowDigest).
+  frozen[@"versionFloorRaised"] = versionRaised;
   BOOL hostRunning = NotesAppRunning();
   [result addEntriesFromDictionary:@{
     @"status" : @"updated",
@@ -3440,7 +4051,8 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     @"title" : after[@"title"],
     @"cloudSync" : after[@"cloudSync"],
     @"readBack" : ReadBackSummary(persisted),
-    @"objects" : created,
+    @"objects" : PublicObjects(created),
+    @"frozenAttachments" : frozen,
     @"pushScheduled" : @NO,
     @"syncHostRunning" : @(hostRunning),
     @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",

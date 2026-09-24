@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writerCompileArguments } from "./privateWriterBuild.js";
@@ -115,6 +115,81 @@ describe("native compose_note", { timeout: 30_000 }, () => {
       status: "error",
       code: "invalid_request",
       committed: false,
+    });
+  });
+
+  describe("file and link-card paragraphs", () => {
+    let files: string;
+    beforeAll(() => {
+      files = mkdtempSync(join(tmpdir(), "private-writer-files-"));
+      writeFileSync(join(files, "report.pdf"), "%PDF-1.4\n");
+      writeFileSync(join(files, "empty.txt"), "");
+      symlinkSync(join(files, "report.pdf"), join(files, "link.pdf"));
+    });
+    afterAll(() => rmSync(files, { recursive: true, force: true }));
+    const file = (extra: Record<string, unknown>) =>
+      compose({ paragraphs: [para(), { kind: "file", ...extra }] });
+    const card = (url: unknown) => compose({ paragraphs: [para(), { kind: "url", url }] });
+
+    // Every refusal raised before the save (a Fail with no `committed` of its
+    // own) must reach the client as committed: false.
+    it.each([
+      ["a relative path", () => file({ path: "report.pdf" })],
+      ["a missing file", () => file({ path: join(files, "missing.pdf") })],
+      ["an empty file", () => file({ path: join(files, "empty.txt") })],
+      ["a symbolic link", () => file({ path: join(files, "link.pdf") })],
+      ["a directory", () => file({ path: files })],
+      ["a changed extension", () => file({ path: join(files, "report.pdf"), filename: "r.txt" })],
+      ["a name with a slash", () => file({ path: join(files, "report.pdf"), filename: "a/b.pdf" })],
+      ["a hidden name", () => file({ path: join(files, "report.pdf"), filename: ".pdf" })],
+      ["an unknown file field", () => file({ path: join(files, "report.pdf"), size: 1 })],
+      ["a non-http card", () => card("notes://showNote?identifier=x")],
+      ["a card URL NSURL would re-encode", () => card("https://example.com/a b")],
+      ["a non-string card URL", () => card(5)],
+      [
+        "an unknown card field",
+        () => compose({ paragraphs: [{ kind: "url", url: "https://e.test/", x: 1 }] }),
+      ],
+      [
+        "more than 20 file and card paragraphs",
+        () => compose({ paragraphs: Array(21).fill({ kind: "url", url: "https://e.test/" }) }),
+      ],
+      [
+        "a run link NSURL would re-encode",
+        () =>
+          compose({ paragraphs: [para({ runs: [{ text: "x", link: "https://e.test/a b" }] })] }),
+      ],
+      [
+        "a table cell past 10000 UTF-16 units",
+        () => compose({ paragraphs: [{ kind: "table", rows: [["x".repeat(10_001)]] }] }),
+      ],
+      [
+        "table cells past the request's UTF-16 budget",
+        () =>
+          compose({
+            paragraphs: [{ kind: "table", rows: Array(21).fill(["x".repeat(10_000)]) }],
+          }),
+      ],
+    ])("rejects %s with invalid_request and nothing committed", (_label, request) => {
+      expect(call(request())).toMatchObject({
+        status: "error",
+        code: "invalid_request",
+        committed: false,
+      });
+    });
+
+    it("accepts files and cards, then stops at the opt-in gate", () => {
+      const gated = call(
+        compose({
+          paragraphs: [
+            { kind: "file", path: join(files, "report.pdf"), filename: "Q3 Report.PDF" },
+            { kind: "url", url: "https://example.com/" },
+            para(),
+          ],
+        })
+      );
+      expect(["disabled", "private_api_unavailable"]).toContain(gated.code);
+      expect(gated.committed).toBe(false);
     });
   });
 

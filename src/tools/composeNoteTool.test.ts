@@ -305,6 +305,69 @@ describe("compose-note create", () => {
     expect(e.message).toMatch(/title only/);
   });
 
+  it("moves the new title-only note to Recently Deleted when nothing was committed", () => {
+    available();
+    vi.mocked(composeNote).mockImplementation(() => {
+      throw new PrivateWriteError("invalid_request", "refused by the writer", false);
+    });
+    const deleteNoteByIdIfUnchanged = vi.fn(() => ({ status: "deleted" }));
+    const getNoteContentById = vi.fn(() => "<div><h1>T</h1></div>");
+    const rt = runtime(managerStub({ deleteNoteByIdIfUnchanged, getNoteContentById }));
+    const e = caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt));
+    expect(e).toMatchObject({
+      code: "invalid_request",
+      committed: false,
+      details: { noteCreated: true, id: CD, createdNote: "moved_to_recently_deleted" },
+    });
+    expect(e.message).toMatch(/moved to Recently Deleted/);
+    expect(deleteNoteByIdIfUnchanged).toHaveBeenCalledWith(CD, "<div><h1>T</h1></div>");
+  });
+
+  it("keeps the new note when it changed, the delete did not happen, or the write committed", () => {
+    available();
+    const deleteNoteByIdIfUnchanged = vi.fn(() => ({ status: "conflict" }));
+    const manager = managerStub({ deleteNoteByIdIfUnchanged, getNoteContentById: vi.fn(() => "") });
+    vi.mocked(composeNote).mockImplementation(() => {
+      throw new PrivateWriteError("save_failed", "no", false);
+    });
+    expect(
+      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager)))
+        .details
+    ).toMatchObject({ createdNote: "kept" });
+    vi.mocked(readWriterNoteState)
+      .mockReturnValueOnce({ revision: REV } as never)
+      .mockReturnValueOnce({ revision: `r1:${"b".repeat(64)}` } as never);
+    deleteNoteByIdIfUnchanged.mockClear();
+    const changed = caught(() =>
+      runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager))
+    );
+    expect(changed.details).toMatchObject({ createdNote: "kept" });
+    expect(changed.message).toMatch(/title only; id/);
+    expect(deleteNoteByIdIfUnchanged).not.toHaveBeenCalled();
+    vi.mocked(composeNote).mockImplementation(() => {
+      throw new PrivateWriteError("timeout", "slow", "unknown");
+    });
+    expect(
+      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager)))
+        .details
+    ).toMatchObject({ createdNote: "kept" });
+    expect(deleteNoteByIdIfUnchanged).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request over the writer's input cap before creating anything", () => {
+    available();
+    const rt = runtime();
+    const blocks = Array.from({ length: 130 }, () => ({
+      type: "body" as const,
+      text: "x".repeat(9_000),
+    }));
+    for (const dryRun of [true, false])
+      expect(
+        caught(() => runComposeNote({ mode: "create", title: "T", blocks, dryRun }, rt))
+      ).toMatchObject({ code: "invalid_request", committed: false });
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+  });
+
   it("gives up when the helper never sees the new note", () => {
     available();
     vi.mocked(readWriterNoteState).mockImplementation(() => {
@@ -397,6 +460,68 @@ describe("compose-note objects and note links", () => {
       ).code
     ).toBe("disabled");
     expect(composeNote).not.toHaveBeenCalled();
+  });
+
+  it("refuses links to trashed or locked notes, from runs and Markdown too", () => {
+    const run = [
+      {
+        type: "body" as const,
+        runs: [{ text: "a", link: `applenotes://showNote?identifier=${OTHER}` }],
+      },
+    ];
+    vi.mocked(readWriterNoteState).mockReturnValueOnce({ deletedOrInTrash: true } as never);
+    expect(
+      caught(() =>
+        runComposeNote({ mode: "append", identifier: NOTE, blocks: run, dryRun: true }, runtime())
+      ).message
+    ).toMatch(/Recently Deleted/);
+    vi.mocked(readWriterNoteState).mockReturnValueOnce({ passwordProtected: true } as never);
+    const markdown = `See [x](notes://showNote?identifier=${OTHER}).`;
+    expect(
+      caught(() =>
+        runComposeNote({ mode: "append", identifier: NOTE, markdown, dryRun: true }, runtime())
+      ).message
+    ).toMatch(/locked/);
+    expect(readWriterNoteState).toHaveBeenLastCalledWith(OTHER, { env: ALLOW });
+    expect(
+      caught(() =>
+        runComposeNote(
+          { mode: "append", identifier: NOTE, markdown: "[x](notes://other)", dryRun: true },
+          runtime()
+        )
+      ).message
+    ).toMatch(/does not name a note/);
+    expect(composeNote).not.toHaveBeenCalled();
+  });
+
+  it("checks the attachment capability before creating a note with a file or link card", () => {
+    vi.mocked(privateWriterCapabilities).mockReturnValue({
+      features: {
+        composeNote: { available: true, reason: null, detail: null },
+        composeObjects: { available: true, reason: null, detail: null },
+        composeAttachments: { available: false, reason: "not_live_validated", detail: "x" },
+      },
+    } as never);
+    const rt = runtime();
+    expect(
+      caught(() =>
+        runComposeNote(
+          { mode: "create", title: "T", blocks: [{ type: "urlCard", url: "https://e.test/" }] },
+          rt
+        )
+      )
+    ).toMatchObject({ code: "not_live_validated", committed: false });
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+    const plan = runComposeNote(
+      {
+        mode: "create",
+        title: "T",
+        blocks: [{ type: "urlCard", url: "https://e.test/" }],
+        dryRun: true,
+      },
+      rt
+    );
+    expect(plan.plan).toEqual([{ kind: "url", url: "https://e.test/" }]);
   });
 });
 

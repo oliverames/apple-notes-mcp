@@ -2679,12 +2679,27 @@ Writes natively formatted content through the writer in one save: headings,
 subheadings, body paragraphs, block quotes, monospaced blocks, bulleted,
 dashed, and numbered lists with indent, checklists with their checked state,
 native dividers (`{"type":"divider"}`), native tables
-(`{"type":"table","rows":[["A","B"],["1","2"]]}`), and links to other notes
-(`{"type":"noteLink","identifier":"<uuid>","text":"See"}`, checked to exist
-first). Inline runs carry bold, italic, underline, strikethrough, links (http,
+(`{"type":"table","rows":[["A","B"],["1","2"]]}`), local files
+(`{"type":"file","path":"/Users/me/Report.pdf","filename":"Q3 Report.pdf"}`),
+rich link cards (`{"type":"urlCard","url":"https://example.com/"}`), and links
+to other notes (`{"type":"noteLink","identifier":"<uuid>","text":"See"}`).
+Inline runs carry bold, italic, underline, strikethrough, links (http,
 https, mailto, tel, notes, applenotes), named highlights (purple, pink,
-orange, mint, blue), and `#RRGGBB` text color. Give `blocks` or `markdown`,
-not both.
+orange, mint, blue), and `#RRGGBB` text color. A link must already be
+well-formed (spaces and non-ASCII characters percent-encoded), so the stored
+link equals the request. Every link to a note, from a `noteLink` block, a run,
+or Markdown, must name an existing note that is not locked or in Recently
+Deleted. Give `blocks` or `markdown`, not both.
+
+File and link-card blocks go where they appear, in the same save as the text.
+A file follows `add-attachment`'s rules: an absolute path to a nonempty
+regular file (not a symbolic link) of at most 64 MiB, and an optional
+`filename` that keeps the source extension. The writer reads each file once
+and creates the attachment from exactly those bytes; one request takes at
+most 20 file and link-card blocks and 128 MiB of files. A link card is an
+absolute http(s) URL; Notes fetches its title and image later, as with
+`native-add-url-card`. If anything fails before the save, the writer rolls
+back every row and deletes every attachment file it wrote.
 
 | `mode` | Target | Guard |
 |--------|--------|-------|
@@ -2695,19 +2710,45 @@ not both.
 `append` also takes `insertBeforeHeading` (`text`, `occurrence`,
 `expectedCount`) to insert before one exact Heading-style paragraph; a count
 mismatch returns `selector_conflict` with nothing written.
-`requireNonSystemPaper` refuses a Quick Note target. After saving, the writer
+`requireNonSystemPaper` refuses a Quick Note target. A note with no body at
+all (not even a title line) is refused, because its first paragraph is the
+title. After saving, the writer
 re-reads the note through a new Core Data stack and compares every written
 paragraph's style, indent, block quote, checklist state, and runs with the
 request; `readBack` reports them, and `unitStart` and `objectURI` say where
-the written paragraphs begin. A mismatch returns `verification_failed` with
+the written paragraphs begin. The server then checks `readBack` against the
+request itself: each run's length and attribute values (link URL, highlight,
+color, styles) and, for each object, its kind, type, card URL, or file name.
+A mismatch at either step returns `verification_failed` with
 `committed: true` and `indeterminate: true`. On the live store the server then
 decodes the same paragraphs from NoteStore.sqlite with its own block decoder
-(the one behind `get-note-blocks`) and reports the comparison as
-`databaseReadBack` (`matches`, or `checked: false` with a reason). With
-`nudge: true` a verified write is followed by the same move-in-place nudge as
-`native-append-plain-text`. If a `create` fails after the note exists, the
-error names it (`noteCreated`, `id`, `identifier`) and the note holds only its
-title.
+(the one behind `get-note-blocks`) and reports the comparison of text and
+attribute values as `databaseReadBack` (`matches`, or `checked: false` with a
+reason).
+
+Appending or prepending never changes what the note already holds. Before
+anything changes, the writer fingerprints every existing attachment: each
+attachment row (identifier, type, metadata, and mergeable data such as a
+table's cells), its media row, its file's bytes where the file is on this
+Mac, every inline attachment, and the order of attachment glyphs. It takes
+the same fingerprint again just before the save and refuses with
+`attachment_drift` (`committed: false`) on any difference, and once more
+after the save, where a difference is `verification_failed` with
+`attachmentDrift`. `frozenAttachments` in the result reports the counts. The
+one change it accepts is a raised version floor
+(`minimumSupportedNotesVersion`), which Notes' own model applies to every
+attachment when new content, such as a divider, needs a newer Notes; those
+rows are listed in `frozenAttachments.versionFloorRaised`.
+
+With `nudge: true` a verified write is followed by the same move-in-place
+nudge as `native-append-plain-text`. `create` checks every limit before
+Notes.app creates the note: content rules, the writer's size limits (table
+cell text counts toward the 200,000 UTF-16 limit, at most 10,000 per cell and
+20,000 runs), and the writer's 1 MiB request size. If the compose still fails
+with nothing written, the server moves the new title-only note to Recently
+Deleted (`createdNote: "moved_to_recently_deleted"`), but only when the note
+is still exactly as created. Otherwise the error names it (`noteCreated`,
+`id`, `identifier`, `createdNote: "kept"`).
 
 ```json
 {
@@ -2728,12 +2769,19 @@ The Markdown importer maps `#` and `##` to Heading and `###` and deeper to
 Subheading, and imports `-`/`*`/`+` and `1.` lists with nesting, `- [ ]` and
 `- [x]` checklists, `>` quotes, fenced code, `**bold**`, `*italic*`,
 `~~strikethrough~~`, `<u>underline</u>`, and links, and turns `---` into a
-divider and pipe tables into native tables (cells as plain text). In `create`
-mode a leading `# ` line equal to the title is dropped. File attachments are
-not supported; use `add-attachment`. Dividers and tables are created only on
-apply and reported under `objects`; the writer re-reads each one and every
-table cell. Writes need both writer switches and, until this path passes live
-validation in a release, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; dry runs do not.
+divider and pipe tables into native tables (cells as plain text). A table
+needs a delimiter row with pipes and the header's cell count (`|-|-|` is
+enough); extra cells in a body row are dropped with a warning. An image alone
+on a line becomes a file block when it points at an absolute path
+(`![](/Users/me/chart.png)`) and a link card when it points at an http(s) URL;
+the alt text is dropped. In `create` mode a leading `# ` line equal to the
+title is dropped. Dividers, tables, files, and link cards are created only on
+apply and reported under `objects`; the dry run lists what it would create,
+with each file's size and SHA-256. The writer re-reads each object, every
+table cell, each card's URL, and each file's bytes. Writes need both writer
+switches and, until this path passes live validation in a release,
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; dry runs do not. Files and link cards
+also need the writer's `composeAttachments` feature (`native-writer-status`).
 
 #### `native-checklist-state`
 

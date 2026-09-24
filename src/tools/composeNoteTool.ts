@@ -16,6 +16,7 @@
  * @module tools/composeNoteTool
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { basename } from "node:path";
 import { z } from "zod";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { MAX_NUDGE_WAIT_SECONDS } from "../services/privateSyncNudge.js";
@@ -27,12 +28,14 @@ import {
 } from "../services/privateWriter.js";
 import {
   assertComposeWritesAllowed,
+  assertWriterRequestSize,
   blockSchema,
   blocksToParagraphs,
   composeNote,
   crossCheckWithDatabase,
   isObject,
   markdownToBlocks,
+  notesLinkTargets,
   type WireEntry,
 } from "../services/privateCompose.js";
 import {
@@ -67,7 +70,7 @@ export const composeNoteInput = {
     .max(200_000)
     .optional()
     .describe(
-      "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
+      "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links; an image alone on a line becomes a file (absolute path) or link card (http URL)"
     ),
   ifRevision: revisionToken
     .optional()
@@ -156,32 +159,74 @@ function checkModeFields(args: ComposeArgs): void {
 const UUID_IN_LINK = /identifier=([0-9A-F-]{36})$/i;
 
 /**
- * Every noteLink block must point at a note the writer can read, so a typo
- * never becomes a dead link. Read-only; one lookup per distinct target.
+ * Every link to a note (a noteLink block, or any `notes:` or `applenotes:`
+ * link in a run or in Markdown) must name a note the writer can read that is
+ * neither in Recently Deleted nor locked, so a typo never becomes a dead link.
+ * Read-only; one lookup per distinct target.
  */
-function assertNoteLinkTargets(args: ComposeArgs, deps: PrivateHelperDeps): void {
-  const targets = new Set(
-    (args.blocks ?? []).flatMap((b) => (b.type === "noteLink" ? [b.identifier.toUpperCase()] : []))
-  );
+function assertNoteLinkTargets(paragraphs: WireEntry[], deps: PrivateHelperDeps): void {
+  const targets = new Set<string>();
+  for (const { link, target } of notesLinkTargets(paragraphs)) {
+    if (!target)
+      throw invalid(`The Notes link ${link} does not name a note (showNote?identifier=)`);
+    targets.add(target);
+  }
   for (const target of targets) {
+    let state: ReturnType<typeof readWriterNoteState>;
     try {
-      readWriterNoteState(target, deps);
+      state = readWriterNoteState(target, deps);
     } catch (error) {
       if (error instanceof PrivateWriteError && error.code === "not_found")
-        throw new PrivateWriteError(
-          "invalid_request",
-          `noteLink target ${target} is not a note in this library`,
-          false
-        );
+        throw invalid(`Link target ${target} is not a note in this library`);
       throw error;
     }
+    if (state.deletedOrInTrash)
+      throw invalid(`Link target ${target} is in Recently Deleted or marked for deletion`);
+    if (state.passwordProtected) throw invalid(`Link target ${target} is a locked note`);
   }
 }
 
-/** Add the independent NoteStore read-back to an applied (not planned) compose. */
-function withDatabaseCheck(result: ReturnType<typeof composeNote>): Record<string, unknown> {
+/**
+ * Add the independent NoteStore read-back to an applied (not planned)
+ * compose, including the requested text of each paragraph.
+ */
+function withDatabaseCheck(
+  result: ReturnType<typeof composeNote>,
+  paragraphs: WireEntry[]
+): Record<string, unknown> {
   if (result.status !== "updated") return result;
-  return { ...result, databaseReadBack: crossCheckWithDatabase(result) };
+  return {
+    ...result,
+    databaseReadBack: crossCheckWithDatabase(result, undefined, paragraphs),
+  };
+}
+
+/** Placeholders the length of a real identifier and revision, for size checks. */
+const PLACEHOLDER_IDENTIFIER = "00000000-0000-0000-0000-000000000000";
+const PLACEHOLDER_REVISION = `r1:${"0".repeat(64)}`;
+
+/**
+ * After a create-mode compose failed with nothing committed, move the new
+ * note (title only, and ours) to Recently Deleted, but only when the writer
+ * still sees exactly the revision it read right after the create and Notes
+ * still holds the body read just before the delete. Returns what happened.
+ */
+function discardCreatedNote(
+  manager: AppleNotesManager,
+  id: string,
+  identifier: string,
+  revision: string,
+  deps: PrivateHelperDeps
+): "moved_to_recently_deleted" | "kept" {
+  try {
+    if (readWriterNoteState(identifier, deps).revision !== revision) return "kept";
+    const body = manager.getNoteContentById(id);
+    return manager.deleteNoteByIdIfUnchanged(id, body).status === "deleted"
+      ? "moved_to_recently_deleted"
+      : "kept";
+  } catch {
+    return "kept";
+  }
 }
 
 /** Retry a lookup that can briefly lag Notes.app's save of a new note. */
@@ -200,16 +245,28 @@ function createAndCompose(
   runtime: ComposeRuntime
 ): Record<string, unknown> {
   const { manager, deps, sleep } = runtime;
-  // Check everything that could refuse the compose BEFORE creating a note.
+  // Check everything that could refuse the compose BEFORE creating a note:
+  // the gates, the writer features the content needs, and the request size
+  // (blocksToParagraphs already applied every content and character rule).
   assertComposeWritesAllowed(deps.env);
+  assertWriterRequestSize({
+    identifier: PLACEHOLDER_IDENTIFIER,
+    mode: "append",
+    paragraphs,
+    ifRevision: PLACEHOLDER_REVISION,
+  });
   const features = privateWriterCapabilities(deps).features;
-  const capability = paragraphs.some(isObject) ? features.composeObjects : features.composeNote;
-  if (!capability.available)
-    throw new PrivateWriteError(
-      capability.reason || "private_api_unavailable",
-      capability.detail || "compose is unavailable",
-      false
-    );
+  const kinds = new Set(paragraphs.filter(isObject).map((p) => p.kind));
+  const needed = [features.composeNote];
+  if (kinds.has("divider") || kinds.has("table")) needed.push(features.composeObjects);
+  if (kinds.has("file") || kinds.has("url")) needed.push(features.composeAttachments);
+  for (const capability of needed)
+    if (!capability.available)
+      throw new PrivateWriteError(
+        capability.reason || "private_api_unavailable",
+        capability.detail || "compose is unavailable",
+        false
+      );
   const note = manager.createNote(
     args.title as string,
     "",
@@ -237,6 +294,7 @@ function createAndCompose(
       false,
       created
     );
+  let revision: string | null = null;
   try {
     const state = poll(() => {
       try {
@@ -248,12 +306,13 @@ function createAndCompose(
     }, sleep);
     if (!state)
       throw new PrivateWriteError("not_found", "The writer cannot see the new note yet", false);
+    revision = state.revision;
     const result = composeNote(
       { identifier, mode: "append", paragraphs, ifRevision: state.revision },
       deps
     );
     return {
-      ...withDatabaseCheck(result),
+      ...withDatabaseCheck(result, paragraphs),
       mode: "create",
       created: true,
       id: note.id,
@@ -261,12 +320,22 @@ function createAndCompose(
     };
   } catch (error) {
     if (!(error instanceof PrivateWriteError)) throw error;
-    throw new PrivateWriteError(
-      error.code,
-      `${error.message} (the note was created with its title only; identifier ${identifier})`,
-      error.committed,
-      { ...error.details, ...created, identifier }
-    );
+    // Nothing was written into the new note: it holds only its title, and it
+    // is ours, so move it to Recently Deleted rather than leave a stray note.
+    const createdNote =
+      error.committed === false && revision
+        ? discardCreatedNote(manager, note.id, identifier, revision, deps)
+        : "kept";
+    const outcome =
+      createdNote === "moved_to_recently_deleted"
+        ? `the new note ${note.id} was moved to Recently Deleted`
+        : `the note was created with its title only; id ${note.id}, identifier ${identifier}`;
+    throw new PrivateWriteError(error.code, `${error.message} (${outcome})`, error.committed, {
+      ...error.details,
+      ...created,
+      identifier,
+      createdNote,
+    });
   }
 }
 
@@ -277,10 +346,16 @@ export function runComposeNote(
 ): Record<string, unknown> {
   checkModeFields(args);
   const { paragraphs, warnings } = contentFor(args);
-  assertNoteLinkTargets(args, runtime.deps);
+  assertNoteLinkTargets(paragraphs, runtime.deps);
   const extra = warnings.length ? { warnings } : {};
   if (args.mode === "create") {
-    if (args.dryRun)
+    if (args.dryRun) {
+      assertWriterRequestSize({
+        identifier: PLACEHOLDER_IDENTIFIER,
+        mode: "append",
+        paragraphs,
+        ifRevision: PLACEHOLDER_REVISION,
+      });
       return {
         status: "planned",
         dryRun: true,
@@ -292,6 +367,10 @@ export function runComposeNote(
             ? {
                 kind: p.kind,
                 ...(p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {}),
+                ...(p.kind === "file"
+                  ? { path: p.path, filename: p.filename ?? basename(p.path) }
+                  : {}),
+                ...(p.kind === "url" ? { url: p.url } : {}),
               }
             : {
                 style: p.style,
@@ -303,6 +382,7 @@ export function runComposeNote(
         ),
         ...extra,
       };
+    }
     return { ...createAndCompose(args, paragraphs, runtime), ...extra };
   }
   const identifier = resolveIdentifier(runtime.manager, args);
@@ -317,7 +397,11 @@ export function runComposeNote(
     },
     runtime.deps
   );
-  return { ...withDatabaseCheck(result), ...(args.id ? { id: args.id } : {}), ...extra };
+  return {
+    ...withDatabaseCheck(result, paragraphs),
+    ...(args.id ? { id: args.id } : {}),
+    ...extra,
+  };
 }
 
 export const blockingSleep = (ms: number) =>
@@ -333,10 +417,10 @@ export function registerComposeNoteTool(
     server,
     depsFactory,
     "compose-note",
-    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\n" +
-      "Returns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider or table), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\n" +
-      "Do not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need a file attachment (add-attachment).\n" +
-      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, and every table cell, is verified in a fresh read. A noteLink target must be an existing note. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, local files and rich link cards placed in order, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\n" +
+      "Returns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider, table, file with its size and SHA-256, or link card), frozenAttachments (existing attachments proven unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\n" +
+      "Do not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, still downloading, or has no title line.\n" +
+      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {

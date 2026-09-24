@@ -168,6 +168,7 @@ before retrying.
 | `native-create-smart-folder` | Create a smart folder from a query Notes validates; idempotent                                                                                                                                                 |
 | `native-update-smart-folder` | Replace a smart folder's query, guarded by its revision                                                                                                                                                        |
 | `native-delete-smart-folder` | Delete one empty smart folder; dry run first, then apply with its revision                                                                                                                                     |
+| `compose-note`               | Write styled blocks or Markdown (headings, lists, checklists, quotes, code, dividers, tables, local files, link cards) in one verified save; create, append, or prepend; existing attachments proven unchanged  |
 
 ## Usage Patterns
 

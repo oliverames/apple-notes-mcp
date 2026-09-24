@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants10);
+          this.rhs = optimizeExpr(this.rhs, names, constants11);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants10);
+        this.rhs = optimizeExpr(this.rhs, names, constants11);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants10) {
-        this.code = optimizeExpr(this.code, names, constants10);
+      optimizeNames(names, constants11) {
+        this.code = optimizeExpr(this.code, names, constants11);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants10))
+          if (n.optimizeNames(names, constants11))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
-        if (!(super.optimizeNames(names, constants10) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants11);
+        if (!(super.optimizeNames(names, constants11) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants10);
+        this.condition = optimizeExpr(this.condition, names, constants11);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants10) {
-        if (!super.optimizeNames(names, constants10))
+      optimizeNames(names, constants11) {
+        if (!super.optimizeNames(names, constants11))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants10);
+        this.iteration = optimizeExpr(this.iteration, names, constants11);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants10) {
-        if (!super.optimizeNames(names, constants10))
+      optimizeNames(names, constants11) {
+        if (!super.optimizeNames(names, constants11))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants10);
+        this.iterable = optimizeExpr(this.iterable, names, constants11);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants11) {
         var _a, _b;
-        super.optimizeNames(names, constants10);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants10);
+        super.optimizeNames(names, constants11);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants11);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants11);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants10) {
+    function optimizeExpr(expr, names, constants11) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants10[n.str];
+        const c = constants11[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants10[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants11[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants10 = {
+    var constants11 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants10) {
-      v = { value: constants10[c] };
+    for (c in constants11) {
+      v = { value: constants11[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -58896,7 +58896,8 @@ var writerProbeSchema = external_exports.object({
     tables: featureSchema2.optional(),
     pruneOrphanTable: featureSchema2.optional(),
     smartFolders: featureSchema2.optional(),
-    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional()
+    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional(),
+    composeAttachments: featureSchema2.optional()
   }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
@@ -59370,7 +59371,12 @@ var WRITER_FEATURES = [
     probeKey: "smartFolders",
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED
   },
-  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED }
+  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  {
+    key: "composeAttachments",
+    probeKey: "composeAttachments",
+    liveValidated: COMPOSE_LIVE_VALIDATED
+  }
 ];
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
@@ -60088,11 +60094,22 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/tools/composeNoteTool.ts
+import { basename as basename8 } from "node:path";
+
 // src/services/privateCompose.ts
+import { closeSync as closeSync10, constants as constants10, fstatSync as fstatSync10, openSync as openSync10 } from "node:fs";
+import { basename as basename7, extname as extname8, isAbsolute as isAbsolute6 } from "node:path";
 var HIGHLIGHTS2 = ["purple", "pink", "orange", "mint", "blue"];
 var MAX_INDENT = 8;
 var MAX_PARAGRAPHS = 2e3;
 var MAX_COMPOSE_UTF16 = 2e5;
+var MAX_COMPOSE_RUNS = 2e4;
+var MAX_WRITER_REQUEST_BYTES = 1024 * 1024;
+var MAX_TABLE_CELL_UTF16 = 1e4;
+var MAX_COMPOSE_ATTACHMENTS = 20;
+var MAX_COMPOSE_FILE_BYTES = 64 * 1024 * 1024;
+var MAX_COMPOSE_FILE_TOTAL = 128 * 1024 * 1024;
 var LINK_SCHEMES2 = /* @__PURE__ */ new Set(["http:", "https:", "mailto:", "tel:", "notes:", "applenotes:"]);
 var isObject3 = (entry) => "kind" in entry;
 var MAX_TABLE_ROWS = 1e3;
@@ -60154,6 +60171,15 @@ var blockSchema2 = external_exports.discriminatedUnion("type", [
     type: external_exports.literal("noteLink"),
     identifier: external_exports.string().regex(NOTE_UUID).describe("Notes UUID of the note to link to"),
     text: external_exports.string().min(1).describe("Link text")
+  }).strict(),
+  external_exports.object({
+    type: external_exports.literal("file"),
+    path: external_exports.string().min(1).max(4096).describe("Absolute path of a local file to attach"),
+    filename: external_exports.string().min(1).max(255).optional().describe("Name the attachment gets in Notes; must keep the source file's extension")
+  }).strict(),
+  external_exports.object({
+    type: external_exports.literal("urlCard"),
+    url: external_exports.string().min(1).max(2048).describe("Absolute http(s) URL shown as a rich link card")
   }).strict()
 ]);
 function invalid3(message) {
@@ -60166,6 +60192,7 @@ function assertLine(text2, where) {
       `${where}: text may contain only printable characters and tabs (no \\r, control characters, or attachment glyphs); a newline is allowed only in a block's \`text\``
     );
 }
+var URL_CHARACTERS = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
 function assertLink(link) {
   let url;
   try {
@@ -60175,6 +60202,51 @@ function assertLink(link) {
   }
   if (!LINK_SCHEMES2.has(url.protocol))
     throw invalid3("Run link must use http, https, mailto, tel, notes, or applenotes");
+  if (!URL_CHARACTERS.test(link))
+    throw invalid3(
+      "Run link must already be a well-formed URL: percent-encode spaces, quotes, and non-ASCII characters"
+    );
+}
+function assertCardUrl(value, where) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalid3(`${where}: url is not an absolute URL`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:" || !url.hostname)
+    throw invalid3(`${where}: url must be an absolute http or https URL with a host`);
+  if (!URL_CHARACTERS.test(value))
+    throw invalid3(
+      `${where}: url must already be well-formed (percent-encode spaces, quotes, and non-ASCII characters)`
+    );
+}
+function assertAttachmentName(path10, filename, where) {
+  if (filename === void 0) return;
+  if (Buffer.byteLength(filename, "utf8") > 255 || filename !== filename.trim() || filename.startsWith(".") || /[/:\\\p{Cc}]/u.test(filename) || FORBIDDEN.test(filename))
+    throw invalid3(
+      `${where}: filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces`
+    );
+  if (extname8(filename).toLowerCase() !== extname8(basename7(path10)).toLowerCase())
+    throw invalid3(`${where}: filename must keep the source file's extension`);
+}
+function composeFileSize(path10, where = "file") {
+  if (!isAbsolute6(path10) || FORBIDDEN.test(path10))
+    throw invalid3(`${where}: path must be an absolute path`);
+  let descriptor;
+  try {
+    descriptor = openSync10(path10, constants10.O_RDONLY | constants10.O_NOFOLLOW);
+  } catch {
+    throw invalid3(`${where}: cannot open ${path10} (missing, unreadable, or a symbolic link)`);
+  }
+  try {
+    const stat = fstatSync10(descriptor);
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_COMPOSE_FILE_BYTES)
+      throw invalid3(`${where}: must be a nonempty regular file of at most 64 MiB`);
+    return stat.size;
+  } finally {
+    closeSync10(descriptor);
+  }
 }
 function wireRun(run, where) {
   assertLine(run.text, where);
@@ -60235,9 +60307,30 @@ function blocksToParagraphs(input) {
       if (block.rows.length * columns2 > MAX_TABLE_CELLS)
         throw invalid3(`${where}: a table may have at most ${MAX_TABLE_CELLS} cells`);
       block.rows.forEach(
-        (row, r) => row.forEach((cell, c) => cell && assertLine(cell, `${where}.rows[${r}][${c}]`))
+        (row, r) => row.forEach((cell, c) => {
+          if (cell.length > MAX_TABLE_CELL_UTF16)
+            throw invalid3(
+              `${where}.rows[${r}][${c}]: a cell may hold at most ${MAX_TABLE_CELL_UTF16} UTF-16 code units`
+            );
+          if (cell) assertLine(cell, `${where}.rows[${r}][${c}]`);
+        })
       );
       out.push({ kind: "table", rows: block.rows });
+      return;
+    }
+    if (block.type === "file") {
+      assertAttachmentName(block.path, block.filename, where);
+      composeFileSize(block.path, where);
+      out.push({
+        kind: "file",
+        path: block.path,
+        ...block.filename !== void 0 ? { filename: block.filename } : {}
+      });
+      return;
+    }
+    if (block.type === "urlCard") {
+      assertCardUrl(block.url, where);
+      out.push({ kind: "url", url: block.url });
       return;
     }
     if (block.type === "noteLink") {
@@ -60290,18 +60383,60 @@ function noteLinkUrl(identifier) {
   return `notes://showNote?identifier=${identifier.toUpperCase()}`;
 }
 var isBlank = (entry) => !!entry && !isObject3(entry) && entry.runs.length === 0;
+function entryUTF16(entry) {
+  if (!isObject3(entry)) return entry.runs.reduce((n, r) => n + r.text.length, 0) + 1;
+  if (entry.kind === "table")
+    return 2 + entry.rows.reduce((n, row) => n + row.reduce((m, cell) => m + cell.length, 0), 0);
+  return 2;
+}
 function finalizeParagraphs(paragraphs) {
   while (isBlank(paragraphs[paragraphs.length - 1])) paragraphs.pop();
   if (!paragraphs.length) throw invalid3("The composed content is empty");
   if (paragraphs.length > MAX_PARAGRAPHS)
     throw invalid3(`The composed content has more than ${MAX_PARAGRAPHS} paragraphs`);
-  const length = paragraphs.reduce(
-    (sum, p) => sum + (isObject3(p) ? 1 : p.runs.reduce((n, r) => n + r.text.length, 0)) + 1,
+  const length = paragraphs.reduce((sum, p) => sum + entryUTF16(p), 0);
+  if (length > MAX_COMPOSE_UTF16)
+    throw invalid3(
+      `The composed content (text and table cells) exceeds ${MAX_COMPOSE_UTF16} UTF-16 code units`
+    );
+  const runs = paragraphs.reduce((n, p) => n + (isObject3(p) ? 0 : p.runs.length), 0);
+  if (runs > MAX_COMPOSE_RUNS)
+    throw invalid3(`The composed content has more than ${MAX_COMPOSE_RUNS} runs`);
+  const attachments = paragraphs.filter(
+    (p) => isObject3(p) && (p.kind === "file" || p.kind === "url")
+  );
+  if (attachments.length > MAX_COMPOSE_ATTACHMENTS)
+    throw invalid3(
+      `A compose may hold at most ${MAX_COMPOSE_ATTACHMENTS} file and link-card blocks`
+    );
+  const bytes = attachments.reduce(
+    (n, p) => n + (isObject3(p) && p.kind === "file" ? composeFileSize(p.path) : 0),
     0
   );
-  if (length > MAX_COMPOSE_UTF16)
-    throw invalid3(`The composed content exceeds ${MAX_COMPOSE_UTF16} UTF-16 code units`);
+  if (bytes > MAX_COMPOSE_FILE_TOTAL)
+    throw invalid3("The files in one compose may total at most 128 MiB");
   return paragraphs;
+}
+function assertWriterRequestSize(fields) {
+  const bytes = Buffer.byteLength(
+    JSON.stringify({ protocol: 1, action: "compose_note", ...fields }),
+    "utf8"
+  );
+  if (bytes > MAX_WRITER_REQUEST_BYTES)
+    throw invalid3(
+      `The compose request is ${bytes} bytes; the writer accepts at most ${MAX_WRITER_REQUEST_BYTES}. Split it into several appends.`
+    );
+}
+function notesLinkTargets(paragraphs) {
+  const out = [];
+  for (const p of paragraphs) {
+    if (isObject3(p)) continue;
+    for (const run of p.runs) {
+      if (!run.link || !/^(?:apple)?notes:/i.test(run.link)) continue;
+      out.push({ link: run.link, target: parseNotesShowUrl(run.link)?.targetNote ?? null });
+    }
+  }
+  return out;
 }
 var PAIRS = [
   { open: "**", close: "**", style: { bold: true } },
@@ -60410,8 +60545,12 @@ function mergeRuns(runs) {
 }
 var LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})[.)])[ \t]+(.*)$/;
 var TASK = /^\[([ xX])\][ \t]+(.*)$/;
-var TABLE_SEPARATOR = /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/;
-function tableCells(line) {
+function separatorColumns(line) {
+  if (!line.includes("|")) return 0;
+  const cells = rawCells(line);
+  return cells.length && cells.every((cell) => /^:?-+:?$/.test(cell.trim())) ? cells.length : 0;
+}
+function rawCells(line) {
   const cells = [];
   let cell = "";
   const body = line.trim().replace(/^\|/, "");
@@ -60425,9 +60564,22 @@ function tableCells(line) {
     } else cell += body[i];
   }
   if (cell.trim() || !body.endsWith("|")) cells.push(cell);
-  return cells.map(
+  return cells;
+}
+function tableCells(line) {
+  return rawCells(line).map(
     (c) => parseInline(c.trim()).map((run) => run.text).join("")
   );
+}
+function imageBlock(line) {
+  const m = /^[ ]{0,3}!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+"[^"]*")?\s*\)[ \t]*$/.exec(
+    line
+  );
+  if (!m) return null;
+  const target = m[1] ?? m[2];
+  if (target.startsWith("/")) return { type: "file", path: target };
+  if (/^https?:\/\//i.test(target)) return { type: "urlCard", url: target };
+  return null;
 }
 function columns(indent) {
   let width = 0;
@@ -60498,18 +60650,30 @@ function markdownToBlocks(markdown, dropTitle) {
       blocks.push({ type: "divider" });
       continue;
     }
-    if (line.includes("|") && TABLE_SEPARATOR.test(lines[i + 1] ?? "")) {
+    if (line.includes("|") && separatorColumns(lines[i + 1] ?? "") === rawCells(line).length) {
       flushAll();
       listStack = [];
       const header = tableCells(line);
       const rows = [header];
       let j = i + 2;
       for (; j < lines.length && lines[j].includes("|") && lines[j].trim(); j++) {
-        const cells = tableCells(lines[j]).slice(0, header.length);
+        const all = tableCells(lines[j]);
+        if (all.length > header.length)
+          warnings.push(
+            `line ${j + 1}: table row has ${all.length} cells but the header has ${header.length}; the extra cells were dropped`
+          );
+        const cells = all.slice(0, header.length);
         rows.push([...cells, ...Array(header.length - cells.length).fill("")]);
       }
       i = j - 1;
       blocks.push({ type: "table", rows });
+      continue;
+    }
+    const image = imageBlock(line);
+    if (image) {
+      flushAll();
+      listStack = [];
+      blocks.push(image);
       continue;
     }
     const quoted2 = /^[ ]{0,3}>[ ]?(.*)$/.exec(line);
@@ -60593,18 +60757,148 @@ var composeResultSchema = external_exports.object({
   unitStart: external_exports.number().int(),
   objectURI: external_exports.string(),
   readBack: summarySchema,
-  objects: external_exports.array(external_exports.object({ kind: external_exports.enum(["divider", "table"]), identifier: external_exports.string() }).passthrough()).optional(),
+  objects: external_exports.array(
+    external_exports.object({
+      kind: external_exports.enum(["divider", "table", "file", "url"]),
+      identifier: external_exports.string(),
+      uti: external_exports.string().nullable().optional()
+    }).passthrough()
+  ).optional(),
+  frozenAttachments: external_exports.object({ attachments: external_exports.number().int(), verified: external_exports.literal(true) }).passthrough().optional(),
   ...writeSyncFields
 }).passthrough();
-var RUN_KEYS = ["bold", "italic", "underline", "strikethrough", "link", "highlight", "color"];
-function attributeTotals(runs) {
-  const totals = {};
-  for (const run of runs)
-    for (const key of RUN_KEYS)
-      if (run.attributes[key] !== void 0) totals[key] = (totals[key] ?? 0) + run.length;
-  return totals;
+var RUN_KEYS = [
+  "bold",
+  "italic",
+  "underline",
+  "strikethrough",
+  "link",
+  "highlight",
+  "color"
+];
+var OBJECT_UTIS = {
+  divider: "com.apple.notes.inlinetextattachment.dividerline",
+  table: "com.apple.notes.table",
+  url: "public.url"
+};
+function runValues(attributes) {
+  const out = {};
+  for (const key of RUN_KEYS)
+    if (attributes[key] !== void 0 && attributes[key] !== false) out[key] = attributes[key];
+  const attachment = attributes.attachment;
+  if (attachment)
+    out.attachment = {
+      identifier: String(attachment.identifier ?? attachment.id ?? "").toUpperCase(),
+      uti: attachment.uti ?? null
+    };
+  return out;
 }
-function crossCheckWithDatabase(result, read = (id2) => readNoteBlocks(id2)) {
+function mergeValueRuns(runs) {
+  const out = [];
+  for (const run of runs) {
+    if (!run.length) continue;
+    const last = out[out.length - 1];
+    if (last && JSON.stringify(last.values) === JSON.stringify(run.values))
+      last.length += run.length;
+    else out.push({ length: run.length, values: run.values });
+  }
+  return out;
+}
+function readBackShape(entry) {
+  return {
+    style: entry.style,
+    indent: entry.indent,
+    blockQuote: entry.blockQuote,
+    checked: entry.checked,
+    lengthUTF16: entry.lengthUTF16,
+    runs: mergeValueRuns(
+      entry.runs.map((run) => ({ length: run.length, values: runValues(run.attributes) }))
+    )
+  };
+}
+function compareShapes(where, actual, want, label) {
+  const mismatches = [];
+  for (const key of Object.keys(want))
+    if (JSON.stringify(actual[key]) !== JSON.stringify(want[key]))
+      mismatches.push(
+        `${where} ${key}: ${label[0]} ${JSON.stringify(actual[key])}, ${label[1]} ${JSON.stringify(want[key])}`
+      );
+  return mismatches;
+}
+function entryText(entry) {
+  return isObject3(entry) ? "\uFFFC" : entry.runs.map((run) => run.text).join("");
+}
+function verifyAgainstRequest(paragraphs, result) {
+  const mismatches = [];
+  if (result.readBack.length !== paragraphs.length)
+    return [
+      `the writer read back ${result.readBack.length} paragraphs; ${paragraphs.length} were requested`
+    ];
+  const objects = result.objects ?? [];
+  let next = 0;
+  paragraphs.forEach((entry, i) => {
+    const where = `paragraph ${i}`;
+    let want;
+    if (isObject3(entry)) {
+      const object3 = objects[next++];
+      if (!object3 || object3.kind !== entry.kind) {
+        mismatches.push(`${where}: no created ${entry.kind} object`);
+        return;
+      }
+      const uti = OBJECT_UTIS[entry.kind];
+      if (uti && object3.uti !== uti)
+        mismatches.push(`${where}: the ${entry.kind} has type ${String(object3.uti)}, not ${uti}`);
+      if (entry.kind === "url" && object3.url !== entry.url)
+        mismatches.push(`${where}: the link card URL is ${String(object3.url)}`);
+      if (entry.kind === "file") {
+        const name = entry.filename ?? basename7(entry.path);
+        if (object3.filename !== name)
+          mismatches.push(`${where}: the file attachment is named ${String(object3.filename)}`);
+      }
+      want = {
+        style: "body",
+        indent: 0,
+        blockQuote: false,
+        checked: void 0,
+        lengthUTF16: 1,
+        runs: [
+          {
+            length: 1,
+            values: {
+              attachment: { identifier: object3.identifier.toUpperCase(), uti: object3.uti ?? null }
+            }
+          }
+        ]
+      };
+    } else {
+      want = {
+        style: entry.style,
+        indent: entry.indent ?? 0,
+        blockQuote: entry.blockQuote ?? false,
+        checked: entry.checked,
+        lengthUTF16: entryText(entry).length,
+        runs: mergeValueRuns(
+          entry.runs.map((run) => {
+            const { text: text2, ...attributes } = run;
+            return { length: text2.length, values: runValues(attributes) };
+          })
+        )
+      };
+    }
+    mismatches.push(
+      ...compareShapes(where, readBackShape(result.readBack[i]), want, ["stored", "requested"])
+    );
+  });
+  if (next !== objects.length)
+    mismatches.push(`the writer created ${objects.length} objects; ${next} were requested`);
+  return mismatches;
+}
+function databaseRunValues(run) {
+  const attributes = { ...run };
+  if (run.highlight === "unknown") attributes.highlight = run.highlightValue;
+  return runValues(attributes);
+}
+function crossCheckWithDatabase(result, read = (id2) => readNoteBlocks(id2), requested) {
   if (result.storeKind !== "live")
     return { checked: false, reason: "the writer wrote a store copy, not NoteStore.sqlite" };
   const { objectURI, unitStart } = result;
@@ -60631,23 +60925,16 @@ function crossCheckWithDatabase(result, read = (id2) => readNoteBlocks(id2)) {
       blockQuote: block.blockQuote,
       checked: block.checklist?.done,
       lengthUTF16: block.length,
-      attributes: attributeTotals(
-        block.runs.map((run) => ({ length: run.length, attributes: { ...run } }))
+      runs: mergeValueRuns(
+        block.runs.map((run) => ({ length: run.length, values: databaseRunValues(run) }))
       )
     };
-    const want = {
-      style: expected.style,
-      indent: expected.indent,
-      blockQuote: expected.blockQuote,
-      checked: expected.checked,
-      lengthUTF16: expected.lengthUTF16,
-      attributes: attributeTotals(expected.runs)
-    };
-    for (const key of Object.keys(want))
-      if (JSON.stringify(actual[key]) !== JSON.stringify(want[key]))
-        mismatches.push(
-          `${where} ${key}: database ${JSON.stringify(actual[key])}, writer ${JSON.stringify(want[key])}`
-        );
+    mismatches.push(
+      ...compareShapes(where, actual, readBackShape(expected), ["database", "writer"])
+    );
+    const entry = requested?.[i];
+    if (entry && block.text !== entryText(entry))
+      mismatches.push(`${where} text: the database text differs from the requested text`);
   });
   return {
     checked: true,
@@ -60670,6 +60957,8 @@ function composeNote(request, deps = defaultWriterDeps()) {
   }
   if (request.insertBeforeHeading && request.mode !== "append")
     throw invalid3("insertBeforeHeading is valid only in append mode");
+  if (request.insertBeforeHeading && /[\n\v\f\r\u0085\u2028\u2029]/.test(request.insertBeforeHeading.text))
+    throw invalid3("insertBeforeHeading.text must be one line");
   const fields = {
     identifier: request.identifier,
     mode: request.mode,
@@ -60679,9 +60968,20 @@ function composeNote(request, deps = defaultWriterDeps()) {
   else fields.ifRevision = request.ifRevision;
   if (request.requireNonSystemPaper) fields.requireNonSystemPaper = true;
   if (request.insertBeforeHeading) fields.insertBeforeHeading = request.insertBeforeHeading;
+  assertWriterRequestSize(fields);
   try {
     const response = callPrivateWriter("compose_note", fields, deps);
-    return dryRun ? parseWriterResult(composePlanSchema, response, false) : parseWriterResult(composeResultSchema, response, true);
+    if (dryRun) return parseWriterResult(composePlanSchema, response, false);
+    const result = parseWriterResult(composeResultSchema, response, true);
+    const mismatches = verifyAgainstRequest(request.paragraphs, result);
+    if (mismatches.length)
+      throw new PrivateWriteError(
+        "verification_failed",
+        "The writer saved the note, but what it stored differs from the request",
+        true,
+        { ...result, indeterminate: true, requestMismatches: mismatches }
+      );
+    return result;
   } catch (error2) {
     if (dryRun && error2 instanceof PrivateWriteError && error2.committed !== false)
       throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
@@ -60699,7 +60999,7 @@ var composeNoteInput = {
   account: external_exports.string().min(1).optional().describe("create: account name"),
   blocks: external_exports.array(blockSchema2).min(1).max(2e3).optional().describe("Ordered content blocks. Give exactly one of blocks or markdown."),
   markdown: external_exports.string().min(1).max(2e5).optional().describe(
-    "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
+    "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links; an image alone on a line becomes a file (absolute path) or link card (http URL)"
   ),
   ifRevision: revisionToken.optional().describe("append/prepend apply: revisionBefore from an identical dry run"),
   dryRun: external_exports.boolean().optional().describe("Validate and plan without writing"),
@@ -60749,27 +61049,44 @@ function checkModeFields(args) {
     throw invalid4("Applying requires ifRevision: run the identical request with dryRun first");
 }
 var UUID_IN_LINK = /identifier=([0-9A-F-]{36})$/i;
-function assertNoteLinkTargets(args, deps) {
-  const targets = new Set(
-    (args.blocks ?? []).flatMap((b) => b.type === "noteLink" ? [b.identifier.toUpperCase()] : [])
-  );
+function assertNoteLinkTargets(paragraphs, deps) {
+  const targets = /* @__PURE__ */ new Set();
+  for (const { link, target } of notesLinkTargets(paragraphs)) {
+    if (!target)
+      throw invalid4(`The Notes link ${link} does not name a note (showNote?identifier=)`);
+    targets.add(target);
+  }
   for (const target of targets) {
+    let state;
     try {
-      readWriterNoteState(target, deps);
+      state = readWriterNoteState(target, deps);
     } catch (error2) {
       if (error2 instanceof PrivateWriteError && error2.code === "not_found")
-        throw new PrivateWriteError(
-          "invalid_request",
-          `noteLink target ${target} is not a note in this library`,
-          false
-        );
+        throw invalid4(`Link target ${target} is not a note in this library`);
       throw error2;
     }
+    if (state.deletedOrInTrash)
+      throw invalid4(`Link target ${target} is in Recently Deleted or marked for deletion`);
+    if (state.passwordProtected) throw invalid4(`Link target ${target} is a locked note`);
   }
 }
-function withDatabaseCheck(result) {
+function withDatabaseCheck(result, paragraphs) {
   if (result.status !== "updated") return result;
-  return { ...result, databaseReadBack: crossCheckWithDatabase(result) };
+  return {
+    ...result,
+    databaseReadBack: crossCheckWithDatabase(result, void 0, paragraphs)
+  };
+}
+var PLACEHOLDER_IDENTIFIER = "00000000-0000-0000-0000-000000000000";
+var PLACEHOLDER_REVISION = `r1:${"0".repeat(64)}`;
+function discardCreatedNote(manager, id2, identifier, revision10, deps) {
+  try {
+    if (readWriterNoteState(identifier, deps).revision !== revision10) return "kept";
+    const body = manager.getNoteContentById(id2);
+    return manager.deleteNoteByIdIfUnchanged(id2, body).status === "deleted" ? "moved_to_recently_deleted" : "kept";
+  } catch {
+    return "kept";
+  }
 }
 function poll(attempt, sleep2) {
   for (let i = 0; i < 5; i++) {
@@ -60782,14 +61099,24 @@ function poll(attempt, sleep2) {
 function createAndCompose(args, paragraphs, runtime) {
   const { manager, deps, sleep: sleep2 } = runtime;
   assertComposeWritesAllowed(deps.env);
+  assertWriterRequestSize({
+    identifier: PLACEHOLDER_IDENTIFIER,
+    mode: "append",
+    paragraphs,
+    ifRevision: PLACEHOLDER_REVISION
+  });
   const features = privateWriterCapabilities(deps).features;
-  const capability = paragraphs.some(isObject3) ? features.composeObjects : features.composeNote;
-  if (!capability.available)
-    throw new PrivateWriteError(
-      capability.reason || "private_api_unavailable",
-      capability.detail || "compose is unavailable",
-      false
-    );
+  const kinds = new Set(paragraphs.filter(isObject3).map((p) => p.kind));
+  const needed = [features.composeNote];
+  if (kinds.has("divider") || kinds.has("table")) needed.push(features.composeObjects);
+  if (kinds.has("file") || kinds.has("url")) needed.push(features.composeAttachments);
+  for (const capability of needed)
+    if (!capability.available)
+      throw new PrivateWriteError(
+        capability.reason || "private_api_unavailable",
+        capability.detail || "compose is unavailable",
+        false
+      );
   const note = manager.createNote(
     args.title,
     "",
@@ -60816,6 +61143,7 @@ function createAndCompose(args, paragraphs, runtime) {
       false,
       created
     );
+  let revision10 = null;
   try {
     const state = poll(() => {
       try {
@@ -60827,12 +61155,13 @@ function createAndCompose(args, paragraphs, runtime) {
     }, sleep2);
     if (!state)
       throw new PrivateWriteError("not_found", "The writer cannot see the new note yet", false);
+    revision10 = state.revision;
     const result = composeNote(
       { identifier, mode: "append", paragraphs, ifRevision: state.revision },
       deps
     );
     return {
-      ...withDatabaseCheck(result),
+      ...withDatabaseCheck(result, paragraphs),
       mode: "create",
       created: true,
       id: note.id,
@@ -60840,21 +61169,29 @@ function createAndCompose(args, paragraphs, runtime) {
     };
   } catch (error2) {
     if (!(error2 instanceof PrivateWriteError)) throw error2;
-    throw new PrivateWriteError(
-      error2.code,
-      `${error2.message} (the note was created with its title only; identifier ${identifier})`,
-      error2.committed,
-      { ...error2.details, ...created, identifier }
-    );
+    const createdNote = error2.committed === false && revision10 ? discardCreatedNote(manager, note.id, identifier, revision10, deps) : "kept";
+    const outcome = createdNote === "moved_to_recently_deleted" ? `the new note ${note.id} was moved to Recently Deleted` : `the note was created with its title only; id ${note.id}, identifier ${identifier}`;
+    throw new PrivateWriteError(error2.code, `${error2.message} (${outcome})`, error2.committed, {
+      ...error2.details,
+      ...created,
+      identifier,
+      createdNote
+    });
   }
 }
 function runComposeNote(args, runtime) {
   checkModeFields(args);
   const { paragraphs, warnings } = contentFor(args);
-  assertNoteLinkTargets(args, runtime.deps);
+  assertNoteLinkTargets(paragraphs, runtime.deps);
   const extra = warnings.length ? { warnings } : {};
   if (args.mode === "create") {
-    if (args.dryRun)
+    if (args.dryRun) {
+      assertWriterRequestSize({
+        identifier: PLACEHOLDER_IDENTIFIER,
+        mode: "append",
+        paragraphs,
+        ifRevision: PLACEHOLDER_REVISION
+      });
       return {
         status: "planned",
         dryRun: true,
@@ -60864,7 +61201,9 @@ function runComposeNote(args, runtime) {
         plan: paragraphs.map(
           (p) => isObject3(p) ? {
             kind: p.kind,
-            ...p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {}
+            ...p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {},
+            ...p.kind === "file" ? { path: p.path, filename: p.filename ?? basename8(p.path) } : {},
+            ...p.kind === "url" ? { url: p.url } : {}
           } : {
             style: p.style,
             indent: p.indent ?? 0,
@@ -60875,6 +61214,7 @@ function runComposeNote(args, runtime) {
         ),
         ...extra
       };
+    }
     return { ...createAndCompose(args, paragraphs, runtime), ...extra };
   }
   const identifier = resolveIdentifier(runtime.manager, args);
@@ -60889,7 +61229,11 @@ function runComposeNote(args, runtime) {
     },
     runtime.deps
   );
-  return { ...withDatabaseCheck(result), ...args.id ? { id: args.id } : {}, ...extra };
+  return {
+    ...withDatabaseCheck(result, paragraphs),
+    ...args.id ? { id: args.id } : {},
+    ...extra
+  };
 }
 var blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function registerComposeNoteTool(server2, manager, depsFactory = defaultWriterToolDeps, sleep2 = blockingSleep) {
@@ -60897,7 +61241,7 @@ function registerComposeNoteTool(server2, manager, depsFactory = defaultWriterTo
     server2,
     depsFactory,
     "compose-note",
-    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider or table), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need a file attachment (add-attachment).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, and every table cell, is verified in a fresh read. A noteLink target must be an existing note. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, local files and rich link cards placed in order, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider, table, file with its size and SHA-256, or link card), frozenAttachments (existing attachments proven unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, still downloading, or has no title line.\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {
@@ -61266,7 +61610,7 @@ var urlCardResultSchema = external_exports.object({
   modificationDate: external_exports.string().nullable(),
   ...writeSyncFields
 }).passthrough();
-function assertCardUrl(url) {
+function assertCardUrl2(url) {
   let parsed = null;
   try {
     parsed = new URL(url);
@@ -61283,7 +61627,7 @@ function assertCardUrl(url) {
 }
 function addUrlCard(request, deps = defaultWriterDeps()) {
   assertNoteIdentifier2(request.identifier);
-  assertCardUrl(request.url);
+  assertCardUrl2(request.url);
   if (request.afterParagraph !== void 0 && (!request.afterParagraph.length || request.afterParagraph.length > MAX_ANCHOR_UTF16 || request.afterParagraph.includes("\n")))
     throw new PrivateWriteError(
       "invalid_request",

@@ -1,5 +1,42 @@
 ## [Unreleased]
 
+### Added
+
+- `compose-note` takes local files (`{"type":"file","path":…}`, with
+  `add-attachment`'s rules) and rich link cards (`{"type":"urlCard","url":…}`)
+  as blocks, placed in order among the text and created in the same verified
+  save; a Markdown image alone on a line becomes one. A failure before the
+  save rolls back every row and deletes every attachment file the writer
+  wrote. The probe reports them as the writer's `composeAttachments` feature.
+- `compose-note` append and prepend prove that a note's existing attachments
+  are unchanged: every attachment row, media row, file, inline attachment,
+  and glyph position is fingerprinted before, just before the save
+  (`attachment_drift`, nothing written), and after it (`frozenAttachments`).
+
+### Fixed
+
+- A `compose-note` table was created with a NotesShared call that saved the
+  note's context by itself, so a compose that failed after creating a table
+  left the table and earlier objects saved while reporting
+  `committed: false`. Tables no longer save early, and any early save by
+  NotesShared is now reported as `committed: true`, `indeterminate: true`.
+- `compose-note` checks every writer limit before `create` makes a note
+  (table cell text counts toward the 200,000-unit limit, at most 10,000 per
+  cell, 20,000 runs, and the writer's 1 MiB request size), and a create whose
+  compose then fails with nothing written moves the empty new note to
+  Recently Deleted when it is unchanged.
+- "Verified" now means the stored paragraphs match the request: the server
+  compares each run's attribute values and each created object with what it
+  sent, and `databaseReadBack` compares values and text, not per-attribute
+  character totals. Links that the writer would re-encode are refused.
+- Note links in runs and Markdown are checked like `noteLink` blocks, and a
+  link to a locked note or one in Recently Deleted is refused.
+- The Markdown importer accepts a table only when the delimiter row has pipes
+  and the header's cell count (one dash per cell is enough), and warns when
+  it drops extra cells from a row.
+- Compose refuses a note with no body at all instead of writing into its
+  title position.
+
 ## [2.9.21] - 2026-09-24
 
 ### Added
