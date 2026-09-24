@@ -197,13 +197,15 @@ export function setHighlight(
   try {
     return parseWriterResult(
       highlightResultSchema,
-      callPrivateWriter("set_highlight", fields, deps),
-      true
+      // Passing dryRun keeps a dry-run timeout from being described as a
+      // possible save.
+      callPrivateWriter("set_highlight", fields, deps, { dryRun }),
+      !dryRun
     );
   } catch (error) {
-    // A dry run opens the store read-only and cannot write, so an
-    // indeterminate outcome is still "nothing committed".
-    if (dryRun && error instanceof PrivateWriteError && error.committed === "unknown")
+    // A dry run opens the store read-only and cannot write, so no failure of
+    // it has committed anything, whatever the transport reports.
+    if (dryRun && error instanceof PrivateWriteError && error.committed !== false)
       throw new PrivateWriteError(error.code, error.message, false, error.details);
     throw error;
   }

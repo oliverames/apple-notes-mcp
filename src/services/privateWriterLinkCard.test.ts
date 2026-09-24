@@ -174,13 +174,15 @@ describe("addUrlCard", SPAWN_TIMEOUT, () => {
     expect(
       caught(() => addUrlCard(request, deps({ ...ALLOW, FAKE_MODE: "malformed" })))
     ).toMatchObject({ code: "invalid_response", committed: "unknown" });
-    expect(
-      caught(() =>
-        addUrlCard(
-          { ...request, dryRun: true },
-          deps({ FAKE_MODE: "hang", APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS: "300" })
-        )
+    const timedOut = caught(() =>
+      addUrlCard(
+        { ...request, dryRun: true },
+        deps({ FAKE_MODE: "hang", APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS: "300" })
       )
-    ).toMatchObject({ code: "timeout", committed: false });
+    );
+    expect(timedOut).toMatchObject({ code: "timeout", committed: false });
+    // The transport treats the dry run as a read, so the message does not
+    // describe a possible save.
+    expect(timedOut.message).not.toMatch(/INDETERMINATE|may have been saved/);
   });
 });

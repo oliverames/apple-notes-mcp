@@ -127,7 +127,11 @@ RANGES="$(field "$OUT" rangeCount)"
 TITLE="$(field "$OUT" skipped.titleUTF16)"
 GLYPHS="$(field "$OUT" skipped.attachmentGlyphs)"
 WHOLE_FLAG_BEFORE="$(field "$OUT" hasEmphasis)"
-[ "$(field "$OUT" plan.0.start)" = "$TITLE" ] || fail "whole-note range does not start after the title"
+# The first range starts right after the title, or after the attachment
+# glyphs that open the body (the whole-note scope skips every glyph).
+START="$(field "$OUT" plan.0.start)"
+[ "$START" -ge "$TITLE" ] && [ $((START - TITLE)) -le "${GLYPHS:-0}" ] ||
+  fail "whole-note range starts at $START, not after the title ($TITLE) and at most $GLYPHS glyphs"
 [ "$(field "$(copy_run "$WHOLE_READ")" revision)" = "$REV" ] || fail "whole-note dry run changed the note"
 echo "ok: whole-note dry run: ranges=$RANGES chars=$CHARS titleUTF16=$TITLE attachmentGlyphs=$GLYPHS highlightedGlyphs=$(field "$OUT" skipped.highlightedAttachmentGlyphs)"
 OUT="$(copy_run "$(note_request blue "$REV")" || true)"

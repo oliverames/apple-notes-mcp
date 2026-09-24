@@ -141,12 +141,15 @@ export function addUrlCard(
   try {
     return parseWriterResult(
       urlCardResultSchema,
-      callPrivateWriter("add_url_card", fields, deps),
-      true
+      // Passing dryRun keeps a dry-run timeout from being described as a
+      // possible save.
+      callPrivateWriter("add_url_card", fields, deps, { dryRun }),
+      !dryRun
     );
   } catch (error) {
-    // A dry run opens the store read-only and cannot write.
-    if (dryRun && error instanceof PrivateWriteError && error.committed === "unknown")
+    // A dry run opens the store read-only and cannot write, so no failure of
+    // it has committed anything, whatever the transport reports.
+    if (dryRun && error instanceof PrivateWriteError && error.committed !== false)
       throw new PrivateWriteError(error.code, error.message, false, error.details);
     throw error;
   }

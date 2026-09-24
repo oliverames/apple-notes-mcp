@@ -231,5 +231,8 @@ describe("setHighlight", SPAWN_TIMEOUT, () => {
       )
     );
     expect(e).toMatchObject({ code: "timeout", committed: false });
+    // The transport treats the dry run as a read, so the message does not
+    // describe a possible save.
+    expect(e.message).not.toMatch(/INDETERMINATE|may have been saved/);
   });
 });
