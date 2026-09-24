@@ -10,9 +10,10 @@ vi.mock(import("../services/privateWriter.js"), async (importOriginal) => ({
 vi.mock(import("../services/privateSyncNudge.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   nudgeInPlace: vi.fn(),
+  syncPush: vi.fn(),
 }));
 import { PrivateHelperError } from "../services/privateHelper.js";
-import { nudgeInPlace } from "../services/privateSyncNudge.js";
+import { nudgeInPlace, syncPush } from "../services/privateSyncNudge.js";
 import {
   PrivateWriteError,
   appendPlainText,
@@ -53,7 +54,13 @@ beforeEach(() => vi.clearAllMocks());
 describe("private writer tools", () => {
   it("registers the status tool and the demonstration write", () => {
     const { config, names } = fixture();
-    expect(names()).toEqual(["native-writer-status", "native-append-plain-text"]);
+    expect(names()).toEqual([
+      "native-writer-status",
+      "native-append-plain-text",
+      "native-sync-push",
+    ]);
+    expect(config("native-sync-push").description).toMatch(/requires confirm: true/);
+    expect(config("native-sync-push").annotations.destructiveHint).toBe(false);
     expect(config("native-writer-status").annotations.readOnlyHint).toBe(true);
     const append = config("native-append-plain-text");
     expect(append.annotations.readOnlyHint).toBe(false);
@@ -129,6 +136,34 @@ describe("private writer tools", () => {
     });
   });
 
+  it("native-sync-push passes its arguments through and reports a refused relaunch", async () => {
+    vi.mocked(syncPush).mockResolvedValueOnce({
+      method: "status",
+      allUploadsRecorded: true,
+      pushScheduled: false,
+      targets: [],
+    } as never);
+    const r = await fixture().call("native-sync-push", { identifiers: [NOTE], method: "status" });
+    expect(r.structuredContent).toMatchObject({ ok: true, method: "status", pushScheduled: false });
+    expect(vi.mocked(syncPush).mock.calls[0][0]).toEqual({
+      identifiers: [NOTE],
+      method: "status",
+    });
+    vi.mocked(syncPush).mockRejectedValueOnce(
+      new PrivateWriteError("confirmation_required", "ask first", false)
+    );
+    const refused = await fixture().call("native-sync-push", {
+      identifiers: [NOTE],
+      method: "relaunch",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.structuredContent).toMatchObject({
+      code: "validation_error",
+      helperCode: "confirmation_required",
+      committed: false,
+    });
+  });
+
   it("refuses identifier plus id, and an id that cannot be resolved", async () => {
     const both = await fixture().call("native-append-plain-text", {
       identifier: NOTE,
@@ -184,6 +219,8 @@ describe("writerErrorResult", () => {
       "writes_disabled",
       "not_live_validated",
       "ambiguous",
+      "confirmation_required",
+      "relaunch_failed",
       "save_failed",
       "timeout",
     ])

@@ -56816,6 +56816,7 @@ function formatWriterBuild(report) {
 }
 
 // src/services/privateSyncNudge.ts
+import { execFileSync as execFileSync20 } from "node:child_process";
 var UUID3 = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 var NOTE_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i;
 var FOLDER_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICFolder\/p\d+$/i;
@@ -56895,6 +56896,17 @@ function defaultNudgeDeps(overrides = {}) {
   return {
     helper: defaultWriterDeps(),
     runAppleScript: (script) => executeAppleScript(script, { maxRetries: 1, timeoutMs: 3e4 }),
+    launchNotes: () => {
+      execFileSync20("/usr/bin/open", ["-g", "-a", "Notes"], { timeout: 15e3 });
+    },
+    notesRunning: () => {
+      try {
+        execFileSync20("/usr/bin/pgrep", ["-x", "Notes"], { timeout: 5e3, stdio: "ignore" });
+        return true;
+      } catch {
+        return false;
+      }
+    },
     sleep: (ms) => new Promise((resolve7) => setTimeout(resolve7, ms)),
     now: () => Date.now(),
     ...overrides
@@ -57002,6 +57014,87 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
     after
   };
 }
+var QUIT_SCRIPT = 'tell application "Notes" to quit';
+var QUIT_TIMEOUT_MS = 2e4;
+async function waitForQuit(deps, timeoutMs) {
+  const end = deps.now() + timeoutMs;
+  for (; ; ) {
+    if (!deps.notesRunning()) return true;
+    if (deps.now() >= end) return false;
+    await deps.sleep(500);
+  }
+}
+function relaunchFailed(message) {
+  return new PrivateWriteError("relaunch_failed", message, false);
+}
+function pushReport(method, report, relaunched, runningBefore) {
+  const { before: _before, after: _after, syncHostRunning, ...rest } = report;
+  void _before;
+  void _after;
+  return {
+    method,
+    syncHostRunningBefore: runningBefore,
+    syncHostRunningAfter: syncHostRunning,
+    relaunched,
+    ...rest
+  };
+}
+async function syncPush(request, deps = defaultNudgeDeps()) {
+  const method = request.method ?? "nudge";
+  const identifiers = syncTargets(request.identifiers);
+  const waitSeconds = request.waitSeconds ?? (method === "status" ? 0 : 30);
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_NUDGE_WAIT_SECONDS)
+    throw invalid2(`waitSeconds must be 0-${MAX_NUDGE_WAIT_SECONDS}`);
+  if (method !== "relaunch") {
+    const report2 = await nudgeInPlace(
+      { identifiers, waitSeconds, nudge: method === "nudge" },
+      deps
+    );
+    if (method === "nudge" && !report2.before.syncHostRunning)
+      report2.warnings.push("To start Notes.app now, use method relaunch with confirm: true.");
+    return pushReport(method, report2, false, report2.before.syncHostRunning);
+  }
+  if (request.confirm !== true)
+    throw new PrivateWriteError(
+      "confirmation_required",
+      "method relaunch quits and reopens Notes.app, which interrupts anyone using it. Ask the user, then pass confirm: true.",
+      false
+    );
+  const first2 = readSyncState(identifiers, deps.helper);
+  if (first2.syncHostRunning) {
+    const quit = deps.runAppleScript(QUIT_SCRIPT);
+    if (!quit.success)
+      throw relaunchFailed(
+        `Notes.app did not accept quit: ${quit.error ?? "unknown error"}. Nothing was relaunched.`
+      );
+    if (!await waitForQuit(deps, QUIT_TIMEOUT_MS))
+      throw relaunchFailed(
+        `Notes.app is still running ${QUIT_TIMEOUT_MS / 1e3} s after quit (it may be showing a dialog). Nothing was relaunched; check Notes.app.`
+      );
+  }
+  try {
+    deps.launchNotes();
+  } catch (error2) {
+    throw relaunchFailed(
+      `Notes.app ${first2.syncHostRunning ? "was quit but " : ""}could not be opened: ${error2 instanceof Error ? error2.message : String(error2)}. Open Notes.app manually.`
+    );
+  }
+  const report = await nudgeInPlace({ identifiers, waitSeconds, nudge: false }, deps);
+  const firstById = new Map(first2.objects.map((o) => [o.identifier, o]));
+  for (const target of report.targets) {
+    const was = firstById.get(target.identifier);
+    target.before = versions(was);
+    target.uploadPendingBefore = Boolean(was?.uploadPending);
+    if (target.reason === null && target.uploadPendingBefore) target.action = "relaunch";
+  }
+  report.pendingUploadCountBefore = first2.pendingUploadCount;
+  const stillPending = report.targets.filter((r) => r.reason === null && !r.uploadRecorded);
+  if (stillPending.length)
+    report.warnings.push(
+      `${stillPending.length} target(s) still show a pending upload after ${waitSeconds} s. Notes.app uploads on its own schedule; check again later with method status.`
+    );
+  return pushReport(method, report, true, first2.syncHostRunning);
+}
 
 // src/tools/privateWriterTools.ts
 var coreDataId3 = external_exports.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
@@ -57018,6 +57111,8 @@ function writerEnvelopeCode(helperCode, message) {
       return "unsupported";
     case "ambiguous":
       return "ambiguous";
+    case "confirmation_required":
+      return "validation_error";
     default:
       return envelopeCode(helperCode, message);
   }
@@ -57118,6 +57213,25 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
         sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
       };
     }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-sync-push",
+    `Use when: a note or folder changed through the private writer earlier (native-append-plain-text and the other native write tools, without nudge or with a nudge that timed out) still shows cloudSync.uploadPending, and you want Notes.app to upload it, or just to check whether it has.
+Returns: per target, Notes' own version counters before and after, uploadRecorded (true only when Notes recorded the current version as synced to iCloud), the action taken, and a skip reason; the library-wide pendingUploadCount before and after; warnings. pushScheduled is always false: only Notes.app uploads.
+Do not use when: the change was made through AppleScript or Shortcuts tools (Notes.app uploads those itself), or right after a native write that already ran with nudge: true and reported uploadRecorded.
+Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer's revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).`,
+    {
+      identifiers: external_exports.array(notesUuid2).min(1).max(MAX_SYNC_TARGETS).describe("Notes UUIDs of the notes or folders to check (from native-note-state etc.)"),
+      method: external_exports.enum(["status", "nudge", "relaunch"]).optional().describe(
+        "status = read only; nudge (default) = in-place Notes.app save; relaunch = quit and reopen Notes.app"
+      ),
+      confirm: external_exports.boolean().optional().describe("Must be true for relaunch, after the user agreed to Notes.app being quit"),
+      waitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("Seconds to watch the counters afterwards (default 30; 0 for status)")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    async (args, deps) => ({ ...await syncPush(args, deps.nudge) })
   );
 }
 async function nudgeAfterWrite(identifier, waitSeconds, deps) {

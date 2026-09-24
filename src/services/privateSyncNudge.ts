@@ -15,6 +15,12 @@
  * date are not touched; the writer's revision token, which covers them, is
  * compared before and after (`contentUnchanged`).
  *
+ * `syncPush` (the `native-sync-push` tool) runs the same machinery for notes
+ * written earlier: `status` only reads, `nudge` moves pending notes in place,
+ * and `relaunch` (only with `confirm: true`) quits and reopens Notes.app so
+ * its launch sweep considers every object with pending changes, including
+ * folders, which cannot be moved in place.
+ *
  * Every outcome is read back from Notes' own counters (`read_sync_state`).
  * `uploadRecorded` is true only when `latestVersionSyncedToCloud` has caught
  * up with `currentLocalVersion`; nothing here claims an upload it did not
@@ -22,6 +28,7 @@
  *
  * @module services/privateSyncNudge
  */
+import { execFileSync } from "node:child_process";
 import { z } from "zod";
 import { executeAppleScript } from "../utils/applescript.js";
 import {
@@ -139,10 +146,14 @@ export function moveInPlaceScript(noteURI: string, folderURI: string): string {
   ].join("\n");
 }
 
-/** Machine side effects of a nudge, injectable for tests. */
+/** Machine side effects of a nudge or relaunch, injectable for tests. */
 export interface NudgeDeps {
   helper: PrivateHelperDeps;
   runAppleScript: (script: string) => { success: boolean; output: string; error?: string };
+  /** Opens Notes.app in the background (`open -g -a Notes`); used only by relaunch. */
+  launchNotes: () => void;
+  /** Whether a Notes.app process exists; used only by relaunch. */
+  notesRunning: () => boolean;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
 }
@@ -151,6 +162,17 @@ export function defaultNudgeDeps(overrides: Partial<NudgeDeps> = {}): NudgeDeps 
   return {
     helper: defaultWriterDeps(),
     runAppleScript: (script) => executeAppleScript(script, { maxRetries: 1, timeoutMs: 30_000 }),
+    launchNotes: () => {
+      execFileSync("/usr/bin/open", ["-g", "-a", "Notes"], { timeout: 15_000 });
+    },
+    notesRunning: () => {
+      try {
+        execFileSync("/usr/bin/pgrep", ["-x", "Notes"], { timeout: 5_000, stdio: "ignore" });
+        return true;
+      } catch {
+        return false;
+      }
+    },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     ...overrides,
@@ -164,7 +186,7 @@ export interface NudgeTargetResult {
   after: { currentLocalVersion?: number; latestVersionSyncedToCloud?: number } | null;
   uploadPendingBefore: boolean;
   uploadRecorded: boolean;
-  action: "none" | "moved_in_place" | "skipped" | "failed";
+  action: "none" | "moved_in_place" | "relaunch" | "skipped" | "failed";
   reason: string | null;
   /** For a nudged note: the writer's revision token and folder were identical before and after. */
   contentUnchanged?: boolean;
@@ -308,4 +330,130 @@ export async function nudgeInPlace(
     before,
     after,
   };
+}
+
+export type SyncPushMethod = "status" | "nudge" | "relaunch";
+
+export interface SyncPushRequest {
+  identifiers: string[];
+  /** status = read only; nudge (default) = move pending notes in place; relaunch = quit and reopen Notes.app. */
+  method?: SyncPushMethod;
+  /** Required for `relaunch`: quitting Notes.app interrupts whoever is using it. */
+  confirm?: boolean;
+  /** How long to watch the counters afterwards (0-180 s; default 30, or 0 for status). */
+  waitSeconds?: number;
+}
+
+export type SyncPushReport = Omit<NudgeReport, "before" | "after" | "syncHostRunning"> & {
+  method: SyncPushMethod;
+  syncHostRunningBefore: boolean;
+  syncHostRunningAfter: boolean;
+  relaunched: boolean;
+};
+
+const QUIT_SCRIPT = 'tell application "Notes" to quit';
+const QUIT_TIMEOUT_MS = 20_000;
+
+async function waitForQuit(deps: NudgeDeps, timeoutMs: number): Promise<boolean> {
+  const end = deps.now() + timeoutMs;
+  for (;;) {
+    if (!deps.notesRunning()) return true;
+    if (deps.now() >= end) return false;
+    await deps.sleep(500);
+  }
+}
+
+function relaunchFailed(message: string): PrivateWriteError {
+  return new PrivateWriteError("relaunch_failed", message, false);
+}
+
+function pushReport(
+  method: SyncPushMethod,
+  report: NudgeReport,
+  relaunched: boolean,
+  runningBefore: boolean
+): SyncPushReport {
+  const { before: _before, after: _after, syncHostRunning, ...rest } = report;
+  void _before;
+  void _after;
+  return {
+    method,
+    syncHostRunningBefore: runningBefore,
+    syncHostRunningAfter: syncHostRunning,
+    relaunched,
+    ...rest,
+  };
+}
+
+/**
+ * Get writer-saved changes uploaded after the fact, and report from Notes'
+ * own counters whether they were. Never writes to the store: `nudge` is a
+ * Notes.app-side move in place and `relaunch` restarts Notes.app.
+ */
+export async function syncPush(
+  request: SyncPushRequest,
+  deps: NudgeDeps = defaultNudgeDeps()
+): Promise<SyncPushReport> {
+  const method = request.method ?? "nudge";
+  const identifiers = syncTargets(request.identifiers);
+  const waitSeconds = request.waitSeconds ?? (method === "status" ? 0 : 30);
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_NUDGE_WAIT_SECONDS)
+    throw invalid(`waitSeconds must be 0-${MAX_NUDGE_WAIT_SECONDS}`);
+
+  if (method !== "relaunch") {
+    const report = await nudgeInPlace(
+      { identifiers, waitSeconds, nudge: method === "nudge" },
+      deps
+    );
+    if (method === "nudge" && !report.before.syncHostRunning)
+      report.warnings.push("To start Notes.app now, use method relaunch with confirm: true.");
+    return pushReport(method, report, false, report.before.syncHostRunning);
+  }
+
+  if (request.confirm !== true)
+    throw new PrivateWriteError(
+      "confirmation_required",
+      "method relaunch quits and reopens Notes.app, which interrupts anyone using it. " +
+        "Ask the user, then pass confirm: true.",
+      false
+    );
+  const first = readSyncState(identifiers, deps.helper);
+  if (first.syncHostRunning) {
+    const quit = deps.runAppleScript(QUIT_SCRIPT);
+    if (!quit.success)
+      throw relaunchFailed(
+        `Notes.app did not accept quit: ${quit.error ?? "unknown error"}. Nothing was relaunched.`
+      );
+    if (!(await waitForQuit(deps, QUIT_TIMEOUT_MS)))
+      throw relaunchFailed(
+        `Notes.app is still running ${QUIT_TIMEOUT_MS / 1000} s after quit (it may be showing ` +
+          "a dialog). Nothing was relaunched; check Notes.app."
+      );
+  }
+  try {
+    deps.launchNotes();
+  } catch (error) {
+    throw relaunchFailed(
+      `Notes.app ${first.syncHostRunning ? "was quit but " : ""}could not be opened: ` +
+        `${error instanceof Error ? error.message : String(error)}. Open Notes.app manually.`
+    );
+  }
+
+  // Watch the counters without nudging, then report against the pre-relaunch state.
+  const report = await nudgeInPlace({ identifiers, waitSeconds, nudge: false }, deps);
+  const firstById = new Map(first.objects.map((o) => [o.identifier, o]));
+  for (const target of report.targets) {
+    const was = firstById.get(target.identifier);
+    target.before = versions(was);
+    target.uploadPendingBefore = Boolean(was?.uploadPending);
+    if (target.reason === null && target.uploadPendingBefore) target.action = "relaunch";
+  }
+  report.pendingUploadCountBefore = first.pendingUploadCount;
+  const stillPending = report.targets.filter((r) => r.reason === null && !r.uploadRecorded);
+  if (stillPending.length)
+    report.warnings.push(
+      `${stillPending.length} target(s) still show a pending upload after ${waitSeconds} s. ` +
+        "Notes.app uploads on its own schedule; check again later with method status."
+    );
+  return pushReport(method, report, true, first.syncHostRunning);
 }

@@ -2378,6 +2378,29 @@ x-coredata `id`, guarded by `ifRevision` and verified by read-back. Returns
 counters for `nudgeWaitSeconds` (default 30), reported under `sync`. Refuses
 locked, shared, trashed, and still-downloading notes.
 
+#### `native-sync-push`
+
+Gets writer-saved changes uploaded after the fact, for example a note written
+without `nudge` or one whose nudge timed out, and reports from Notes' own
+counters whether they were. Pass up to 50 note or folder UUIDs in
+`identifiers`. It never writes to the Notes database.
+
+- `method: "status"` reads each target's `currentLocalVersion` and
+  `latestVersionSyncedToCloud`, plus the library-wide `pendingUploadCount`.
+  Read-only.
+- `method: "nudge"` (default) makes a running Notes.app save each pending
+  note by moving it into the folder it is already in, as `nudge: true` does
+  after a write. Text, title, and modification date do not change
+  (`contentUnchanged` compares the revision token). Locked, shared, trashed,
+  and non-iCloud notes, and folders, are skipped with a `reason`.
+- `method: "relaunch"` quits and reopens Notes.app (or opens it when it is not
+  running) so its launch sweep uploads everything pending, folders included.
+  It interrupts anyone using Notes, so it requires `confirm: true`.
+
+Afterwards the tool watches the counters for `waitSeconds` (default 30, or 0
+for `status`). `uploadRecorded` is true only when Notes recorded the current
+version as synced to iCloud; `pushScheduled` is always `false`.
+
 ## Usage Patterns
 
 ### Basic Workflow

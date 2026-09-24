@@ -130,6 +130,7 @@ before retrying.
 | -------------------------- | -------------------------------------------------------------------------------- |
 | `native-writer-status`     | Report both switches, writer build state, and live probe (read-only)             |
 | `native-append-plain-text` | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
+| `native-sync-push`         | Check or get writer changes uploaded later (status, nudge, confirmed relaunch)   |
 
 ## Usage Patterns
 
