@@ -541,6 +541,98 @@ Every title (78), heading (18) and subheading (7) was unique; body text was
 roughly half and half. A paragraph whose runs carry more than one UUID is
 common and reported as `mixedParagraphIds`; its first-run UUID is still used.
 
+### Paragraph Anchors
+
+`src/utils/paragraphAnchors.ts` (matching and resolution, read-only),
+`src/services/anchorRegistry.ts` (the registry file) and
+`src/services/paragraphAnchorOps.ts` (record, resolve with refresh or
+re-mint, prune) back the five anchor tools and the resolver service.
+
+**What an anchor stores.** The note's `ZIDENTIFIER` (uppercase; the
+`x-coredata` id is kept only as a hint, since it is local to one Mac), the
+first-run paragraph UUID and its status, the paragraph text normalized as for
+paragraph selection (NFKC, U+FFFC removed, whitespace collapsed, lowercase),
+a fingerprint (the first 32 hex digits of SHA-256 of that text), the
+fingerprints of the previous and next non-empty paragraphs (null at the
+note's edges), the block index, the style and the creation time.
+
+**Matching.** Against the note's current non-empty paragraphs:
+
+1. Paragraph UUID. If exactly one paragraph's first run carries the UUID and
+   its status is `unique`, it is the match (confidence 1 when the text is
+   unchanged, 0.8 to 0.95 when edited). This is safe even for a heavily edited
+   paragraph, because a link to that UUID opens that paragraph and nothing
+   else. If several paragraphs carry it (a split or a copy), only an exact
+   text match among them counts, with the neighbours breaking a tie.
+2. Exact fingerprint anywhere in the note: 0.95 with a matching neighbour,
+   0.85 without. Several equal fingerprints are narrowed to the single one
+   with the most matching neighbours (at least one); otherwise `ambiguous`.
+3. Text similarity (the Dice coefficient of character trigrams) for
+   paragraphs with both recorded neighbours in place and similarity 0.5 or
+   more, or one neighbour and 0.8 or more. Score = 0.4 × similarity + 0.2 ×
+   matching neighbours. A runner-up within 0.1 of the best gives `ambiguous`;
+   a best score under `minConfidence` (default 0.6) gives `low-confidence`.
+   Only a match is ever linked. In practice one neighbour is enough only for
+   nearly identical text.
+
+Neither position alone nor the block index is ever used to choose, because
+both shift with every insertion above the paragraph. A matched paragraph
+whose UUID is `shared` or `missing` gives `needs-reminting`: the resolver
+knows where the paragraph is but cannot produce a link that is certain to
+open it.
+
+The note itself is found by `ZIDENTIFIER` (bound upper and lower case, since
+Notes stores some identifiers lower-case). A note in Recently Deleted or
+marked for deletion is `note-deleted`, a locked or undecodable body is
+`note-unreadable`, and a purged note is `note-not-found`. None of these
+reaches the matcher.
+
+**Re-minting hook.** Public automation cannot set a paragraph UUID. The
+module exports `setParagraphIdReminter(fn)`; nothing in this package installs
+one. A writer that can set ParagraphStyle field 9 on one block's runs can
+register a function that receives `{ anchorId, noteId, noteIdentifier,
+blockIndex, expectedText, currentParagraphId }`, must refuse when the block's
+text no longer equals `expectedText`, and resolves with the new UUID only
+after its write is committed and verified. `resolve-paragraph-anchor` with
+`remint: true` then reads the note again and resolves as usual, so the new
+link is still checked for uniqueness. Without a writer the tool reports
+`remint.reason: "writer-unavailable"`.
+
+**Registry.** One JSON file, `{ "version": 1, "anchors": [...] }`, at
+`APPLE_NOTES_MCP_ANCHOR_FILE` or `~/Library/Application
+Support/apple-notes-mcp/paragraph-anchors.json`. Changes take
+`<file>.lock` (`O_EXCL`, waited on for up to 3 s, removed when older than 30
+s), re-read the file, write `.paragraph-anchors.<random>.tmp` with mode 0600
+and `fsync`, and rename it into place. The directory is created 0700. The
+file and its directory are opened without following symlinks, a record with
+a missing or mistyped field makes the whole file `corrupt-registry`, and a
+corrupt file is never rewritten. The limit is 20,000 anchors.
+
+**Resolver service.** `apple-notes-mcp anchors serve`
+(`src/services/anchorServer.ts`) answers `GET /a/<anchor-id>` with a 302 to
+the current `applenotes://` link when the anchor resolves, and a plain-text
+409 or 404 otherwise. It binds 127.0.0.1, or with `--tailnet` the first IPv4
+in 100.64.0.0/10 found by `os.networkInterfaces()` (utun interfaces first).
+It never runs `tailscale` or changes any configuration. The request checks
+run in this order: the failed-token limit (429), the method (GET or HEAD),
+the Host header (the bound address, or `localhost` on loopback), and the
+token (`?token=` or `Authorization: Bearer`, compared with `timingSafeEqual`),
+before the path is looked at. The token is in the query string because a link
+opened from another app cannot add a header; `Referrer-Policy: no-referrer`
+and `Cache-Control: no-store` keep it from leaking onward, and the request
+log records only the method, path and status.
+
+**Custom URL scheme (not built).** A scheme such as `notes-anchor://<id>`
+would let a link work without a running server, but only on a Mac with a
+handler installed. The handler would be a small signed app bundle that
+declares the scheme in `CFBundleURLTypes`, receives the URL through
+`NSAppleEventManager` (`kAEGetURL`), resolves the anchor with the same code
+(it needs Full Disk Access of its own), and opens the result with
+`NSWorkspace.open`. It must refuse anything but a well-formed anchor id and
+open only `applenotes://showNote` URLs. It is left out because it adds a
+separately signed app and its own privacy grant for a narrow benefit over the
+loopback server; the resolution code needs no change to support it.
+
 ### CRDT Implementation
 
 Tables and collaborative editing use Conflict-Free Replicated Data Types (CRDTs). Apple uses "topotext" for synchronization with first-write-wins conflict resolution via iCloud.
