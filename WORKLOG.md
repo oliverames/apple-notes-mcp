@@ -10,42 +10,50 @@
 
 Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstream main was `1462604` (v2.9.10) when work paused. All branches below are on this fork.
 
-## Ready, not yet opened upstream
-- [ ] `feat/search-match-details` (`fbb60a0`, base 8c90ea7): `matchedIn` + opt-in `wordCount` on `search-notes` / `query-notes`. 2179 tests pass; live read-only check done. Merge current upstream/main, set version to 2.10.x above main, open PR "Part of sweetrb/apple-notes-mcp#181".
-- [ ] `feat/smart-folder-destination-guard` (`2867a1e`, base 8c90ea7): refuses smart folders as create/move destinations. Main today moves such notes into Recently Deleted or creates them inside the smart folder while reporting an error. 2163 tests pass; live-verified on test notes. Fails open without Full Disk Access. Merge main (CHANGELOG conflict), renumber, open PR.
-- [ ] `fix/large-attachment-read` (`be1dfa2`, base 8c90ea7): real fix for sweetrb/apple-notes-mcp#237 (reads >64 MB hit maxBuffer; deletes >5 MB blocked by the inline expected-body limit). Upstream #242 only explains the error. Rebase on main, make `classifyBodyReadError` recognise the new overflow error, renumber, then offer as a follow-up to #242.
+## 2026-09-24 (Mac session) - macOS verification, upstream posts, private-writes rebuild
 
-## sweetrb change requests to address first on resume (posted ~21Z, 2026-09-23)
-Read the full reviews with `gh api repos/sweetrb/apple-notes-mcp/pulls/<n>/reviews/<id>`.
-- [ ] **#234** (review 5296113654; head d6220bf, which someone else pushed, so check it first). He asked for four things:
-  - merge main;
-  - escape list bodies in `blockLine`, with fixture cases for `## Notes`, `1. x` and `---`. The keeper's fix may already cover part of this;
-  - stop echoing file contents in template errors, from `parseTemplate`/`readTemplateFile` via the JSON.parse snippet and echoed values;
-  - a version bump and rebuilt bundle.
-- [ ] **#235** (review 5296113924): wait for #234, then:
-  - add a test that `validate-markdown-template` on a file that isn't a template returns none of its contents;
-  - the CodeQL fix is already pushed as 9630336;
-  - bump the version.
-- [ ] **#238** (review 5296114130):
-  - merge main and bump the version;
-  - avoid the macOS 26+ "Allow Paste" prompt on the general pasteboard. The live runs used a named pasteboard, so the real path is untested;
-  - freeze the pasteboard only after the note and revision checks pass;
-  - handle multiple copied file URLs;
-  - use `callTimeoutMs()` and make the unsupported-types output clearer.
-- [ ] **#231**: his review is still open on his head 3de370a, which is mergeable. Wait for his re-review.
+(Placed here, below the lines fork PR #2 adds, so #2 still merges cleanly.)
 
-## Open upstream PRs to keep mergeable
-- sweetrb/apple-notes-mcp#231: all review points addressed and replied (9e3a7f4); sweetrb pushed 3de370a (2.9.11), awaiting his re-review. #234, #235, #238 synced. Every upstream merge re-conflicts version/CHANGELOG/manifests/build.
+**What changed**:
+- Verified all six upstream branches on macOS 27.2: every test passes with none skipped, and the bundles match. Upstream CI (macos-latest) was green on #234/#235/#238.
+- Live checks, test folder only:
+  - #238's general pasteboard path works. JXA's `respondsToSelector("accessBehavior")` accepts a plain string, and `pb.accessBehavior` returns the string "2" (alwaysAllow for this host). `Number()` handles that.
+  - A PNG copy, a single Finder file copy with `allowPasteAlert`, and the refusal of two copied files all worked.
+  - The large-attachment fix read and deleted a note with a 42 MB image; main failed with a false "timed out after 30 seconds".
+  - The smart-folder guard refused smart-folder destinations while ordinary same-name folders still worked.
+  - search-notes and query-notes `matchedIn`/`wordCount` checked out.
+- Posted the review replies on #234, #235 and #238, and opened #244, #245 and #246 with texts updated to the macOS results.
+- Upstream merged, in order: #246 (2.9.12), #245 (2.9.13), #244 (2.9.14), #234 (2.9.15) and #235 (2.9.16). sweetrb pushed his own merge-and-release commits to #245 and #234 before merging them. #238 is resynced at 2.9.17 (`951a210`) and still carries his old CHANGES_REQUESTED review.
+- Filed upstream issues:
+  - #243: add-attachment reports files of 25-64 MiB as unverified because it verifies through the 25 MiB fetch cap.
+  - #247: folderStore.ts comment; `folders of account` does list smart folders on 27.2.
+  - #248: the Background Operations v5 Shortcut's "Find Notes" action fails on this Mac, so create-table, create-checklist-items and append-native insert nothing. create-table hides the Shortcut error and reports "uncertain".
+- Incidental finding 2 confirmed: on main, moving a Recently Deleted note into a smart folder marks it for deletion (it leaves Recently Deleted). #245 refuses that move; recorded in its PR body.
+- Private writes:
+  - The foundation smoke test passed live.
+  - The foundation merged upstream 2.9.11 (`3418163`). Fix `269637a`: `waitedSeconds` now reports elapsed time.
+  - Seven agents ported the 13 branches as `-v2` off `3418163`. `markdown-native-import` needed no port (upstream #199), so there are 12 branches.
+  - Every `-v2` branch passed its live plan in the test folder and is pushed: edit, compose, compose-2, checklist-toggle, highlight, link-card, paragraph-links, section-chips, table-rows, smart-folders, sync-push, paper-authoring.
+  - Step 5.4: `feat/native-edit-attachment-selector` (`43126ea`) and `feat/native-edit-trim-breaks` (`e36c287`) were built and live-tested.
+  - Live testing found a real verification bug on native-edit-v2. `AttachmentGlyphs()` merged adjacent glyphs of one attachment into one run, and Notes stores AppleScript-added images as two adjacent glyphs. Fixed in `4382d84` and merged into both follow-ups.
+  - Opened ONE draft upstream PR, sweetrb/apple-notes-mcp#250, from `feat/native-writes-upstream` (`6a7c7bc`, 2.9.18). It carries neutral wording, the upload-lag evidence and the branch list. `feat/native-writes-foundation` stays the fork base.
 
-## Private writes (fork only; upstream hold)
-- [ ] `feat/native-writes-foundation` (`671c539`): separate opt-in writer binary on top of upstream's read-only helper; copy-store test passes. Needs live smoke test in the `apple-notes-mcp test` folder.
-- [ ] Port the 13 branches as `-v2` onto it (see resume notes in the foundation commit / TECHNICAL_NOTES.md).
-- [ ] Then open ONE draft upstream PR for the foundation with the sync-lag evidence, listing the feature branches (decision 2026-09-23).
-- [ ] Build on the foundation: whole-note highlight, attachment selector in edits, line-break trimming.
+**Decisions made**:
+- Merge commits only on pushed branches. Where sweetrb pushed his own resync, I adopted his and dropped my unpushed local resync. The source was identical.
+- The upstream draft PR comes from a separate branch, so the fork foundation keeps its fork wording as the `-v2` base.
+- The `isolation: "remote"` Agent option silently ran locally. Don't count on it as "cloud" until that is confirmed working.
 
-## Incidental findings (unverified beyond one run)
-- `src/utils/folderStore.ts` comment says `folders of account` omits smart folders; a live probe showed it returns them.
-- Moving a note that is already in Recently Deleted into a smart folder appeared to tombstone it.
+**Left off at**:
+- [ ] Whole-note highlight (step 5.4): agent building `feat/native-highlight-whole-note` off `feat/native-highlight-v2`; live-test and push it.
+- [ ] #238: awaiting sweetrb's re-review. Renumber if another PR lands first.
+- [ ] #250 (draft): awaiting sweetrb's view on the two open concerns (concurrent saves, CRDT replica identity).
+- [ ] The `-v2` branches are based on `3418163`; merge the foundation fix `269637a` into them when next touched. `native-sync-push-v2` also edits `privateSyncNudge.ts`, so expect a small conflict there.
+- [ ] Check whether Notes shows an AppleScript-added image twice (two body glyphs per image on 27.2; the 42 MB note's HTML also had two `<img>`). If it does, file it upstream.
+- [ ] Orphan attachment row: removing an attachment through native-edit leaves its row in the note, unmarked (observed 2026-09-24). Document or clean up.
+- [ ] Queued by Oliver: after the PRs are through, write privately to sweetrb (draft for Oliver's approval first) asking for a README line crediting Oliver's work with a link to github.com/oliverames.
+- [ ] Queued by Oliver: once #244 and #238 are merged, a comprehensive bug review of everything contributed on 2026-09-23 and 2026-09-24, then work through sweetrb's open issues.
+
+**Verification**: macOS 27.2 (26B5091g), Node 26.9.0, pnpm 11.9.0. Every branch named above passed lint, typecheck, format check, the full unit suite (no skips) and build with a matching bundle before it was pushed. Every live test used disposable notes, a smart folder and a subfolder inside `apple-notes-mcp test`, and all were deleted afterwards (they are in Recently Deleted; one test note was permanently tombstoned by the Recently Deleted to smart folder reproduction). Writer installs went to scratch directories, never to the plugin's install directory.
 
 ---
 
