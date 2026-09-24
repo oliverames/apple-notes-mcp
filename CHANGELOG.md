@@ -84,6 +84,16 @@
   `native-writer-status` report a `composeNote` feature, and the copy-store
   script exercises plan, apply, stale and replayed revisions, prepend,
   heading placement, and the Quick Note refusal.
+- `compose-note` blocks `divider` (Notes' native divider line), `table` (a
+  native table filled cell by cell from rectangular `rows`), and `noteLink`
+  (body text linking to another note by its UUID, which must exist). The
+  Markdown importer turns `---` into a divider and pipe tables into native
+  tables. Each divider and table is created only on apply, in the same single
+  save as the text, and verified in a fresh read: the object exists, belongs
+  to the note, sits under its glyph, and a table holds exactly the requested
+  cells. The writer probe and `native-writer-status` report the needed API as
+  the `composeObjects` feature, and the copy-store script creates two
+  dividers and a table on the copy.
 
 ### Fixed
 

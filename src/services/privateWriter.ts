@@ -252,6 +252,7 @@ export const writerProbeSchema = z
         planEdit: featureSchema.optional(),
         editNote: featureSchema.optional(),
         composeNote: featureSchema.optional(),
+        composeObjects: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -917,6 +918,7 @@ export const WRITER_FEATURES = [
   { key: "planEdit", probeKey: "planEdit", liveValidated: true },
   { key: "editNote", probeKey: "editNote", liveValidated: EDIT_LIVE_VALIDATED },
   { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED },
+  { key: "composeObjects", probeKey: "composeObjects", liveValidated: COMPOSE_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

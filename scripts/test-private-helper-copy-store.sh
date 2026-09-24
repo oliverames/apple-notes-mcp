@@ -374,6 +374,24 @@ OUT="$(copy_run "$(compose_req append "$ANCHOR,\"dryRun\":true")" || true)"
 [ "$(field "$OUT" code)" = "selector_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
   fail "stale heading count not refused"
 echo "ok: insert before heading verified; a stale expectedCount is refused"
+OBJECTS='[{"style":"body","runs":[{"text":"objects"}]},{"kind":"divider"},
+{"kind":"table","rows":[["A","B"],["1",""]]},{"kind":"divider"},
+{"style":"body","runs":[{"text":"link","link":"notes://showNote?identifier='"$NOTE"'"}]}]'
+OREQ="$(printf '{"protocol":1,"action":"compose_note","identifier":"%s","mode":"append","paragraphs":%s' "$NOTE" "$OBJECTS")"
+OUT="$(copy_run "$OREQ,\"dryRun\":true}" || true)"
+[ "$(field "$OUT" status)" = "planned" ] || fail "object plan failed: $(field "$OUT" code) $(field "$OUT" message)"
+OBJ_BEFORE="$(/usr/bin/sqlite3 "$COPY" "SELECT COUNT(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline') OR ZTYPEUTI1 IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline');" 2>/dev/null || echo "?")"
+OREV="$(field "$(copy_run "$READ")" revision)"
+OUT="$(copy_run "$OREQ,\"ifRevision\":\"$OREV\"}" || true)"
+[ "$(field "$OUT" verified)" = "true" ] || fail "object compose failed: $(field "$OUT" code) $(field "$OUT" message)"
+[ "$(field "$OUT" objects)" = "3" ] || fail "expected 3 created objects, got $(field "$OUT" objects)"
+[ "$(field "$OUT" objects.1.uti)" = "com.apple.notes.table" ] || fail "table object has UTI $(field "$OUT" objects.1.uti)"
+OBJ_AFTER="$(/usr/bin/sqlite3 "$COPY" "SELECT COUNT(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline') OR ZTYPEUTI1 IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline');" 2>/dev/null || echo "?")"
+echo "ok: 2 dividers and a table created, placed, and verified cell by cell (divider UTI $(field "$OUT" objects.0.uti); object rows $OBJ_BEFORE -> $OBJ_AFTER)"
+OUT="$(copy_run "$OREQ,\"ifRevision\":\"$OREV\"}" || true)"
+[ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "replayed object compose not refused"
+echo "ok: replayed object compose refused, committed=false"
 QUICK="$(/usr/bin/sqlite3 "$COPY" "SELECT ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT WHERE ZISSYSTEMPAPER=1
   AND IFNULL(ZMARKEDFORDELETION,0)=0 AND ZFOLDER IS NOT NULL LIMIT 1;" 2>/dev/null || true)"
 if [ -n "$QUICK" ]; then

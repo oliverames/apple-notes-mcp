@@ -93,7 +93,7 @@ describe("compose-note append and prepend", () => {
   it("applies with ifRevision, resolving an x-coredata id and echoing it", () => {
     const rt = runtime();
     const r = runComposeNote(
-      { mode: "prepend", id: CD, markdown: "- [x] done\n---", ifRevision: REV },
+      { mode: "prepend", id: CD, markdown: "- [x] done\n---\n<div>", ifRevision: REV },
       rt
     );
     expect(rt.manager.getNoteLinkById).toHaveBeenCalledWith(CD);
@@ -101,14 +101,17 @@ describe("compose-note append and prepend", () => {
       {
         identifier: NOTE,
         mode: "prepend",
-        paragraphs: [{ style: "checklist", checked: true, runs: [{ text: "done" }] }],
+        paragraphs: [
+          { style: "checklist", checked: true, runs: [{ text: "done" }] },
+          { kind: "divider" },
+        ],
         ifRevision: REV,
       },
       { env: ALLOW }
     );
     expect(r).toMatchObject({
       id: CD,
-      warnings: ["line 2: horizontal rule skipped (dividers are not supported yet)"],
+      warnings: ["line 3: raw HTML block skipped"],
     });
   });
 
@@ -159,7 +162,7 @@ describe("compose-note append and prepend", () => {
     ],
     [
       "Markdown with no content",
-      { mode: "append", identifier: NOTE, markdown: "---", dryRun: true },
+      { mode: "append", identifier: NOTE, markdown: "<div>", dryRun: true },
     ],
     [
       "a dry run with nudge",
@@ -327,6 +330,73 @@ describe("compose-note create", () => {
     expect(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())).toThrow(
       TypeError
     );
+  });
+});
+
+describe("compose-note objects and note links", () => {
+  const OTHER = "11111111-2222-3333-4444-555555555555";
+
+  it("plans dividers and tables in a create dry run", () => {
+    const r = runComposeNote(
+      {
+        mode: "create",
+        title: "T",
+        markdown: "---\n| a | b |\n|---|---|\n| 1 | 2 |",
+        dryRun: true,
+      },
+      runtime()
+    );
+    expect(r.plan).toEqual([{ kind: "divider" }, { kind: "table", rows: 2, columns: 2 }]);
+  });
+
+  it("checks the object capability before creating a note with a divider or table", () => {
+    vi.mocked(privateWriterCapabilities).mockReturnValue({
+      features: {
+        composeNote: { available: true, reason: null, detail: null },
+        composeObjects: { available: false, reason: "private_api_unavailable", detail: "x" },
+      },
+    } as never);
+    const rt = runtime();
+    expect(
+      caught(() =>
+        runComposeNote({ mode: "create", title: "T", blocks: [{ type: "divider" }] }, rt)
+      )
+    ).toMatchObject({ code: "private_api_unavailable", committed: false });
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+    runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt);
+    expect(rt.manager.createNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks each distinct note-link target once before writing", () => {
+    const blocks = [
+      { type: "noteLink" as const, identifier: OTHER.toLowerCase(), text: "a" },
+      { type: "noteLink" as const, identifier: OTHER, text: "b" },
+    ];
+    runComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime());
+    expect(readWriterNoteState).toHaveBeenCalledTimes(1);
+    expect(readWriterNoteState).toHaveBeenCalledWith(OTHER, { env: ALLOW });
+    expect(composeNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a link to a note that does not exist, and passes other errors through", () => {
+    const blocks = [{ type: "noteLink" as const, identifier: OTHER, text: "a" }];
+    vi.mocked(readWriterNoteState).mockImplementationOnce(() => {
+      throw new PrivateWriteError("not_found", "no");
+    });
+    expect(
+      caught(() =>
+        runComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime())
+      )
+    ).toMatchObject({ code: "invalid_request", committed: false });
+    vi.mocked(readWriterNoteState).mockImplementationOnce(() => {
+      throw new PrivateWriteError("disabled", "off");
+    });
+    expect(
+      caught(() =>
+        runComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime())
+      ).code
+    ).toBe("disabled");
+    expect(composeNote).not.toHaveBeenCalled();
   });
 });
 

@@ -67,6 +67,19 @@ export interface WireParagraph {
   runs: WireRun[];
 }
 
+/** A block object: one attachment glyph on its own line. */
+export type WireObject = { kind: "divider" } | { kind: "table"; rows: string[][] };
+
+/** One entry of the writer's `paragraphs` array. */
+export type WireEntry = WireParagraph | WireObject;
+
+export const isObject = (entry: WireEntry): entry is WireObject => "kind" in entry;
+
+export const MAX_TABLE_ROWS = 1000;
+export const MAX_TABLE_COLUMNS = 100;
+export const MAX_TABLE_CELLS = 10_000;
+const NOTE_UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
 // ---------------------------------------------------------------------------
 // Block schema (the public input)
 // ---------------------------------------------------------------------------
@@ -138,6 +151,24 @@ export const blockSchema = z.discriminatedUnion("type", [
       items: z.array(checklistItem).min(1),
       checked: z.array(z.boolean()).optional().describe("Per-item state, same length as items"),
       indent: indentSchema.optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal("divider") }).strict(),
+  z
+    .object({
+      type: z.literal("table"),
+      rows: z
+        .array(z.array(z.string()).min(1).max(MAX_TABLE_COLUMNS))
+        .min(1)
+        .max(MAX_TABLE_ROWS)
+        .describe("Rectangular rows of plain-text cells; the first row is not special"),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("noteLink"),
+      identifier: z.string().regex(NOTE_UUID).describe("Notes UUID of the note to link to"),
+      text: z.string().min(1).describe("Link text"),
     })
     .strict(),
 ]);
@@ -232,16 +263,40 @@ const TEXT_STYLES: Record<string, { style: WireStyle; blockQuote?: boolean }> = 
  * Validate blocks and flatten them to one wire paragraph per Notes paragraph.
  * Throws `invalid_request` (committed: false) before anything is sent.
  */
-export function blocksToParagraphs(input: unknown): WireParagraph[] {
+export function blocksToParagraphs(input: unknown): WireEntry[] {
   const parsed = z.array(blockSchema).min(1).safeParse(input);
   if (!parsed.success)
     throw invalid(
       "Invalid blocks: " +
         parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")
     );
-  const out: WireParagraph[] = [];
+  const out: WireEntry[] = [];
   parsed.data.forEach((block, index) => {
     const where = `blocks[${index}] (${block.type})`;
+    if (block.type === "divider") {
+      out.push({ kind: "divider" });
+      return;
+    }
+    if (block.type === "table") {
+      const columns = block.rows[0].length;
+      if (block.rows.some((row) => row.length !== columns))
+        throw invalid(`${where}: every row needs the same number of cells`);
+      if (block.rows.length * columns > MAX_TABLE_CELLS)
+        throw invalid(`${where}: a table may have at most ${MAX_TABLE_CELLS} cells`);
+      block.rows.forEach((row, r) =>
+        row.forEach((cell, c) => cell && assertLine(cell, `${where}.rows[${r}][${c}]`))
+      );
+      out.push({ kind: "table", rows: block.rows });
+      return;
+    }
+    if (block.type === "noteLink") {
+      assertLine(block.text, where);
+      out.push({
+        style: "body",
+        runs: [{ text: block.text, link: noteLinkUrl(block.identifier) }],
+      });
+      return;
+    }
     if (block.type in TEXT_STYLES) {
       const { style, blockQuote } = TEXT_STYLES[block.type];
       const textBlock = block as { text?: string; runs?: Array<z.infer<typeof runSchema>> };
@@ -291,14 +346,22 @@ function paragraph(
   };
 }
 
+/** The notes:// deep link this server uses for note-to-note links. */
+export function noteLinkUrl(identifier: string): string {
+  return `notes://showNote?identifier=${identifier.toUpperCase()}`;
+}
+
+const isBlank = (entry: WireEntry | undefined) =>
+  !!entry && !isObject(entry) && entry.runs.length === 0;
+
 /** Trim trailing blank paragraphs and enforce the writer's size limits. */
-function finalizeParagraphs(paragraphs: WireParagraph[]): WireParagraph[] {
-  while (paragraphs.length && paragraphs[paragraphs.length - 1].runs.length === 0) paragraphs.pop();
+function finalizeParagraphs(paragraphs: WireEntry[]): WireEntry[] {
+  while (isBlank(paragraphs[paragraphs.length - 1])) paragraphs.pop();
   if (!paragraphs.length) throw invalid("The composed content is empty");
   if (paragraphs.length > MAX_PARAGRAPHS)
     throw invalid(`The composed content has more than ${MAX_PARAGRAPHS} paragraphs`);
   const length = paragraphs.reduce(
-    (sum, p) => sum + p.runs.reduce((n, r) => n + r.text.length, 0) + 1,
+    (sum, p) => sum + (isObject(p) ? 1 : p.runs.reduce((n, r) => n + r.text.length, 0)) + 1,
     0
   );
   if (length > MAX_COMPOSE_UTF16)
@@ -435,6 +498,30 @@ export interface MarkdownImport {
 const LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})[.)])[ \t]+(.*)$/;
 const TASK = /^\[([ xX])\][ \t]+(.*)$/;
 
+const TABLE_SEPARATOR = /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/;
+
+/** GFM table row cells as plain text (Notes table cells carry no runs here). */
+function tableCells(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  const body = line.trim().replace(/^\|/, "");
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === "\\" && body[i + 1] === "|") {
+      cell += "|";
+      i++;
+    } else if (body[i] === "|") {
+      cells.push(cell);
+      cell = "";
+    } else cell += body[i];
+  }
+  if (cell.trim() || !body.endsWith("|")) cells.push(cell);
+  return cells.map((c) =>
+    parseInline(c.trim())
+      .map((run) => run.text)
+      .join("")
+  );
+}
+
 function columns(indent: string): number {
   let width = 0;
   for (const ch of indent) width += ch === "\t" ? 4 - (width % 4) : 1;
@@ -446,8 +533,10 @@ function columns(indent: string): number {
  * `###`+ to Subheading), paragraphs (soft line breaks join with a space),
  * `>` quotes, fenced code, bulleted/numbered lists and `- [ ]`/`- [x]`
  * checklists with nesting, and inline bold, italic, strikethrough, `<u>`
- * underline, code spans (as plain text), and links. Horizontal rules and raw
- * HTML blocks are skipped with a warning.
+ * underline, code spans (as plain text), and links. Horizontal rules become
+ * native dividers and GFM pipe tables become native tables (cells as plain
+ * text; the delimiter row's alignment is not kept). Raw HTML blocks are
+ * skipped with a warning.
  *
  * @param dropTitle - drop a leading `# ` heading equal to this note title
  */
@@ -522,7 +611,21 @@ export function markdownToBlocks(markdown: string, dropTitle?: string): Markdown
     if (/^[ ]{0,3}([-*_])([ \t]*\1){2,}[ \t]*$/.test(line)) {
       flushAll();
       listStack = [];
-      warnings.push(`line ${i + 1}: horizontal rule skipped (dividers are not supported yet)`);
+      blocks.push({ type: "divider" });
+      continue;
+    }
+    if (line.includes("|") && TABLE_SEPARATOR.test(lines[i + 1] ?? "")) {
+      flushAll();
+      listStack = [];
+      const header = tableCells(line);
+      const rows = [header];
+      let j = i + 2;
+      for (; j < lines.length && lines[j].includes("|") && lines[j].trim(); j++) {
+        const cells = tableCells(lines[j]).slice(0, header.length);
+        rows.push([...cells, ...Array<string>(header.length - cells.length).fill("")]);
+      }
+      i = j - 1;
+      blocks.push({ type: "table", rows });
       continue;
     }
     const quoted = /^[ ]{0,3}>[ ]?(.*)$/.exec(line);
@@ -621,6 +724,9 @@ export const composeResultSchema = z
     unitStart: z.number().int(),
     objectURI: z.string(),
     readBack: summarySchema,
+    objects: z
+      .array(z.object({ kind: z.enum(["divider", "table"]), identifier: z.string() }).passthrough())
+      .optional(),
     ...writeSyncFields,
   })
   .passthrough();
@@ -635,7 +741,7 @@ export interface InsertBeforeHeading {
 export interface ComposeRequest {
   identifier: string;
   mode: "append" | "prepend";
-  paragraphs: WireParagraph[];
+  paragraphs: WireEntry[];
   ifRevision?: string;
   dryRun?: boolean;
   requireNonSystemPaper?: boolean;

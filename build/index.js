@@ -24287,11 +24287,11 @@ var require_turndown_cjs = __commonJS({
     function Node(node, options) {
       node.isBlock = isBlock(node);
       node.isCode = node.nodeName === "CODE" || node.parentNode.isCode;
-      node.isBlank = isBlank(node);
+      node.isBlank = isBlank2(node);
       node.flankingWhitespace = flankingWhitespace(node, options);
       return node;
     }
-    function isBlank(node) {
+    function isBlank2(node) {
       return !isVoid(node) && !isMeaningfulWhenBlank(node) && /^\s*$/i.test(node.textContent) && !hasVoid(node) && !hasMeaningfulWhenBlank(node);
     }
     function flankingWhitespace(node, options) {
@@ -30351,7 +30351,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     return (payload, ctx) => fn(shape, payload, ctx);
   };
   let fastpass;
-  const isObject3 = isObject;
+  const isObject4 = isObject;
   const jit = !globalConfig.jitless;
   const allowsEval2 = allowsEval;
   const fastEnabled = jit && allowsEval2.value;
@@ -30360,7 +30360,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
     const input = payload.value;
-    if (!isObject3(input)) {
+    if (!isObject4(input)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
@@ -58862,7 +58862,8 @@ var writerProbeSchema = external_exports.object({
     // instead of failing the whole status call.
     planEdit: featureSchema2.optional(),
     editNote: featureSchema2.optional(),
-    composeNote: featureSchema2.optional()
+    composeNote: featureSchema2.optional(),
+    composeObjects: featureSchema2.optional()
   }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
@@ -59304,7 +59305,8 @@ var WRITER_FEATURES = [
   { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
   { key: "planEdit", probeKey: "planEdit", liveValidated: true },
   { key: "editNote", probeKey: "editNote", liveValidated: EDIT_LIVE_VALIDATED },
-  { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED }
+  { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED },
+  { key: "composeObjects", probeKey: "composeObjects", liveValidated: COMPOSE_LIVE_VALIDATED }
 ];
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
@@ -60003,6 +60005,11 @@ var MAX_INDENT = 8;
 var MAX_PARAGRAPHS = 2e3;
 var MAX_COMPOSE_UTF16 = 2e5;
 var LINK_SCHEMES2 = /* @__PURE__ */ new Set(["http:", "https:", "mailto:", "tel:", "notes:", "applenotes:"]);
+var isObject3 = (entry) => "kind" in entry;
+var MAX_TABLE_ROWS = 1e3;
+var MAX_TABLE_COLUMNS = 100;
+var MAX_TABLE_CELLS = 1e4;
+var NOTE_UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 var runSchema2 = external_exports.object({
   text: external_exports.string().min(1),
   bold: external_exports.boolean().optional(),
@@ -60048,6 +60055,16 @@ var blockSchema2 = external_exports.discriminatedUnion("type", [
     items: external_exports.array(checklistItem).min(1),
     checked: external_exports.array(external_exports.boolean()).optional().describe("Per-item state, same length as items"),
     indent: indentSchema.optional()
+  }).strict(),
+  external_exports.object({ type: external_exports.literal("divider") }).strict(),
+  external_exports.object({
+    type: external_exports.literal("table"),
+    rows: external_exports.array(external_exports.array(external_exports.string()).min(1).max(MAX_TABLE_COLUMNS)).min(1).max(MAX_TABLE_ROWS).describe("Rectangular rows of plain-text cells; the first row is not special")
+  }).strict(),
+  external_exports.object({
+    type: external_exports.literal("noteLink"),
+    identifier: external_exports.string().regex(NOTE_UUID).describe("Notes UUID of the note to link to"),
+    text: external_exports.string().min(1).describe("Link text")
   }).strict()
 ]);
 function invalid3(message) {
@@ -60118,6 +60135,30 @@ function blocksToParagraphs(input) {
   const out = [];
   parsed.data.forEach((block, index) => {
     const where = `blocks[${index}] (${block.type})`;
+    if (block.type === "divider") {
+      out.push({ kind: "divider" });
+      return;
+    }
+    if (block.type === "table") {
+      const columns2 = block.rows[0].length;
+      if (block.rows.some((row) => row.length !== columns2))
+        throw invalid3(`${where}: every row needs the same number of cells`);
+      if (block.rows.length * columns2 > MAX_TABLE_CELLS)
+        throw invalid3(`${where}: a table may have at most ${MAX_TABLE_CELLS} cells`);
+      block.rows.forEach(
+        (row, r) => row.forEach((cell, c) => cell && assertLine(cell, `${where}.rows[${r}][${c}]`))
+      );
+      out.push({ kind: "table", rows: block.rows });
+      return;
+    }
+    if (block.type === "noteLink") {
+      assertLine(block.text, where);
+      out.push({
+        style: "body",
+        runs: [{ text: block.text, link: noteLinkUrl(block.identifier) }]
+      });
+      return;
+    }
     if (block.type in TEXT_STYLES) {
       const { style, blockQuote } = TEXT_STYLES[block.type];
       const textBlock2 = block;
@@ -60156,13 +60197,17 @@ function paragraph(style, runs, indent, where, checked) {
     runs
   };
 }
+function noteLinkUrl(identifier) {
+  return `notes://showNote?identifier=${identifier.toUpperCase()}`;
+}
+var isBlank = (entry) => !!entry && !isObject3(entry) && entry.runs.length === 0;
 function finalizeParagraphs(paragraphs) {
-  while (paragraphs.length && paragraphs[paragraphs.length - 1].runs.length === 0) paragraphs.pop();
+  while (isBlank(paragraphs[paragraphs.length - 1])) paragraphs.pop();
   if (!paragraphs.length) throw invalid3("The composed content is empty");
   if (paragraphs.length > MAX_PARAGRAPHS)
     throw invalid3(`The composed content has more than ${MAX_PARAGRAPHS} paragraphs`);
   const length = paragraphs.reduce(
-    (sum, p) => sum + p.runs.reduce((n, r) => n + r.text.length, 0) + 1,
+    (sum, p) => sum + (isObject3(p) ? 1 : p.runs.reduce((n, r) => n + r.text.length, 0)) + 1,
     0
   );
   if (length > MAX_COMPOSE_UTF16)
@@ -60276,6 +60321,25 @@ function mergeRuns(runs) {
 }
 var LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})[.)])[ \t]+(.*)$/;
 var TASK = /^\[([ xX])\][ \t]+(.*)$/;
+var TABLE_SEPARATOR = /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/;
+function tableCells(line) {
+  const cells = [];
+  let cell = "";
+  const body = line.trim().replace(/^\|/, "");
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === "\\" && body[i + 1] === "|") {
+      cell += "|";
+      i++;
+    } else if (body[i] === "|") {
+      cells.push(cell);
+      cell = "";
+    } else cell += body[i];
+  }
+  if (cell.trim() || !body.endsWith("|")) cells.push(cell);
+  return cells.map(
+    (c) => parseInline(c.trim()).map((run) => run.text).join("")
+  );
+}
 function columns(indent) {
   let width = 0;
   for (const ch of indent) width += ch === "	" ? 4 - width % 4 : 1;
@@ -60342,7 +60406,21 @@ function markdownToBlocks(markdown, dropTitle) {
     if (/^[ ]{0,3}([-*_])([ \t]*\1){2,}[ \t]*$/.test(line)) {
       flushAll();
       listStack = [];
-      warnings.push(`line ${i + 1}: horizontal rule skipped (dividers are not supported yet)`);
+      blocks.push({ type: "divider" });
+      continue;
+    }
+    if (line.includes("|") && TABLE_SEPARATOR.test(lines[i + 1] ?? "")) {
+      flushAll();
+      listStack = [];
+      const header = tableCells(line);
+      const rows = [header];
+      let j = i + 2;
+      for (; j < lines.length && lines[j].includes("|") && lines[j].trim(); j++) {
+        const cells = tableCells(lines[j]).slice(0, header.length);
+        rows.push([...cells, ...Array(header.length - cells.length).fill("")]);
+      }
+      i = j - 1;
+      blocks.push({ type: "table", rows });
       continue;
     }
     const quoted2 = /^[ ]{0,3}>[ ]?(.*)$/.exec(line);
@@ -60426,6 +60504,7 @@ var composeResultSchema = external_exports.object({
   unitStart: external_exports.number().int(),
   objectURI: external_exports.string(),
   readBack: summarySchema,
+  objects: external_exports.array(external_exports.object({ kind: external_exports.enum(["divider", "table"]), identifier: external_exports.string() }).passthrough()).optional(),
   ...writeSyncFields
 }).passthrough();
 var RUN_KEYS = ["bold", "italic", "underline", "strikethrough", "link", "highlight", "color"];
@@ -60531,7 +60610,7 @@ var composeNoteInput = {
   account: external_exports.string().min(1).optional().describe("create: account name"),
   blocks: external_exports.array(blockSchema2).min(1).max(2e3).optional().describe("Ordered content blocks. Give exactly one of blocks or markdown."),
   markdown: external_exports.string().min(1).max(2e5).optional().describe(
-    "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
+    "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
   ),
   ifRevision: revisionToken.optional().describe("append/prepend apply: revisionBefore from an identical dry run"),
   dryRun: external_exports.boolean().optional().describe("Validate and plan without writing"),
@@ -60581,6 +60660,24 @@ function checkModeFields(args) {
     throw invalid4("Applying requires ifRevision: run the identical request with dryRun first");
 }
 var UUID_IN_LINK = /identifier=([0-9A-F-]{36})$/i;
+function assertNoteLinkTargets(args, deps) {
+  const targets = new Set(
+    (args.blocks ?? []).flatMap((b) => b.type === "noteLink" ? [b.identifier.toUpperCase()] : [])
+  );
+  for (const target of targets) {
+    try {
+      readWriterNoteState(target, deps);
+    } catch (error2) {
+      if (error2 instanceof PrivateWriteError && error2.code === "not_found")
+        throw new PrivateWriteError(
+          "invalid_request",
+          `noteLink target ${target} is not a note in this library`,
+          false
+        );
+      throw error2;
+    }
+  }
+}
 function withDatabaseCheck(result) {
   if (result.status !== "updated") return result;
   return { ...result, databaseReadBack: crossCheckWithDatabase(result) };
@@ -60596,7 +60693,8 @@ function poll(attempt, sleep2) {
 function createAndCompose(args, paragraphs, runtime) {
   const { manager, deps, sleep: sleep2 } = runtime;
   assertComposeWritesAllowed(deps.env);
-  const capability = privateWriterCapabilities(deps).features.composeNote;
+  const features = privateWriterCapabilities(deps).features;
+  const capability = paragraphs.some(isObject3) ? features.composeObjects : features.composeNote;
   if (!capability.available)
     throw new PrivateWriteError(
       capability.reason || "private_api_unavailable",
@@ -60664,6 +60762,7 @@ function createAndCompose(args, paragraphs, runtime) {
 function runComposeNote(args, runtime) {
   checkModeFields(args);
   const { paragraphs, warnings } = contentFor(args);
+  assertNoteLinkTargets(args, runtime.deps);
   const extra = warnings.length ? { warnings } : {};
   if (args.mode === "create") {
     if (args.dryRun)
@@ -60673,13 +60772,18 @@ function runComposeNote(args, runtime) {
         committed: false,
         mode: "create",
         paragraphs: paragraphs.length,
-        plan: paragraphs.map((p) => ({
-          style: p.style,
-          indent: p.indent ?? 0,
-          blockQuote: p.blockQuote ?? false,
-          ...p.checked !== void 0 ? { checked: p.checked } : {},
-          runs: p.runs.length
-        })),
+        plan: paragraphs.map(
+          (p) => isObject3(p) ? {
+            kind: p.kind,
+            ...p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {}
+          } : {
+            style: p.style,
+            indent: p.indent ?? 0,
+            blockQuote: p.blockQuote ?? false,
+            ...p.checked !== void 0 ? { checked: p.checked } : {},
+            runs: p.runs.length
+          }
+        ),
         ...extra
       };
     return { ...createAndCompose(args, paragraphs, runtime), ...extra };
@@ -60704,7 +60808,7 @@ function registerComposeNoteTool(server2, manager, depsFactory = defaultWriterTo
     server2,
     depsFactory,
     "compose-note",
-    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, and monospaced blocks. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need tables, dividers, attachments, or note links (not supported here).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph is verified in a fresh read. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider or table), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need a file attachment (add-attachment).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, and every table cell, is verified in a fresh read. A noteLink target must be an existing note. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {

@@ -98,6 +98,18 @@ describe("native compose_note", { timeout: 30_000 }, () => {
       "an unknown highlight",
       compose({ paragraphs: [para({ runs: [{ text: "x", highlight: "red" }] })] }),
     ],
+    ["an unknown paragraph kind", compose({ paragraphs: [{ kind: "image" }] })],
+    ["a divider with other fields", compose({ paragraphs: [{ kind: "divider", runs: [] }] })],
+    ["a table without rows", compose({ paragraphs: [{ kind: "table" }] })],
+    ["a table with an empty row", compose({ paragraphs: [{ kind: "table", rows: [[]] }] })],
+    ["a ragged table", compose({ paragraphs: [{ kind: "table", rows: [["a", "b"], ["c"]] }] })],
+    ["a non-string cell", compose({ paragraphs: [{ kind: "table", rows: [[1]] }] })],
+    ["a newline in a cell", compose({ paragraphs: [{ kind: "table", rows: [["a\nb"]] }] })],
+    [
+      "a table past 10000 cells",
+      compose({ paragraphs: [{ kind: "table", rows: Array(101).fill(Array(100).fill("")) }] }),
+    ],
+    ["an unknown table field", compose({ paragraphs: [{ kind: "table", rows: [["a"]], x: 1 }] })],
   ])("rejects %s with invalid_request and nothing committed", (_label, request) => {
     expect(call(request)).toMatchObject({
       status: "error",
@@ -120,6 +132,15 @@ describe("native compose_note", { timeout: 30_000 }, () => {
         para({ style: "dashed", indent: 8 }),
         para({ style: "numbered" }),
         para({ style: "checklist", checked: true }),
+        { kind: "divider" },
+        {
+          kind: "table",
+          rows: [
+            ["a", ""],
+            ["", "d"],
+          ],
+        },
+        { kind: "text", style: "body", runs: [{ text: "explicit kind" }] },
         para({
           runs: [
             {
