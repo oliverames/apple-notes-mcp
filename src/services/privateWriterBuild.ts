@@ -51,6 +51,21 @@ export interface WriterBuildReport {
   installation: WriterInstallationReport;
 }
 
+/**
+ * The read-only helper's compiler flags plus PencilKit, which the writer's
+ * Paper authoring (`add_paper`) links against. The helper's own flags stay
+ * unchanged.
+ */
+export function writerCompileArguments(
+  sourcePath: string,
+  outputPath: string,
+  sourceSha: string
+): string[] {
+  const args = compileArguments(sourcePath, outputPath, sourceSha);
+  const appKit = args.indexOf("AppKit");
+  return [...args.slice(0, appKit + 1), "-framework", "PencilKit", ...args.slice(appKit + 1)];
+}
+
 export function defaultWriterBuildDeps(): HelperBuildDeps {
   return { ...defaultBuildDeps(), sourcePath: defaultWriterDeps().sourcePath };
 }
@@ -114,7 +129,7 @@ export function buildPrivateWriter(
     const stagedBinary = join(staging, WRITER_BINARY_NAME);
     const compile = deps.spawn(
       "/usr/bin/xcrun",
-      compileArguments(deps.sourcePath, stagedBinary, sourceSha),
+      writerCompileArguments(deps.sourcePath, stagedBinary, sourceSha),
       { encoding: "utf8", timeout: 180_000 }
     );
     if (compile.status !== 0) {

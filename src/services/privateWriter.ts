@@ -73,6 +73,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_note_state: "read",
   append_plain_text: "write",
   read_sync_state: "read",
+  add_paper: "write",
 };
 
 /**
@@ -80,6 +81,12 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
  * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
  */
 export const APPEND_LIVE_VALIDATED = false;
+/**
+ * Paper authoring (`add_paper`) has not passed live end-to-end validation,
+ * including iCloud sync, on this writer. Until it has, a write (not a dry run)
+ * also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ */
+export const PAPER_WRITE_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -228,7 +235,11 @@ export const writerProbeSchema = z
       .passthrough(),
     syncHostRunning: z.boolean(),
     features: z
-      .object({ readNoteState: featureSchema, appendPlainText: featureSchema })
+      .object({
+        readNoteState: featureSchema,
+        appendPlainText: featureSchema,
+        addPaper: featureSchema.extend({ formats: z.array(z.string()) }).optional(),
+      })
       .passthrough(),
   })
   .passthrough();
@@ -494,7 +505,42 @@ export interface PrivateWriterCapabilities {
   writesEnabled: boolean;
   installation: WriterInstallationReport;
   probe: PrivateWriterProbe | null;
-  features: { appendPlainText: PrivateWriterFeatureStatus };
+  features: { appendPlainText: PrivateWriterFeatureStatus; addPaper: PrivateWriterFeatureStatus };
+}
+
+/**
+ * One write feature's status from its probe report and its live-validation
+ * flag. A feature the probe does not report at all is treated as missing API.
+ */
+function writeFeatureStatus(
+  feature: z.infer<typeof featureSchema> | undefined,
+  validated: boolean,
+  env: NodeJS.ProcessEnv
+): PrivateWriterFeatureStatus {
+  if (!feature)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The writer did not report this feature",
+    };
+  if (!feature.available) {
+    const reason =
+      feature.reason === "store_unavailable" || feature.reason === "disabled"
+        ? (feature.reason as PrivateWriterUnavailableReason)
+        : "private_api_unavailable";
+    return {
+      available: false,
+      reason,
+      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
+    };
+  }
+  if (!validated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
+      available: false,
+      reason: "not_live_validated",
+      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
+    };
+  return { available: true, reason: null, detail: null };
 }
 
 /** Never throws. Runs the live probe only when both switches are on and the writer is installed. */
@@ -510,7 +556,10 @@ export function privateWriterCapabilities(
     detail: string | null
   ): PrivateWriterCapabilities => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } },
+    features: {
+      appendPlainText: { available: false, reason, detail },
+      addPaper: { available: false, reason, detail },
+    },
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -523,26 +572,16 @@ export function privateWriterCapabilities(
   } catch (error) {
     return off("helper_unreachable", error instanceof Error ? error.message : String(error));
   }
-  const feature = probe.features.appendPlainText;
-  let append: PrivateWriterFeatureStatus;
-  if (!feature.available) {
-    const reason =
-      feature.reason === "store_unavailable" || feature.reason === "disabled"
-        ? (feature.reason as PrivateWriterUnavailableReason)
-        : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return {
+    ...base,
+    probe,
+    features: {
+      appendPlainText: writeFeatureStatus(
+        probe.features.appendPlainText,
+        APPEND_LIVE_VALIDATED,
+        deps.env
+      ),
+      addPaper: writeFeatureStatus(probe.features.addPaper, PAPER_WRITE_LIVE_VALIDATED, deps.env),
+    },
+  };
 }

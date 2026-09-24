@@ -165,6 +165,7 @@ import { buildPrivateHelper, formatHelperBuild } from "@/services/privateHelperB
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
 import { buildPrivateWriter, formatWriterBuild } from "@/services/privateWriterBuild.js";
 import { registerPrivateWriterTools } from "@/tools/privateWriterTools.js";
+import { registerPrivatePaperWriterTools } from "@/tools/privatePaperWriterTools.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
 // Lets users configure the server when the host app strips the MCP env block.
@@ -222,6 +223,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivatePaperWriterTools(server, notesManager);
 
 // =============================================================================
 // Response Helpers

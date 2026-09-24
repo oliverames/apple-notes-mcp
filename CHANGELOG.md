@@ -26,6 +26,22 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+- `native-add-paper` (#181): the writer's `add_paper` action adds a drawing to
+  the end of a note as a Paper attachment, or a classic drawing
+  (`com.apple.drawing.2`) when Paper is unavailable or not wanted. Input is
+  stroke JSON plus eight shape kinds written as tracing strokes, or an SVG
+  converted by the `analyze-svg` analyzer; a lossy SVG is written only with
+  `ifSvgAnalysis` equal to its `analysisDigest` and `allowSvgLosses` equal to
+  its `requiredLosses`. Guarded by `ifRevision`, plannable with `dryRun`,
+  verified by decoding the saved drawing in a fresh Core Data stack, and
+  behind `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated. On a copy
+  store the writer redirects every Notes file directory beside the copy. The
+  writer now links PencilKit and embeds a bundle identifier, which PencilKit
+  needs to build a drawing. `native-writer-status` reports `addPaper`.
+- `scripts/test-private-writer-paper-copy-store.sh` runs `add_paper` in both
+  formats against a copy of the store and checks the read-back counts, the
+  replay refusal, and that no file for the new attachments appears in the
+  live Notes container.
 
 ## [2.9.11] - 2026-09-23
 

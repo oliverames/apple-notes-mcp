@@ -40689,12 +40689,12 @@ var Decoder = class {
         const verb = key.startsWith("creation") ? "created" : "edited";
         if (value.type === 6) {
           const amount = value.customAmount;
-          const unit = typeof value.customUnit === "number" ? CUSTOM_UNITS[value.customUnit] : null;
-          if (typeof amount !== "number" || !unit) return null;
+          const unit2 = typeof value.customUnit === "number" ? CUSTOM_UNITS[value.customUnit] : null;
+          if (typeof amount !== "number" || !unit2) return null;
           return {
             type: key,
             value,
-            description: `${verb} in the last ${amount} ${unit}`
+            description: `${verb} in the last ${amount} ${unit2}`
           };
         }
         const range = RELATIVE_RANGES[value.type];
@@ -52457,7 +52457,7 @@ function parsePathData(d) {
     const rel = command === command.toLowerCase();
     const base = rel ? pen : [0, 0];
     const num2 = () => s.number();
-    const pt = () => {
+    const pt2 = () => {
       const x = num2();
       const y = x === null ? null : num2();
       return x === null || y === null ? null : [x + base[0], y + base[1]];
@@ -52468,7 +52468,7 @@ function parsePathData(d) {
     let quadCtrl = null;
     switch (upper) {
       case "M": {
-        const p = pt();
+        const p = pt2();
         if (!p) return result(true);
         current = { start: p, segments: [], closed: false };
         subpaths.push(current);
@@ -52478,7 +52478,7 @@ function parsePathData(d) {
         break;
       }
       case "L": {
-        const p = pt();
+        const p = pt2();
         if (!p) return result(true);
         lineTo(p);
         break;
@@ -52498,10 +52498,10 @@ function parsePathData(d) {
       case "C":
       case "S": {
         let c1;
-        if (upper === "C") c1 = pt();
+        if (upper === "C") c1 = pt2();
         else c1 = lastCubic ? [2 * pen[0] - lastCubic[0], 2 * pen[1] - lastCubic[1]] : pen;
-        const c2 = c1 ? pt() : null;
-        const to = c2 ? pt() : null;
+        const c2 = c1 ? pt2() : null;
+        const to = c2 ? pt2() : null;
         if (!c1 || !c2 || !to) return result(true);
         current.segments.push({ kind: "C", c1, c2, to });
         cubicCtrl = c2;
@@ -52512,9 +52512,9 @@ function parsePathData(d) {
       case "Q":
       case "T": {
         let q;
-        if (upper === "Q") q = pt();
+        if (upper === "Q") q = pt2();
         else q = lastQuad ? [2 * pen[0] - lastQuad[0], 2 * pen[1] - lastQuad[1]] : pen;
-        const to = q ? pt() : null;
+        const to = q ? pt2() : null;
         if (!q || !to) return result(true);
         current.segments.push({
           kind: "C",
@@ -52533,7 +52533,7 @@ function parsePathData(d) {
         const rot = ry === null ? null : num2();
         const large = rot === null ? null : s.flag();
         const sweep = large === null ? null : s.flag();
-        const to = sweep === null ? null : pt();
+        const to = sweep === null ? null : pt2();
         if (!to) return result(true);
         const segs = arcToCubics(pen, rx, ry, rot, large, sweep, to);
         current.segments.push(...segs);
@@ -53129,8 +53129,8 @@ function parseLength(value, percentOf) {
   );
   if (!m) return null;
   const n = Number(m[1]);
-  const unit = (m[2] ?? "").toLowerCase();
-  const px = unit === "%" ? n / 100 * percentOf : n * UNITS[unit];
+  const unit2 = (m[2] ?? "").toLowerCase();
+  const px = unit2 === "%" ? n / 100 * percentOf : n * UNITS[unit2];
   return Number.isFinite(px) ? px : null;
 }
 function parseOpacity(value) {
@@ -53312,10 +53312,10 @@ var Analyzer = class {
       switch (name) {
         case "fill":
         case "stroke": {
-          const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid3();
-          else if (name === "fill") style.fill = paint;
-          else style.stroke = paint;
+          const paint2 = parsePaint(value);
+          if (paint2.kind === "invalid") invalid3();
+          else if (name === "fill") style.fill = paint2;
+          else style.stroke = paint2;
           break;
         }
         case "color": {
@@ -53808,10 +53808,10 @@ var Analyzer = class {
       );
     return parts;
   }
-  paintColor(paint, style) {
-    if (paint.kind === "color") return paint.rgba;
-    if (paint.kind === "current") return style.color;
-    if (paint.kind === "url") return "url";
+  paintColor(paint2, style) {
+    if (paint2.kind === "color") return paint2.rgba;
+    if (paint2.kind === "current") return style.color;
+    if (paint2.kind === "url") return "url";
     return null;
   }
   shape(el, ctx) {
@@ -56329,9 +56329,11 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  add_paper: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var PAPER_WRITE_LIVE_VALIDATED = false;
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56424,7 +56426,11 @@ var writerProbeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema2,
+    appendPlainText: featureSchema2,
+    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
   available: external_exports.boolean(),
@@ -56608,6 +56614,29 @@ function appendPlainText(request, deps = defaultWriterDeps()) {
     true
   );
 }
+function writeFeatureStatus(feature, validated, env) {
+  if (!feature)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The writer did not report this feature"
+    };
+  if (!feature.available) {
+    const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
+    return {
+      available: false,
+      reason,
+      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
+    };
+  }
+  if (!validated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
+      available: false,
+      reason: "not_live_validated",
+      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
+    };
+  return { available: true, reason: null, detail: null };
+}
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
   const writesEnabled = privateWritesEnabled(deps.env);
@@ -56615,7 +56644,10 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const base = { enabled, writesEnabled, installation, probe: null };
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: {
+      appendPlainText: { available: false, reason, detail },
+      addPaper: { available: false, reason, detail }
+    }
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,28 +56660,26 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
-  if (!feature.available) {
-    const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return {
+    ...base,
+    probe,
+    features: {
+      appendPlainText: writeFeatureStatus(
+        probe.features.appendPlainText,
+        APPEND_LIVE_VALIDATED,
+        deps.env
+      ),
+      addPaper: writeFeatureStatus(probe.features.addPaper, PAPER_WRITE_LIVE_VALIDATED, deps.env)
+    }
+  };
 }
 
 // src/services/privateWriterBuild.ts
+function writerCompileArguments(sourcePath, outputPath, sourceSha) {
+  const args = compileArguments(sourcePath, outputPath, sourceSha);
+  const appKit = args.indexOf("AppKit");
+  return [...args.slice(0, appKit + 1), "-framework", "PencilKit", ...args.slice(appKit + 1)];
+}
 function defaultWriterBuildDeps() {
   return { ...defaultBuildDeps(), sourcePath: defaultWriterDeps().sourcePath };
 }
@@ -56703,7 +56733,7 @@ function buildPrivateWriter(checkOnly, deps = defaultWriterBuildDeps()) {
     const stagedBinary = join29(staging, WRITER_BINARY_NAME);
     const compile = deps.spawn(
       "/usr/bin/xcrun",
-      compileArguments(deps.sourcePath, stagedBinary, sourceSha),
+      writerCompileArguments(deps.sourcePath, stagedBinary, sourceSha),
       { encoding: "utf8", timeout: 18e4 }
     );
     if (compile.status !== 0) {
@@ -57019,6 +57049,7 @@ function writerEnvelopeCode(helperCode, message) {
     case "ambiguous":
       return "ambiguous";
     default:
+      if (helperCode.startsWith("svg_")) return "validation_error";
       return envelopeCode(helperCode, message);
   }
 }
@@ -57136,6 +57167,506 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privatePaperWriter.ts
+var PAPER_FORMATS = ["auto", "paper", "drawing"];
+var rect = external_exports.array(external_exports.number()).length(4);
+var addPaperPlanSchema = external_exports.object({
+  format: external_exports.enum(["paper", "drawing"]),
+  availableFormats: external_exports.array(external_exports.string()),
+  strokeCount: external_exports.number().int().nonnegative(),
+  pointCount: external_exports.number().int().nonnegative(),
+  inks: external_exports.array(external_exports.string()),
+  bounds: rect,
+  revisionBefore: external_exports.string(),
+  storeKind: external_exports.enum(["live", "copy"])
+}).passthrough();
+var addPaperPlannedSchema = addPaperPlanSchema.extend({
+  status: external_exports.literal("planned"),
+  committed: external_exports.literal(false)
+});
+var addPaperCreatedSchema = addPaperPlanSchema.extend({
+  status: external_exports.literal("created"),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  attachmentIdentifier: external_exports.string(),
+  typeUTI: external_exports.string().nullable(),
+  decodedStrokeCount: external_exports.number().int().nonnegative(),
+  decodedPointCount: external_exports.number().int().nonnegative(),
+  glyphInserted: external_exports.boolean(),
+  previewUpdated: external_exports.boolean(),
+  revisionAfter: external_exports.string(),
+  modificationDate: external_exports.string().nullable(),
+  ...writeSyncFields
+});
+function addPaper(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertRevision(request.ifRevision);
+  const dryRun = request.dryRun === true;
+  if (!dryRun) requireLiveValidated(PAPER_WRITE_LIVE_VALIDATED, "native-add-paper", deps.env);
+  const fields = {
+    identifier: request.identifier,
+    ifRevision: request.ifRevision,
+    drawing: request.drawing,
+    format: request.format ?? "auto"
+  };
+  if (dryRun) fields.dryRun = true;
+  if (!dryRun)
+    return parseWriterResult(
+      addPaperCreatedSchema,
+      callPrivateWriter("add_paper", fields, deps),
+      true
+    );
+  try {
+    return parseWriterResult(
+      addPaperPlannedSchema,
+      callPrivateWriter("add_paper", fields, deps),
+      false
+    );
+  } catch (error2) {
+    if (error2 instanceof PrivateWriteError && error2.committed !== false)
+      throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
+    throw error2;
+  }
+}
+
+// src/utils/paperAuthoring.ts
+var AUTHOR_INKS = [
+  "pen",
+  "pencil",
+  "marker",
+  "fountainpen",
+  "watercolor",
+  "crayon"
+];
+var PaperAuthoringError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "PaperAuthoringError";
+  }
+  code;
+};
+var DEFAULT_COLOR = [0, 0, 0, 1];
+var DEFAULT_WIDTH = 2;
+var ELLIPSE_SEGMENTS = 72;
+function paint(input, width) {
+  return {
+    ink: input.ink ?? "pen",
+    color: input.color ?? DEFAULT_COLOR,
+    width: width ?? DEFAULT_WIDTH
+  };
+}
+var round2 = (v) => Math.round(v * 1e3) / 1e3 || 0;
+var pt = (x, y) => [round2(x), round2(y)];
+function arc(cx, cy, rx, ry, start, end) {
+  const steps = Math.max(2, Math.ceil(ELLIPSE_SEGMENTS * Math.abs(end - start) / (2 * Math.PI)));
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = start + (end - start) * i / steps;
+    out.push(pt(cx + rx * Math.cos(t), cy + ry * Math.sin(t)));
+  }
+  return out;
+}
+function regular(cx, cy, radii, count, rotation = 0) {
+  const out = [];
+  const n = count * radii.length;
+  const start = -Math.PI / 2 + rotation * Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const t = start + 2 * Math.PI * i / n;
+    const r = radii[i % radii.length];
+    out.push(pt(cx + r * Math.cos(t), cy + r * Math.sin(t)));
+  }
+  out.push(out[0]);
+  return out;
+}
+function roundedRect(x, y, w, h, radius) {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  if (r === 0) return [pt(x, y), pt(x + w, y), pt(x + w, y + h), pt(x, y + h), pt(x, y)];
+  const h2 = Math.PI / 2;
+  return [
+    ...arc(x + w - r, y + r, r, r, -h2, 0),
+    ...arc(x + w - r, y + h - r, r, r, 0, h2),
+    ...arc(x + r, y + h - r, r, r, h2, Math.PI),
+    ...arc(x + r, y + r, r, r, Math.PI, 3 * h2),
+    pt(x + w - r, y)
+  ];
+}
+function arrowHead(from, tip, length) {
+  const angle = Math.atan2(tip[1] - from[1], tip[0] - from[0]);
+  const wing = (a) => pt(tip[0] - length * Math.cos(a), tip[1] - length * Math.sin(a));
+  return [wing(angle + Math.PI / 6), pt(tip[0], tip[1]), wing(angle - Math.PI / 6)];
+}
+function blockArrow(from, to, head, shaft) {
+  const len = Math.hypot(to[0] - from[0], to[1] - from[1]);
+  if (len === 0)
+    throw new PaperAuthoringError("invalid_request", "An arrow needs two distinct points");
+  const ux = (to[0] - from[0]) / len;
+  const uy = (to[1] - from[1]) / len;
+  const nx = -uy;
+  const ny = ux;
+  const headLen = Math.min(head, len);
+  const base = [to[0] - ux * headLen, to[1] - uy * headLen];
+  const s = shaft / 2;
+  const h = Math.max(head / 2, s * 2);
+  const at = (p, k) => pt(p[0] + nx * k, p[1] + ny * k);
+  return [
+    at(from, s),
+    at(base, s),
+    at(base, h),
+    pt(to[0], to[1]),
+    at(base, -h),
+    at(base, -s),
+    at(from, -s),
+    at(from, s)
+  ];
+}
+function positive2(value, what) {
+  if (!(value > 0)) throw new PaperAuthoringError("invalid_request", `${what} must be positive`);
+}
+function shapeToStrokes(shape) {
+  const p = paint(shape, shape.strokeWidth);
+  const one = (points) => [{ ...p, points }];
+  switch (shape.kind) {
+    case "rectangle":
+      positive2(shape.width, "Rectangle width");
+      positive2(shape.height, "Rectangle height");
+      return one(roundedRect(shape.x, shape.y, shape.width, shape.height, shape.cornerRadius ?? 0));
+    case "ellipse":
+      positive2(shape.rx, "Ellipse rx");
+      positive2(shape.ry, "Ellipse ry");
+      return one(arc(shape.cx, shape.cy, shape.rx, shape.ry, 0, 2 * Math.PI));
+    case "line": {
+      const head = Math.max(8, p.width * 4);
+      const strokes = one([pt(...shape.from), pt(...shape.to)]);
+      if (shape.arrowEnd) strokes.push({ ...p, points: arrowHead(shape.from, shape.to, head) });
+      if (shape.arrowStart) strokes.push({ ...p, points: arrowHead(shape.to, shape.from, head) });
+      return strokes;
+    }
+    case "arrow":
+      return one(blockArrow(shape.from, shape.to, shape.headLength ?? 24, shape.shaftWidth ?? 8));
+    case "polygon":
+      positive2(shape.radius, "Polygon radius");
+      if (!Number.isInteger(shape.sides) || shape.sides < 3 || shape.sides > 512)
+        throw new PaperAuthoringError("invalid_request", "Polygon sides must be 3 to 512");
+      return one(regular(shape.cx, shape.cy, [shape.radius], shape.sides, shape.rotation));
+    case "star":
+      positive2(shape.outerRadius, "Star outerRadius");
+      positive2(shape.innerRadius, "Star innerRadius");
+      if (!Number.isInteger(shape.points) || shape.points < 3 || shape.points > 512)
+        throw new PaperAuthoringError("invalid_request", "Star points must be 3 to 512");
+      return one(
+        regular(
+          shape.cx,
+          shape.cy,
+          [shape.outerRadius, shape.innerRadius],
+          shape.points,
+          shape.rotation
+        )
+      );
+    case "chatBubble": {
+      positive2(shape.width, "Chat bubble width");
+      positive2(shape.height, "Chat bubble height");
+      const r = Math.min(shape.width, shape.height) / 4;
+      const body = roundedRect(shape.x, shape.y, shape.width, shape.height, r);
+      const baseX = shape.tail[0] < shape.x + shape.width / 2 ? shape.x + r * 1.5 : shape.x + shape.width - r * 1.5;
+      const bottom = shape.y + shape.height;
+      const tail = [pt(baseX - r / 2, bottom), pt(...shape.tail), pt(baseX + r / 2, bottom)];
+      return [
+        { ...p, points: body },
+        { ...p, points: tail }
+      ];
+    }
+    case "polyline": {
+      if (shape.points.length < 2)
+        throw new PaperAuthoringError("invalid_request", "A polyline needs at least two points");
+      const points = shape.points.map((q) => pt(q[0], q[1]));
+      if (shape.closed) points.push(points[0]);
+      return one(points);
+    }
+  }
+}
+function drawingFromInput(input) {
+  const strokes = (input.strokes ?? []).map((s) => {
+    if (!s.points.length)
+      throw new PaperAuthoringError("invalid_request", "Every stroke needs at least one point");
+    return {
+      ...paint(s, s.width),
+      // Decoded points carry up to nine values; x, y and width are what a stroke keeps.
+      points: s.points.map((q) => {
+        if (q.length < 2)
+          throw new PaperAuthoringError("invalid_request", "Each point needs at least x and y");
+        return q.length >= 3 ? [q[0], q[1], q[2]] : [q[0], q[1]];
+      })
+    };
+  });
+  const shapes = input.shapes ?? [];
+  for (const shape of shapes) strokes.push(...shapeToStrokes(shape));
+  if (!strokes.length)
+    throw new PaperAuthoringError("invalid_request", "The drawing has no strokes or shapes");
+  return {
+    drawing: { strokes },
+    inputStrokeCount: input.strokes?.length ?? 0,
+    shapeCount: shapes.length,
+    shapePersistence: shapes.length ? "stroke-fallback" : "none"
+  };
+}
+function drawingFromSvg(drawing) {
+  return {
+    strokes: drawing.strokes.map((s) => ({
+      ink: "pen",
+      color: s.color,
+      width: s.width,
+      points: s.points.map(([x, y]) => [x, y])
+    }))
+  };
+}
+function authorizeSvgDrawing(result, options) {
+  const { analysis } = result;
+  const allow = [...new Set(options.allowSvgLosses ?? [])];
+  if (allow.length && options.ifSvgAnalysis === void 0)
+    throw new PaperAuthoringError(
+      "svg_analysis_required",
+      "Accepting an SVG loss requires ifSvgAnalysis with the exact analysisDigest"
+    );
+  if (options.ifSvgAnalysis !== void 0 && options.ifSvgAnalysis !== analysis.analysisDigest)
+    throw new PaperAuthoringError(
+      "svg_analysis_conflict",
+      "The SVG or its normalized drawing changed since it was analyzed; run analyze-svg again"
+    );
+  if (!analysis.importable)
+    throw new PaperAuthoringError("svg_not_importable", "The SVG has no drawable content");
+  if (analysis.requiredLosses.length && options.ifSvgAnalysis === void 0)
+    throw new PaperAuthoringError(
+      "svg_analysis_required",
+      `This SVG needs ${analysis.requiredLosses.join(", ")}; pass ifSvgAnalysis and allowSvgLosses`
+    );
+  const required2 = analysis.requiredLosses;
+  const missing = required2.filter((l) => !allow.includes(l));
+  const extra = allow.filter((l) => !required2.includes(l));
+  if (missing.length || extra.length)
+    throw new PaperAuthoringError(
+      "svg_lossy_import_refused",
+      "allowSvgLosses must list exactly the required losses" + (missing.length ? `; missing ${missing.join(", ")}` : "") + (extra.length ? `; not required ${extra.join(", ")}` : "")
+    );
+  return result.drawing;
+}
+
+// src/tools/privatePaperWriterTools.ts
+var unit = () => external_exports.number().min(0).max(1);
+var coordinate = () => external_exports.number().finite().min(-1e6).max(1e6);
+var xy = () => external_exports.array(coordinate()).length(2);
+var paintFields = () => ({
+  ink: external_exports.enum(AUTHOR_INKS).optional().describe("PencilKit ink (default pen)"),
+  color: external_exports.array(unit()).length(4).optional().describe("sRGB [r, g, b, a], each 0..1 (default opaque black)")
+});
+var strokeWidth = () => external_exports.number().positive().max(8192).optional().describe("Stroke width (default 2)");
+var positive3 = () => external_exports.number().positive().max(1e6);
+var shapeSchema = external_exports.discriminatedUnion("kind", [
+  external_exports.object({
+    kind: external_exports.literal("rectangle"),
+    x: coordinate(),
+    y: coordinate(),
+    width: positive3(),
+    height: positive3(),
+    cornerRadius: external_exports.number().min(0).optional(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("ellipse"),
+    cx: coordinate(),
+    cy: coordinate(),
+    rx: positive3(),
+    ry: positive3(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("line"),
+    from: xy(),
+    to: xy(),
+    arrowStart: external_exports.boolean().optional(),
+    arrowEnd: external_exports.boolean().optional(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("arrow"),
+    from: xy(),
+    to: xy(),
+    headLength: positive3().optional(),
+    shaftWidth: positive3().optional(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("polygon"),
+    cx: coordinate(),
+    cy: coordinate(),
+    radius: positive3(),
+    sides: external_exports.number().int().min(3).max(512),
+    rotation: external_exports.number().finite().optional(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("star"),
+    cx: coordinate(),
+    cy: coordinate(),
+    outerRadius: positive3(),
+    innerRadius: positive3(),
+    points: external_exports.number().int().min(3).max(512),
+    rotation: external_exports.number().finite().optional(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("chatBubble"),
+    x: coordinate(),
+    y: coordinate(),
+    width: positive3(),
+    height: positive3(),
+    tail: xy(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  }),
+  external_exports.object({
+    kind: external_exports.literal("polyline"),
+    points: external_exports.array(xy()).min(2).max(1e5),
+    closed: external_exports.boolean().optional(),
+    ...paintFields(),
+    strokeWidth: strokeWidth()
+  })
+]);
+var drawingSchema = external_exports.object({
+  strokes: external_exports.array(
+    external_exports.object({
+      ...paintFields(),
+      width: strokeWidth(),
+      points: external_exports.array(external_exports.array(coordinate()).min(2).max(9)).min(1).max(1e5).describe(
+        "[x, y] or [x, y, width] per point; longer rows (up to 9 values) use their first three"
+      )
+    })
+  ).max(4096).optional(),
+  shapes: external_exports.array(shapeSchema).max(1e3).optional().describe(
+    "rectangle, ellipse, line, arrow, polygon, star, chatBubble, polyline; each is written as strokes tracing it"
+  )
+});
+function asWriteError(error2) {
+  if (error2 instanceof PaperAuthoringError)
+    return new PrivateWriteError(error2.code, error2.message, false);
+  if (error2 instanceof SvgError)
+    return new PrivateWriteError(error2.code, error2.message, false, {
+      svgCode: error2.code,
+      ...error2.location ? { location: error2.location } : {}
+    });
+  return error2;
+}
+function prepareDrawing(args, roots) {
+  if (args.drawing === void 0 === (args.svgPath === void 0))
+    throw new PrivateWriteError("invalid_request", "Pass exactly one of drawing or svgPath", false);
+  if (args.drawing && (args.ifSvgAnalysis !== void 0 || args.allowSvgLosses !== void 0))
+    throw new PrivateWriteError(
+      "invalid_request",
+      "ifSvgAnalysis and allowSvgLosses apply to svgPath only",
+      false
+    );
+  try {
+    if (args.svgPath !== void 0) {
+      let path10;
+      try {
+        path10 = assertReadableInRoots(args.svgPath, roots, "SVG file");
+      } catch (error2) {
+        throw new PrivateWriteError("svg_file_invalid", error2.message, false, {
+          svgCode: "svg_file_invalid"
+        });
+      }
+      const analyzed = analyzeSvgFile(path10);
+      const drawing = drawingFromSvg(
+        authorizeSvgDrawing(analyzed, {
+          ifSvgAnalysis: args.ifSvgAnalysis,
+          allowSvgLosses: args.allowSvgLosses
+        })
+      );
+      return {
+        drawing,
+        source: {
+          source: "svg",
+          svgAnalysis: {
+            analysisDigest: analyzed.analysis.analysisDigest,
+            classification: analyzed.analysis.classification,
+            requiredLosses: analyzed.analysis.requiredLosses,
+            acceptedLosses: [...new Set(args.allowSvgLosses ?? [])]
+          }
+        }
+      };
+    }
+    const converted = drawingFromInput(args.drawing);
+    return {
+      drawing: converted.drawing,
+      source: {
+        source: "json",
+        inputStrokeCount: converted.inputStrokeCount,
+        shapeCount: converted.shapeCount,
+        shapePersistence: converted.shapePersistence
+      }
+    };
+  } catch (error2) {
+    throw asWriteError(error2);
+  }
+}
+function registerPrivatePaperWriterTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-add-paper",
+    "Use when: adding a hand-drawn-style drawing to the end of one exact note as editable ink, from stroke and shape JSON or from an SVG file, through the opt-in private writer.\nReturns: status (planned or created), the attachment format (paper or drawing) and typeUTI, stroke and point counts, decodedStrokeCount/decodedPointCount from the verifying read-back, attachmentIdentifier, revisionBefore/revisionAfter, and sync state: pushScheduled (always false; the writer cannot upload), pushState, cloudSync versions, and with nudge: true a `sync` report. For an SVG, svgAnalysis names the digest and the losses accepted; for JSON, shapeCount and shapePersistence (shapes are written as strokes tracing them).\nDo not use when: you want a picture of the SVG exactly as it looks (attach a PNG with add-attachment instead), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. An SVG is re-analyzed at write time: a lossy one needs ifSvgAnalysis equal to analyze-svg's analysisDigest and allowSvgLosses equal to its requiredLosses. Verifies by decoding the saved drawing in a new Core Data stack. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Not yet live-validated, so a write also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      ifRevision: revisionToken.describe(
+        "The `revision` returned by native-note-state for this note"
+      ),
+      drawing: drawingSchema.optional().describe("Strokes and shapes to draw; pass this or svgPath, not both"),
+      svgPath: external_exports.string().min(1).max(4096).optional().describe(
+        "Absolute path of an SVG file (home, temp, or /Volumes) to convert with the analyze-svg analyzer"
+      ),
+      ifSvgAnalysis: external_exports.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("The analysisDigest from analyze-svg; required when the SVG needs any loss"),
+      allowSvgLosses: external_exports.array(external_exports.enum(SVG_LOSSES)).max(3).optional().describe("Exactly the requiredLosses analyze-svg reported for this digest"),
+      format: external_exports.enum(PAPER_FORMATS).optional().describe(
+        "auto (default): Paper when this macOS can create it, else a classic drawing; paper or drawing to insist"
+      ),
+      dryRun: external_exports.boolean().optional().describe("Validate and plan without writing"),
+      nudge: external_exports.boolean().optional().describe(
+        "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
+      ),
+      nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async (args, deps) => {
+      const { drawing, source } = prepareDrawing(args);
+      const identifier = resolveIdentifier(manager, args);
+      const result = addPaper(
+        {
+          identifier,
+          ifRevision: args.ifRevision,
+          drawing,
+          format: args.format,
+          dryRun: args.dryRun
+        },
+        deps.writer
+      );
+      const payload = { ...source, ...result };
+      if (!args.nudge || result.status !== "created") return payload;
+      return {
+        ...payload,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57704,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivatePaperWriterTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;
