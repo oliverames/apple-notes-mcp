@@ -50,8 +50,14 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
 - [ ] The `-v2` branches are based on `3418163`; merge the foundation fix `269637a` into them when next touched. `native-sync-push-v2` also edits `privateSyncNudge.ts`, so expect a small conflict there.
 - [ ] Check whether Notes shows an AppleScript-added image twice (two body glyphs per image on 27.2; the 42 MB note's HTML also had two `<img>`). If it does, file it upstream.
 - [ ] Orphan attachment row: removing an attachment through native-edit leaves its row in the note, unmarked (observed 2026-09-24). Document or clean up.
-- [ ] Queued by Oliver: after the PRs are through, write privately to sweetrb (draft for Oliver's approval first) asking for a README line crediting Oliver's work with a link to github.com/oliverames.
-- [ ] Queued by Oliver: once #244 and #238 are merged, a comprehensive bug review of everything contributed on 2026-09-23 and 2026-09-24, then work through sweetrb's open issues.
+- [x] README-credit email to Rob Sweet (rob@superiortech.io, from his README) sent from Oliver's Gmail on 2026-09-24 after Oliver approved the draft; no reply yet.
+- [x] Skill PR sweetrb/apple-notes-mcp#252 (formatting rules + tool-table fixes) merged as 2.9.20. Two observation-based rules verified live first.
+- [x] Whole-note highlight: `feat/native-highlight-whole-note` (`a2cf2ae`) built, live-tested, pushed.
+- [ ] Comprehensive bug review (2026-09-23/24 contributions): audit going to ~/Documents/apple-notes-mcp-bug-review-2026-09-24.md. Oliver's instruction: fix every issue found. Plan: foundation writer first (pre-save refusals report committed:false, NSException after save keeps committed:true, Cc-only control set, probe the read properties), merge into all -v2 branches, then branch fixes, then focused upstream PRs (analyze-svg OOM first). Treat the contentPath read scope as sweetrb's design call.
+- [ ] Then sweetrb's open issues.
+- [ ] Gap analysis against the reference tool in ~/Downloads (private; never name it publicly): ~/Documents/apple-notes-mcp-gap-analysis-2026-09-24.md.
+- [ ] README coverage + SEO PR: agent preparing `docs/readme-coverage-seo`; GitHub topics/description go in the PR body as suggestions for sweetrb.
+- #250 resynced to 2.9.21 over main 2.9.20 (`b8d94a1`).
 
 **Verification**: macOS 27.2 (26B5091g), Node 26.9.0, pnpm 11.9.0. Every branch named above passed lint, typecheck, format check, the full unit suite (no skips) and build with a matching bundle before it was pushed. Every live test used disposable notes, a smart folder and a subfolder inside `apple-notes-mcp test`, and all were deleted afterwards (they are in Recently Deleted; one test note was permanently tombstoned by the Recently Deleted to smart folder reproduction). Writer installs went to scratch directories, never to the plugin's install directory.
 
