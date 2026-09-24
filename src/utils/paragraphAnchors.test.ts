@@ -486,6 +486,23 @@ describe("resolution against a fixture store (real sqlite3)", { timeout: 60000 }
       status: "needs-reminting",
       remint: { attempted: true, reason: "writer-failed", message: "revision conflict" },
     });
+    expect(failed.remint).not.toHaveProperty("committed");
+
+    // A writer error's committed state is passed on, so a timeout reads as uncertain.
+    setParagraphIdReminter(async () => {
+      throw Object.assign(new Error("timed out"), { committed: "unknown" });
+    });
+    const uncertain = await resolveStoredAnchor(anchor.anchorId, {
+      registry,
+      dbPath: db,
+      remint: true,
+    });
+    expect(uncertain.remint).toEqual({
+      attempted: true,
+      reason: "writer-failed",
+      message: "timed out",
+      committed: "unknown",
+    });
     setBody(10, [TITLE, A, B, C, D]);
     expect(
       (await resolveStoredAnchor(anchor.anchorId, { registry, dbPath: db, remint: true })).remint

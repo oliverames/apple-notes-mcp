@@ -277,6 +277,108 @@ else
   echo "ok: replayed set_paragraph_id refused"
 fi
 
+# 4a1. Anchor heal: resolve-paragraph-anchor's remint through the writer
+#    client (src/services/privateWriterReminter.ts). Records an anchor for a
+#    paragraph whose ID is shared or missing (in the paragraph note or another
+#    recent writable note), checks that it reports needs-reminting and, with
+#    no reminter installed, writer-unavailable; then installs the writer
+#    reminter and resolves with remint, which must mint a unique ID through
+#    set_paragraph_id on the copy and resolve the anchor to it. The client runs
+#    against a writer installed by `setup --native-writer` in the work
+#    directory; the writer process itself never gets the write switch.
+HNOTE=""
+HBLOCK=""
+for CANDIDATE in "$PNOTE" $(recent_notes 80); do
+  writable "$CANDIDATE" || continue
+  HPARAS="$(paragraphs_on_copy "$CANDIDATE")"
+  HBLOCK="$(printf '%s' "$HPARAS" | node -e '
+    let s = "";
+    process.stdin.on("data", (c) => (s += c)).on("end", () => {
+      const hit = (JSON.parse(s).paragraphs || []).find(
+        (p) => p.paragraphIdStatus !== "unique" && p.text.replace(/￼/g, "").trim()
+      );
+      process.stdout.write(hit ? String(hit.blockIndex) : "");
+    });')"
+  if [ -n "$HBLOCK" ]; then
+    HNOTE="$CANDIDATE"
+    break
+  fi
+done
+if [ -z "$HNOTE" ]; then
+  echo "skipped: anchor heal (no paragraph with a shared or missing ID in the recent notes)"
+else
+  watch_live "$HNOTE"
+  HEAL_INSTALL="$WORK/writer-install"
+  APPLE_NOTES_MCP_PRIVATE_HELPER_DIR="$HEAL_INSTALL" node "$REPO/build/index.js" setup --native-writer \
+    >"$WORK/heal-setup.log" 2>&1 || fail "setup --native-writer for the heal step failed: $(tail -3 "$WORK/heal-setup.log")"
+  HEAL="$WORK/anchor-heal.mjs"
+  cat >"$WORK/anchor-heal.ts" <<'TS'
+import { spawnSync } from "node:child_process";
+import { AnchorRegistry } from "@/services/anchorRegistry.js";
+import { resolveStoredAnchor } from "@/services/paragraphAnchorOps.js";
+import { defaultWriterDeps } from "@/services/privateWriter.js";
+import { installWriterParagraphIdReminter } from "@/services/privateWriterReminter.js";
+import { readNoteParagraphs } from "@/utils/noteParagraphs.js";
+import { anchorFor, setParagraphIdReminter } from "@/utils/paragraphAnchors.js";
+const [id, dbPath, block, registryPath, sourcePath] = process.argv.slice(2);
+// The client's gates see both switches; the writer process gets neither the
+// write switch nor anything but the copy.
+const env = { ...process.env, APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const childEnv = { ...env };
+delete childEnv.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES;
+const deps = () =>
+  defaultWriterDeps({
+    env,
+    sourcePath,
+    spawn: ((command: string, args: string[], options: object) =>
+      spawnSync(command, args, { ...options, env: childEnv })) as typeof spawnSync,
+  });
+try {
+  const note = readNoteParagraphs({ id }, { dbPath });
+  const paragraph = note.paragraphs.find((p) => p.blockIndex === Number(block));
+  if (!paragraph) throw new Error(`block ${block} not found`);
+  const registry = new AnchorRegistry(registryPath);
+  const [{ anchor }] = registry.record([anchorFor(note, paragraph, { anchorId: "", now: new Date() })]);
+  setParagraphIdReminter(undefined);
+  const before = await resolveStoredAnchor(anchor.anchorId, { registry, dbPath, remint: true });
+  const installed = installWriterParagraphIdReminter(env, deps);
+  const healed = await resolveStoredAnchor(anchor.anchorId, { registry, dbPath, remint: true });
+  const after = readNoteParagraphs({ id }, { dbPath }).paragraphs.find(
+    (p) => p.blockIndex === Number(block)
+  );
+  process.stdout.write(
+    JSON.stringify({
+      before: { status: before.status, remint: before.remint },
+      installed,
+      healed: { status: healed.status, url: healed.url ?? null, remint: healed.remint },
+      reader: { paragraphId: after?.paragraphId ?? null, status: after?.paragraphIdStatus ?? null, url: after?.url ?? null },
+    })
+  );
+} catch (error) {
+  process.stdout.write(JSON.stringify({ error: String(error) }));
+}
+TS
+  (cd "$REPO" && node_modules/.bin/esbuild "$WORK/anchor-heal.ts" --bundle --platform=node \
+    --format=esm --log-level=error --tsconfig="$REPO/tsconfig.json" \
+    "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" \
+    --outfile="$HEAL")
+  OUT="$(env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES APPLE_NOTES_MCP_PRIVATE_HELPER_DIR="$HEAL_INSTALL" \
+    APPLE_NOTES_MCP_PRIVATE_STORE="$COPY" node "$HEAL" "$(object_uri "$HNOTE")" "$COPY" "$HBLOCK" \
+    "$WORK/anchors.json" "$SOURCE")"
+  [ -z "$(field "$OUT" error)" ] || fail "anchor heal: $(field "$OUT" error)"
+  [ "$(field "$OUT" before.status)" = "needs-reminting" ] || fail "anchor did not need reminting: $(field "$OUT" before.status)"
+  [ "$(field "$OUT" before.remint.reason)" = "writer-unavailable" ] ||
+    fail "remint without a reminter: $(field "$OUT" before.remint.reason)"
+  [ "$(field "$OUT" installed)" = "true" ] || fail "writer reminter not installed with both switches"
+  [ "$(field "$OUT" healed.remint.attempted)" = "true" ] && [ -n "$(field "$OUT" healed.remint.paragraphId)" ] ||
+    fail "remint failed: $(field "$OUT" healed.remint.reason) $(field "$OUT" healed.remint.message)"
+  [ "$(field "$OUT" healed.status)" = "resolved" ] || fail "healed anchor did not resolve: $(field "$OUT" healed.status)"
+  [ "$(field "$OUT" reader.paragraphId)" = "$(field "$OUT" healed.remint.paragraphId)" ] &&
+    [ "$(field "$OUT" reader.status)" = "unique" ] || fail "reader does not see the re-minted identifier as unique"
+  [ "$(field "$OUT" healed.url)" = "$(field "$OUT" reader.url)" ] || fail "healed url differs from the reader's"
+  echo "ok: anchor heal: needs-reminting, writer-unavailable without a reminter, then re-minted through set_paragraph_id and resolved"
+fi
+
 # 4a2. Section-link chips (macOS 27). A chip within a note that has a heading,
 #    a replacement below the title that clears it, and a chip from the append
 #    note into that heading. Each is checked with the list-note-links
@@ -871,7 +973,7 @@ prune_request() { # tableIdentifier dryRun [ifRevision ifTableDigest]
 ZERO_DIGEST="t1:${ZERO#r1:}"
 
 table_checks() {
-  local CANDIDATE STATE COUNT I TREAD TLIVE_BEFORE ROWS_BEFORE ROW0 COL0 PLAN PREV PDIG OUT
+  local CANDIDATE STATE COUNT I TREAD TLIVE TLIVE_BEFORE ROWS_BEFORE ROW0 COL0 PLAN PREV PDIG OUT
   local REV_AFTER DIG_AFTER INSERT NEWROW SETCELL ORPHAN
   TNOTE=""
   TABLE=""
@@ -882,21 +984,26 @@ table_checks() {
       AND n.ZFOLDER IS NOT NULL AND IFNULL(n.ZISPASSWORDPROTECTED,0)=0
       AND IFNULL(n.ZMARKEDFORDELETION,0)=0
     GROUP BY n.Z_PK ORDER BY MAX(n.ZMODIFICATIONDATE1) DESC LIMIT 40;"); do
-    # The append note got its table from the compose step above, on the copy
-    # only, so the live comparison below could not find it.
-    [ "$CANDIDATE" != "$NOTE" ] || continue
     STATE="$(copy_run "$(read_request "$CANDIDATE")" || true)"
     if [ "$(field "$STATE" editable)" != "true" ] || [ "$(field "$STATE" sharedViaICloud)" != "false" ] ||
       [ "$(field "$STATE" deletedOrInTrash)" != "false" ]; then
       continue
     fi
     TSTATE="$(copy_run "$(tables_request "$CANDIDATE")" || true)"
+    # The live store's tables for the same note. Earlier steps write to the
+    # copy only (the compose step gives the append note a table there), so a
+    # table is a candidate only when the live store holds the same table in
+    # the same state; that is what the live comparison below checks.
+    TLIVE="$(run "$(tables_request "$CANDIDATE")" || true)"
     COUNT="$(field "$TSTATE" tableCount)"
     I=0
     while [ "$I" -lt "${COUNT:-0}" ]; do
       if [ "$(field "$TSTATE" "tables.$I.glyphCount")" = "1" ] &&
         [ "$(field "$TSTATE" "tables.$I.readable")" = "true" ] &&
-        [ "$(field "$TSTATE" "tables.$I.rowCount")" -ge 2 ]; then
+        [ "$(field "$TSTATE" "tables.$I.rowCount")" -ge 2 ] &&
+        [ -n "$(field "$TSTATE" "tables.$I.digest")" ] &&
+        [ "$(field "$TLIVE" "tables.$I.identifier")" = "$(field "$TSTATE" "tables.$I.identifier")" ] &&
+        [ "$(field "$TLIVE" "tables.$I.digest")" = "$(field "$TSTATE" "tables.$I.digest")" ]; then
         TNOTE="$CANDIDATE"
         TABLE="$I"
         break 2
@@ -905,7 +1012,7 @@ table_checks() {
     done
   done
   if [ -z "$TNOTE" ]; then
-    echo "skip: no editable note with a visible multi-row table in the copy"
+    echo "skip: no editable note with a visible multi-row table that the copy and the live store share"
     return 0
   fi
   TREAD="$(tables_request "$TNOTE")"

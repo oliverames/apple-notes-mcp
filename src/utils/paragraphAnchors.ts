@@ -456,8 +456,10 @@ let reminter: ParagraphIdReminter | undefined;
 
 /**
  * Install (or with undefined, remove) the writer that re-mints paragraph IDs.
- * Nothing in this package installs one: re-minting needs a writer that can set
- * a paragraph's stored UUID, which public automation cannot do.
+ * Re-minting needs a writer that can set a paragraph's stored UUID, which
+ * public automation cannot do. The server installs the opt-in private
+ * writer's `set_paragraph_id` when both writer switches are on
+ * (src/services/privateWriterReminter.ts); otherwise none is installed.
  */
 export function setParagraphIdReminter(fn: ParagraphIdReminter | undefined): void {
   reminter = fn;

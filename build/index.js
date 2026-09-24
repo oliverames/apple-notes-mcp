@@ -65222,6 +65222,271 @@ function registerPrivateWriterPurgeRepairTools(server2, manager, depsFactory = d
   );
 }
 
+// src/utils/paragraphAnchors.ts
+import { createHash as createHash8 } from "node:crypto";
+var ANCHOR_ID_PATTERN = /^pa_[0-9a-f]{24}$/;
+var DEFAULT_MIN_CONFIDENCE = 0.6;
+var textFingerprint = (normalized2) => createHash8("sha256").update(normalized2, "utf8").digest("hex").slice(0, 32);
+function textSimilarity(a, b) {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  const size = Math.min(a.length, b.length) < 3 ? 2 : 3;
+  const grams = (s) => {
+    const out = /* @__PURE__ */ new Map();
+    const padded = ` ${s} `;
+    for (let i = 0; i + size <= padded.length; i++) {
+      const g = padded.slice(i, i + size);
+      out.set(g, (out.get(g) ?? 0) + 1);
+    }
+    return out;
+  };
+  const ga = grams(a);
+  const gb = grams(b);
+  let shared = 0;
+  let total = 0;
+  for (const count2 of ga.values()) total += count2;
+  for (const [g, count2] of gb) {
+    total += count2;
+    shared += Math.min(count2, ga.get(g) ?? 0);
+  }
+  return total ? 2 * shared / total : 0;
+}
+var round3 = (value) => Math.round(value * 100) / 100;
+function anchorFor(note, paragraph2, { anchorId, now }) {
+  if (!note.identifier)
+    throw new CodedError("The note has no stored identifier, so no anchor can be recorded", {
+      code: "unsupported"
+    });
+  const i = note.paragraphs.indexOf(paragraph2);
+  if (i < 0) throw new Error("The paragraph does not belong to this note");
+  const fp = (p) => p ? textFingerprint(normalizeParagraphText(p.text)) : null;
+  const text2 = normalizeParagraphText(paragraph2.text);
+  return {
+    anchorId,
+    noteIdentifier: note.identifier.toUpperCase(),
+    noteId: note.id,
+    paragraphId: paragraph2.paragraphId,
+    paragraphIdStatus: paragraph2.paragraphIdStatus,
+    text: text2,
+    fingerprint: textFingerprint(text2),
+    prevFingerprint: fp(note.paragraphs[i - 1]),
+    nextFingerprint: fp(note.paragraphs[i + 1]),
+    blockIndex: paragraph2.blockIndex,
+    style: paragraph2.style,
+    createdAt: now.toISOString()
+  };
+}
+function matchAnchor(anchor, paragraphs, { minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
+  const result = findAnchor(anchor, paragraphs);
+  return result.status === "matched" && result.confidence < minConfidence ? { ...result, status: "low-confidence" } : result;
+}
+function findAnchor(anchor, paragraphs) {
+  const normalized2 = paragraphs.map((p) => normalizeParagraphText(p.text));
+  const fps = normalized2.map(textFingerprint);
+  const neighbours = (i) => Number((fps[i - 1] ?? null) === anchor.prevFingerprint) + Number((fps[i + 1] ?? null) === anchor.nextFingerprint);
+  const all = paragraphs.map((_, i) => i);
+  const byNeighbours = (candidates) => {
+    const scored2 = candidates.map((i) => ({ i, n: neighbours(i) }));
+    const best = Math.max(...scored2.map((s) => s.n));
+    const top = scored2.filter((s) => s.n === best);
+    return best > 0 && top.length === 1 ? top[0] : void 0;
+  };
+  if (anchor.paragraphId) {
+    const owners = all.filter((i) => paragraphs[i].paragraphId === anchor.paragraphId);
+    if (owners.length === 1 && paragraphs[owners[0]].paragraphIdStatus === "unique") {
+      const i = owners[0];
+      const same = fps[i] === anchor.fingerprint;
+      const confidence = same ? 1 : 0.8 + 0.15 * Math.max(textSimilarity(anchor.text, normalized2[i]), neighbours(i) / 2);
+      return { status: "matched", index: i, method: "paragraph-id", confidence: round3(confidence) };
+    }
+    const exact2 = owners.filter((i) => fps[i] === anchor.fingerprint);
+    if (exact2.length === 1)
+      return { status: "matched", index: exact2[0], method: "paragraph-id", confidence: 0.95 };
+    if (exact2.length > 1) {
+      const pick2 = byNeighbours(exact2);
+      if (pick2)
+        return { status: "matched", index: pick2.i, method: "paragraph-id", confidence: 0.9 };
+    }
+  }
+  const exact = all.filter((i) => fps[i] === anchor.fingerprint);
+  if (exact.length === 1) {
+    const confidence = neighbours(exact[0]) > 0 ? 0.95 : 0.85;
+    return { status: "matched", index: exact[0], method: "exact-text", confidence };
+  }
+  if (exact.length > 1) {
+    const pick2 = byNeighbours(exact);
+    if (pick2) return { status: "matched", index: pick2.i, method: "exact-text", confidence: 0.8 };
+    return { status: "ambiguous", confidence: 0, candidates: exact.length };
+  }
+  const scored = all.map((i) => ({ i, sim: textSimilarity(anchor.text, normalized2[i]), n: neighbours(i) })).filter(({ sim, n }) => n === 2 && sim >= 0.5 || n === 1 && sim >= 0.8).map((s) => ({ ...s, score: 0.4 * s.sim + 0.2 * s.n })).sort((a, b) => b.score - a.score);
+  if (!scored.length) return { status: "not-found", confidence: 0 };
+  if (scored.length > 1 && scored[0].score - scored[1].score < 0.1)
+    return {
+      status: "ambiguous",
+      confidence: 0,
+      candidates: scored.filter((s) => scored[0].score - s.score < 0.1).length
+    };
+  return {
+    status: "matched",
+    index: scored[0].i,
+    method: "text-and-neighbours",
+    confidence: round3(scored[0].score)
+  };
+}
+function resolutionFor(anchor, note, options = {}) {
+  const base = {
+    anchorId: anchor.anchorId,
+    noteId: note.id,
+    needsReminting: false,
+    resolved: false
+  };
+  const result = matchAnchor(anchor, note.paragraphs, options);
+  if (result.status === "ambiguous")
+    return {
+      ...base,
+      status: "ambiguous",
+      confidence: 0,
+      candidates: result.candidates,
+      message: `${result.candidates} paragraphs match the anchor equally well; refusing to guess`
+    };
+  if (result.status === "not-found")
+    return {
+      ...base,
+      status: "not-found",
+      confidence: 0,
+      message: "The anchored paragraph is no longer in the note (deleted, or edited beyond recognition)"
+    };
+  const p = note.paragraphs[result.index];
+  const match = {
+    blockIndex: p.blockIndex,
+    text: p.text,
+    paragraphId: p.paragraphId,
+    paragraphIdStatus: p.paragraphIdStatus,
+    ...p.sharedWith !== void 0 ? { sharedWith: p.sharedWith } : {}
+  };
+  const changes = {
+    textChanged: textFingerprint(normalizeParagraphText(p.text)) !== anchor.fingerprint,
+    blockIndexChanged: p.blockIndex !== anchor.blockIndex,
+    paragraphIdChanged: p.paragraphId !== anchor.paragraphId
+  };
+  const found = { ...base, method: result.method, confidence: result.confidence, match, changes };
+  if (result.status === "low-confidence")
+    return {
+      ...found,
+      status: "low-confidence",
+      message: `The best candidate scored ${result.confidence}, below the minimum; refusing to link it`
+    };
+  if (p.paragraphIdStatus === "unique" && note.identifier)
+    return {
+      ...found,
+      status: "resolved",
+      resolved: true,
+      url: paragraphUrl(note.identifier, p.paragraphId),
+      message: `Resolved by ${result.method} (confidence ${result.confidence})`
+    };
+  return {
+    ...found,
+    status: "needs-reminting",
+    needsReminting: true,
+    message: p.paragraphIdStatus === "shared" ? `Found the paragraph by ${result.method}, but its ID is shared with ${p.sharedWith} other paragraph(s); it needs a new paragraph ID before it can be linked` : `Found the paragraph by ${result.method}, but it has no paragraph ID; it needs one before it can be linked`
+  };
+}
+function noteByIdentifierSql(columns2) {
+  return `SELECT json_object('pk', n.Z_PK, 'active', CASE WHEN ${activeNoteSql(columns2, "n", "f")} THEN 1 ELSE 0 END, 'store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1)) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZIDENTIFIER IN (CAST(@upper AS TEXT), CAST(@lower AS TEXT)) ORDER BY n.Z_PK;`;
+}
+function resolveAnchorDetailed(anchor, { dbPath: dbPath2 = NOTES_DB_PATH8, minConfidence } = {}) {
+  const none = { anchorId: anchor.anchorId, resolved: false, needsReminting: false, confidence: 0 };
+  const columns2 = readColumns(dbPath2);
+  const rows = parseJsonLines(
+    runReadOnlySql(dbPath2, noteByIdentifierSql(columns2), {
+      upper: { blob: Buffer.from(anchor.noteIdentifier.toUpperCase(), "utf8") },
+      lower: { blob: Buffer.from(anchor.noteIdentifier.toLowerCase(), "utf8") }
+    })
+  );
+  if (!rows.length || !rows[0].store)
+    return {
+      resolution: {
+        ...none,
+        status: "note-not-found",
+        message: `No note with identifier ${anchor.noteIdentifier} is in the Notes database`
+      }
+    };
+  if (rows.length > 1)
+    return {
+      resolution: {
+        ...none,
+        status: "ambiguous",
+        candidates: rows.length,
+        message: `${rows.length} notes carry identifier ${anchor.noteIdentifier}; refusing to guess`
+      }
+    };
+  const noteId3 = noteIdFor(rows[0].store, rows[0].pk);
+  if (!rows[0].active)
+    return {
+      resolution: {
+        ...none,
+        noteId: noteId3,
+        status: "note-deleted",
+        message: "The note is in Recently Deleted or awaiting deletion"
+      }
+    };
+  let note;
+  try {
+    note = readNoteParagraphs({ id: noteId3 }, { dbPath: dbPath2 });
+  } catch (error2) {
+    if (error2 instanceof ParagraphLinkError)
+      return {
+        resolution: {
+          ...none,
+          noteId: noteId3,
+          status: error2.reason === "not-found" ? "note-not-found" : "note-unreadable",
+          message: error2.message
+        }
+      };
+    throw error2;
+  }
+  return { resolution: resolutionFor(anchor, note, { minConfidence }), note };
+}
+var reminter;
+function setParagraphIdReminter(fn) {
+  reminter = fn;
+}
+function paragraphIdReminter() {
+  return reminter;
+}
+
+// src/services/privateWriterReminter.ts
+function writerParagraphIdReminter(depsFactory = () => defaultWriterDeps()) {
+  return async (request) => {
+    const deps = depsFactory();
+    if (!privateWritesEnabled(deps.env))
+      throw new PrivateWriteError(
+        "disabled",
+        "Re-minting needs APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1",
+        false
+      );
+    const state = readWriterNoteState(request.noteIdentifier, deps);
+    const result = setParagraphId(
+      {
+        identifier: request.noteIdentifier,
+        blockIndex: request.blockIndex,
+        expectedText: request.expectedText,
+        ifRevision: state.revision
+      },
+      deps
+    );
+    return { paragraphId: result.paragraphId };
+  };
+}
+function installWriterParagraphIdReminter(env = process.env, depsFactory) {
+  if (!privateWritesEnabled(env)) {
+    setParagraphIdReminter(void 0);
+    return false;
+  }
+  setParagraphIdReminter(writerParagraphIdReminter(depsFactory));
+  return true;
+}
+
 // src/utils/localServer.ts
 import { randomBytes as randomBytes3, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
@@ -65946,238 +66211,6 @@ ${TEMPLATES_USAGE}`);
 
 // src/services/anchorServer.ts
 import { createServer as createServer2 } from "node:http";
-
-// src/utils/paragraphAnchors.ts
-import { createHash as createHash8 } from "node:crypto";
-var ANCHOR_ID_PATTERN = /^pa_[0-9a-f]{24}$/;
-var DEFAULT_MIN_CONFIDENCE = 0.6;
-var textFingerprint = (normalized2) => createHash8("sha256").update(normalized2, "utf8").digest("hex").slice(0, 32);
-function textSimilarity(a, b) {
-  if (a === b) return 1;
-  if (!a || !b) return 0;
-  const size = Math.min(a.length, b.length) < 3 ? 2 : 3;
-  const grams = (s) => {
-    const out = /* @__PURE__ */ new Map();
-    const padded = ` ${s} `;
-    for (let i = 0; i + size <= padded.length; i++) {
-      const g = padded.slice(i, i + size);
-      out.set(g, (out.get(g) ?? 0) + 1);
-    }
-    return out;
-  };
-  const ga = grams(a);
-  const gb = grams(b);
-  let shared = 0;
-  let total = 0;
-  for (const count2 of ga.values()) total += count2;
-  for (const [g, count2] of gb) {
-    total += count2;
-    shared += Math.min(count2, ga.get(g) ?? 0);
-  }
-  return total ? 2 * shared / total : 0;
-}
-var round3 = (value) => Math.round(value * 100) / 100;
-function anchorFor(note, paragraph2, { anchorId, now }) {
-  if (!note.identifier)
-    throw new CodedError("The note has no stored identifier, so no anchor can be recorded", {
-      code: "unsupported"
-    });
-  const i = note.paragraphs.indexOf(paragraph2);
-  if (i < 0) throw new Error("The paragraph does not belong to this note");
-  const fp = (p) => p ? textFingerprint(normalizeParagraphText(p.text)) : null;
-  const text2 = normalizeParagraphText(paragraph2.text);
-  return {
-    anchorId,
-    noteIdentifier: note.identifier.toUpperCase(),
-    noteId: note.id,
-    paragraphId: paragraph2.paragraphId,
-    paragraphIdStatus: paragraph2.paragraphIdStatus,
-    text: text2,
-    fingerprint: textFingerprint(text2),
-    prevFingerprint: fp(note.paragraphs[i - 1]),
-    nextFingerprint: fp(note.paragraphs[i + 1]),
-    blockIndex: paragraph2.blockIndex,
-    style: paragraph2.style,
-    createdAt: now.toISOString()
-  };
-}
-function matchAnchor(anchor, paragraphs, { minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
-  const result = findAnchor(anchor, paragraphs);
-  return result.status === "matched" && result.confidence < minConfidence ? { ...result, status: "low-confidence" } : result;
-}
-function findAnchor(anchor, paragraphs) {
-  const normalized2 = paragraphs.map((p) => normalizeParagraphText(p.text));
-  const fps = normalized2.map(textFingerprint);
-  const neighbours = (i) => Number((fps[i - 1] ?? null) === anchor.prevFingerprint) + Number((fps[i + 1] ?? null) === anchor.nextFingerprint);
-  const all = paragraphs.map((_, i) => i);
-  const byNeighbours = (candidates) => {
-    const scored2 = candidates.map((i) => ({ i, n: neighbours(i) }));
-    const best = Math.max(...scored2.map((s) => s.n));
-    const top = scored2.filter((s) => s.n === best);
-    return best > 0 && top.length === 1 ? top[0] : void 0;
-  };
-  if (anchor.paragraphId) {
-    const owners = all.filter((i) => paragraphs[i].paragraphId === anchor.paragraphId);
-    if (owners.length === 1 && paragraphs[owners[0]].paragraphIdStatus === "unique") {
-      const i = owners[0];
-      const same = fps[i] === anchor.fingerprint;
-      const confidence = same ? 1 : 0.8 + 0.15 * Math.max(textSimilarity(anchor.text, normalized2[i]), neighbours(i) / 2);
-      return { status: "matched", index: i, method: "paragraph-id", confidence: round3(confidence) };
-    }
-    const exact2 = owners.filter((i) => fps[i] === anchor.fingerprint);
-    if (exact2.length === 1)
-      return { status: "matched", index: exact2[0], method: "paragraph-id", confidence: 0.95 };
-    if (exact2.length > 1) {
-      const pick2 = byNeighbours(exact2);
-      if (pick2)
-        return { status: "matched", index: pick2.i, method: "paragraph-id", confidence: 0.9 };
-    }
-  }
-  const exact = all.filter((i) => fps[i] === anchor.fingerprint);
-  if (exact.length === 1) {
-    const confidence = neighbours(exact[0]) > 0 ? 0.95 : 0.85;
-    return { status: "matched", index: exact[0], method: "exact-text", confidence };
-  }
-  if (exact.length > 1) {
-    const pick2 = byNeighbours(exact);
-    if (pick2) return { status: "matched", index: pick2.i, method: "exact-text", confidence: 0.8 };
-    return { status: "ambiguous", confidence: 0, candidates: exact.length };
-  }
-  const scored = all.map((i) => ({ i, sim: textSimilarity(anchor.text, normalized2[i]), n: neighbours(i) })).filter(({ sim, n }) => n === 2 && sim >= 0.5 || n === 1 && sim >= 0.8).map((s) => ({ ...s, score: 0.4 * s.sim + 0.2 * s.n })).sort((a, b) => b.score - a.score);
-  if (!scored.length) return { status: "not-found", confidence: 0 };
-  if (scored.length > 1 && scored[0].score - scored[1].score < 0.1)
-    return {
-      status: "ambiguous",
-      confidence: 0,
-      candidates: scored.filter((s) => scored[0].score - s.score < 0.1).length
-    };
-  return {
-    status: "matched",
-    index: scored[0].i,
-    method: "text-and-neighbours",
-    confidence: round3(scored[0].score)
-  };
-}
-function resolutionFor(anchor, note, options = {}) {
-  const base = {
-    anchorId: anchor.anchorId,
-    noteId: note.id,
-    needsReminting: false,
-    resolved: false
-  };
-  const result = matchAnchor(anchor, note.paragraphs, options);
-  if (result.status === "ambiguous")
-    return {
-      ...base,
-      status: "ambiguous",
-      confidence: 0,
-      candidates: result.candidates,
-      message: `${result.candidates} paragraphs match the anchor equally well; refusing to guess`
-    };
-  if (result.status === "not-found")
-    return {
-      ...base,
-      status: "not-found",
-      confidence: 0,
-      message: "The anchored paragraph is no longer in the note (deleted, or edited beyond recognition)"
-    };
-  const p = note.paragraphs[result.index];
-  const match = {
-    blockIndex: p.blockIndex,
-    text: p.text,
-    paragraphId: p.paragraphId,
-    paragraphIdStatus: p.paragraphIdStatus,
-    ...p.sharedWith !== void 0 ? { sharedWith: p.sharedWith } : {}
-  };
-  const changes = {
-    textChanged: textFingerprint(normalizeParagraphText(p.text)) !== anchor.fingerprint,
-    blockIndexChanged: p.blockIndex !== anchor.blockIndex,
-    paragraphIdChanged: p.paragraphId !== anchor.paragraphId
-  };
-  const found = { ...base, method: result.method, confidence: result.confidence, match, changes };
-  if (result.status === "low-confidence")
-    return {
-      ...found,
-      status: "low-confidence",
-      message: `The best candidate scored ${result.confidence}, below the minimum; refusing to link it`
-    };
-  if (p.paragraphIdStatus === "unique" && note.identifier)
-    return {
-      ...found,
-      status: "resolved",
-      resolved: true,
-      url: paragraphUrl(note.identifier, p.paragraphId),
-      message: `Resolved by ${result.method} (confidence ${result.confidence})`
-    };
-  return {
-    ...found,
-    status: "needs-reminting",
-    needsReminting: true,
-    message: p.paragraphIdStatus === "shared" ? `Found the paragraph by ${result.method}, but its ID is shared with ${p.sharedWith} other paragraph(s); it needs a new paragraph ID before it can be linked` : `Found the paragraph by ${result.method}, but it has no paragraph ID; it needs one before it can be linked`
-  };
-}
-function noteByIdentifierSql(columns2) {
-  return `SELECT json_object('pk', n.Z_PK, 'active', CASE WHEN ${activeNoteSql(columns2, "n", "f")} THEN 1 ELSE 0 END, 'store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1)) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZIDENTIFIER IN (CAST(@upper AS TEXT), CAST(@lower AS TEXT)) ORDER BY n.Z_PK;`;
-}
-function resolveAnchorDetailed(anchor, { dbPath: dbPath2 = NOTES_DB_PATH8, minConfidence } = {}) {
-  const none = { anchorId: anchor.anchorId, resolved: false, needsReminting: false, confidence: 0 };
-  const columns2 = readColumns(dbPath2);
-  const rows = parseJsonLines(
-    runReadOnlySql(dbPath2, noteByIdentifierSql(columns2), {
-      upper: { blob: Buffer.from(anchor.noteIdentifier.toUpperCase(), "utf8") },
-      lower: { blob: Buffer.from(anchor.noteIdentifier.toLowerCase(), "utf8") }
-    })
-  );
-  if (!rows.length || !rows[0].store)
-    return {
-      resolution: {
-        ...none,
-        status: "note-not-found",
-        message: `No note with identifier ${anchor.noteIdentifier} is in the Notes database`
-      }
-    };
-  if (rows.length > 1)
-    return {
-      resolution: {
-        ...none,
-        status: "ambiguous",
-        candidates: rows.length,
-        message: `${rows.length} notes carry identifier ${anchor.noteIdentifier}; refusing to guess`
-      }
-    };
-  const noteId3 = noteIdFor(rows[0].store, rows[0].pk);
-  if (!rows[0].active)
-    return {
-      resolution: {
-        ...none,
-        noteId: noteId3,
-        status: "note-deleted",
-        message: "The note is in Recently Deleted or awaiting deletion"
-      }
-    };
-  let note;
-  try {
-    note = readNoteParagraphs({ id: noteId3 }, { dbPath: dbPath2 });
-  } catch (error2) {
-    if (error2 instanceof ParagraphLinkError)
-      return {
-        resolution: {
-          ...none,
-          noteId: noteId3,
-          status: error2.reason === "not-found" ? "note-not-found" : "note-unreadable",
-          message: error2.message
-        }
-      };
-    throw error2;
-  }
-  return { resolution: resolutionFor(anchor, note, { minConfidence }), note };
-}
-var reminter;
-function paragraphIdReminter() {
-  return reminter;
-}
-
-// src/services/anchorServer.ts
 var MIN_TOKEN_LENGTH = 32;
 var STATUS_CODE = {
   resolved: 302,
@@ -66674,10 +66707,12 @@ async function resolveStoredAnchor(anchorId, {
         ({ resolution, note } = resolveAnchorDetailed(anchor, { dbPath: dbPath2, minConfidence }));
         Object.assign(out, resolution, { remint: { attempted: true, paragraphId } });
       } catch (error2) {
+        const committed = error2?.committed;
         out.remint = {
           attempted: true,
           reason: "writer-failed",
-          message: error2 instanceof Error ? error2.message : String(error2)
+          message: error2 instanceof Error ? error2.message : String(error2),
+          ...typeof committed === "boolean" || committed === "unknown" ? { committed } : {}
         };
       }
     }
@@ -66812,6 +66847,7 @@ registerPrivateWriterTableTools(server, notesManager);
 registerPrivateWriterSmartFolderTools(server);
 registerPrivatePaperWriterTools(server, notesManager);
 registerPrivateWriterPurgeRepairTools(server, notesManager);
+installWriterParagraphIdReminter();
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;
@@ -68041,7 +68077,7 @@ registerTool(
 registerTool(
   "resolve-paragraph-anchor",
   {
-    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); never changes Notes. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until a writer gives it a new ID; remint asks such a writer only when one is installed (none is by default). refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
+    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); changes Notes only with remint and the opt-in private writer. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until the paragraph gets a new ID. remint: true then calls the private writer's native-set-paragraph-id on the matched block (with a fresh revision, refusing if the paragraph changed) and resolves again; it runs only when APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1 (and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1), and otherwise reports writer-unavailable. refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
     inputSchema: {
       anchorId: anchorIdInput,
       minConfidence: external_exports.number().min(0).max(1).optional().describe(`Lowest confidence accepted as a match (default ${DEFAULT_MIN_CONFIDENCE})`),
@@ -68049,7 +68085,7 @@ registerTool(
         "Update the stored anchor to the matched paragraph as it is now (default false; only at confidence 0.8 or more)"
       ),
       remint: external_exports.boolean().optional().describe(
-        "On needs-reminting, ask the installed paragraph-ID writer for a new ID (default false; reports writer-unavailable when none is installed)"
+        "On needs-reminting, give the paragraph a new ID through the private writer and resolve again (default false; reports writer-unavailable unless both writer switches are on)"
       )
     },
     outputSchema: {

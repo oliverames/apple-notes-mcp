@@ -44,6 +44,8 @@ export interface StoredResolution extends AnchorResolution {
     paragraphId?: string;
     reason?: "writer-unavailable" | "not-needed" | "writer-failed";
     message?: string;
+    /** From a failed writer call: false means nothing was written; "unknown" means read the note before retrying. */
+    committed?: boolean | "unknown";
   };
 }
 
@@ -102,10 +104,12 @@ export async function resolveStoredAnchor(
         ({ resolution, note } = resolveAnchorDetailed(anchor, { dbPath, minConfidence }));
         Object.assign(out, resolution, { remint: { attempted: true, paragraphId } });
       } catch (error) {
+        const committed = (error as { committed?: unknown } | null)?.committed;
         out.remint = {
           attempted: true,
           reason: "writer-failed",
           message: error instanceof Error ? error.message : String(error),
+          ...(typeof committed === "boolean" || committed === "unknown" ? { committed } : {}),
         };
       }
     }

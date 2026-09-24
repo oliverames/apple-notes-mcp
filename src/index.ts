@@ -210,6 +210,7 @@ import { registerPrivateWriterTableTools } from "@/tools/privateWriterTableTools
 import { registerPrivateWriterSmartFolderTools } from "@/tools/privateWriterSmartFolderTools.js";
 import { registerPrivatePaperWriterTools } from "@/tools/privatePaperWriterTools.js";
 import { registerPrivateWriterPurgeRepairTools } from "@/tools/privateWriterPurgeRepairTools.js";
+import { installWriterParagraphIdReminter } from "@/services/privateWriterReminter.js";
 import { runTemplatesCommand } from "@/services/templateEditorCli.js";
 import { runAnchorsCli } from "@/services/anchorServer.js";
 import { AnchorRegistry } from "@/services/anchorRegistry.js";
@@ -327,6 +328,8 @@ registerPrivateWriterTableTools(server, notesManager);
 registerPrivateWriterSmartFolderTools(server);
 registerPrivatePaperWriterTools(server, notesManager);
 registerPrivateWriterPurgeRepairTools(server, notesManager);
+// resolve-paragraph-anchor remint: the writer's set_paragraph_id, only with both writer switches on.
+installWriterParagraphIdReminter();
 
 // =============================================================================
 // Response Helpers
@@ -2195,7 +2198,7 @@ registerTool(
   "resolve-paragraph-anchor",
   {
     description:
-      "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); never changes Notes. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until a writer gives it a new ID; remint asks such a writer only when one is installed (none is by default). refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
+      "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); changes Notes only with remint and the opt-in private writer. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until the paragraph gets a new ID. remint: true then calls the private writer's native-set-paragraph-id on the matched block (with a fresh revision, refusing if the paragraph changed) and resolves again; it runs only when APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1 (and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1), and otherwise reports writer-unavailable. refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
     inputSchema: {
       anchorId: anchorIdInput,
       minConfidence: z
@@ -2214,7 +2217,7 @@ registerTool(
         .boolean()
         .optional()
         .describe(
-          "On needs-reminting, ask the installed paragraph-ID writer for a new ID (default false; reports writer-unavailable when none is installed)"
+          "On needs-reminting, give the paragraph a new ID through the private writer and resolve again (default false; reports writer-unavailable unless both writer switches are on)"
         ),
     },
     outputSchema: {
