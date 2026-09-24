@@ -527,8 +527,10 @@ and 64 levels of nesting. An unknown field such as `titel:x` is an error rather
 than a silent text search; quote it to search the literal text.
 
 Password-protected notes match on title and metadata only. Their bodies are
-encrypted, so body predicates never match them, and `-body:x` therefore does.
-Their snippets are always empty.
+encrypted, so a body predicate is unknown for them rather than false: neither
+`body:x` nor `-body:x` matches them, though `-body:x OR pinned` matches a
+pinned one. Notes whose body cannot be decoded are treated the same way. Their
+snippets are always empty.
 
 **Example - Open to-dos in a folder:**
 ```json
@@ -1355,7 +1357,7 @@ Lists notes from the NoteStore database (read-only) by stored modification time,
 - **Browsing.** Without `since`, rows come newest first. `nextSince` is then the newest row's cursor, set only when the call returned every matching note (`saturated` is `false`); otherwise it is `null`.
 - **Late edits.** A modification-date cursor can miss an edit that iCloud delivers later from another device with an older timestamp, for example after that device was offline. The row then sorts before the cursor. Run a full pass from the start now and then to catch these.
 - **Deletions.** Deleted notes are invisible unless `includeDeleted` is `true`. With it, notes in Recently Deleted and notes awaiting deletion appear, flagged, when their modification date is after the cursor. A note purged from the database leaves no row, so compare ids against a full pass to detect it.
-- **Word counts.** A word is a whitespace-separated token containing a letter or digit; `charCount` counts Unicode code points. Attachment markers are not counted. Both are `null` for locked notes and bodies that are not downloaded or cannot be decoded, and `0` for a body known to be empty.
+- **Word counts.** A word is a whitespace-separated token containing a letter or digit, except that Chinese, Japanese, Thai, Lao, Khmer and Myanmar text, which has no spaces between words, is split at word boundaries (the same count `query-notes` uses for `words:` and `wordCount`); `charCount` counts Unicode code points. Attachment markers are not counted. Both are `null` for locked notes and bodies that are not downloaded or cannot be decoded, and `0` for a body known to be empty.
 - **Previews.** With `wordCounts`, `bodyPreview` comes from the decoded body and `textDecoded` is `true`. Otherwise it is the stored snippet. Locked notes never get a preview.
 - Folderless notes (abandoned Quick Note drafts Notes.app never shows) and Recently Deleted appear only with `includeDeleted`. Notes without a stored modification date never match a `since` query.
 
@@ -2015,7 +2017,7 @@ Decodes a note's classic PencilKit drawings (`com.apple.drawing.2` and the older
 | `format` | string | No | `"json"` (default) returns strokes, `"svg"` returns a standalone SVG document per drawing, `"both"` returns both |
 | `includePoints` | boolean | No | Include per-point `x`, `y`, `width`, `opacity`, and `force` in JSON strokes (default `true`) |
 
-**Returns:** `status` (`ok`, `partial`, `error`, or `none` when the note has no classic drawing), `drawingCount`, and one entry per drawing with `attachmentId`, `identifier`, `typeUti`, `status` (`ok`, or `error` with a `code` such as `no_data`, `undecodable`, or `timeout`), `strokeCount`, `bounds`, `truncated`, `strokes` (each with `inkType`, sRGB `color` with alpha, mean `width`, `pointCount`, `bounds`, and `points`), and `svg`. Points are already in drawing coordinates. When a response would exceed `APPLE_NOTES_MCP_EXPORT_MAX_BYTES`, points are dropped and `pointsOmitted` is set. The SVG draws one path per stroke; it is a faithful outline, not a pixel-exact copy of PencilKit's ink textures.
+**Returns:** `status` (`ok`, `partial`, `error`, or `none` when the note has no classic drawing), `drawingCount`, and one entry per drawing with `attachmentId`, `identifier`, `typeUti`, `status` (`ok`, or `error` with a `code` such as `no_data`, `undecodable`, or `timeout`), `strokeCount`, `bounds`, `truncated`, `strokes` (each with `inkType`, sRGB `color` with alpha, mean `width`, `pointCount`, `bounds`, and `points`), and `svg`. Points are already in drawing coordinates. Ink removed with the pixel eraser is left out: a partly erased stroke comes back as one entry per visible piece, each marked `masked: true`, and `hiddenStrokeCount` counts strokes erased completely. `pointsTruncated: true` marks a stroke cut short by the helper's point limit. When a response would exceed `APPLE_NOTES_MCP_EXPORT_MAX_BYTES`, points are dropped and `pointsOmitted` is set, then SVG documents are dropped and `svgOmitted` is set; if it still does not fit, the call fails with an error instead. The SVG draws one path per stroke; it is a faithful outline, not a pixel-exact copy of PencilKit's ink textures.
 
 ---
 
@@ -2046,7 +2048,7 @@ Each take gets a deadline of 1.5 times its length plus a minute (at most 30 minu
 
 **Speech models:** the call never starts a download on its own. When the language's on-device model is not installed, it returns `asset_unavailable` right away. Pass `downloadAssets: true` to let macOS download it (a one-time download); if it is still downloading when the call ends, try again shortly.
 
-**Speech Recognition permission:** the server never shows the Speech Recognition prompt, because nobody may be watching an MCP server to answer it. The helper reads the current authorization first. On older macOS, the `SFSpeechRecognizer` path needs that access, and macOS attributes the grant to the app that launches the MCP server (Claude Desktop, Codex, Terminal, and so on), not to the helper. Without it the call returns `code: "permission_required"`; allow the app under System Settings > Privacy & Security > Speech Recognition. On macOS 26 and later, `SpeechAnalyzer` transcribed files without any grant in testing (authorization stayed "not determined"), so only an explicit refusal (denied or restricted) stops it.
+**Speech Recognition permission:** the server never shows the Speech Recognition prompt, because nobody may be watching an MCP server to answer it. The helper reads the current authorization first. On older macOS, the `SFSpeechRecognizer` path needs that access, and macOS attributes the grant to the app that launches the MCP server (Claude Desktop, Codex, Terminal, and so on), not to the helper. Without it the call returns `code: "permission_required"`; allow the app under System Settings > Privacy & Security > Speech Recognition. If the app has never asked for Speech Recognition access, macOS does not list it there yet, and the call returns `code: "permission_not_requested"` instead: use macOS 26 or later, or run the server from an app that already has the access. On macOS 26 and later, `SpeechAnalyzer` transcribed files without any grant in testing (authorization stayed "not determined"), so only an explicit refusal (denied or restricted) stops it.
 
 ---
 
@@ -2135,8 +2137,10 @@ file then goes through [`add-attachment`](#add-attachment)'s checks.
 
 **Returns:** the `add-attachment` result plus `source` (`kind`: `file` or
 `data`, the pasteboard `type`, and the default `filename`). A copied file wins
-over image data; among data types PNG is preferred, then JPEG, HEIC, GIF, TIFF,
-and PDF.
+over image data; among data types PDF is preferred (a copied PDF usually comes
+with a raster preview of itself), then PNG, JPEG, HEIC, GIF, and TIFF. Several
+copied files or several image or PDF items are refused rather than attaching
+only the first.
 
 **Paste privacy (macOS 15.4 and later):** macOS can show an alert asking
 whether to allow a paste when a process reads the general pasteboard without a
@@ -2160,6 +2164,7 @@ before 15.4 the property does not exist and the pasteboard is read as before.
 | `pasteboard_empty` | `validation_error` | Nothing is on the pasteboard |
 | `unsupported_content` | `validation_error` | No PNG, JPEG, HEIC, GIF, TIFF, PDF, or copied file (text belongs in `append-to-note`); the message and `types` list the pasteboard types found |
 | `multiple_files` | `validation_error` | More than one copied file; `count` says how many. Copy one file, or use `add-attachment` per file |
+| `multiple_items` | `validation_error` | More than one image or PDF item (not files); `count` says how many. Copy one, or save each and use `add-attachment` |
 | `too_large` | `validation_error` | More than 64 MiB |
 | `file_unreadable` | `validation_error` | The copied file is a symlink, empty, over 64 MiB, or unreadable |
 | `pasteboard_changed` | `operation_failed` | The pasteboard changed while it was being read; try again |
@@ -2231,7 +2236,7 @@ Lists the Paper drawings (`com.apple.paper`) and classic drawings (`com.apple.dr
 |-----------|------|----------|-------------|
 | `id` | string | Yes | Exact CoreData note ID |
 
-**Returns:** Per drawing: `attachmentId`, `identifier`, `uti`, `kind` (`paper` or `drawing`), `handwritingSummary` (the handwriting text Notes recognized, or `null` when it stored none), `bundlePresent` (the Paper data bundle is on disk), `fallbackImagePath` (Notes' full rendering), `previewPath` (its largest thumbnail), and `raster` `{source, format, width, height}`: the validated image `export-paper-image` would copy, or `null`.
+**Returns:** Per drawing: `attachmentId`, `identifier`, `uti`, `kind` (`paper` or `drawing`), `handwritingSummary` (the handwriting text Notes recognized, or `null` when it stored none), `bundlePresent` (the Paper data bundle is on disk), `fallbackImagePath` (Notes' full rendering), `fallbackImageStale` (true when Notes recorded a newer rendering than the one on disk, so the image may not show the latest strokes; `export-paper-image` then reports `stale: true`), `previewPath` (its largest thumbnail), and `raster` `{source, format, width, height}`: the validated image `export-paper-image` would copy, or `null`.
 
 Strokes are not decoded. Notes' Paper bundle has no public reader, so the image is Notes' own rendering.
 
@@ -2292,7 +2297,7 @@ Copies a note's attachment files into a directory without opening Notes.app.
 | `exportDir` | string | Yes | Absolute destination directory, created if missing. Same allowlist as `save-attachment` (home, temp, or `/Volumes`), and never inside the Notes data folder |
 | `firstImageOnly` | boolean | No | Export only the lead visual that `list-attachments` `firstImage` reports |
 
-**Returns:** `exportDir`, counts (`exported`, `previews`, `skipped`, `failed`), and per attachment its `attachmentId`, `identifier`, `kind`, `exportedTo`, and `exportedKind`: `"asset"` for the real file, `"preview"` when the asset never downloaded and only Notes' thumbnail was on disk, or `null` when nothing was on disk. A preview is never chosen over an available asset, and it is named `<name>-preview.<ext>` so it is not mistaken for the original. A scan gallery with no file of its own exports its pages.
+**Returns:** `exportDir`, counts (`exported`, `previews`, `fallbacks`, `skipped`, `failed`), and per attachment its `attachmentId`, `identifier`, `kind`, `exportedTo`, and `exportedKind`: `"asset"` for the real file, `"fallback"` for Notes' own full rendering of it (a drawing's PNG or a scan's PDF, named with that format's extension), `"preview"` when the asset never downloaded and only Notes' thumbnail was on disk, or `null` when nothing was on disk. `inBody: false` marks an attachment the note body no longer shows, and `stale: true` marks a rendering taken from an older generation because the one Notes recorded is missing; attachments inside a container Notes has deleted are not exported. A preview is never chosen over an available asset, and it is named `<name>-preview.<ext>` so it is not mistaken for the original. A scan gallery with no file of its own exports its pages.
 
 **⚠️ Safety:** Existing files are never replaced. A name that is taken gets `-2`, `-3`, and so on. Reads NoteStore and the Notes data folder read-only and needs Full Disk Access.
 

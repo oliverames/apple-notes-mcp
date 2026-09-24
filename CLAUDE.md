@@ -178,6 +178,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `update-note`, `append-to-note`, `delete-note`, and `move-note` accept optional `ifFolderId`, `ifAncestorFolderId`, and `forbiddenAncestorFolderIds` (exact folder ids from `list-folders`).
 - Use them when a write should only happen while the note is still where you reviewed it, or must never touch a protected subtree (for `move-note`, the destination is checked against the forbidden list too).
 - They are re-checked inside the write's own AppleScript. A failure reads `Scope guard failed: …` and nothing is changed; re-read the note before retrying.
+- A forbidden id that matches no folder fails the guard (`a forbidden folder id does not match any folder`) rather than being ignored; take ids from `list-folders`.
 
 ### list-smart-folders
 - Read-only; reads the NoteStore database, so it needs Full Disk Access
@@ -202,9 +203,9 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`; `checklist:open|done`; `pinned`, `locked`, `shared`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
 - Scans the 500 most recently modified notes by default (`scanLimit` up to 5000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
 - Excludes Recently Deleted and folderless notes unless `includeDeleted: true`
-- Locked notes match on title and metadata only; body predicates never match them
+- Locked notes match on title and metadata only; body predicates never match them, negated or not (`-body:x` does not match a locked or undecodable note)
 - Each hit has `matchedIn` (where the positive text terms occur: `title`, `body`, or both) when the query has a text term and the body is readable; a `title:` term only counts toward the title and a `body:` term only toward the body. An empty list means the note matched through a non-text branch (`pinned OR x`)
-- `includeWordCount: true` adds `wordCount`, the same count `words:` filters on (null = locked or unreadable). A metadata-only query reads just the returned notes' bodies in one extra query
+- `includeWordCount: true` adds `wordCount`, the same count `words:` filters on (null = locked or unreadable). Chinese, Japanese and Thai text is counted by word boundaries, not by spaces. A metadata-only query reads just the returned notes' bodies in one extra query
 - Result ids chain directly into `get-note-content` and every other id-based tool
 
 ### list-notes
@@ -254,7 +255,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Use when the user says "attach what I copied" or "put this screenshot in the note". Same `id`, `expectedContentHash`, and `filename` as `add-attachment`; a `filename` without an extension gets the pasted type's extension.
 - It reads the pasteboard once, freezes the bytes into a private temporary file, and never writes to the pasteboard. A copied file wins over image data; text-only contents are refused (use `append-to-note` for text).
 - `source` in the result says what was attached (`kind`, pasteboard `type`, default `filename`). An "unreachable" error means the MCP host is not running in the user's GUI session.
-- The note and revision are checked before the pasteboard is read. Errors carry `pasteboardCode`. `pasteboard_access_denied` (macOS 15.4+ paste privacy): nothing was read because macOS would show its paste alert; ask the user before retrying with `allowPasteAlert: true`, which makes macOS show the alert. `alwaysDeny` cannot be overridden. `multiple_files`: several copied files are refused; use `add-attachment` per file.
+- The note and revision are checked before the pasteboard is read. Errors carry `pasteboardCode`. `pasteboard_access_denied` (macOS 15.4+ paste privacy): nothing was read because macOS would show its paste alert; ask the user before retrying with `allowPasteAlert: true`, which makes macOS show the alert. `alwaysDeny` cannot be overridden. `multiple_files`: several copied files are refused; use `add-attachment` per file. `multiple_items`: several copied images or PDFs are refused the same way. When a copy offers a PDF and a raster preview of it, the PDF is attached.
 - A pasted PDF is inserted but reported as "insertion outcome uncertain" on macOS 27 (issue #236: AppleScript does not list PDF attachments, so neither this tool nor `add-attachment` can verify them). Read the note with `list-attachments includePaths` or in Notes.app before any retry; never retry blindly.
 
 ### create-table
@@ -329,7 +330,8 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Placeholder features (`checklistToggle`, and `smartFolders` for creating or editing smart folders) always report `not_implemented`; do not attempt them through other tools. `paragraphLinks` and `audioTranscription` are real features gated on Full Disk Access.
 
 ### export-notes-markdown
-- Exactly one of `id` (exact note ID) or `folder` (path, optional `account`, `limit` default 100)
+- Exactly one of `id` (exact note ID) or `folder` (path, optional `account`, `limit` default 100). `truncated: true` means the folder holds more notes than `limit`
+- An `assetsDir` (or template assets directory) that cannot be created fails the export with `[invalid-path]` instead of marking every attachment unavailable
 - Renders from the decoded body, so checklist state, tables and attachment positions are exact; `get-note-markdown` is unchanged
 - A folder document joins notes with `---`. It is a presentation format: never split it back into notes or use it as a backup
 - `outputPath` is create-only; `[output_exists]` means choose a new path, never delete the old file on the user's behalf
@@ -369,7 +371,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### Attachment paths, first image, and batch export
 - `list-attachments` with `includePaths: true` (needs the note `id` and Full Disk Access) adds `assetPaths` (the attachment's own files), `previewPath` (Notes' largest rendered thumbnail, always an image file), and `paths`. Use `assetPaths` when you need the original; a `previewPath` alone means the asset has not downloaded.
 - `list-attachments` with `firstImage: true` returns only the lead visual in body order: the first image even when `path` is `null`, else the first scan or drawing, else `null`.
-- `export-attachments` copies files into `exportDir` (same allowlist as `save-attachment`, never the Notes data folder). Check `exportedKind`: `"preview"` means you got a thumbnail, not the original. It never overwrites; collisions become `-2`, `-3`.
+- `export-attachments` copies files into `exportDir` (same allowlist as `save-attachment`, never the Notes data folder). Check `exportedKind`: `"preview"` means you got a thumbnail, not the original, and `"fallback"` means Notes' own rendering (a drawing's PNG, a scan's PDF). `inBody: false` marks an attachment the body no longer shows. `stale: true` on a fallback (and `fallbackStale` in `list-attachments` paths, `stats.staleRenderings` in Markdown/HTML exports) means the rendering Notes recorded is missing and an older one was used. It never overwrites; collisions become `-2`, `-3`.
 - Do not hand raw Notes paths to a browser or another tool. Export first.
 
 ### get-note-link
@@ -386,14 +388,16 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Decodes `com.apple.drawing.2` / `com.apple.drawing` attachments into strokes (`inkType`, sRGB `color`, `width`, `points`) and/or SVG (`format: "json" | "svg" | "both"`). Modern Paper sketches (`com.apple.paper`) are not decoded.
 - Needs Full Disk Access and the public native helper, built once by the user with `apple-notes-mcp setup --public-helper`. An error mentioning `setup --public-helper` means it is not built or is stale after an upgrade; tell the user to run that command rather than retrying.
 - Overall `status` is `none` when the note has no classic drawing. A per-drawing `status: "error"` carries a `code` (`no_data`, `undecodable`, `timeout`, ...) and does not fail the call.
-- For large drawings pass `includePoints: false` or `format: "svg"`; the server also drops points itself (`pointsOmitted`) past the response size limit.
+- For large drawings pass `includePoints: false` or `format: "svg"`; the server also drops points (`pointsOmitted`) and then SVG (`svgOmitted`) itself past the response size limit, and fails if even that is too large.
+- Pixel-erased ink is not returned: `masked: true` marks a visible piece of a partly erased stroke (one stroke can give several), and `hiddenStrokeCount` counts fully erased strokes.
 
 ### transcribe-note-audio (on-device transcription)
 - Transcribes a note's voice recordings and audio attachments on this Mac with the Speech framework (never a server). Same prerequisites as `get-note-drawings`: Full Disk Access and `apple-notes-mcp setup --public-helper`.
 - Pass `locale` (BCP-47, default `en-US`) when the speech is not US English. Transcribe long recordings one at a time with `attachmentId`; clients may stop waiting after a fixed time.
 - Per-recording `status`: `ok`, `partial` (some text; `code: "incomplete"` or a failed take), `error` (with `code`), or `indeterminate` (the helper timed out; the outcome is unknown, so a retry may work). Overall `none` means the note has no audio.
 - `asset_unavailable` can mean the audio file has not downloaded from iCloud, or that the language's on-device speech model is not installed. The server never downloads a model on its own: ask the user before retrying with `downloadAssets: true`.
-- The server never shows a permission prompt. `permission_required` means the app hosting this server lacks Speech Recognition access; tell the user to allow it under System Settings > Privacy & Security > Speech Recognition rather than retrying.
+- The server never shows a permission prompt. `permission_required` means the app hosting this server lacks Speech Recognition access; tell the user to allow it under System Settings > Privacy & Security > Speech Recognition rather than retrying. `permission_not_requested` (before macOS 26 only) means the host app has never asked for that access, so it is not in that list yet; the user needs macOS 26 or a host app that already has the access.
+- `responseOversized: true` means the transcripts were dropped to fit the response size limit; transcribe one recording at a time with `attachmentId`.
 - `maxSeconds` (30 to 3600, default 900) caps the whole call; takes not started in time report `time_limit`, so transcribe the rest by `attachmentId`. Cancelling the request stops the helper.
 - Use `includeText: false` when only statuses and word counts are needed.
 

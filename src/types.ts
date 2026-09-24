@@ -939,6 +939,13 @@ export interface DrawingStroke {
   points?: DrawingPoint[];
   /** True when the stroke carried a non-identity transform, already applied to its points. */
   transformApplied?: boolean;
+  /**
+   * True when part of the stroke was erased (a pixel eraser or ruler mask):
+   * this entry is one visible piece, and one stroke can yield several entries.
+   */
+  masked?: boolean;
+  /** True when the helper's point limit cut this stroke short; pointCount counts the points returned. */
+  pointsTruncated?: boolean;
 }
 
 /** Decode outcome for one classic drawing attachment. */
@@ -958,6 +965,8 @@ export interface NoteDrawing {
   strokes?: DrawingStroke[];
   /** True when the helper stopped at its stroke or point limit. */
   truncated?: boolean;
+  /** Strokes erased completely (nothing visible), left out of strokes and SVG. */
+  hiddenStrokeCount?: number;
   /** Standalone SVG document, when format is "svg" or "both". */
   svg?: string;
 }
@@ -1013,6 +1022,8 @@ export interface NoteTranscriptionResult {
   status: TranscriptionStatus | "none";
   recordingCount: number;
   recordings: TranscribedRecording[];
+  /** Set when the response did not fit the size limit even with every transcript emptied. */
+  responseOversized?: boolean;
 }
 
 /** Result of get-note-drawings. */
@@ -1469,6 +1480,8 @@ export interface NotesExportAttachmentStats {
   tables: number;
   unreadableTables: number;
   unreferenced: number;
+  /** Notes renderings taken from an older generation than recorded; only when any. */
+  staleRenderings?: number;
 }
 
 /** A note that was selected but could not be exported. */
@@ -1483,6 +1496,8 @@ export interface NotesExportReceipt {
   format: "markdown" | "html";
   /** Notes rendered into the document. */
   count: number;
+  /** Folder exports: the folder holds more notes than `limit`; only the first were exported. */
+  truncated?: boolean;
   /** UTF-8 size of the document. */
   bytes: number;
   /** The document itself, only when no outputPath was given. */

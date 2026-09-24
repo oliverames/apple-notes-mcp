@@ -44,9 +44,15 @@ import {
   SPECIAL_LIMIT,
 } from "@/utils/noteListings.js";
 import { NoteStoreError } from "@/utils/noteStoreSql.js";
-import type { DeleteGuardNote, FolderTreeNode, SpecialNoteKind } from "@/types.js";
+import type {
+  DeleteGuardNote,
+  FolderTreeNode,
+  NoteTranscriptionResult,
+  SpecialNoteKind,
+} from "@/types.js";
 import { folderTree, listRecentNotes, RECENT_LIMIT } from "@/utils/noteRecentList.js";
 import {
+  canonicalCoreDataId,
   exactIdArrayInput,
   exactIdInput,
   lookupStableIdentifiers,
@@ -91,7 +97,7 @@ import {
   unavailableWriteEnvelope,
   type ErrorEnvelope,
 } from "@/utils/errorCodes.js";
-import { createShutdown } from "@/utils/shutdown.js";
+import { createShutdown, InFlightRequests, trackRequests } from "@/utils/shutdown.js";
 import { comparableVisibleText } from "@/utils/noteRevision.js";
 import { CALL_TIMEOUT_SECONDS, runWithCallTimeout } from "@/utils/callTimeout.js";
 import { readAllowedTextFile } from "@/utils/attachmentFs.js";
@@ -166,7 +172,7 @@ import {
 } from "@/services/backgroundNotes.js";
 import { formatShortcutSetup, setupShortcuts } from "@/setupShortcuts.js";
 import { buildPublicHelper, formatPublicHelperBuild } from "@/services/publicHelper.js";
-import { formatNoteDrawings, getNoteDrawings } from "@/services/noteDrawings.js";
+import { fitNoteDrawings, formatNoteDrawings, getNoteDrawings } from "@/services/noteDrawings.js";
 import {
   fitTranscriptions,
   formatTranscription,
@@ -606,10 +612,15 @@ function prepareDeleteGuards(args: DeleteGuardArgs): PreparedDeleteGuards | { er
   if ((guardNoteId === undefined) !== (expectedGuardContentHash === undefined)) {
     return { error: "Pass guardNoteId and expectedGuardContentHash together." };
   }
-  if (guardNoteId === id || requireActiveNoteId === id) {
+  // Compare canonical spellings: Notes resolves a lower-case store UUID to the
+  // same note, so a raw string comparison could let the target guard itself.
+  // The delete script also refuses a guard whose live id is the target's.
+  const same = (a?: string, b?: string) =>
+    a !== undefined && b !== undefined && canonicalCoreDataId(a) === canonicalCoreDataId(b);
+  if (same(guardNoteId, id) || same(requireActiveNoteId, id)) {
     return { error: "A guard note must be a different note from the one being deleted." };
   }
-  if (guardNoteId !== undefined && guardNoteId === requireActiveNoteId) {
+  if (same(guardNoteId, requireActiveNoteId)) {
     return { error: "requireActiveNoteId repeats guardNoteId; pass only guardNoteId." };
   }
 
@@ -1129,7 +1140,7 @@ registerTool(
       'Syntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\n' +
       "Returns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\n" +
       "Do not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\n" +
-      "Safety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates never match them.",
+      "Safety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.",
     inputSchema: {
       query: z
         .string()
@@ -1209,7 +1220,7 @@ registerTool(
     }
     if (result.unreadable > 0) {
       notes.push(
-        `⚠️ ${result.unreadable} note bodies could not be decoded, so body predicates did not match them.`
+        `⚠️ ${result.unreadable} note bodies could not be decoded, so body predicates (including negated ones) did not match them.`
       );
     }
     const footer = notes.length ? `\n\n${notes.join("\n")}` : "";
@@ -1714,7 +1725,9 @@ registerTool(
     if (!note) return notFoundResponse(`Note with ID "${id}" not found`);
     const body = notesManager.getNoteContentById(id);
     if (!body) return errorResponse(`Failed to read content of note "${note.title}"`);
-    const rich = readRichNote(id);
+    // Read-only, so a tel: or sms: link must not hide the native objects; the
+    // revision (and so contentHash) does not depend on which links are kept.
+    const rich = readRichNote(id, { skipUnsafeLinks: true });
     const tables: Array<Record<string, unknown>> = (rich.objectData || [])
       .filter((object) => object.type?.includes("table"))
       .map((object) => {
@@ -3891,6 +3904,7 @@ registerTool(
       height: z.number().optional(),
       bytes: z.number().optional(),
       source: z.enum(["fallback", "preview"]).optional(),
+      stale: z.boolean().optional(),
       attachmentId: z.string().optional(),
       identifier: z.string().optional(),
       kind: z.enum(["paper", "drawing"]).optional(),
@@ -3899,8 +3913,12 @@ registerTool(
   },
   withErrorHandling(({ noteId, savePath, attachmentId }) => {
     const r = notesManager.exportPaperImageById(noteId, savePath, attachmentId);
+    const stale = r.source === "fallback" && r.drawing.fallbackImageStale;
     return successResponse(
-      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}`,
+      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}` +
+        (stale
+          ? ". This is an older rendering: the one Notes recorded is not on disk, so it may not show the latest strokes."
+          : ""),
       {
         savedPath: r.savedPath,
         format: r.format,
@@ -3908,6 +3926,7 @@ registerTool(
         height: r.height,
         bytes: r.bytes,
         source: r.source,
+        ...(stale ? { stale } : {}),
         attachmentId: attachmentCoreDataId(noteId, r.drawing.pk),
         identifier: r.drawing.identifier,
         kind: r.drawing.kind,
@@ -3923,7 +3942,7 @@ registerTool(
   "export-attachments",
   {
     description:
-      'Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.\nReturns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "preview" when the asset never downloaded and only Notes\' rendered thumbnail was available, or null when nothing was on disk.\nDo not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).\nSafety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.',
+      'Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.\nReturns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "fallback" for Notes\' own full rendering of it (a drawing\'s PNG or a scan\'s PDF, named with that format\'s extension), "preview" when the asset never downloaded and only Notes\' rendered thumbnail was available, or null when nothing was on disk; inBody: false marks an attachment no longer shown in the note body.\nDo not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).\nSafety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.',
     inputSchema: {
       noteId: noteIdInput,
       exportDir: z
@@ -3940,6 +3959,7 @@ registerTool(
       exportDir: z.string().optional(),
       exported: z.number().optional(),
       previews: z.number().optional(),
+      fallbacks: z.number().optional(),
       skipped: z.number().optional(),
       failed: z.number().optional(),
       results: z.array(z.object({}).passthrough()).optional(),
@@ -3954,12 +3974,14 @@ registerTool(
     }));
     const exported = results.filter((x) => x.exportedKind !== null).length;
     const previews = results.filter((x) => x.exportedKind === "preview").length;
+    const fallbacks = results.filter((x) => x.exportedKind === "fallback").length;
     const failed = results.filter((x) => x.error).length;
     const skipped = results.length - exported - failed;
     const structured: Record<string, unknown> = {
       exportDir: r.exportDir,
       exported,
       previews,
+      fallbacks,
       skipped,
       failed,
       results,
@@ -3973,7 +3995,7 @@ registerTool(
         );
       }
     }
-    const summary = `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${skipped} with nothing on disk, ${failed} failed).`;
+    const summary = `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${fallbacks} Notes rendering(s), ${skipped} with nothing on disk, ${failed} failed).`;
     // Every copy that was attempted failed: that is a failed call, not a success
     // with nothing in it. The per-attachment errors stay in `results`.
     if (exported === 0 && failed > 0) {
@@ -4239,6 +4261,7 @@ const exportStatsSchema = z.object({
   tables: z.number(),
   unreadableTables: z.number(),
   unreferenced: z.number(),
+  staleRenderings: z.number().optional(),
 });
 
 registerTool(
@@ -4292,6 +4315,7 @@ registerTool(
     outputSchema: {
       format: z.string().optional(),
       count: z.number().optional(),
+      truncated: z.boolean().optional(),
       bytes: z.number().optional(),
       markdown: z.string().optional(),
       output: z.string().optional(),
@@ -4339,7 +4363,10 @@ registerTool(
     const warned = receipt.warnings?.length
       ? `; ${receipt.warnings.length + (receipt.warningsOmitted ?? 0)} warning(s)`
       : "";
-    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + warned;
+    const skipped =
+      (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") +
+      warned +
+      (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     if (receipt.output)
       return successResponse(
         `Wrote ${receipt.count} note(s) as Markdown (${receipt.bytes} bytes) to ${receipt.output}` +
@@ -4400,6 +4427,7 @@ registerTool(
     outputSchema: {
       format: z.string().optional(),
       count: z.number().optional(),
+      truncated: z.boolean().optional(),
       bytes: z.number().optional(),
       output: z.string().optional(),
       assets: z.object({ dir: z.string(), files: z.number() }).optional(),
@@ -4428,7 +4456,9 @@ registerTool(
     const assets = receipt.assets
       ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}`
       : `; embedded ${receipt.embedded ?? 0} asset(s)`;
-    const skipped = receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "";
+    const skipped =
+      (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") +
+      (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     return successResponse(
       `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
       { ...receipt }
@@ -4673,29 +4703,34 @@ registerTool(
       status: z.string().optional(),
       drawings: z.array(z.object({}).passthrough()).optional(),
       pointsOmitted: z.boolean().optional(),
+      svgOmitted: z.boolean().optional(),
     },
   },
   withErrorHandling(({ id, format, includePoints }) => {
-    let result = getNoteDrawings(id, { format, includePoints });
-    let pointsOmitted = false;
-    // Stroke points dominate the payload. Past the response budget, drop them
-    // (SVG and stroke summaries stay) rather than fail the whole read.
-    if (
-      Buffer.byteLength(JSON.stringify(result)) > exportMaxResponseBytes() &&
-      includePoints !== false &&
-      format !== "svg"
-    ) {
-      result = getNoteDrawings(id, { format, includePoints: false });
-      pointsOmitted = true;
-    }
+    // Past the response budget, drop stroke points and then SVG documents from
+    // the decoded result (no second helper run), and fail rather than send a
+    // response that is still too large.
+    const limit = exportMaxResponseBytes();
+    const { result, pointsOmitted, svgOmitted, oversized } = fitNoteDrawings(
+      getNoteDrawings(id, { format, includePoints }),
+      limit
+    );
+    if (oversized)
+      return errorResponse(
+        `The drawings in note "${id}" are too large to return even without stroke points and SVG (limit ${limit} bytes, APPLE_NOTES_MCP_EXPORT_MAX_BYTES).`
+      );
     const text =
       formatNoteDrawings(result) +
       (pointsOmitted
         ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)."
+        : "") +
+      (svgOmitted
+        ? "\nSVG documents were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)."
         : "");
     return successResponse(text, {
       ...result,
       ...(pointsOmitted ? { pointsOmitted } : {}),
+      ...(svgOmitted ? { svgOmitted } : {}),
     } as unknown as Record<string, unknown>);
   }, "Error reading drawings")
 );
@@ -4706,7 +4741,7 @@ registerTool(
   "transcribe-note-audio",
   {
     description:
-      "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
+      "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition; permission_not_requested (before macOS 26) means the host app has never asked for that access, so it is not listed there yet. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
     inputSchema: {
       id: noteIdInput,
       locale: z
@@ -4745,10 +4780,15 @@ registerTool(
       status: z.string().optional(),
       recordingCount: z.number().optional(),
       recordings: z.array(z.object({}).passthrough()).optional(),
+      responseOversized: z.boolean().optional(),
     },
   },
   withAsyncErrorHandling(async (params, signal) => {
     const { id, locale, attachmentId, includeText, downloadAssets, maxSeconds } = params;
+    const toResponse = (r: NoteTranscriptionResult): ToolResponse =>
+      successResponse(formatTranscription(r), r as unknown as Record<string, unknown>);
+    // Measure the whole response: the transcripts appear in the text summary
+    // and again in structuredContent.
     const result = fitTranscriptions(
       await transcribeNoteAudio(id, {
         locale,
@@ -4758,12 +4798,10 @@ registerTool(
         maxSeconds,
         signal,
       }),
-      exportMaxResponseBytes()
+      exportMaxResponseBytes(),
+      (r) => Buffer.byteLength(JSON.stringify(toResponse(r)))
     );
-    return successResponse(
-      formatTranscription(result),
-      result as unknown as Record<string, unknown>
-    );
+    return toResponse(result);
   }, "Error transcribing audio")
 );
 
@@ -4946,7 +4984,10 @@ process.on("unhandledRejection", (reason) => {
 // lingering as an orphan. Idempotent so multiple triggers don't double-exit.
 // Pending stdout is drained first (bounded), so a response larger than the pipe
 // buffer isn't truncated when the client closes stdin right after a request.
-const shutdown = createShutdown(process.stdout, () => process.exit(0));
+// Requests still being handled (an asynchronous tool) are answered first, so
+// their responses are not lost when stdin closes (#186).
+const inFlight = new InFlightRequests();
+const shutdown = createShutdown(process.stdout, () => process.exit(0), undefined, inFlight);
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, shutdown);
 }
@@ -4956,5 +4997,5 @@ process.stdin.on("close", shutdown);
 // Wrapped so every tools/list payload declares JSON Schema 2020-12: the SDK
 // stamps draft-07 on every emitted inputSchema/outputSchema, which current MCP
 // clients reject outright. See @/utils/jsonSchemaDialect.js.
-const transport = withJsonSchema2020_12(new StdioServerTransport());
+const transport = trackRequests(withJsonSchema2020_12(new StdioServerTransport()), inFlight);
 await server.connect(transport);

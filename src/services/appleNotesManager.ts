@@ -1783,7 +1783,9 @@ export class AppleNotesManager {
    * @throws Error when the note's rich data cannot be read (e.g. no Full Disk Access)
    */
   getNoteTablesById(id: string): NoteTablesResult {
-    return collectNoteTables(readRichNote(id), id);
+    // Tables never feed a rewrite, so a link Notes stores with a scheme the
+    // write path refuses (tel:, sms:) must not make the tables unreadable.
+    return collectNoteTables(readRichNote(id, { skipUnsafeLinks: true }), id);
   }
 
   /**
@@ -1984,6 +1986,7 @@ export class AppleNotesManager {
           return `
       if not (exists note id "${safeGuardId}") then ${inactive("missing")}
       set ${ref} to note id "${safeGuardId}"
+      if (id of ${ref}) is (id of noteRef) then ${inactive("the note being deleted")}
       if password protected of ${ref} then ${inactive("locked")}
       set ${folderVar} to missing value
       try

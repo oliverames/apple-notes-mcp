@@ -63,6 +63,8 @@ export interface AttachmentRow {
   identifier: string;
   uti: string | null;
   parentPk: number | null;
+  /** True when the parent (container) row is marked for deletion. */
+  parentDeleted?: boolean;
   filename: string | null;
   mediaIdentifier: string | null;
   mediaFilename: string | null;
@@ -86,6 +88,11 @@ export interface AttachmentAssetRecord {
   bodyIndex: number | null;
   /** The attachment's own files (media asset, fallback image or PDF), best first. */
   assetPaths: string[];
+  /**
+   * Set when a fallback rendering in assetPaths comes from an older generation
+   * than the one Notes recorded (that one is missing on disk).
+   */
+  fallbackStale?: true;
   /** The largest rendered preview image, or null. Always a file, never a directory. */
   previewPath: string | null;
   /** assetPaths followed by previewPath: everything on disk for this attachment. */
@@ -124,8 +131,16 @@ export interface AttachmentExportResult {
   kind: AttachmentKind;
   parentIdentifier: string | null;
   exportedTo: string | null;
-  /** "asset" for the real file, "preview" only when no asset exists, null when nothing was copied. */
-  exportedKind: "asset" | "preview" | null;
+  /**
+   * "asset" for the real file, "fallback" for Notes' own rendering of it
+   * (FallbackImage / FallbackPDF, e.g. a drawing's PNG or a scan's PDF),
+   * "preview" only when neither exists, null when nothing was copied.
+   */
+  exportedKind: "asset" | "fallback" | "preview" | null;
+  /** false when the attachment is no longer referenced from the note body. */
+  inBody?: false;
+  /** A "fallback" rendering from an older generation than Notes recorded. */
+  stale?: true;
   error?: string;
 }
 
@@ -248,6 +263,11 @@ export function buildAttachmentRowsSql(notePk: number, columns: Set<string>): st
     `'identifier', a.ZIDENTIFIER`,
     `'uti', ${col("a", "ZTYPEUTI")}`,
     `'parentPk', ${parent}`,
+    `'parentDeleted', ${
+      parent !== "NULL" && columns.has("ZMARKEDFORDELETION")
+        ? `(SELECT COALESCE(p.ZMARKEDFORDELETION, 0) FROM ZICCLOUDSYNCINGOBJECT p WHERE p.Z_PK = ${parent})`
+        : "0"
+    }`,
     `'filename', ${col("a", "ZFILENAME")}`,
     `'mediaIdentifier', m.ZIDENTIFIER`,
     `'mediaFilename', ${col("m", "ZFILENAME")}`,
@@ -317,6 +337,7 @@ export function parseAttachmentRows(json: string): AttachmentRow[] {
       identifier,
       uti: toStringOrNull(r.uti),
       parentPk: toIntOrNull(r.parentPk),
+      ...(toIntOrNull(r.parentDeleted) ? { parentDeleted: true } : {}),
       filename: toStringOrNull(r.filename),
       mediaIdentifier: toStringOrNull(r.mediaIdentifier),
       mediaFilename: toStringOrNull(r.mediaFilename),
@@ -482,7 +503,8 @@ function fallbackFiles(
   rootName: string,
   identifier: string,
   generation: string | null,
-  names: string[]
+  names: string[],
+  onStale?: () => void
 ): string[] {
   const base = join(accountDir, rootName, identifier);
   const found: string[] = [];
@@ -492,12 +514,15 @@ function fallbackFiles(
   };
   const gen = safeComponent(generation);
   if (gen) for (const name of names) add(join(base, gen, name));
+  const recorded = found.length;
   if (isDirectory(base)) {
     for (const dir of generationDirs(base, accountDir))
       for (const name of names) add(join(dir, name));
     for (const name of names) add(join(base, name));
   }
   for (const name of names) add(join(accountDir, rootName, `${identifier}${extname(name)}`));
+  // A generation was recorded but none of its files exist: what was found is older.
+  if (gen && recorded === 0 && found.length > 0) onStale?.();
   return found;
 }
 
@@ -569,7 +594,12 @@ export function previewPaths(accountDir: string, identifier: string, entries: st
 }
 
 /** The attachment's own files, best first: media asset, then Notes' fallback renderings. */
-export function assetPathsFor(accountDir: string, row: AttachmentRow): string[] {
+export function assetPathsFor(
+  accountDir: string,
+  row: AttachmentRow,
+  /** Called when a fallback rendering comes from an older generation than recorded. */
+  onStale?: () => void
+): string[] {
   const found: string[] = [];
   const add = (candidate: string) => {
     const real = realInside(candidate, accountDir);
@@ -586,14 +616,23 @@ export function assetPathsFor(accountDir: string, row: AttachmentRow): string[] 
   if (!id) return found;
   const ownName = safeComponent(row.filename);
   if (ownName) add(join(accountDir, "Media", id, ownName));
-  for (const file of fallbackFiles(accountDir, "FallbackImages", id, row.fallbackImageGeneration, [
-    "FallbackImage.png",
-    "FallbackImage.jpg",
-  ]))
+  for (const file of fallbackFiles(
+    accountDir,
+    "FallbackImages",
+    id,
+    row.fallbackImageGeneration,
+    ["FallbackImage.png", "FallbackImage.jpg"],
+    onStale
+  ))
     add(file);
-  for (const file of fallbackFiles(accountDir, "FallbackPDFs", id, row.fallbackPdfGeneration, [
-    "FallbackPDF.pdf",
-  ]))
+  for (const file of fallbackFiles(
+    accountDir,
+    "FallbackPDFs",
+    id,
+    row.fallbackPdfGeneration,
+    ["FallbackPDF.pdf"],
+    onStale
+  ))
     add(file);
   return found;
 }
@@ -608,10 +647,13 @@ export function assetPathsFor(accountDir: string, row: AttachmentRow): string[] 
  * followed by its children in creation order.
  */
 export function assembleAttachmentAssets(
-  rows: AttachmentRow[],
+  allRows: AttachmentRow[],
   bodyOrder: string[] | null,
   containerDir: string = NOTES_CONTAINER_DIR
 ): NoteAttachmentAssets {
+  // A child of a container Notes has marked for deletion is gone with it; it
+  // must not surface as a top-level attachment of its own.
+  const rows = allRows.filter((r) => !r.parentDeleted);
   const byPk = new Map(rows.map((r) => [r.pk, r]));
   const roots = rows.filter((r) => r.parentPk === null || !byPk.has(r.parentPk));
   const bodyIndex = new Map<string, number>();
@@ -635,10 +677,11 @@ export function assembleAttachmentAssets(
     const accountDir = accountDirFor(row.accountIdentifier ?? parent?.accountIdentifier ?? null);
     let assetPaths: string[] = [];
     let previews: string[] = [];
+    let fallbackStale = false;
     if (accountDir) {
       if (!previewEntries.has(accountDir))
         previewEntries.set(accountDir, listPreviewEntries(accountDir));
-      assetPaths = assetPathsFor(accountDir, row);
+      assetPaths = assetPathsFor(accountDir, row, () => (fallbackStale = true));
       previews = previewPaths(accountDir, row.identifier, previewEntries.get(accountDir)!);
     }
     const previewPath = previews[0] ?? null;
@@ -651,6 +694,7 @@ export function assembleAttachmentAssets(
       filename: row.filename ?? row.mediaFilename,
       bodyIndex: parent ? null : indexOf(row),
       assetPaths,
+      ...(fallbackStale ? { fallbackStale: true as const } : {}),
       previewPath,
       paths: previewPath ? [...assetPaths, previewPath] : [...assetPaths],
     };
@@ -772,12 +816,22 @@ export function copyFileExclusive(src: string, dest: string): void {
 export function exportFileName(
   record: Pick<AttachmentAssetRecord, "identifier" | "filename">,
   source: string,
-  kind: "asset" | "preview"
+  kind: "asset" | "fallback" | "preview"
 ): string {
   const ext = extname(source);
   // The identifier comes from the store like the file name, so it gets the
   // same one-component check, with a constant fallback.
   const id = safeComponent(record.identifier) ?? "attachment";
+  if (kind === "fallback") {
+    // Notes' rendering has its own format (PNG, JPEG or PDF): keep the stored
+    // name's stem but the rendering's extension, never the original's.
+    const stored = safeComponent(record.filename ? basename(record.filename) : null);
+    const stem =
+      stored && !GENERIC_FILE_NAMES.has(stored.toLowerCase())
+        ? basename(stored, extname(stored))
+        : id;
+    return `${safeComponent(stem) ?? id}${ext}`;
+  }
   if (kind === "preview") {
     // A preview is a thumbnail in its own format: never present it under the
     // asset's name and extension.
@@ -817,7 +871,8 @@ export function prepareExportDir(exportDir: string, containerDir = NOTES_CONTAIN
 export function exportOneAttachment(
   record: AttachmentAssetRecord,
   dir: string,
-  source: { path: string; kind: "asset" | "preview" } | null
+  source: { path: string; kind: "asset" | "fallback" | "preview" } | null,
+  inBody?: boolean
 ): AttachmentExportResult {
   const base: AttachmentExportResult = {
     pk: record.pk,
@@ -827,6 +882,7 @@ export function exportOneAttachment(
     parentIdentifier: record.parentIdentifier,
     exportedTo: null,
     exportedKind: null,
+    ...(inBody === false ? { inBody: false as const } : {}),
   };
   if (!source) return base;
   const name = exportFileName(record, source.path, source.kind);
@@ -837,7 +893,12 @@ export function exportOneAttachment(
         throw new Error(`Refusing to write outside the export directory: "${dest}"`);
       assertSafeSavePath(dest);
       copyFileExclusive(source.path, dest);
-      return { ...base, exportedTo: dest, exportedKind: source.kind };
+      return {
+        ...base,
+        exportedTo: dest,
+        exportedKind: source.kind,
+        ...(source.kind === "fallback" && record.fallbackStale ? { stale: true as const } : {}),
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
       return { ...base, error: error instanceof Error ? error.message : String(error) };
@@ -846,11 +907,17 @@ export function exportOneAttachment(
   return { ...base, error: "Too many name collisions in the export directory" };
 }
 
+/** Whether a path is one of Notes' own renderings (FallbackImages / FallbackPDFs). */
+export function isFallbackRendering(path: string): boolean {
+  return /[\\/]Fallback(?:Images|PDFs)[\\/]/.test(path);
+}
+
 /** The file an export takes for a record: asset first, preview only as a fallback. */
 export function exportSource(
   record: Pick<AttachmentAssetRecord, "assetPaths" | "previewPath">
-): { path: string; kind: "asset" | "preview" } | null {
-  if (record.assetPaths[0]) return { path: record.assetPaths[0], kind: "asset" };
+): { path: string; kind: "asset" | "fallback" | "preview" } | null {
+  const asset = record.assetPaths[0];
+  if (asset) return { path: asset, kind: isFallbackRendering(asset) ? "fallback" : "asset" };
   if (record.previewPath) return { path: record.previewPath, kind: "preview" };
   return null;
 }
@@ -865,13 +932,25 @@ export function exportAttachmentAssets(
   options: { firstImageOnly?: boolean; containerDir?: string } = {}
 ): { exportDir: string; results: AttachmentExportResult[]; firstImage?: FirstImage | null } {
   const dir = prepareExportDir(exportDir, options.containerDir);
+  // Known only when the body gave the order: a top-level attachment with no
+  // body position (and its children) is no longer shown in the note.
+  const inBody = (record: AttachmentAssetRecord): boolean | undefined => {
+    if (assets.orderSource !== "body") return undefined;
+    const root =
+      record.parentIdentifier === null
+        ? record
+        : assets.attachments.find(
+            (a) => a.parentIdentifier === null && a.identifier === record.parentIdentifier
+          );
+    return root ? root.bodyIndex !== null : undefined;
+  };
   if (options.firstImageOnly) {
     const first = selectFirstImage(assets);
     if (!first) return { exportDir: dir, results: [], firstImage: null };
     const record = assets.attachments.find((a) => a.pk === first.pk)!;
     return {
       exportDir: dir,
-      results: [exportOneAttachment(record, dir, exportSource(record))],
+      results: [exportOneAttachment(record, dir, exportSource(record), inBody(record))],
       firstImage: first,
     };
   }
@@ -889,7 +968,7 @@ export function exportAttachmentAssets(
     ) {
       continue;
     }
-    results.push(exportOneAttachment(record, dir, exportSource(record)));
+    results.push(exportOneAttachment(record, dir, exportSource(record), inBody(record)));
   }
   return { exportDir: dir, results };
 }

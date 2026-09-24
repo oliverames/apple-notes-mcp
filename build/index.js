@@ -30351,7 +30351,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     return (payload, ctx) => fn(shape, payload, ctx);
   };
   let fastpass;
-  const isObject3 = isObject;
+  const isObject4 = isObject;
   const jit = !globalConfig.jitless;
   const allowsEval2 = allowsEval;
   const fastEnabled = jit && allowsEval2.value;
@@ -30360,7 +30360,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
     const input = payload.value;
-    if (!isObject3(input)) {
+    if (!isObject4(input)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
@@ -39361,7 +39361,7 @@ function bytesValue(field) {
 function stringValue(field) {
   const bytes = bytesValue(field);
   if (!bytes) return void 0;
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 }
 function embeddedMessage(field) {
   const bytes = bytesValue(field);
@@ -39640,6 +39640,10 @@ function identifierFailureIn(message) {
 }
 function canonicalKey(value) {
   return BigInt(value).toString();
+}
+function canonicalCoreDataId(id2) {
+  const match = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/(IC[A-Za-z]+)\/p(\d+)$/.exec(id2);
+  return match ? `x-coredata://${match[1].toUpperCase()}/${match[2]}/p${canonicalKey(match[3])}` : id2;
 }
 function assertAll(values, pattern2, label) {
   for (const value of values) {
@@ -40034,7 +40038,7 @@ function styleValue(field) {
   }
   return Buffer.from(field.value).toString("hex");
 }
-function parseRichNote(data, nativeTags = []) {
+function parseRichNote(data, nativeTags = [], options = {}) {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
   const body = wrapper && embeddedMessage(getField(wrapper, 3));
@@ -40074,7 +40078,7 @@ function parseRichNote(data, nativeTags = []) {
       if (varintValue(getField(fields, 14))) lossy.add("highlight");
     }
     const url = stringValue(getField(fields, 9));
-    if (url) {
+    if (url && !(options.skipUnsafeLinks && !safeUrl(url))) {
       if (!safeUrl(url)) throw new Error("Unsupported link scheme in note");
       const previous = links.at(-1);
       if (previous?.url === url && previous.start + previous.length === position) {
@@ -40129,7 +40133,7 @@ function parseRichNote(data, nativeTags = []) {
     ...lossy.size ? { htmlLossyFormatting: HTML_LOSSY_ORDER.filter((f) => lossy.has(f)) } : {}
   };
 }
-function readRichNote(id2) {
+function readRichNote(id2, options = {}) {
   const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]+)$/i.exec(id2)?.[1];
   if (!pk) throw new Error("Invalid exact note ID");
   const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
@@ -40144,7 +40148,9 @@ function readRichNote(id2) {
   if (!tags || Array.isArray(tags) || typeof tags !== "object" || Object.values(tags).some((tag) => typeof tag !== "string"))
     throw new Error("Invalid native tags");
   const rich = parseRichNote(
-    gunzipSync2(Buffer.from(rows[0], "hex"), { maxOutputLength: 32 * 1024 * 1024 })
+    gunzipSync2(Buffer.from(rows[0], "hex"), { maxOutputLength: 32 * 1024 * 1024 }),
+    [],
+    options
   );
   const tagMap = tags;
   const objectData = JSON.parse(rows[2] || "[]");
@@ -41660,6 +41666,7 @@ function buildAttachmentRowsSql(notePk, columns) {
     `'identifier', a.ZIDENTIFIER`,
     `'uti', ${col3("a", "ZTYPEUTI")}`,
     `'parentPk', ${parent}`,
+    `'parentDeleted', ${parent !== "NULL" && columns.has("ZMARKEDFORDELETION") ? `(SELECT COALESCE(p.ZMARKEDFORDELETION, 0) FROM ZICCLOUDSYNCINGOBJECT p WHERE p.Z_PK = ${parent})` : "0"}`,
     `'filename', ${col3("a", "ZFILENAME")}`,
     `'mediaIdentifier', m.ZIDENTIFIER`,
     `'mediaFilename', ${col3("m", "ZFILENAME")}`,
@@ -41718,6 +41725,7 @@ function parseAttachmentRows(json2) {
       identifier,
       uti: toStringOrNull(r.uti),
       parentPk: toIntOrNull(r.parentPk),
+      ...toIntOrNull(r.parentDeleted) ? { parentDeleted: true } : {},
       filename: toStringOrNull(r.filename),
       mediaIdentifier: toStringOrNull(r.mediaIdentifier),
       mediaFilename: toStringOrNull(r.mediaFilename),
@@ -41835,7 +41843,7 @@ function generationDirs(base, accountDir) {
   const entries2 = boundedEntries(base, MAX_GENERATION_DIRS) ?? [];
   return entries2.map((e) => realInside(join8(base, e), accountDir)).filter((p) => p !== null && isDirectory(p)).sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
 }
-function fallbackFiles(accountDir, rootName, identifier, generation, names) {
+function fallbackFiles(accountDir, rootName, identifier, generation, names, onStale) {
   const base = join8(accountDir, rootName, identifier);
   const found = [];
   const add = (candidate) => {
@@ -41844,12 +41852,14 @@ function fallbackFiles(accountDir, rootName, identifier, generation, names) {
   };
   const gen = safeComponent(generation);
   if (gen) for (const name of names) add(join8(base, gen, name));
+  const recorded = found.length;
   if (isDirectory(base)) {
     for (const dir of generationDirs(base, accountDir))
       for (const name of names) add(join8(dir, name));
     for (const name of names) add(join8(base, name));
   }
   for (const name of names) add(join8(accountDir, rootName, `${identifier}${extname(name)}`));
+  if (gen && recorded === 0 && found.length > 0) onStale?.();
   return found;
 }
 function previewPixelArea(name) {
@@ -41895,7 +41905,7 @@ function previewPaths(accountDir, identifier, entries2) {
   }
   return files;
 }
-function assetPathsFor(accountDir, row) {
+function assetPathsFor(accountDir, row, onStale) {
   const found = [];
   const add = (candidate) => {
     const real = realInside(candidate, accountDir);
@@ -41912,18 +41922,28 @@ function assetPathsFor(accountDir, row) {
   if (!id2) return found;
   const ownName = safeComponent(row.filename);
   if (ownName) add(join8(accountDir, "Media", id2, ownName));
-  for (const file of fallbackFiles(accountDir, "FallbackImages", id2, row.fallbackImageGeneration, [
-    "FallbackImage.png",
-    "FallbackImage.jpg"
-  ]))
+  for (const file of fallbackFiles(
+    accountDir,
+    "FallbackImages",
+    id2,
+    row.fallbackImageGeneration,
+    ["FallbackImage.png", "FallbackImage.jpg"],
+    onStale
+  ))
     add(file);
-  for (const file of fallbackFiles(accountDir, "FallbackPDFs", id2, row.fallbackPdfGeneration, [
-    "FallbackPDF.pdf"
-  ]))
+  for (const file of fallbackFiles(
+    accountDir,
+    "FallbackPDFs",
+    id2,
+    row.fallbackPdfGeneration,
+    ["FallbackPDF.pdf"],
+    onStale
+  ))
     add(file);
   return found;
 }
-function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINER_DIR) {
+function assembleAttachmentAssets(allRows, bodyOrder, containerDir = NOTES_CONTAINER_DIR) {
+  const rows = allRows.filter((r) => !r.parentDeleted);
   const byPk = new Map(rows.map((r) => [r.pk, r]));
   const roots = rows.filter((r) => r.parentPk === null || !byPk.has(r.parentPk));
   const bodyIndex = /* @__PURE__ */ new Map();
@@ -41946,10 +41966,11 @@ function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINE
     const accountDir = accountDirFor(row.accountIdentifier ?? parent?.accountIdentifier ?? null);
     let assetPaths = [];
     let previews = [];
+    let fallbackStale = false;
     if (accountDir) {
       if (!previewEntries.has(accountDir))
         previewEntries.set(accountDir, listPreviewEntries(accountDir));
-      assetPaths = assetPathsFor(accountDir, row);
+      assetPaths = assetPathsFor(accountDir, row, () => fallbackStale = true);
       previews = previewPaths(accountDir, row.identifier, previewEntries.get(accountDir));
     }
     const previewPath = previews[0] ?? null;
@@ -41962,6 +41983,7 @@ function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINE
       filename: row.filename ?? row.mediaFilename,
       bodyIndex: parent ? null : indexOf(row),
       assetPaths,
+      ...fallbackStale ? { fallbackStale: true } : {},
       previewPath,
       paths: previewPath ? [...assetPaths, previewPath] : [...assetPaths]
     };
@@ -42047,6 +42069,11 @@ function copyFileExclusive(src, dest) {
 function exportFileName(record2, source, kind) {
   const ext = extname(source);
   const id2 = safeComponent(record2.identifier) ?? "attachment";
+  if (kind === "fallback") {
+    const stored2 = safeComponent(record2.filename ? basename(record2.filename) : null);
+    const stem = stored2 && !GENERIC_FILE_NAMES.has(stored2.toLowerCase()) ? basename(stored2, extname(stored2)) : id2;
+    return `${safeComponent(stem) ?? id2}${ext}`;
+  }
   if (kind === "preview") {
     const stored2 = safeComponent(record2.filename ? basename(record2.filename) : null);
     const stem = stored2 ? basename(stored2, extname(stored2)) : id2;
@@ -42075,7 +42102,7 @@ function prepareExportDir(exportDir, containerDir = NOTES_CONTAINER_DIR) {
   }
   return abs;
 }
-function exportOneAttachment(record2, dir, source) {
+function exportOneAttachment(record2, dir, source, inBody) {
   const base = {
     pk: record2.pk,
     identifier: record2.identifier,
@@ -42083,7 +42110,8 @@ function exportOneAttachment(record2, dir, source) {
     kind: record2.kind,
     parentIdentifier: record2.parentIdentifier,
     exportedTo: null,
-    exportedKind: null
+    exportedKind: null,
+    ...inBody === false ? { inBody: false } : {}
   };
   if (!source) return base;
   const name = exportFileName(record2, source.path, source.kind);
@@ -42094,7 +42122,12 @@ function exportOneAttachment(record2, dir, source) {
         throw new Error(`Refusing to write outside the export directory: "${dest}"`);
       assertSafeSavePath(dest);
       copyFileExclusive(source.path, dest);
-      return { ...base, exportedTo: dest, exportedKind: source.kind };
+      return {
+        ...base,
+        exportedTo: dest,
+        exportedKind: source.kind,
+        ...source.kind === "fallback" && record2.fallbackStale ? { stale: true } : {}
+      };
     } catch (error2) {
       if (error2.code === "EEXIST") continue;
       return { ...base, error: error2 instanceof Error ? error2.message : String(error2) };
@@ -42102,20 +42135,31 @@ function exportOneAttachment(record2, dir, source) {
   }
   return { ...base, error: "Too many name collisions in the export directory" };
 }
+function isFallbackRendering(path10) {
+  return /[\\/]Fallback(?:Images|PDFs)[\\/]/.test(path10);
+}
 function exportSource(record2) {
-  if (record2.assetPaths[0]) return { path: record2.assetPaths[0], kind: "asset" };
+  const asset = record2.assetPaths[0];
+  if (asset) return { path: asset, kind: isFallbackRendering(asset) ? "fallback" : "asset" };
   if (record2.previewPath) return { path: record2.previewPath, kind: "preview" };
   return null;
 }
 function exportAttachmentAssets(assets, exportDir, options = {}) {
   const dir = prepareExportDir(exportDir, options.containerDir);
+  const inBody = (record2) => {
+    if (assets.orderSource !== "body") return void 0;
+    const root = record2.parentIdentifier === null ? record2 : assets.attachments.find(
+      (a) => a.parentIdentifier === null && a.identifier === record2.parentIdentifier
+    );
+    return root ? root.bodyIndex !== null : void 0;
+  };
   if (options.firstImageOnly) {
     const first2 = selectFirstImage(assets);
     if (!first2) return { exportDir: dir, results: [], firstImage: null };
     const record2 = assets.attachments.find((a) => a.pk === first2.pk);
     return {
       exportDir: dir,
-      results: [exportOneAttachment(record2, dir, exportSource(record2))],
+      results: [exportOneAttachment(record2, dir, exportSource(record2), inBody(record2))],
       firstImage: first2
     };
   }
@@ -42129,7 +42173,7 @@ function exportAttachmentAssets(assets, exportDir, options = {}) {
     } else if (!exportSource(record2) && assets.attachments.some((c) => c.parentIdentifier === record2.identifier)) {
       continue;
     }
-    results.push(exportOneAttachment(record2, dir, exportSource(record2)));
+    results.push(exportOneAttachment(record2, dir, exportSource(record2), inBody(record2)));
   }
   return { exportDir: dir, results };
 }
@@ -42298,7 +42342,17 @@ function entries(dir, limit) {
   }
 }
 var byGenerationDesc = (a, b) => generationRank(basename2(b)) - generationRank(basename2(a));
-function findFallbackImage(accountDir, identifier, generation) {
+function locateFallbackImage(accountDir, identifier, generation) {
+  const gen = safeComponent(generation);
+  const path10 = searchFallbackImage(accountDir, identifier, generation);
+  if (!path10 || !gen) return { path: path10, stale: false };
+  const id2 = safeComponent(identifier);
+  const recorded = ["FallbackImage.png", "FallbackImage.jpg"].map(
+    (n) => id2 ? realInside(join9(accountDir, "FallbackImages", id2, gen, n), accountDir) : null
+  ).filter((p) => p !== null);
+  return { path: path10, stale: !recorded.includes(path10) };
+}
+function searchFallbackImage(accountDir, identifier, generation) {
   const id2 = safeComponent(identifier);
   if (!id2) return null;
   const base = join9(accountDir, "FallbackImages", id2);
@@ -42345,7 +42399,8 @@ function describeDrawings(rows, containerDir = NOTES_CONTAINER_DIR) {
     const accountDir = resolveAccountDir(containerDir, row.accountIdentifier);
     const kind = row.uti === "com.apple.paper" ? "paper" : "drawing";
     const id2 = safeComponent(row.identifier);
-    const fallbackImagePath = accountDir ? findFallbackImage(accountDir, row.identifier, row.fallbackImageGeneration) : null;
+    const fallback = accountDir ? locateFallbackImage(accountDir, row.identifier, row.fallbackImageGeneration) : { path: null, stale: false };
+    const fallbackImagePath = fallback.path;
     const previewPath = accountDir ? findLargestPreview(accountDir, row.identifier) : null;
     const bundle = accountDir && id2 && kind === "paper" ? realInside(join9(accountDir, "Paper", "Bundles", `${id2}.bundle`), accountDir) : null;
     let raster = null;
@@ -42367,6 +42422,7 @@ function describeDrawings(rows, containerDir = NOTES_CONTAINER_DIR) {
       handwritingSummary: row.handwritingSummary,
       bundlePresent: bundle !== null && kindOf(bundle) === "dir",
       fallbackImagePath,
+      fallbackImageStale: fallback.stale,
       previewPath,
       raster
     };
@@ -42507,18 +42563,25 @@ function idList(ids) {
 function buildScopeGuardScript(noteVar, guard, destinationVar) {
   if (!hasScopeGuard(guard)) return "";
   validateScopeGuard(guard);
-  const forbidden = guard.forbiddenAncestorFolderIds ?? [];
+  const ifFolderId = guard.ifFolderId && canonicalCoreDataId(guard.ifFolderId);
+  const ifAncestorFolderId = guard.ifAncestorFolderId && canonicalCoreDataId(guard.ifAncestorFolderId);
+  const forbidden = [...new Set((guard.forbiddenAncestorFolderIds ?? []).map(canonicalCoreDataId))];
   let script = `
       set scopeFolder to container of ${noteVar}
       if class of scopeFolder is not folder then return "${SCOPE_MARKER}:the note is not in a folder"`;
-  if (guard.ifFolderId)
+  if (forbidden.length > 0)
     script += `
-      if (id of scopeFolder) is not "${guard.ifFolderId}" then return "${SCOPE_MARKER}:the note is not in the expected folder"`;
-  if (guard.ifAncestorFolderId || forbidden.length > 0)
+      repeat with forbiddenId in ${idList(forbidden)}
+        if not (exists folder id (contents of forbiddenId)) then return "${SCOPE_MARKER}:a forbidden folder id does not match any folder"
+      end repeat`;
+  if (ifFolderId)
+    script += `
+      if (id of scopeFolder) is not "${ifFolderId}" then return "${SCOPE_MARKER}:the note is not in the expected folder"`;
+  if (ifAncestorFolderId || forbidden.length > 0)
     script += chainScript("scopeChain", "scopeFolder");
-  if (guard.ifAncestorFolderId)
+  if (ifAncestorFolderId)
     script += `
-      if scopeChain does not contain "${guard.ifAncestorFolderId}" then return "${SCOPE_MARKER}:the note is not inside the expected ancestor folder"`;
+      if scopeChain does not contain "${ifAncestorFolderId}" then return "${SCOPE_MARKER}:the note is not inside the expected ancestor folder"`;
   if (forbidden.length > 0) {
     script += `
       repeat with forbiddenId in ${idList(forbidden)}
@@ -43435,7 +43498,7 @@ var AppleNotesManager = class {
    * @throws Error when the note's rich data cannot be read (e.g. no Full Disk Access)
    */
   getNoteTablesById(id2) {
-    return collectNoteTables(readRichNote(id2), id2);
+    return collectNoteTables(readRichNote(id2, { skipUnsafeLinks: true }), id2);
   }
   /**
    * Retrieves detailed metadata for a note by title.
@@ -43568,6 +43631,7 @@ var AppleNotesManager = class {
         return `
       if not (exists note id "${safeGuardId}") then ${inactive("missing")}
       set ${ref} to note id "${safeGuardId}"
+      if (id of ${ref}) is (id of noteRef) then ${inactive("the note being deleted")}
       if password protected of ${ref} then ${inactive("locked")}
       set ${folderVar} to missing value
       try
@@ -46328,7 +46392,7 @@ var HIGHLIGHTS = {
 var KNOWN_RUN_FIELDS = /* @__PURE__ */ new Set([1, 2, 3, 5, 6, 7, 8, 9, 10, 12, 14]);
 var KNOWN_PARAGRAPH_FIELDS = /* @__PURE__ */ new Set([1, 2, 4, 5, 8, 9]);
 var isSafeLink = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
-var utf8 = new TextDecoder();
+var utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
 var first = (fields, n) => fields.find((f) => f.fieldNumber === n);
 var varintOf = (fields, n) => {
   const f = first(fields, n);
@@ -46477,7 +46541,8 @@ function decodeNoteBlocks(data) {
     const end = newline === -1 ? text2.length : newline;
     while (runIndex < runs.length - 1 && runs[runIndex].start + runs[runIndex].length <= paragraphStart)
       runIndex++;
-    const attrs = runs[runIndex]?.paragraph ?? DEFAULT_PARAGRAPH;
+    const covering = runs[runIndex];
+    const attrs = !covering ? DEFAULT_PARAGRAPH : covering.paragraph.styleType === 103 && checklistRunLineStart(text2, covering.start, covering.length) > paragraphStart ? DEFAULT_PARAGRAPH : covering.paragraph;
     const style = attrs.styleType === null ? "body" : STYLE_NAMES[attrs.styleType] ?? "unknown";
     const alignment = ALIGNMENTS[attrs.alignmentValue] ?? "unknown";
     const block = {
@@ -46684,6 +46749,25 @@ function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH9 } = {}) {
   return decodeCompressedNoteBlocks(Buffer.from(row.data, "hex"));
 }
 
+// src/utils/wordCount.ts
+var UNSPACED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+var segmenter;
+function countWords(text2) {
+  let count = 0;
+  for (const run of text2.replace(/￼/gu, " ").split(/\s+/u)) {
+    if (!/[\p{L}\p{N}]/u.test(run)) continue;
+    if (!UNSPACED_SCRIPT.test(run)) {
+      count++;
+      continue;
+    }
+    segmenter ??= new Intl.Segmenter(void 0, { granularity: "word" });
+    let words = 0;
+    for (const segment of segmenter.segment(run)) if (segment.isWordLike) words++;
+    count += Math.max(1, words);
+  }
+  return count;
+}
+
 // src/utils/noteRecentList.ts
 var RECENT_LIMIT = { DEFAULT: 50, MAX: 1e3 };
 var CHECKPOINT_PREFIX = "cdts1:";
@@ -46738,9 +46822,7 @@ function parseSince(input) {
 }
 function textStats(text2) {
   const visible2 = text2.replace(OBJECT_REPLACEMENT, "");
-  let wordCount2 = 0;
-  for (const token of visible2.split(/\s+/u)) if (/[\p{L}\p{N}]/u.test(token)) wordCount2++;
-  return { wordCount: wordCount2, charCount: [...visible2].length };
+  return { wordCount: countWords(visible2), charCount: [...visible2].length };
 }
 function previewText(text2) {
   const flat = text2.replace(OBJECT_REPLACEMENT, " ").replace(/\s+/gu, " ").trim();
@@ -47362,6 +47444,10 @@ var Parser = class {
 function parseNoteQuery(input) {
   return new Parser(tokenize(input), input.length).parse();
 }
+function noteBodyText(text2) {
+  const firstBreak = text2.indexOf("\n");
+  return firstBreak === -1 ? "" : text2.slice(firstBreak + 1);
+}
 function normalizeForMatch(text2) {
   return text2.normalize("NFC").replace(/[\ufffc\u00a0]/gu, " ").toLowerCase();
 }
@@ -47436,20 +47522,36 @@ function cheapFirst(children) {
   }
   return ordered;
 }
-function evaluateNoteQuery(node, note) {
+function evaluateNoteQueryTruth(node, note) {
   switch (node.type) {
-    case "and":
-      return cheapFirst(node.children).every((child2) => evaluateNoteQuery(child2, note));
-    case "or":
-      return cheapFirst(node.children).some((child2) => evaluateNoteQuery(child2, note));
-    case "not":
-      return !evaluateNoteQuery(node.child, note);
+    case "and": {
+      let unknown2 = false;
+      for (const child2 of cheapFirst(node.children)) {
+        const value = evaluateNoteQueryTruth(child2, note);
+        if (value === false) return false;
+        if (value === null) unknown2 = true;
+      }
+      return unknown2 ? null : true;
+    }
+    case "or": {
+      let unknown2 = false;
+      for (const child2 of cheapFirst(node.children)) {
+        const value = evaluateNoteQueryTruth(child2, note);
+        if (value === true) return true;
+        if (value === null) unknown2 = true;
+      }
+      return unknown2 ? null : false;
+    }
+    case "not": {
+      const value = evaluateNoteQueryTruth(node.child, note);
+      return value === null ? null : !value;
+    }
     case "text": {
       const needle = normalizeForMatch(node.value);
       if (node.field === "title") return note.titleLower.includes(needle);
       if (node.field === "any" && note.titleLower.includes(needle)) return true;
       const content = note.content();
-      if (!content) return false;
+      if (!content) return null;
       return (node.field === "body" ? content.bodyLower : content.textLower).includes(needle);
     }
     case "folder":
@@ -47462,20 +47564,26 @@ function evaluateNoteQuery(node, note) {
       return compareDate(node.field === "created" ? note.created : note.modified, node);
     case "tag": {
       const content = note.content();
-      return Boolean(content?.tags.includes(normalizeForMatch(node.value)));
+      return content ? content.tags.includes(normalizeForMatch(node.value)) : null;
     }
-    case "has":
-      return Boolean(note.content()?.facets.has(node.facet));
+    case "has": {
+      const content = note.content();
+      return content ? content.facets.has(node.facet) : null;
+    }
     case "checklist": {
       const content = note.content();
-      if (!content || content.checklist.total === 0) return false;
+      if (!content) return null;
+      if (content.checklist.total === 0) return false;
       return node.state === "open" ? content.checklist.open > 0 : content.checklist.open === 0;
     }
     case "words": {
       const content = note.content();
-      return content ? compare(content.words, node.op, node.value) : false;
+      return content ? compare(content.words, node.op, node.value) : null;
     }
   }
+}
+function evaluateNoteQuery(node, note) {
+  return evaluateNoteQueryTruth(node, note) === true;
 }
 function positiveTextPredicates(node, negated = false) {
   switch (node.type) {
@@ -47499,7 +47607,7 @@ function matchLocations(predicates, title, text2) {
   const firstBreak = text2 === null ? -1 : text2.indexOf("\n");
   const titleLower = normalizeForMatch(title);
   const firstLineLower = text2 === null ? "" : normalizeForMatch(firstBreak === -1 ? text2 : text2.slice(0, firstBreak));
-  const bodyLower = text2 === null || firstBreak === -1 ? "" : normalizeForMatch(text2.slice(firstBreak + 1));
+  const bodyLower = text2 === null ? "" : normalizeForMatch(noteBodyText(text2));
   let inTitle = false;
   let inBody = false;
   for (const predicate of predicates) {
@@ -47610,13 +47718,6 @@ function decodeBodyHex(hex3) {
   } catch {
     return null;
   }
-}
-function countWords(text2) {
-  let count = 0;
-  for (const word of text2.replace(/\ufffc/gu, " ").split(/\s+/u)) {
-    if (/[\p{L}\p{N}]/u.test(word)) count++;
-  }
-  return count;
 }
 var REQUIRED_COLUMNS3 = ["Z_PK", "Z_ENT", "ZTITLE1", "ZFOLDER", "ZMODIFICATIONDATE1"];
 function col2(available, alias, name) {
@@ -47862,7 +47963,6 @@ function runNoteQuery(ast, options = {}) {
         const body2 = decode2();
         if (!body2) return content = null;
         const text2 = body2.text;
-        const firstBreak = text2.indexOf("\n");
         const tags = /* @__PURE__ */ new Set();
         for (const [id2, alt] of row.tags ?? []) {
           if (id2 && alt && body2.objectIds.has(id2))
@@ -47872,7 +47972,7 @@ function runNoteQuery(ast, options = {}) {
         if (tags.size) facets.add("tag");
         content = {
           textLower: normalizeForMatch(text2),
-          bodyLower: normalizeForMatch(firstBreak === -1 ? "" : text2.slice(firstBreak + 1)),
+          bodyLower: normalizeForMatch(noteBodyText(text2)),
           words: countWords(text2),
           facets,
           checklist: body2.checklist,
@@ -48365,13 +48465,16 @@ var LEGACY_ENTITIES = {
   gt: ">",
   amp: "&"
 };
+function codePointText(value) {
+  return Number.isSafeInteger(value) && value <= 1114111 ? String.fromCodePoint(value) : "\uFFFD";
+}
 function comparableVisibleText(html) {
   return html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ").replace(
     /&(?:(nbsp|quot|lt|gt|amp);?|apos;|#(\d+);|#x([0-9a-f]+);)/gi,
     (_match, legacy, dec, hex3) => {
       if (legacy) return LEGACY_ENTITIES[legacy.toLowerCase()];
-      if (dec) return String.fromCodePoint(Number(dec));
-      if (hex3) return String.fromCodePoint(Number.parseInt(hex3, 16));
+      if (dec) return codePointText(Number(dec));
+      if (hex3) return codePointText(Number.parseInt(hex3, 16));
       return "'";
     }
   ).replace(/\s+/g, " ").trim();
@@ -48796,15 +48899,26 @@ function createMarkdownNote(manager, request, run = runBackgroundShortcut) {
   const segments = (path10) => JSON.stringify(splitFolderPath(path10).map((part) => part.toLocaleLowerCase()));
   if (request.folder) {
     const wanted = segments(request.folder);
-    const accounts = manager.listAccounts().filter((account) => account.defaultFolder);
-    if (!accounts.some(
-      (account) => manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
-    ))
+    const accounts = manager.listAccounts().filter(
+      (account) => account.defaultFolder && manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
+    );
+    if (!accounts.length)
       throw new Error(
         `Folder "${request.folder}" does not exist; create it with create-folder first. Nothing was created`
       );
-    for (const account of accounts)
-      manager.assertNotSmartFolderDestination(request.folder, account.name);
+    let smartRefusal;
+    const ordinary = accounts.filter((account) => {
+      try {
+        manager.assertNotSmartFolderDestination(request.folder, account.name);
+        return true;
+      } catch (error2) {
+        if (!(error2 instanceof CodedError && error2.envelope.reason === "smart_folder_destination"))
+          throw error2;
+        smartRefusal ??= error2;
+        return false;
+      }
+    });
+    if (!ordinary.length) throw smartRefusal;
   }
   const defaultFolderNotes = () => new Map(
     manager.listAccounts().flatMap(
@@ -49501,7 +49615,63 @@ function withJsonSchema2020_12(transport2) {
 
 // src/utils/shutdown.ts
 var SHUTDOWN_DRAIN_TIMEOUT_MS = 2e3;
-function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS) {
+var SHUTDOWN_IN_FLIGHT_TIMEOUT_MS = 3e4;
+var InFlightRequests = class {
+  open = /* @__PURE__ */ new Set();
+  waiters = [];
+  get count() {
+    return this.open.size;
+  }
+  received(id2) {
+    this.open.add(id2);
+  }
+  /** A response was sent, or the client cancelled the request (no response follows). */
+  settled(id2) {
+    if (!this.open.delete(id2) || this.open.size > 0) return;
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const waiter of waiters) waiter();
+  }
+  onIdle(listener) {
+    if (this.open.size === 0) listener();
+    else this.waiters.push(listener);
+  }
+};
+var isObject2 = (value) => typeof value === "object" && value !== null;
+var isId = (value) => typeof value === "string" || typeof value === "number";
+function trackRequests(transport2, requests) {
+  if (typeof transport2.send !== "function") return transport2;
+  let handler;
+  Object.defineProperty(transport2, "onmessage", {
+    configurable: true,
+    enumerable: true,
+    get: () => handler,
+    set: (next) => {
+      handler = next ? (message, extra) => {
+        const m = message;
+        if (typeof m.method === "string") {
+          if (isId(m.id)) requests.received(m.id);
+          else if (m.method === "notifications/cancelled" && isObject2(m.params)) {
+            const id2 = m.params.requestId;
+            if (isId(id2)) requests.settled(id2);
+          }
+        }
+        next(message, extra);
+      } : next;
+    }
+  });
+  const send = transport2.send.bind(transport2);
+  transport2.send = async (message, options) => {
+    try {
+      return await send(message, options);
+    } finally {
+      const m = message;
+      if (typeof m.method !== "string" && isId(m.id)) requests.settled(m.id);
+    }
+  };
+  return transport2;
+}
+function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS, pending, inFlightTimeoutMs = SHUTDOWN_IN_FLIGHT_TIMEOUT_MS) {
   let shuttingDown = false;
   let exited = false;
   const exitOnce = () => {
@@ -49518,8 +49688,11 @@ function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS) {
   return () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    timer = setTimeout(exitOnce, timeoutMs);
-    setImmediate(exitWhenDrained);
+    const busy = (pending?.count ?? 0) > 0;
+    timer = setTimeout(exitOnce, busy ? Math.max(timeoutMs, inFlightTimeoutMs) : timeoutMs);
+    setImmediate(
+      () => pending ? pending.onIdle(() => setImmediate(exitWhenDrained)) : exitWhenDrained()
+    );
   };
 }
 
@@ -49867,7 +50040,7 @@ function lastViewedOf(raw, columnPresent = true, now = Date.now()) {
   return { lastViewed: new Date(ms).toISOString(), lastViewedStatus: "viewed" };
 }
 var visible = (text2) => text2.replace(/\ufffc/g, "");
-var wordCount = (text2) => visible(text2).split(/\s+/u).filter((word) => word !== "").length;
+var wordCount = (text2) => countWords(text2);
 var charCount = (text2) => Array.from(visible(text2)).length;
 function noteStructureSql(columns) {
   const c = (alias, name) => col(columns, alias, name);
@@ -50155,7 +50328,7 @@ function inventorySql(columns) {
       ORDER BY d.ZNOTE LIMIT ${BODY_BATCH};`
   };
 }
-function decodeBodies(dbPath2, sql, params) {
+function decodeBodies(dbPath2, sql, params, notes) {
   const docs = /* @__PURE__ */ new Map();
   let after = 0;
   for (; ; ) {
@@ -50164,7 +50337,7 @@ function decodeBodies(dbPath2, sql, params) {
     );
     for (const row of rows) {
       after = Math.max(after, row.note);
-      if (row.encrypted || !row.data) continue;
+      if (row.encrypted || !row.data || !notes.has(row.note)) continue;
       try {
         docs.set(row.note, decodeCompressedNoteBlocks(Buffer.from(row.data, "hex")));
       } catch {
@@ -50212,7 +50385,7 @@ function listNoteLinks(options = {}) {
   if (options.id && !notes.length)
     throw new NoteStoreError(`No note found for ID "${options.id}".`, "invalid_input");
   const includeInline = options.includeInline ?? Boolean(options.id);
-  const docs = includeInline ? decodeBodies(dbPath2, sql.bodies, params) : /* @__PURE__ */ new Map();
+  const docs = includeInline ? decodeBodies(dbPath2, sql.bodies, params, new Set(notes.map((note) => note.pk))) : /* @__PURE__ */ new Map();
   const noteById = new Map(notes.map((note) => [note.pk, note]));
   const accountById = new Map(context.accounts.map((account) => [account.pk, account]));
   const folderById = new Map(context.folders.map((folder) => [folder.pk, folder]));
@@ -50527,7 +50700,14 @@ var AssetLocator = class {
           ["FallbackImage.png", "FallbackImage.jpg"]
         );
         if (fallback)
-          return { primary: { path: fallback, name: `${source.kind}.png`, role: "fallback" } };
+          return {
+            primary: {
+              path: fallback.path,
+              name: `${source.kind}.png`,
+              role: "fallback",
+              ...fallback.stale ? { stale: true } : {}
+            }
+          };
         return preview ? { primary: preview } : {};
       }
       case "scan": {
@@ -50535,7 +50715,14 @@ var AssetLocator = class {
           "FallbackPDF.pdf"
         ]);
         return {
-          ...pdf ? { primary: { path: pdf, name: "scan.pdf", role: "fallback" } } : {},
+          ...pdf ? {
+            primary: {
+              path: pdf.path,
+              name: "scan.pdf",
+              role: "fallback",
+              ...pdf.stale ? { stale: true } : {}
+            }
+          } : {},
           ...preview ? { preview } : {}
         };
       }
@@ -50564,7 +50751,11 @@ var AssetLocator = class {
     }
     return void 0;
   }
-  /** <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation. */
+  /**
+   * <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation.
+   * `stale` is set when a generation was recorded but the file came from
+   * somewhere else.
+   */
   fallback(account, dir, id2, generation, names) {
     const base = join19(account, dir, id2);
     const gen = safeComponent2(generation);
@@ -50576,7 +50767,7 @@ var AssetLocator = class {
     for (const g of generations)
       for (const name of names) {
         const path10 = confine(g ? join19(base, g, name) : join19(base, name), account);
-        if (path10 && isFile(path10)) return path10;
+        if (path10 && isFile(path10)) return { path: path10, stale: Boolean(gen) && g !== gen };
       }
     return void 0;
   }
@@ -50733,6 +50924,9 @@ function readHead(fd) {
   const n = readSync3(fd, head, 0, 16, 0);
   return head.subarray(0, n);
 }
+function directoryFailure(dir, error2) {
+  return `Could not create the assets directory ${dir}: ${error2 instanceof Error ? error2.message : String(error2)}`;
+}
 var SidecarWriter = class {
   constructor(dir, linkBase) {
     this.dir = dir;
@@ -50743,9 +50937,16 @@ var SidecarWriter = class {
   placed = /* @__PURE__ */ new Map();
   created = false;
   count = 0;
+  /**
+   * Set when the directory could not be created. Every later asset fails the
+   * same way without another attempt; the export checks this and fails
+   * instead of reporting each asset as unavailable.
+   */
+  directoryError;
   place(asset) {
     const done = this.placed.get(asset.path);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     let source;
     try {
       source = openSource(asset.path);
@@ -50755,8 +50956,13 @@ var SidecarWriter = class {
     try {
       const mime = sniffMime(readHead(source.fd), asset.name);
       if (!this.created) {
-        assertExportPath(this.dir);
-        mkdirSync4(this.dir, { recursive: true });
+        try {
+          assertExportPath(this.dir);
+          mkdirSync4(this.dir, { recursive: true });
+        } catch (error2) {
+          this.directoryError = directoryFailure(this.dir, error2);
+          return { error: this.directoryError };
+        }
         this.created = true;
       }
       const name = safeAssetName(asset.name, mime);
@@ -50909,7 +51115,10 @@ function titleBlockIndex(note) {
   return first2.text.trim() === note.title.trim() && first2.style !== "monospaced" ? first2.index : -1;
 }
 function place(ctx, asset) {
-  return asset && ctx.writer ? ctx.writer.place(asset) : void 0;
+  const placed = asset && ctx.writer ? ctx.writer.place(asset) : void 0;
+  if (asset?.stale && placed && "url" in placed)
+    ctx.stats.staleRenderings = (ctx.stats.staleRenderings ?? 0) + 1;
+  return placed;
 }
 function planAttachment(attachment, ctx) {
   ctx.stats.attachments++;
@@ -51075,6 +51284,7 @@ function inlinePlanHtml(plan) {
   }
 }
 function blockPlanHtml(plan) {
+  if (!isHtmlBlockPlan(plan)) return `<p>${inlinePlanHtml(plan)}</p>`;
   switch (plan.type) {
     case "table":
       return tableHtml(plan.rows);
@@ -51942,7 +52152,7 @@ function child(path10, key) {
   if (key.length > MAX_QUOTED_TOKEN) key = `${key.slice(0, MAX_QUOTED_TOKEN - 3)}...`;
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? `${path10}.${key}` : `${path10}[${JSON.stringify(key)}]`;
 }
-var isObject2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var isObject3 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var describe = (value) => value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 var describeVersion = (value) => typeof value === "number" && Number.isFinite(value) ? String(value) : describe(value);
 var listed = (values) => values.map((v) => JSON.stringify(v)).join(", ");
@@ -52023,7 +52233,7 @@ var RULE_FIELDS = {
   omit: []
 };
 function validateRule(c, rule, path10) {
-  if (!isObject2(rule)) {
+  if (!isObject3(rule)) {
     c.add(path10, `must be an object, not ${describe(rule)}`);
     return;
   }
@@ -52070,7 +52280,7 @@ function validateInlineOrder(c, value, path10) {
   if (missing.length) c.add(path10, `must list every inline format; missing ${listed(missing)}`);
 }
 function validateOptions(c, value, path10) {
-  if (!isObject2(value)) {
+  if (!isObject3(value)) {
     c.add(path10, `must be an object, not ${describe(value)}`);
     return;
   }
@@ -52091,7 +52301,7 @@ function validateOptions(c, value, path10) {
 }
 function templateErrors(input) {
   const c = new Collector();
-  if (!isObject2(input)) {
+  if (!isObject3(input)) {
     c.add("$", `a template must be a JSON object, not ${describe(input)}`);
     return c.errors;
   }
@@ -52126,7 +52336,7 @@ function templateErrors(input) {
         c.oneOf(value, path10, BUILTIN_TEMPLATE_NAMES);
         break;
       case "assets":
-        if (!isObject2(value)) {
+        if (!isObject3(value)) {
           c.add(path10, `must be an object, not ${describe(value)}`);
           break;
         }
@@ -52142,7 +52352,7 @@ function templateErrors(input) {
         validateInlineOrder(c, value, path10);
         break;
       case "rules":
-        if (!isObject2(value)) {
+        if (!isObject3(value)) {
           c.add(path10, `must be an object keyed by rule id, not ${describe(value)}`);
           break;
         }
@@ -52772,16 +52982,26 @@ var HashedSidecarWriter = class {
   /** Absolute paths of files written or reused. */
   files = [];
   count = 0;
+  /** Set when the directory could not be created; see SidecarWriter.directoryError. */
+  directoryError;
+  /** Creates the directory once; returns an error message when it cannot. */
   prepare() {
-    if (this.ready) return;
-    assertExportPath(this.dir);
-    mkdirSync5(this.dir, { recursive: true });
-    if (!lstatSync4(this.dir).isDirectory()) throw new Error("assets directory is not a directory");
+    if (this.ready) return void 0;
+    try {
+      assertExportPath(this.dir);
+      mkdirSync5(this.dir, { recursive: true });
+      if (!lstatSync4(this.dir).isDirectory())
+        throw new Error("assets directory is not a directory");
+    } catch (error2) {
+      return this.directoryError = directoryFailure(this.dir, error2);
+    }
     this.ready = true;
+    return void 0;
   }
   place(asset) {
     const done = this.placed.get(asset.path);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     let source;
     try {
       source = openRegular(asset.path);
@@ -52791,7 +53011,8 @@ var HashedSidecarWriter = class {
     try {
       const { hash, head } = digest(source);
       const mime = sniffMime(head, asset.name);
-      this.prepare();
+      const directoryError = this.prepare();
+      if (directoryError) return { error: directoryError };
       const name = safeAssetName(asset.name, mime);
       const ext = extname4(name);
       const target = join21(
@@ -53021,10 +53242,11 @@ function validPath(path10, what) {
 function selectNotes(request, deps) {
   if (!!request.id === !!request.folder)
     throw new NotesExportError("invalid-request", "Provide exactly one of 'id' or 'folder'.");
-  if (request.id) return [request.id];
+  if (request.id) return { ids: [request.id], truncated: false };
   const limit = Math.min(request.limit ?? DEFAULT_FOLDER_EXPORT_LIMIT, MAX_FOLDER_EXPORT_LIMIT);
   try {
-    return deps.listNoteRefs(request.account, request.folder, void 0, limit).map((ref) => ref.id);
+    const ids = deps.listNoteRefs(request.account, request.folder, void 0, limit + 1).map((ref) => ref.id);
+    return { ids: ids.slice(0, limit), truncated: ids.length > limit };
   } catch (error2) {
     throw new NotesExportError(
       "folder-unavailable",
@@ -53056,9 +53278,13 @@ function openOutput(output) {
     throw error2;
   }
 }
-function renderInto(fd, render) {
+function renderInto(fd, render, writers = []) {
   try {
-    return render();
+    const document = render();
+    const directoryError = writers.find((writer) => writer.directoryError)?.directoryError;
+    if (directoryError)
+      throw new NotesExportError("invalid-path", `${directoryError}. Nothing was exported.`);
+    return document;
   } catch (error2) {
     if (fd !== void 0) writeAllAndClose(fd, "");
     throw error2;
@@ -53075,10 +53301,15 @@ function exportNotesMarkdown(request, deps) {
       "invalid-request",
       `assetsDir has no effect: template "${chosen.info.name}" sets assets.mode to "${chosen.template.assets.mode}".`
     );
-  const ids = selectNotes(request, deps);
+  const { ids, truncated } = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
-  if (chosen)
-    return exportWithTemplate(request, deps, chosen, notes, skipped, { output, assetsDir });
+  if (chosen) {
+    const receipt2 = exportWithTemplate(request, deps, chosen, notes, skipped, {
+      output,
+      assetsDir
+    });
+    return truncated ? { ...receipt2, truncated } : receipt2;
+  }
   const fd = output ? openOutput(output) : void 0;
   const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname6(output) : void 0) : void 0;
   const ctx = {
@@ -53087,12 +53318,14 @@ function exportNotesMarkdown(request, deps) {
   };
   const markdown = renderInto(
     fd,
-    () => renderNotesMarkdown(notes, ctx, { wrap: request.wrap ?? 0 })
+    () => renderNotesMarkdown(notes, ctx, { wrap: request.wrap ?? 0 }),
+    writer ? [writer] : []
   );
   const bytes = Buffer.byteLength(markdown);
   const receipt = {
     format: "markdown",
     count: notes.length,
+    ...truncated ? { truncated } : {},
     bytes,
     stats: ctx.stats,
     skipped,
@@ -53128,7 +53361,7 @@ function exportNotesHtml(request, deps) {
   const assetsDir = embed ? void 0 : validPath(request.assetsDir ?? defaultSidecarDir(output), "assetsDir");
   if (assetsDir === output)
     throw new NotesExportError("invalid-path", "outputPath and assetsDir must differ.");
-  const ids = selectNotes(request, deps);
+  const { ids, truncated } = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
   const fd = openOutput(output);
   const writer = assetsDir ? new SidecarWriter(assetsDir, dirname6(output)) : new DataUrlWriter();
@@ -53138,11 +53371,16 @@ function exportNotesHtml(request, deps) {
     locator: deps.locator ?? new AssetLocator()
   };
   const title = request.id ? notes[0]?.title || "Note" : request.folder;
-  const html = renderInto(fd, () => renderNotesHtml(notes, ctx, { title }));
+  const html = renderInto(
+    fd,
+    () => renderNotesHtml(notes, ctx, { title }),
+    writer instanceof SidecarWriter ? [writer] : []
+  );
   const bytes = writeAllAndClose(fd, html);
   return {
     format: "html",
     count: notes.length,
+    ...truncated ? { truncated } : {},
     bytes,
     output,
     stats: ctx.stats,
@@ -53224,7 +53462,7 @@ function exportWithTemplate(request, deps, chosen, notes, skipped, { output, ass
     });
     warnings = result.warnings;
     return result.markdown;
-  });
+  }, [...writers.values()]);
   const bytes = Buffer.byteLength(markdown);
   const used = [...writers.values()].filter((writer) => writer.count > 0);
   const files = used.flatMap((writer) => writer.files);
@@ -53290,12 +53528,12 @@ import { basename as basename5, extname as extname6, join as join23 } from "node
 var PASTEBOARD_NAME_ENV = "APPLE_NOTES_MCP_PASTEBOARD_NAME";
 var MAX_PASTEBOARD_BYTES = 64 * 1024 * 1024;
 var PASTEBOARD_DATA_TYPES = [
+  { type: "com.adobe.pdf", ext: "pdf", label: "document" },
   { type: "public.png", ext: "png", label: "image" },
   { type: "public.jpeg", ext: "jpg", label: "image" },
   { type: "public.heic", ext: "heic", label: "image" },
   { type: "com.compuserve.gif", ext: "gif", label: "image" },
-  { type: "public.tiff", ext: "tiff", label: "image" },
-  { type: "com.adobe.pdf", ext: "pdf", label: "document" }
+  { type: "public.tiff", ext: "tiff", label: "image" }
 ];
 var PASTEBOARD_ACCESS_BEHAVIORS = {
   0: "default",
@@ -53322,15 +53560,26 @@ function run(argv) {
   var items = pb.pasteboardItems;
   var itemCount = items && !items.isNil() ? Number(items.count) : 0;
   var fileUrls = [];
+  var dataItems = 0;
   for (var k = 0; k < itemCount; k++) {
     var item = items.objectAtIndex(k);
     var itemTypes = ObjC.deepUnwrap(item.types) || [];
-    if (itemTypes.indexOf("public.file-url") < 0) continue;
+    if (itemTypes.indexOf("public.file-url") < 0) {
+      for (var j = 0; j < prefs.length; j++) {
+        if (itemTypes.indexOf(prefs[j][0]) >= 0) {
+          dataItems++;
+          break;
+        }
+      }
+      continue;
+    }
     var value = ObjC.unwrap(item.stringForType("public.file-url"));
     if (value) fileUrls.push(value);
   }
   if (fileUrls.length > 1)
     return JSON.stringify({ status: "error", code: "multiple_files", count: fileUrls.length });
+  if (fileUrls.length === 0 && dataItems > 1)
+    return JSON.stringify({ status: "error", code: "multiple_items", count: dataItems });
   if (fileUrls.length === 1) {
     var url = $.NSURL.URLWithString(fileUrls[0]);
     if (url && !url.isNil() && url.isFileURL) {
@@ -53361,6 +53610,7 @@ var ENVELOPE_CODES = {
   pasteboard_changed: "operation_failed",
   unsupported_content: "validation_error",
   multiple_files: "validation_error",
+  multiple_items: "validation_error",
   too_large: "validation_error",
   write_failed: "operation_failed",
   file_unreadable: "validation_error"
@@ -53387,6 +53637,7 @@ var MESSAGES = {
   pasteboard_changed: "The pasteboard changed while it was being read. Try again.",
   unsupported_content: `The pasteboard holds no supported content: copy ${SUPPORTED}. Text belongs in append-to-note, not in an attachment.`,
   multiple_files: "The pasteboard holds more than one copied file. Copy exactly one file, or attach each file with add-attachment.",
+  multiple_items: "The pasteboard holds more than one image or PDF. Copy exactly one, or save each and attach it with add-attachment.",
   too_large: "The pasteboard contents exceed the 64 MiB attachment limit.",
   write_failed: "Could not write the pasteboard contents to a temporary file.",
   file_unreadable: "The copied file could not be read as a regular file of at most 64 MiB."
@@ -53398,13 +53649,10 @@ function replyError(code, reply) {
     const message = accessBehavior === "alwaysDeny" ? "macOS is set to deny pasteboard access to the app that runs this server, so nothing was read. Change it to allow in System Settings, then try again." : MESSAGES.pasteboard_access_denied;
     return new PasteboardError(code, message, { accessBehavior });
   }
-  if (code === "multiple_files") {
+  if (code === "multiple_files" || code === "multiple_items") {
     const count = typeof reply.count === "number" ? reply.count : void 0;
-    return new PasteboardError(
-      code,
-      count ? `The pasteboard holds ${count} copied files. Copy exactly one file, or attach each file with add-attachment.` : MESSAGES[code],
-      count ? { count } : {}
-    );
+    const counted = code === "multiple_files" ? `The pasteboard holds ${count} copied files. Copy exactly one file, or attach each file with add-attachment.` : `The pasteboard holds ${count} images or PDFs. Copy exactly one, or save each and attach it with add-attachment.`;
+    return new PasteboardError(code, count ? counted : MESSAGES[code], count ? { count } : {});
   }
   if (code === "unsupported_content" && Array.isArray(reply.types)) {
     const types = reply.types.filter((t) => typeof t === "string").slice(0, 20);
@@ -53617,7 +53865,10 @@ function registerDirectOperations(server2, manager) {
     {
       id: folderId,
       expectedName: external_exports.string().max(1e3),
-      expectedParentId: external_exports.string().max(2e3),
+      // Same forms as id, so list-folders' parentIdentifier (a folder UUID)
+      // works; a top-level folder's parent is its account, passed as the
+      // account's x-coredata id.
+      expectedParentId: folderId,
       newName: external_exports.string().min(1).max(1e3)
     },
     (args) => ({
@@ -54020,7 +54271,9 @@ function readFolderStoreFacts(pk, dbPath2 = NOTE_STORE_PATH) {
 
 // src/tools/folderDelete.ts
 var folderIdSchema = external_exports.string().max(2e3).transform(looseIdTransform("ICFolder"));
-var accountIdSchema = external_exports.string().max(2e3).regex(/^x-coredata:\/\/[0-9a-f-]+\/ICAccount\/p\d+$/i, "An exact account ID is required");
+var accountIdSchema = external_exports.string().max(2e3).transform(looseIdTransform("ICAccount")).pipe(
+  external_exports.string().regex(/^x-coredata:\/\/[0-9a-f-]+\/ICAccount\/p\d+$/i, "An exact account ID is required")
+);
 var revisionSchema = external_exports.string().regex(/^sha256:[a-f0-9]{64}$/);
 var defaultDeps = {
   readStore: (pk) => readFolderStoreFacts(pk),
@@ -58005,14 +58258,17 @@ var strokeSchema = external_exports.object({
       force: external_exports.number()
     })
   ).optional(),
-  transformApplied: external_exports.boolean().optional()
+  transformApplied: external_exports.boolean().optional(),
+  masked: external_exports.boolean().optional(),
+  pointsTruncated: external_exports.boolean().optional()
 }).strip();
 var decodedDrawingSchema = external_exports.object({
   status: external_exports.literal("ok"),
   strokeCount: external_exports.number().int(),
   strokes: external_exports.array(strokeSchema),
   truncated: external_exports.boolean(),
-  bounds
+  bounds,
+  hiddenStrokeCount: external_exports.number().int().optional()
 });
 function decodeRow(row, format, includePoints, deps) {
   const base = {
@@ -58045,7 +58301,8 @@ function decodeRow(row, format, includePoints, deps) {
     status: "ok",
     strokeCount: decoded.strokeCount,
     bounds: decoded.bounds,
-    truncated: decoded.truncated
+    truncated: decoded.truncated,
+    ...decoded.hiddenStrokeCount ? { hiddenStrokeCount: decoded.hiddenStrokeCount } : {}
   };
   if (format !== "json") result.svg = drawingToSvg(strokes, decoded.bounds);
   if (format !== "svg")
@@ -58070,6 +58327,28 @@ function getNoteDrawings(noteId3, options = {}) {
     drawings
   };
 }
+function fitNoteDrawings(result, maxBytes, measure = (r) => Buffer.byteLength(JSON.stringify(r))) {
+  let next = result;
+  let pointsOmitted = false;
+  let svgOmitted = false;
+  if (measure(next) > maxBytes && next.drawings.some((d) => d.strokes?.some((s) => s.points))) {
+    next = {
+      ...next,
+      drawings: next.drawings.map(
+        (d) => d.strokes ? { ...d, strokes: d.strokes.map(({ points: _points, ...rest }) => rest) } : d
+      )
+    };
+    pointsOmitted = true;
+  }
+  if (measure(next) > maxBytes && next.drawings.some((d) => d.svg !== void 0)) {
+    next = {
+      ...next,
+      drawings: next.drawings.map(({ svg: _svg, ...rest }) => rest)
+    };
+    svgOmitted = true;
+  }
+  return { result: next, pointsOmitted, svgOmitted, oversized: measure(next) > maxBytes };
+}
 function formatNoteDrawings(result) {
   if (result.drawingCount === 0) return `No classic PencilKit drawings in note ${result.id}.`;
   const lines = [
@@ -58077,7 +58356,7 @@ function formatNoteDrawings(result) {
   ];
   for (const d of result.drawings)
     lines.push(
-      d.status === "ok" ? `- ${d.attachmentId}: ${d.strokeCount} stroke${d.strokeCount === 1 ? "" : "s"}${d.truncated ? " (truncated)" : ""}` : `- ${d.attachmentId}: error ${d.code}: ${d.message}`
+      d.status === "ok" ? `- ${d.attachmentId}: ${d.strokeCount} stroke${d.strokeCount === 1 ? "" : "s"}${d.hiddenStrokeCount ? ` (${d.hiddenStrokeCount} fully erased)` : ""}${d.truncated ? " (truncated)" : ""}` : `- ${d.attachmentId}: error ${d.code}: ${d.message}`
     );
   return lines.join("\n");
 }
@@ -58177,9 +58456,6 @@ function readAudioAssets(noteId3, options = {}) {
     };
   });
 }
-function countWords2(text2) {
-  return text2.split(/\s+/u).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
-}
 
 // src/services/noteTranscription.ts
 var DEFAULT_TRANSCRIPTION_LOCALE = "en-US";
@@ -58194,6 +58470,7 @@ var BUDGET_MARGIN_MS = 1e4;
 var MIN_TAKE_SECONDS = 5;
 var CALL_WIDE_CODES = /* @__PURE__ */ new Set([
   "permission_required",
+  "permission_not_requested",
   "asset_unavailable",
   "unsupported_locale",
   "speech_unavailable"
@@ -58272,7 +58549,7 @@ async function transcribeTake(take, ctx) {
       status: complete ? "ok" : text2 ? "partial" : "indeterminate",
       ...complete ? {} : { code: "incomplete", message: stopReason ?? "stopped early" },
       ...durationSeconds !== void 0 ? { durationSeconds } : {},
-      wordCount: countWords2(text2),
+      wordCount: countWords(text2),
       ...engine ? { engine } : {}
     },
     text: text2
@@ -58299,7 +58576,7 @@ async function transcribeRecording(asset, includeText, ctx) {
     status,
     ...status !== "ok" && firstProblem?.code ? { code: firstProblem.code, message: firstProblem.message } : {},
     ...asset.durationSeconds !== null ? { durationSeconds: Math.round(asset.durationSeconds) } : {},
-    wordCount: countWords2(transcript),
+    wordCount: countWords(transcript),
     ...includeText ? { transcript } : {},
     takes: outcomes.map((o) => o.take)
   };
@@ -58354,24 +58631,29 @@ async function transcribeNoteAudio(noteId3, options = {}) {
 }
 function fitTranscriptions(result, maxBytes, measure = (r) => Buffer.byteLength(JSON.stringify(r))) {
   if (measure(result) <= maxBytes) return result;
+  const shorten = (share) => ({
+    ...result,
+    recordings: result.recordings.map(
+      (r) => r.transcript ? {
+        ...r,
+        transcript: r.transcript.slice(0, Math.floor(r.transcript.length * share)),
+        transcriptTruncated: true
+      } : r
+    )
+  });
   let next = result;
   for (let share = 0.5; measure(next) > maxBytes && share > 1e-4; share /= 2) {
-    next = {
-      ...result,
-      recordings: result.recordings.map(
-        (r) => r.transcript ? {
-          ...r,
-          transcript: r.transcript.slice(0, Math.floor(r.transcript.length * share)),
-          transcriptTruncated: true
-        } : r
-      )
-    };
+    next = shorten(share);
   }
+  if (measure(next) > maxBytes) next = { ...shorten(0), responseOversized: true };
   return next;
 }
 function formatTranscription(result) {
   if (result.recordingCount === 0) return `No audio attachments in note ${result.id}.`;
   const lines = [
+    ...result.responseOversized ? [
+      "The transcripts were dropped: even without them the response exceeds APPLE_NOTES_MCP_EXPORT_MAX_BYTES. Transcribe one recording at a time with attachmentId."
+    ] : [],
     `${result.recordingCount} audio attachment${result.recordingCount === 1 ? "" : "s"} in note ${result.id} (${result.status}, locale ${result.locale}):`
   ];
   result.recordings.forEach((r, i) => {
@@ -59243,10 +59525,11 @@ function prepareDeleteGuards(args) {
   if (guardNoteId === void 0 !== (expectedGuardContentHash === void 0)) {
     return { error: "Pass guardNoteId and expectedGuardContentHash together." };
   }
-  if (guardNoteId === id2 || requireActiveNoteId === id2) {
+  const same = (a, b) => a !== void 0 && b !== void 0 && canonicalCoreDataId(a) === canonicalCoreDataId(b);
+  if (same(guardNoteId, id2) || same(requireActiveNoteId, id2)) {
     return { error: "A guard note must be a different note from the one being deleted." };
   }
-  if (guardNoteId !== void 0 && guardNoteId === requireActiveNoteId) {
+  if (same(guardNoteId, requireActiveNoteId)) {
     return { error: "requireActiveNoteId repeats guardNoteId; pass only guardNoteId." };
   }
   const prepared = { guards: [], labels: [] };
@@ -59593,7 +59876,7 @@ ${noteList}${truncationNote}${scanNote}${wordCountNote}${syncNote}`,
 registerTool(
   "query-notes",
   {
-    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates never match them.',
+    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.',
     inputSchema: {
       query: external_exports.string().min(1, "A query expression is required").max(MAX.QUERY).describe(
         'Boolean query expression, e.g. `folder:"Work Projects" has:checklist -checklist:done`'
@@ -59646,7 +59929,7 @@ registerTool(
     }
     if (result.unreadable > 0) {
       notes.push(
-        `\u26A0\uFE0F ${result.unreadable} note bodies could not be decoded, so body predicates did not match them.`
+        `\u26A0\uFE0F ${result.unreadable} note bodies could not be decoded, so body predicates (including negated ones) did not match them.`
       );
     }
     const footer = notes.length ? `
@@ -60049,7 +60332,7 @@ registerTool(
     if (!note) return notFoundResponse(`Note with ID "${id2}" not found`);
     const body = notesManager.getNoteContentById(id2);
     if (!body) return errorResponse(`Failed to read content of note "${note.title}"`);
-    const rich = readRichNote(id2);
+    const rich = readRichNote(id2, { skipUnsafeLinks: true });
     const tables = (rich.objectData || []).filter((object3) => object3.type?.includes("table")).map((object3) => {
       try {
         return {
@@ -61659,6 +61942,7 @@ registerTool(
       height: external_exports.number().optional(),
       bytes: external_exports.number().optional(),
       source: external_exports.enum(["fallback", "preview"]).optional(),
+      stale: external_exports.boolean().optional(),
       attachmentId: external_exports.string().optional(),
       identifier: external_exports.string().optional(),
       kind: external_exports.enum(["paper", "drawing"]).optional(),
@@ -61667,8 +61951,9 @@ registerTool(
   },
   withErrorHandling(({ noteId: noteId3, savePath, attachmentId }) => {
     const r = notesManager.exportPaperImageById(noteId3, savePath, attachmentId);
+    const stale = r.source === "fallback" && r.drawing.fallbackImageStale;
     return successResponse(
-      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}`,
+      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}` + (stale ? ". This is an older rendering: the one Notes recorded is not on disk, so it may not show the latest strokes." : ""),
       {
         savedPath: r.savedPath,
         format: r.format,
@@ -61676,6 +61961,7 @@ registerTool(
         height: r.height,
         bytes: r.bytes,
         source: r.source,
+        ...stale ? { stale } : {},
         attachmentId: attachmentCoreDataId(noteId3, r.drawing.pk),
         identifier: r.drawing.identifier,
         kind: r.drawing.kind,
@@ -61688,7 +61974,7 @@ registerTool(
   "export-attachments",
   {
     description: `Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.
-Returns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "preview" when the asset never downloaded and only Notes' rendered thumbnail was available, or null when nothing was on disk.
+Returns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "fallback" for Notes' own full rendering of it (a drawing's PNG or a scan's PDF, named with that format's extension), "preview" when the asset never downloaded and only Notes' rendered thumbnail was available, or null when nothing was on disk; inBody: false marks an attachment no longer shown in the note body.
 Do not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).
 Safety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.`,
     inputSchema: {
@@ -61700,6 +61986,7 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
       exportDir: external_exports.string().optional(),
       exported: external_exports.number().optional(),
       previews: external_exports.number().optional(),
+      fallbacks: external_exports.number().optional(),
       skipped: external_exports.number().optional(),
       failed: external_exports.number().optional(),
       results: external_exports.array(external_exports.object({}).passthrough()).optional(),
@@ -61714,12 +62001,14 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
     }));
     const exported = results.filter((x) => x.exportedKind !== null).length;
     const previews = results.filter((x) => x.exportedKind === "preview").length;
+    const fallbacks = results.filter((x) => x.exportedKind === "fallback").length;
     const failed = results.filter((x) => x.error).length;
     const skipped = results.length - exported - failed;
     const structured = {
       exportDir: r.exportDir,
       exported,
       previews,
+      fallbacks,
       skipped,
       failed,
       results
@@ -61733,7 +62022,7 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
         );
       }
     }
-    const summary = `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${skipped} with nothing on disk, ${failed} failed).`;
+    const summary = `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${fallbacks} Notes rendering(s), ${skipped} with nothing on disk, ${failed} failed).`;
     if (exported === 0 && failed > 0) {
       const error2 = errorResponse(summary, new CodedError(summary, { code: "operation_failed" }));
       return { ...error2, structuredContent: { ...structured, ...error2.structuredContent } };
@@ -61914,7 +62203,8 @@ var exportStatsSchema = external_exports.object({
   unavailable: external_exports.number(),
   tables: external_exports.number(),
   unreadableTables: external_exports.number(),
-  unreferenced: external_exports.number()
+  unreferenced: external_exports.number(),
+  staleRenderings: external_exports.number().optional()
 });
 registerTool(
   "export-notes-markdown",
@@ -61940,6 +62230,7 @@ registerTool(
     outputSchema: {
       format: external_exports.string().optional(),
       count: external_exports.number().optional(),
+      truncated: external_exports.boolean().optional(),
       bytes: external_exports.number().optional(),
       markdown: external_exports.string().optional(),
       output: external_exports.string().optional(),
@@ -61978,7 +62269,7 @@ registerTool(
       );
     }
     const warned = receipt.warnings?.length ? `; ${receipt.warnings.length + (receipt.warningsOmitted ?? 0)} warning(s)` : "";
-    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + warned;
+    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + warned + (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     if (receipt.output)
       return successResponse(
         `Wrote ${receipt.count} note(s) as Markdown (${receipt.bytes} bytes) to ${receipt.output}` + (receipt.assets ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}` : "") + `${skipped}.`,
@@ -62009,6 +62300,7 @@ registerTool(
     outputSchema: {
       format: external_exports.string().optional(),
       count: external_exports.number().optional(),
+      truncated: external_exports.boolean().optional(),
       bytes: external_exports.number().optional(),
       output: external_exports.string().optional(),
       assets: external_exports.object({ dir: external_exports.string(), files: external_exports.number() }).optional(),
@@ -62031,7 +62323,7 @@ registerTool(
       return errorResponse(`Error exporting HTML [${error2.code}]: ${error2.message}${hint}`, error2);
     }
     const assets = receipt.assets ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}` : `; embedded ${receipt.embedded ?? 0} asset(s)`;
-    const skipped = receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "";
+    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     return successResponse(
       `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
       { ...receipt }
@@ -62214,27 +62506,32 @@ registerTool(
       drawingCount: external_exports.number().optional(),
       status: external_exports.string().optional(),
       drawings: external_exports.array(external_exports.object({}).passthrough()).optional(),
-      pointsOmitted: external_exports.boolean().optional()
+      pointsOmitted: external_exports.boolean().optional(),
+      svgOmitted: external_exports.boolean().optional()
     }
   },
   withErrorHandling(({ id: id2, format, includePoints }) => {
-    let result = getNoteDrawings(id2, { format, includePoints });
-    let pointsOmitted = false;
-    if (Buffer.byteLength(JSON.stringify(result)) > exportMaxResponseBytes() && includePoints !== false && format !== "svg") {
-      result = getNoteDrawings(id2, { format, includePoints: false });
-      pointsOmitted = true;
-    }
-    const text2 = formatNoteDrawings(result) + (pointsOmitted ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "");
+    const limit = exportMaxResponseBytes();
+    const { result, pointsOmitted, svgOmitted, oversized } = fitNoteDrawings(
+      getNoteDrawings(id2, { format, includePoints }),
+      limit
+    );
+    if (oversized)
+      return errorResponse(
+        `The drawings in note "${id2}" are too large to return even without stroke points and SVG (limit ${limit} bytes, APPLE_NOTES_MCP_EXPORT_MAX_BYTES).`
+      );
+    const text2 = formatNoteDrawings(result) + (pointsOmitted ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "") + (svgOmitted ? "\nSVG documents were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "");
     return successResponse(text2, {
       ...result,
-      ...pointsOmitted ? { pointsOmitted } : {}
+      ...pointsOmitted ? { pointsOmitted } : {},
+      ...svgOmitted ? { svgOmitted } : {}
     });
   }, "Error reading drawings")
 );
 registerTool(
   "transcribe-note-audio",
   {
-    description: "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
+    description: "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition; permission_not_requested (before macOS 26) means the host app has never asked for that access, so it is not listed there yet. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
     inputSchema: {
       id: noteIdInput,
       locale: external_exports.string().max(35).optional().describe('BCP-47 language of the speech, e.g. "en-US" (default), "it-IT", "fr-FR"'),
@@ -62252,11 +62549,13 @@ registerTool(
       locale: external_exports.string().optional(),
       status: external_exports.string().optional(),
       recordingCount: external_exports.number().optional(),
-      recordings: external_exports.array(external_exports.object({}).passthrough()).optional()
+      recordings: external_exports.array(external_exports.object({}).passthrough()).optional(),
+      responseOversized: external_exports.boolean().optional()
     }
   },
   withAsyncErrorHandling(async (params, signal) => {
     const { id: id2, locale, attachmentId, includeText, downloadAssets, maxSeconds } = params;
+    const toResponse = (r) => successResponse(formatTranscription(r), r);
     const result = fitTranscriptions(
       await transcribeNoteAudio(id2, {
         locale,
@@ -62266,12 +62565,10 @@ registerTool(
         maxSeconds,
         signal
       }),
-      exportMaxResponseBytes()
+      exportMaxResponseBytes(),
+      (r) => Buffer.byteLength(JSON.stringify(toResponse(r)))
     );
-    return successResponse(
-      formatTranscription(result),
-      result
-    );
+    return toResponse(result);
   }, "Error transcribing audio")
 );
 registerTool(
@@ -62386,13 +62683,14 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[unhandledRejection]", reason);
 });
-var shutdown = createShutdown(process.stdout, () => process.exit(0));
+var inFlight = new InFlightRequests();
+var shutdown = createShutdown(process.stdout, () => process.exit(0), void 0, inFlight);
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, shutdown);
 }
 process.stdin.on("end", shutdown);
 process.stdin.on("close", shutdown);
-var transport = withJsonSchema2020_12(new StdioServerTransport());
+var transport = trackRequests(withJsonSchema2020_12(new StdioServerTransport()), inFlight);
 await server.connect(transport);
 /*! Bundled license information:
 
