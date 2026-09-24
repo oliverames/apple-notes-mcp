@@ -1,13 +1,13 @@
 /**
  * Paragraph identifiers through the opt-in private WRITER.
  *
- * Upstream's read-only `list-note-paragraphs` and `get-paragraph-link`
+ * The read-only `list-note-paragraphs` and `get-paragraph-link`
  * (src/utils/noteParagraphs.ts, #218) list each paragraph's stored UUID as
  * `unique`, `shared` or `missing` and refuse to link the last two. This module
  * adds the one write they deliberately lack: `set_paragraph_id` gives one
  * paragraph (chosen by its `blockIndex` from list-note-paragraphs) a UUID of
  * its own, so its `applenotes://showNote?identifier=…&paragraphID=…` link
- * opens exactly there. The writer applies upstream's block and uniqueness
+ * opens exactly there. The writer applies the same block and uniqueness
  * rules to the live body, and its read-back checks the result by them.
  *
  * @module services/privateWriterParagraphs

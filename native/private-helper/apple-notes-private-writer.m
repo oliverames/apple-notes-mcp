@@ -4379,7 +4379,7 @@ static NSString *ComparableText(NSString *text) {
   return [stripped stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
-// Blocks in upstream's order and with upstream's ranges, each with its first
+// Blocks in list-note-paragraphs' order and with its ranges, each with its first
 // UUID, every UUID any of its characters carries (NSNull for none), and its
 // paragraph style value.
 static NSArray<NSDictionary *> *NoteBlocks(NSAttributedString *body) {

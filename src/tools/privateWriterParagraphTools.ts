@@ -8,7 +8,7 @@
  *   that opens a paragraph in the same or another note, minting the
  *   paragraph's identifier when needed.
  *
- * Listing paragraphs and building links stay with upstream's read-only
+ * Listing paragraphs and building links stay with the read-only
  * `list-note-paragraphs` and `get-paragraph-link`; this module adds only the
  * write they leave out.
  *

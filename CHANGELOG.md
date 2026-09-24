@@ -59,8 +59,13 @@
   newline; the title paragraph, list, checklist, monospaced, and attachment
   rows are never touched. The dry run lists every paragraph it would remove.
   The copy-store script adds a trim round trip.
-- `native-writer-status` reports `planEdit` and `editNote` beside
-  `appendPlainText`; the features come from one `WRITER_FEATURES` table.
+- `native-writer-status` reports every writer feature from one
+  `WRITER_FEATURES` table (key, probe key, live-validation flag), each behind
+  its own gate: `appendPlainText`, `planEdit`, `editNote`, `composeNote`,
+  `composeObjects`, `checklistToggle`, `highlight`, `linkCard`,
+  `setParagraphId`, `addSectionLink`, `readTables`, `editTables`,
+  `pruneOrphanTable`, `readSmartFolders`, `editSmartFolders`, and `addPaper`.
+  The writer probe can check model properties per feature.
 - The copy-store script runs a plan, apply, and restore round trip on up to
   eight notes and checks each step with `scripts/check-edit-preservation.mjs`,
   an independent decoder of the stored note.
@@ -105,8 +110,6 @@
   Optional `nudge`. Until it passes live validation it also requires
   `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
   helper branch.
-- `native-writer-status` reports every writer feature from one
-  `WRITER_FEATURES` table, each with its own live-validation gate.
 - `scripts/test-private-writer-checklist-copy-store.sh` exercises the
   checklist actions on a store copy, with shared setup in
   `scripts/private-writer-copy-store-lib.sh`.
@@ -133,8 +136,6 @@
   left to highlight is refused as `nothing_to_highlight`. Both scopes now
   report `characterCount`. Verification, including the `hasEmphasis` check,
   is the same as for the text scope.
-- `native-writer-status` reports every writer feature from one
-  `WRITER_FEATURES` table, each with its own live-validation gate.
 - `scripts/test-private-writer-highlight-copy-store.sh` exercises the
   highlight action on a store copy, with shared setup in
   `scripts/private-writer-copy-store-lib.sh`.
@@ -150,9 +151,6 @@
   passes live validation, writes also require
   `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
   helper branch.
-- `native-writer-status` reports every writer feature from one
-  `WRITER_FEATURES` table, each with its own live-validation gate. The writer
-  probe can check model properties per feature.
 - `scripts/test-private-writer-link-card-copy-store.sh` exercises the link
   card action on a store copy, with shared setup in
   `scripts/private-writer-copy-store-lib.sh`.
@@ -163,8 +161,6 @@
   `list-note-paragraphs`, uses the same uniqueness rules, returns `unchanged`
   without writing when the identifier is already unique, and takes the
   optional `nudge`. Gated by `PARAGRAPH_IDS_LIVE_VALIDATED`.
-- `native-writer-status` reports each writer feature from one
-  `WRITER_FEATURES` table (key, probe key, live-validation flag).
 - `native-add-section-link` (writer action `add_section_link`, macOS 27)
   inserts a native section-link chip that opens a paragraph in the same or
   another note, selected by `blockIndex`, `paragraphId`, `heading`, or the
@@ -173,7 +169,7 @@
   `ifTargetRevision` for another note, and takes the optional `nudge`. Gated
   by `SECTION_LINKS_LIVE_VALIDATED`. `list-note-links` reports the chips it
   makes as kind `section`, which the copy-store script checks.
-- The copy-store script checks paragraph identifiers with upstream's
+- The copy-store script checks paragraph identifiers with the
   `list-note-paragraphs` reader against the copy, and confirms that every live
   note a feature check uses is unchanged.
 - Native table edits through the writer: `native-read-tables`,
@@ -183,8 +179,6 @@
   `revision` and the table `digest`; row deletion and the orphan prune are
   two-phase (a read-only dry run, then an apply with both tokens). Applies
   accept `nudge` and are gated by `TABLE_WRITES_LIVE_VALIDATED`.
-- `native-writer-status` reports `readTables`, `editTables`, and
-  `pruneOrphanTable` next to `appendPlainText`.
 - The copy-store script exercises the four table writes, their stale-token
   refusals, and the live-store gate.
 - Smart-folder writes through the writer (#181): `native-read-smart-folder`,
@@ -195,9 +189,6 @@
   delete is two-phase and only takes empty smart folders. A smart folder is
   refused as a parent with `reason: "smart_folder_destination"`, matching the
   destination guard. Writes are gated by `SMART_FOLDERS_LIVE_VALIDATED`.
-- `native-writer-status` reports `readSmartFolders` and `editSmartFolders`
-  next to `appendPlainText`. A writer action that fails before its first save
-  reports `committed: false`.
 - The copy-store script exercises the smart-folder create, update, and delete
   paths, their refusals, and the live-store gate, and fingerprints the live
   smart-folder rows before and after.
@@ -220,13 +211,16 @@
 
 ### Fixed
 
-- The writer reports `committed: false` for every refusal before its save
-  (a locked, shared or trashed note, bad input, a missing API), and an
+- Every write action reports `committed: false` for every refusal before its
+  save (a locked, shared or trashed note, bad input, a missing API), and an
   exception after a successful save reports a committed, unverified write
-  instead of an unknown outcome. The read-back catches any exception.
+  instead of an unknown outcome. Each write handler marks itself before it
+  can save, every save goes through one bracketed `SaveOrFailFor()`, and
+  every read-back catches any exception.
 - Written text may contain format characters (emoji joiners, ZWNJ, soft
-  hyphens, BOMs, bidi marks); only C0/C1 control characters are refused,
-  matching the client's check.
+  hyphens, BOMs, bidi marks); only C0/C1 control characters (plus U+FFFC,
+  U+2028 and U+2029) are refused, through one shared character set in the
+  writer, matching the client's checks.
 - The probe checks the folder fields `read_sync_state` reads, and a copy of
   the store (`APPLE_NOTES_MCP_PRIVATE_STORE`) still needs
   `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`.

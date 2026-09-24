@@ -1056,9 +1056,9 @@ Extra NotesShared API, reported by the probe as the `composeNote` feature:
 | `highlight` | `TTEmphasis` 1 to 5 (purple, pink, orange, mint, blue) | AttributeRun field 14 |
 | `color` | `TTColor` (a `CGColor`) | AttributeRun field 10 |
 
-The table was recorded on an earlier branch (2026-09-23), where the same
-code ran in a combined helper; it has not been re-derived for this
-writer beyond the copy-store run below.
+The table was recorded on 2026-09-23, when the same code ran in a combined
+helper; it has not been re-derived for this writer beyond the copy-store run
+below.
 
 Each paragraph's `TTStyle` covers its text and its own terminating newline.
 Placement: `append` closes the note's last paragraph with a newline carrying
@@ -1348,14 +1348,14 @@ nudge. The writer build of this action has not been live-tested yet.
 
 ### Paragraph identifiers
 
-Upstream's read-only `list-note-paragraphs` and `get-paragraph-link` (#218)
+The read-only `list-note-paragraphs` and `get-paragraph-link` (#218)
 classify each paragraph's stored UUID (ParagraphStyle field 9) as `unique`,
 `shared` or `missing` and refuse to link the last two. They never mint one.
 The writer's `set_paragraph_id` action (`native-set-paragraph-id`) adds that
-write and builds on the upstream listing rather than repeating it: the
-caller picks a paragraph by its upstream `blockIndex` and `text`.
+write and builds on that listing rather than repeating it: the caller
+picks a paragraph by its `blockIndex` and `text` from the listing.
 
-The writer applies upstream's rules to the live attributed string: blocks
+The writer applies the same rules to the live attributed string: blocks
 split on `\n` only, a block owns its terminating newline, its UUID is the one
 on its first character, and that UUID is unique when no character of another
 block carries it. It refuses a block whose text no longer matches
@@ -1369,7 +1369,7 @@ other attributes and paragraph style value are unchanged, and that every
 other block kept its first UUID. A run without a paragraph style counts as
 body text (style 3) in that comparison, since the new style it receives is
 the default body style. `scripts/test-private-helper-copy-store.sh` checks
-the result on a copy with upstream's own reader (`readNoteParagraphs`),
+the result on a copy with the read tools' own reader (`readNoteParagraphs`),
 which must report the paragraph as `unique` with the writer's `url`.
 
 ### Section-link chips (macOS 27)
@@ -1377,8 +1377,8 @@ which must report the paragraph as `unique` with the writer's `url`.
 A section link is the chip Notes pastes for Copy Link to Section: an
 `ICInlineAttachment` of type `com.apple.notes.inlinetextattachment.link`
 whose token is an `applenotes://showNote?identifier=<note>&paragraphID=<uuid>`
-link, shown in the body as one U+FFFC glyph. Upstream's `list-note-links` and
-`get-note-structure` read these as kind `section`; nothing upstream creates
+link, shown in the body as one U+FFFC glyph. `list-note-links` and
+`get-note-structure` read these as kind `section`, but no other tool creates
 one. The writer's `add_section_link` action (`native-add-section-link`) does,
 in one save:
 
@@ -1404,7 +1404,7 @@ new attachment, the persisted attachment and its token (target note and
 paragraph), that the target paragraph carries the identifier uniquely, that
 a target note's text is unchanged, that its other paragraphs kept their
 identifiers, and that cleared attachments are marked for deletion. The
-copy-store script confirms each chip with upstream's `listNoteLinks` reader.
+copy-store script confirms each chip with the `listNoteLinks` reader.
 On the 2026-09-24 copy test no recent note had a heading, so the default and
 `heading` selectors have not yet run against a store; `blockIndex` and `paragraphId`,
 minting in the same and in another note, and clearing ran on the copy.
@@ -1536,8 +1536,8 @@ Findings, macOS 27.2, on copy stores:
 - Shapes are traced as strokes. Notes' typed shapes live in the Paper bundle's
   own model, which no stable entry point exposes, so none are created.
 
-This branch ports only the write path. Stroke decoding as a read tool
-(`native-read-paper` on the earlier fork branches) is not part of it;
+Only the write path is included. Stroke decoding as a read tool is not
+part of it;
 `get-note-drawings` decodes classic drawings, and `list-paper-attachments`
 and `export-paper-image` read Paper's own rendering.
 

@@ -4,11 +4,11 @@
  * A section link is the chip Notes pastes for "Copy Link to Section": an
  * inline attachment of type `com.apple.notes.inlinetextattachment.link` whose
  * token is an `applenotes://showNote?identifier=<note>&paragraphID=<uuid>`
- * link. Upstream reads these chips (list-note-links and get-note-structure
+ * link. The read tools report these chips (list-note-links and get-note-structure
  * report them as kind `section`) but cannot create one. The writer's
  * `add_section_link` action has NotesShared build the attachment, inserts its
  * glyph, and, when the target paragraph's identifier is not unique by
- * upstream's rules (see privateWriterParagraphs.ts), mints one in the same
+ * the read tools' rules (see privateWriterParagraphs.ts), mints one in the same
  * save.
  *
  * @module services/privateWriterSectionLinks

@@ -1,6 +1,6 @@
 /**
  * `native-add-paper`: author a drawing into one exact note through the opt-in
- * private WRITER (#181, fork-only).
+ * private WRITER (#181).
  *
  * Input is stroke and shape JSON, or an SVG file converted by the same
  * analyzer `analyze-svg` runs. A lossy SVG is written only when the caller

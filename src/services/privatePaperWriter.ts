@@ -1,5 +1,5 @@
 /**
- * Paper authoring through the opt-in private WRITER (#181, fork-only).
+ * Paper authoring through the opt-in private WRITER (#181).
  *
  * `add_paper` appends one drawing to the end of an exact note as a new
  * attachment: a Paper drawing (`com.apple.paper`) or a classic drawing

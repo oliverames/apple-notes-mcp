@@ -1,7 +1,7 @@
 /**
  * MCP tools for smart folders through the opt-in private WRITER (#181).
  *
- * `list-smart-folders` (read-only, upstream) finds smart folders and decodes
+ * `list-smart-folders` (read-only) finds smart folders and decodes
  * their rules. These tools add:
  *
  * - `native-read-smart-folder`: one smart folder's writer state and `f1:`

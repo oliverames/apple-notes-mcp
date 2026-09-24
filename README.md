@@ -2851,21 +2851,6 @@ columns are addressed by native identifier, never by position alone, and
 every write needs two tokens: the note `revision` as `ifRevision` and the
 table `digest` as `ifTableDigest`.
 
-- `native-read-tables` (read-only): every active table in a note with its
-  `identifier`, `glyphCount`, `orphan` flag, `digest`, `columnIdentifiers`,
-  and `rows` (`{identifier, cells}`), plus the note `revision`.
-- `native-delete-table-row`: two phases. `dryRun: true` opens the store
-  read-only and returns the row, its cells, and both tokens; `dryRun: false`
-  with those tokens deletes it. A table's only row cannot be deleted.
-- `native-insert-table-row`: adds a row after `afterRowIdentifier` (or at
-  the end) with optional plain-text `cells`, and returns the new
-  `rowIdentifier`.
-- `native-set-table-cell`: replaces one cell's text and returns
-  `previousText`.
-- `native-prune-orphan-table`: two phases, like the row delete. Tombstones a
-  table attachment that no body glyph shows (`orphan: true`), the same way
-  Notes deletes an attachment. It refuses a visible table.
-
 Each apply verifies through a fresh Core Data stack that the body text is
 unchanged and the table equals the planned result. A stale token fails with
 `revision_conflict` (the envelope code for both the note and the table
@@ -2874,25 +2859,38 @@ same optional `nudge`; its `uploadRecorded` covers the note record, not the
 table attachment's own record. Dry runs and `native-read-tables` are not
 gated by `APPLE_NOTES_MCP_ALLOW_UNVERIFIED`; applies are.
 
+#### `native-read-tables`
+
+Read-only. Returns every active table in a note with its `identifier`,
+`glyphCount`, `orphan` flag, `digest`, `columnIdentifiers`, and `rows`
+(`{identifier, cells}`), plus the note `revision`.
+
+#### `native-delete-table-row`
+
+Two phases. `dryRun: true` opens the store read-only and returns the row, its
+cells, and both tokens; `dryRun: false` with those tokens deletes it. A
+table's only row cannot be deleted.
+
+#### `native-insert-table-row`
+
+Adds a row after `afterRowIdentifier` (or at the end) with optional
+plain-text `cells`, and returns the new `rowIdentifier`.
+
+#### `native-set-table-cell`
+
+Replaces one cell's text and returns `previousText`.
+
+#### `native-prune-orphan-table`
+
+Two phases, like the row delete. Tombstones a table attachment that no body
+glyph shows (`orphan: true`), the same way Notes deletes an attachment. It
+refuses a visible table.
+
 #### Smart folders
 
 Four tools create, edit, and delete smart folders. Find a smart folder and
 its rules with the read-only `list-smart-folders` first; it returns each
 folder's `identifier` and stored query (`rawQuery`).
-
-- `native-read-smart-folder` (read-only): one smart folder's state by
-  `identifier`, with its canonical `queryJSON`, decoded rules, child and note
-  counts, `cloudSync`, and a folder `revision` (`f1:…`).
-- `native-create-smart-folder`: `title` plus `query` (an object or a JSON
-  string), at the root of `account` (default: Notes' default account) or
-  inside the ordinary folder `parentIdentifier`. Calling it again with the
-  same title, destination, and query returns `status: "ok"` and writes
-  nothing; a different folder with that title is refused (`folder_exists`).
-- `native-update-smart-folder`: replaces one smart folder's query, guarded by
-  its `revision` as `ifRevision`.
-- `native-delete-smart-folder`: two phases. `dryRun: true` returns the
-  folder and its `revision`; `dryRun: false` with that revision marks it
-  deleted, the way Notes deletes a folder. Only empty smart folders.
 
 Each query goes through Notes' own query parser, and the writer stores the
 form Notes regenerates from it. A query Notes cannot store without changing
@@ -2906,6 +2904,30 @@ not offered, because it moves notes and a folder has no equivalent; check
 `cloudSync` with `native-read-smart-folder` after Notes.app saves. Writes
 need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; the read and the delete's dry run
 do not.
+
+#### `native-read-smart-folder`
+
+Read-only. One smart folder's state by `identifier`, with its canonical
+`queryJSON`, decoded rules, child and note counts, `cloudSync`, and a folder
+`revision` (`f1:…`).
+
+#### `native-create-smart-folder`
+
+`title` plus `query` (an object or a JSON string), at the root of `account`
+(default: Notes' default account) or inside the ordinary folder
+`parentIdentifier`. Calling it again with the same title, destination, and
+query returns `status: "ok"` and writes nothing; a different folder with that
+title is refused (`folder_exists`).
+
+#### `native-update-smart-folder`
+
+Replaces one smart folder's query, guarded by its `revision` as `ifRevision`.
+
+#### `native-delete-smart-folder`
+
+Two phases. `dryRun: true` returns the folder and its `revision`;
+`dryRun: false` with that revision marks it deleted, the way Notes deletes a
+folder. Only empty smart folders.
 
 #### `native-add-paper`
 

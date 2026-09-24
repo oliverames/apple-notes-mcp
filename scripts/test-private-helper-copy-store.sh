@@ -146,7 +146,7 @@ WATCHED="$WORK/watched-live"
 : >"$WATCHED"
 watch_live() { printf '%s %s\n' "$1" "$(field "$(run "$(read_request "$1")")" revision)" >>"$WATCHED"; }
 
-# Upstream's read-only readers (src/utils/noteParagraphs.ts and
+# The read-only readers (src/utils/noteParagraphs.ts and
 # noteLinkInventory.ts), bundled once and pointed at the copy, so every
 # paragraph or link write is checked by the same code list-note-paragraphs and
 # list-note-links run. Prints one JSON object per call.
@@ -258,7 +258,7 @@ fi
 
 # 4a2. Section-link chips (macOS 27). A chip within a note that has a heading,
 #    a replacement below the title that clears it, and a chip from the append
-#    note into that heading. Each is checked with upstream's list-note-links
+#    note into that heading. Each is checked with the list-note-links
 #    reader on the copy: one `section` link whose attachment, target note and
 #    paragraph match the writer's result.
 # The section link with this attachment identifier, as JSON ({} if none), and
