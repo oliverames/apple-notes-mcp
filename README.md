@@ -1192,7 +1192,8 @@ the write happened so it is not repeated.
   paragraph, or inside the text, is not available.
 - Rich URL preview cards (the link tile Notes makes when you paste a URL) are
   not produced. No public automation route creates one: the Shortcuts Notes
-  actions write text, and AppleScript's `body` has no card markup.
+  actions write text, and AppleScript's `body` has no card markup. The opt-in
+  private writer's [`native-add-url-card`](#native-add-url-card) can add one.
 - To start a new note with a link, use [`create-note`](#create-note) with
   `format: "html"` and an `<a href>` in `content`; the link is stored the same
   way.
@@ -2377,6 +2378,26 @@ x-coredata `id`, guarded by `ifRevision` and verified by read-back. Returns
 `nudge: true` it then moves the note in place and watches Notes' upload
 counters for `nudgeWaitSeconds` (default 30), reported under `sync`. Refuses
 locked, shared, trashed, and still-downloading notes.
+
+#### `native-add-url-card`
+
+Adds a rich web link card (the preview tile Notes shows for a pasted URL) to
+one note: a new `public.url` attachment plus its attachment glyph on a line of
+its own, at the end of the note or directly after the one paragraph whose full
+text equals `afterParagraph`. Zero or several matching paragraphs refuse with
+`match_count_mismatch` (envelope code `validation_error`, with `found`) and
+write nothing. `url` must be an absolute `http` or `https` URL. `dryRun: true`
+reports the insertion point without writing; a write needs `ifRevision` from
+`native-note-state`. The writer re-reads the note through a new Core Data
+stack and requires the text to equal the old text plus the card at the planned
+index, the glyph to name the new attachment exactly once, and the attachment
+row to be a `public.url` attachment for that URL on that note. It makes no
+network request: Notes fetches the card's title and preview image itself. The
+result carries the attachment's own `cloudSync` counters. Not idempotent: a
+repeat adds a second card, but the replayed revision is refused. Sync
+reporting and the optional `nudge` match `native-append-plain-text`. Writes
+also require `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated in a
+release; dry runs do not.
 
 ## Usage Patterns
 

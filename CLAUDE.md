@@ -108,7 +108,7 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 - Needs the same `expectedContentHash` as `append-to-note`. Notes with native objects route to native end-append and need `scopeText`; only `position: "end"` with `blankLine: true` works there.
 - Verified from the note's stored link runs, not the HTML sent: the result carries `linkStored` and `storedUrl` (a bare origin comes back with a trailing `/`).
 - A bare URL written as plain text is not linked by Notes. `linked: false` writes it that way on purpose and reports `linkStored: false`.
-- Rich URL preview cards cannot be created, and a link cannot be placed inside an existing paragraph. For a link to another note by id, use `insert-note-link`.
+- Rich URL preview cards cannot be created here (the opt-in writer's `native-add-url-card` can), and a link cannot be placed inside an existing paragraph. For a link to another note by id, use `insert-note-link`.
 
 ### Checklist Creation Is Not Supported
 
@@ -382,6 +382,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### Private writer tools (opt-in, fork-only)
 - A separate **writer** (`apple-notes-mcp setup --native-writer`) backs `native-append-plain-text` and the other native write tools. It needs `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` **and** `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`, and unvalidated writes also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Call `native-writer-status` first; never suggest enabling it unprompted, and use it only on notes the user has agreed to risk.
 - Every write needs a fresh `revision` as `ifRevision` (from `native-note-state` or the feature's own read tool). `revision_conflict` means the note changed: read it again before retrying. `indeterminate: true` means the write may have been saved: read the note before any retry. `committed: false` means nothing was written.
+- `native-add-url-card` is for a rich preview card. For a clickable text link use `insert-link` or `append-native`. `afterParagraph` must be the whole text of one paragraph; try `dryRun: true` first. The card's title and image appear once Notes fetches them; the tool does not wait for that. It is not idempotent: never retry a committed call.
 - The writer cannot upload to iCloud. After a write, `cloudSync.uploadPending` stays true until Notes.app saves the note. Pass `nudge: true` to have Notes.app save it by moving it into its own folder; `sync.targets[].uploadRecorded` says whether Notes recorded the upload.
 
 ### Multi-account

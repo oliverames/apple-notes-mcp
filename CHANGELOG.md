@@ -26,6 +26,24 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+- `native-add-url-card` on the writer (action `add_url_card`). Adds a rich
+  web link card: NotesShared creates the `public.url` attachment
+  (`addURLAttachmentWithURL:`) and the writer inserts its attachment glyph on
+  its own line at the end of the note or after the one paragraph that exactly
+  equals `afterParagraph`. It supports `dryRun`, requires `ifRevision` for a
+  write, marks both the note and the attachment for upload, and re-reads the
+  note in a fresh Core Data stack to verify the text, the glyph position, and
+  the attachment's type, URL, and owning note. The writer makes no network
+  request; Notes fetches the card preview itself. Optional `nudge`. Until it
+  passes live validation, writes also require
+  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
+  helper branch.
+- `native-writer-status` reports every writer feature from one
+  `WRITER_FEATURES` table, each with its own live-validation gate. The writer
+  probe can check model properties per feature.
+- `scripts/test-private-writer-link-card-copy-store.sh` exercises the link
+  card action on a store copy, with shared setup in
+  `scripts/private-writer-copy-store-lib.sh`.
 
 ## [2.9.11] - 2026-09-23
 
