@@ -2393,6 +2393,26 @@ changed. Returns `status: "updated"` with the new `paragraphId` and `url`, or
 unique. `paragraph_changed` (code `revision_conflict`, `committed: false`)
 means the block no longer holds that text. Takes the optional `nudge`.
 
+#### `native-add-section-link`
+
+Inserts a native section-link chip, the chip Notes pastes for Copy Link to
+Section, into a note (macOS 27 or later). The chip opens a paragraph of the
+same note or, with `target`, of another note. Choose the paragraph by
+`blockIndex` plus `expectedText` from `list-note-paragraphs`, by a
+`paragraphId` that is unique in the target, or by `heading` (title, heading,
+or subheading text, exact and case-insensitive); with none of them it links
+the first heading or subheading. When the paragraph's identifier is `shared`
+or `missing`, the writer mints one in the same save (`paragraphIdMinted`).
+`position` is `end` (default) or `belowTitle`, and
+`clearExistingSectionLinks: true` first removes the note's section-link chips
+(note-link chips stay). Needs `ifRevision` for the note and, for another
+note, `ifTargetRevision`, both from `native-note-state`. Returns `url`,
+`token`, `section`, `paragraphId`, `inlineAttachmentIdentifier`,
+`clearedSectionLinks`, the revisions of both notes, and sync state.
+`list-note-links` then reports the chip as kind `section`. With `nudge: true`
+it nudges the note, and the target note too when an identifier was minted
+there.
+
 ## Usage Patterns
 
 ### Basic Workflow

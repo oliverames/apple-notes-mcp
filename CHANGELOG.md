@@ -35,6 +35,14 @@
   optional `nudge`. Gated by `PARAGRAPH_IDS_LIVE_VALIDATED`.
 - `native-writer-status` reports each writer feature from one
   `WRITER_FEATURES` table (key, probe key, live-validation flag).
+- `native-add-section-link` (writer action `add_section_link`, macOS 27)
+  inserts a native section-link chip that opens a paragraph in the same or
+  another note, selected by `blockIndex`, `paragraphId`, `heading`, or the
+  first heading. It mints the paragraph's identifier in the same save when it
+  is not unique, can clear the note's existing section chips, needs
+  `ifTargetRevision` for another note, and takes the optional `nudge`. Gated
+  by `SECTION_LINKS_LIVE_VALIDATED`. `list-note-links` reports the chips it
+  makes as kind `section`, which the copy-store script checks.
 - The copy-store script checks paragraph identifiers with upstream's
   `list-note-paragraphs` reader against the copy, and confirms that every live
   note a feature check uses is unchanged.

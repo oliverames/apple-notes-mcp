@@ -74,6 +74,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   append_plain_text: "write",
   read_sync_state: "read",
   set_paragraph_id: "write",
+  add_section_link: "write",
 };
 
 /**
@@ -84,6 +85,9 @@ export const APPEND_LIVE_VALIDATED = false;
 
 /** Same gate for minting paragraph identifiers (native-set-paragraph-id). */
 export const PARAGRAPH_IDS_LIVE_VALIDATED = false;
+
+/** Same gate for inserting native section-link chips (native-add-section-link). */
+export const SECTION_LINKS_LIVE_VALIDATED = false;
 
 /**
  * One row per writer feature that `native-writer-status` reports: its key in
@@ -101,6 +105,11 @@ export const WRITER_FEATURES: readonly WriterFeature[] = [
     key: "setParagraphId",
     probeKey: "setParagraphId",
     liveValidated: PARAGRAPH_IDS_LIVE_VALIDATED,
+  },
+  {
+    key: "addSectionLink",
+    probeKey: "addSectionLink",
+    liveValidated: SECTION_LINKS_LIVE_VALIDATED,
   },
 ];
 
@@ -255,6 +264,7 @@ export const writerProbeSchema = z
         readNoteState: featureSchema,
         appendPlainText: featureSchema,
         setParagraphId: featureSchema.optional(),
+        addSectionLink: featureSchema.optional(),
       })
       .passthrough(),
   })

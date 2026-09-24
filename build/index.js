@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid4 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid4}))`);
+        const invalid5 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid5}))`);
       }
     };
     exports.default = def;
@@ -53303,7 +53303,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid4 = () => this.issue(
+      const invalid5 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -53313,7 +53313,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid4();
+          if (paint.kind === "invalid") invalid5();
           else if (name === "fill") style.fill = paint;
           else style.stroke = paint;
           break;
@@ -53321,12 +53321,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid4();
+          else invalid5();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid4();
+          if (w === null || w < 0) invalid5();
           else style.strokeWidth = w;
           break;
         }
@@ -53334,7 +53334,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid4();
+          if (o === null) invalid5();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -53342,7 +53342,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid4();
+          else invalid5();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -53362,14 +53362,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid4();
+          if (!list || list.some((v) => v < 0)) invalid5();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid4();
+          if (o === null) invalid5();
           else style.dashoffset = o;
           break;
         }
@@ -56330,16 +56330,23 @@ var WRITER_ACTIONS = {
   read_note_state: "read",
   append_plain_text: "write",
   read_sync_state: "read",
-  set_paragraph_id: "write"
+  set_paragraph_id: "write",
+  add_section_link: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
 var PARAGRAPH_IDS_LIVE_VALIDATED = false;
+var SECTION_LINKS_LIVE_VALIDATED = false;
 var WRITER_FEATURES = [
   { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
   {
     key: "setParagraphId",
     probeKey: "setParagraphId",
     liveValidated: PARAGRAPH_IDS_LIVE_VALIDATED
+  },
+  {
+    key: "addSectionLink",
+    probeKey: "addSectionLink",
+    liveValidated: SECTION_LINKS_LIVE_VALIDATED
   }
 ];
 function defaultWriterDeps(overrides = {}) {
@@ -56437,7 +56444,8 @@ var writerProbeSchema = external_exports.object({
   features: external_exports.object({
     readNoteState: featureSchema2,
     appendPlainText: featureSchema2,
-    setParagraphId: featureSchema2.optional()
+    setParagraphId: featureSchema2.optional(),
+    addSectionLink: featureSchema2.optional()
   }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
@@ -57044,6 +57052,7 @@ function writerEnvelopeCode(helperCode, message) {
     case "not_live_validated":
       return "unsupported";
     case "ambiguous":
+    case "ambiguous_paragraph":
       return "ambiguous";
     default:
       return envelopeCode(helperCode, message);
@@ -57148,8 +57157,9 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
   );
 }
 async function nudgeAfterWrite(identifier, waitSeconds, deps) {
+  const identifiers = Array.isArray(identifier) ? identifier : [identifier];
   try {
-    const report = await nudgeInPlace({ identifiers: [identifier], waitSeconds }, deps);
+    const report = await nudgeInPlace({ identifiers, waitSeconds }, deps);
     const { before: _before, after: _after, ...rest } = report;
     void _before;
     void _after;
@@ -57201,7 +57211,7 @@ function setParagraphId(request, deps = defaultWriterDeps()) {
   assertNoteIdentifier2(request.identifier);
   if (!Number.isInteger(request.blockIndex) || request.blockIndex < 0)
     invalid3("blockIndex must be a non-negative integer from list-note-paragraphs");
-  if (!request.expectedText.replace(/￼/g, "").trim())
+  if (!request.expectedText.replace(/\ufffc/g, "").trim())
     invalid3("expectedText must be the paragraph text from list-note-paragraphs");
   assertRevision(request.ifRevision);
   if (request.paragraphId !== void 0 && !UUID_PATTERN.test(request.paragraphId))
@@ -57217,6 +57227,90 @@ function setParagraphId(request, deps = defaultWriterDeps()) {
   return parseWriterResult(
     setParagraphIdSchema,
     callPrivateWriter("set_paragraph_id", fields, deps),
+    true
+  );
+}
+
+// src/services/privateWriterSectionLinks.ts
+var revision5 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
+var addSectionLinkSchema = external_exports.object({
+  status: external_exports.literal("updated"),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  target: external_exports.string(),
+  selfLink: external_exports.boolean(),
+  section: external_exports.string(),
+  targetStyleType: external_exports.number().int(),
+  paragraphId: external_exports.string().regex(UUID_PATTERN),
+  previousParagraphIdStatus: external_exports.enum(["unique", "shared", "missing"]),
+  paragraphIdMinted: external_exports.boolean(),
+  url: external_exports.string().regex(PARAGRAPH_URL),
+  token: external_exports.string().nullable(),
+  inlineAttachmentIdentifier: external_exports.string().regex(UUID_PATTERN),
+  position: external_exports.enum(["end", "belowTitle"]),
+  clearedSectionLinks: external_exports.number().int().nonnegative(),
+  revisionBefore: revision5,
+  revisionAfter: revision5,
+  modificationDate: external_exports.string().nullable(),
+  targetRevisionBefore: revision5.optional(),
+  targetRevisionAfter: revision5.optional(),
+  targetCloudSync: cloudSyncSchema2.optional(),
+  ...writeSyncFields
+}).passthrough();
+function invalid4(message) {
+  throw new PrivateWriteError("invalid_request", message, false);
+}
+function addSectionLink(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  if (request.target !== void 0) assertNoteIdentifier2(request.target);
+  const selfLink = request.target === void 0 || request.target.toUpperCase() === request.identifier.toUpperCase();
+  assertRevision(request.ifRevision);
+  if (selfLink && request.ifTargetRevision !== void 0)
+    invalid4("ifTargetRevision is only for a link to another note");
+  if (!selfLink) {
+    if (request.ifTargetRevision === void 0)
+      invalid4(
+        "ifTargetRevision (the target note's revision) is required for a link to another note"
+      );
+    assertRevision(request.ifTargetRevision, "native-note-state for the target note");
+  }
+  const selectors = [request.blockIndex, request.paragraphId, request.heading].filter(
+    (value) => value !== void 0
+  ).length;
+  if (selectors > 1) invalid4("pass at most one of blockIndex, paragraphId, heading");
+  if (request.blockIndex !== void 0) {
+    if (!Number.isInteger(request.blockIndex) || request.blockIndex < 0)
+      invalid4("blockIndex must be a non-negative integer from list-note-paragraphs");
+    if (!request.expectedText?.replace(/\ufffc/g, "").trim())
+      invalid4("expectedText (the paragraph text from list-note-paragraphs) goes with blockIndex");
+  } else if (request.expectedText !== void 0) {
+    invalid4("expectedText goes with blockIndex");
+  }
+  if (request.paragraphId !== void 0 && !UUID_PATTERN.test(request.paragraphId))
+    invalid4("paragraphId must be a UUID");
+  if (request.heading !== void 0 && !request.heading.trim()) invalid4("heading is empty");
+  requireLiveValidated(SECTION_LINKS_LIVE_VALIDATED, "native-add-section-link", deps.env);
+  const fields = {
+    identifier: request.identifier,
+    ifRevision: request.ifRevision
+  };
+  if (!selfLink) {
+    fields.target = request.target;
+    fields.ifTargetRevision = request.ifTargetRevision;
+  }
+  if (request.blockIndex !== void 0) {
+    fields.blockIndex = request.blockIndex;
+    fields.expectedText = request.expectedText;
+  }
+  if (request.paragraphId !== void 0) fields.paragraphId = request.paragraphId.toUpperCase();
+  if (request.heading !== void 0) fields.heading = request.heading;
+  if (request.position !== void 0) fields.position = request.position;
+  if (request.clearExistingSectionLinks !== void 0)
+    fields.clearExistingSectionLinks = request.clearExistingSectionLinks;
+  return parseWriterResult(
+    addSectionLinkSchema,
+    callPrivateWriter("add_section_link", fields, deps),
     true
   );
 }
@@ -57263,6 +57357,53 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
         ...result,
         sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
       };
+    }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-add-section-link",
+    "Use when: inserting a native section-link chip (what Notes' Copy Link to Section pastes) that opens a paragraph or heading in the same note or another note. macOS 27 or later.\nReturns: `url` and `token` (applenotes://showNote?identifier=\u2026&paragraphID=\u2026), the `section` label, `paragraphId`, `paragraphIdMinted` (true when the target paragraph needed an identifier of its own), `inlineAttachmentIdentifier`, `clearedSectionLinks`, revisionBefore/After (plus targetRevisionBefore/After for another note), sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: a link string is enough (get-paragraph-link, or native-set-paragraph-id first when the identifier is shared), or you want a chip to a whole note.\nSafety: writes to the Notes database through unsupported private API. Selects the target paragraph by `blockIndex` + `expectedText` from list-note-paragraphs, by a unique `paragraphId`, by `heading` text (exact, case-insensitive), or defaults to the first heading or subheading; refuses a missing or ambiguous match. Needs `ifRevision` and, for another note, `ifTargetRevision`, both from native-note-state; refuses on any change (committed: false). `clearExistingSectionLinks` removes only chips that are section links; note-link chips stay. Verified by a fresh read-back of both notes and the attachment. A timeout is indeterminate (indeterminate: true). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until live-validated.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID of the note that receives the chip"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      target: notesUuid2.optional().describe("Notes UUID of the note the chip opens; omit to link within the same note"),
+      blockIndex: external_exports.number().int().min(0).optional().describe("Target paragraph's `blockIndex` from list-note-paragraphs (with expectedText)"),
+      expectedText: external_exports.string().min(1).max(5e4).optional().describe("With blockIndex: the paragraph's `text` from list-note-paragraphs"),
+      paragraphId: notesUuid2.optional().describe("A paragraph identifier that is unique in the target note"),
+      heading: external_exports.string().min(1).max(1e3).optional().describe("Title, heading, or subheading text to link to (exact, case-insensitive)"),
+      position: external_exports.enum(["end", "belowTitle"]).optional().describe(
+        "end (default) appends; belowTitle inserts after the title and any section chips right below it"
+      ),
+      clearExistingSectionLinks: external_exports.boolean().optional().describe("Remove the note's existing section-link chips first (default false)"),
+      ifRevision: revisionToken.describe(
+        "The `revision` from native-note-state for the note that receives the chip"
+      ),
+      ifTargetRevision: revisionToken.optional().describe("The target note's `revision` from native-note-state; required for another note"),
+      ...nudgeInput
+    },
+    // destructiveHint: clearExistingSectionLinks removes chips.
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = addSectionLink(
+        {
+          identifier,
+          target: args.target,
+          blockIndex: args.blockIndex,
+          expectedText: args.expectedText,
+          paragraphId: args.paragraphId,
+          heading: args.heading,
+          position: args.position,
+          clearExistingSectionLinks: args.clearExistingSectionLinks,
+          ifRevision: args.ifRevision,
+          ifTargetRevision: args.ifTargetRevision
+        },
+        deps.writer
+      );
+      if (!args.nudge) return { ...result };
+      const changed = !result.selfLink && result.paragraphIdMinted ? [identifier, result.target] : [identifier];
+      return { ...result, sync: await nudgeAfterWrite(changed, args.nudgeWaitSeconds, deps.nudge) };
     }
   );
 }

@@ -424,7 +424,11 @@ describe("privateWriterCapabilities", () => {
   });
 
   it("reports every WRITER_FEATURES row, gated one by one", () => {
-    expect(WRITER_FEATURES.map((row) => row.key)).toEqual(["appendPlainText", "setParagraphId"]);
+    expect(WRITER_FEATURES.map((row) => row.key)).toEqual([
+      "appendPlainText",
+      "setParagraphId",
+      "addSectionLink",
+    ]);
     expect(Object.keys(privateWriterCapabilities(deps()).features)).toEqual(
       WRITER_FEATURES.map((row) => row.key)
     );

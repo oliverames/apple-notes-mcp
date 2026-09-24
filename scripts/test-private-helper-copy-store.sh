@@ -141,15 +141,21 @@ WATCHED="$WORK/watched-live"
 : >"$WATCHED"
 watch_live() { printf '%s %s\n' "$1" "$(field "$(run "$(read_request "$1")")" revision)" >>"$WATCHED"; }
 
-# Upstream's read-only paragraph reader (src/utils/noteParagraphs.ts),
-# bundled once and pointed at the copy, so every paragraph write is checked by
-# the same code list-note-paragraphs runs. Prints one JSON object per call.
+# Upstream's read-only readers (src/utils/noteParagraphs.ts and
+# noteLinkInventory.ts), bundled once and pointed at the copy, so every
+# paragraph or link write is checked by the same code list-note-paragraphs and
+# list-note-links run. Prints one JSON object per call.
 READER="$WORK/paragraph-reader.mjs"
 cat >"$WORK/paragraph-reader.ts" <<'TS'
 import { readNoteParagraphs } from "@/utils/noteParagraphs.js";
-const [id, dbPath] = process.argv.slice(2);
+import { listNoteLinks } from "@/utils/noteLinkInventory.js";
+const [mode, id, dbPath] = process.argv.slice(2);
 try {
-  process.stdout.write(JSON.stringify(readNoteParagraphs({ id }, { dbPath })));
+  const result =
+    mode === "links"
+      ? listNoteLinks({ id, kinds: ["section"], dbPath })
+      : readNoteParagraphs({ id }, { dbPath });
+  process.stdout.write(JSON.stringify(result));
 } catch (error) {
   process.stdout.write(JSON.stringify({ error: String(error) }));
 }
@@ -159,7 +165,8 @@ TS
   "--banner:js=import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" \
   --outfile="$READER")
 object_uri() { field "$(copy_run "$(read_request "$1")")" objectURI; }
-paragraphs_on_copy() { node "$READER" "$(object_uri "$1")" "$COPY"; }
+paragraphs_on_copy() { node "$READER" paragraphs "$(object_uri "$1")" "$COPY"; }
+section_links_on_copy() { node "$READER" links "$(object_uri "$1")" "$COPY"; }
 # JSON-encode one string field (plutil cannot emit a bare JSON string).
 json_string() {
   printf '%s' "$1" | node -e '
@@ -242,6 +249,131 @@ else
   OUT="$(copy_run "$SETP" || true)"
   [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed set_paragraph_id not refused: $(field "$OUT" code)"
   echo "ok: replayed set_paragraph_id refused"
+fi
+
+# 7. Section-link chips (macOS 27). A chip within a note that has a heading,
+#    a replacement below the title that clears it, and a chip from the append
+#    note into that heading. Each is checked with upstream's list-note-links
+#    reader on the copy: one `section` link whose attachment, target note and
+#    paragraph match the writer's result.
+# The section link with this attachment identifier, as JSON ({} if none), and
+# how many section links the reader lists.
+section_link() {
+  printf '%s' "$1" | node -e '
+    let s = "";
+    process.stdin.on("data", (c) => (s += c)).on("end", () => {
+      const links = JSON.parse(s).links || [];
+      const hit = links.find((l) => (l.attachmentIdentifier || "").toUpperCase() === process.argv[1].toUpperCase());
+      process.stdout.write(JSON.stringify(hit || {}));
+    });' "$2"
+}
+section_count() { printf '%s' "$1" | /usr/bin/plutil -extract links raw -o - - 2>/dev/null || echo 0; }
+check_chip() { # writer-output source-note
+  local out="$1" links hit
+  links="$(section_links_on_copy "$2")"
+  hit="$(section_link "$links" "$(field "$out" inlineAttachmentIdentifier)")"
+  [ "$(field "$hit" kind)" = "section" ] || fail "list-note-links does not list the chip as a section link"
+  [ "$(field "$hit" inBody)" = "true" ] || fail "the chip's glyph is not in the body"
+  [ "$(field "$hit" targetNote)" = "$(field "$out" target)" ] || fail "the chip targets another note"
+  [ "$(field "$hit" paragraphId)" = "$(field "$out" paragraphId)" ] || fail "the chip targets another paragraph"
+  [ "$(field "$hit" url)" = "$(field "$out" token)" ] || fail "the stored URL differs from the writer's token"
+  TPARAS="$(paragraphs_on_copy "$(field "$out" target)")"
+  grep -qF "\"url\":\"$(field "$out" url)\"" <<<"$TPARAS" ||
+    fail "list-note-paragraphs does not link the target paragraph"
+  LAST_SECTION_COUNT="$(section_count "$links")"
+}
+if [ "$(field "$(copy_run '{"protocol":1,"action":"probe"}')" features.addSectionLink.available)" != "true" ]; then
+  echo "skip: section-link chips unavailable here (need macOS 27)"
+else
+  SNOTE=""
+  for CANDIDATE in $(recent_notes 80); do
+    [ "$CANDIDATE" != "$NOTE" ] || continue
+    writable "$CANDIDATE" || continue
+    if grep -Eq '"style":"(heading|subheading)"' <<<"$(paragraphs_on_copy "$CANDIDATE")"; then
+      SNOTE="$CANDIDATE"
+      break
+    fi
+  done
+  # Without a heading in any recent note, link a paragraph of the step 6
+  # note by blockIndex instead of the default first heading.
+  SELECTOR=""
+  if [ -z "$SNOTE" ] && [ "$PNOTE" != "$NOTE" ]; then
+    SNOTE="$PNOTE"
+    SPARAS="$(paragraphs_on_copy "$SNOTE")"
+    # Prefer a paragraph whose identifier is shared, so the chip must mint one.
+    SPI=0
+    I=0
+    while [ -n "$(field "$SPARAS" "paragraphs.$I.blockIndex")" ]; do
+      if [ "$(field "$SPARAS" "paragraphs.$I.paragraphIdStatus")" = "shared" ]; then
+        SPI="$I"
+        break
+      fi
+      I=$((I + 1))
+    done
+    SELECTOR=",\"blockIndex\":$(field "$SPARAS" "paragraphs.$SPI.blockIndex"),\"expectedText\":$(json_string "$SPARAS" "paragraphs.$SPI.text")"
+    echo "no heading in recent notes; linking block $(field "$SPARAS" "paragraphs.$SPI.blockIndex") of the step 6 note"
+  fi
+  if [ -z "$SNOTE" ]; then
+    echo "skip: no second writable note for section-link chips in the copy"
+  else
+    watch_live "$SNOTE"
+    chip_request() { # revision position clear
+      printf '{"protocol":1,"action":"add_section_link","identifier":"%s","ifRevision":"%s","position":"%s","clearExistingSectionLinks":%s%s}' \
+        "$SNOTE" "$1" "$2" "$3" "$SELECTOR"
+    }
+    SREV="$(field "$(copy_run "$(read_request "$SNOTE")")" revision)"
+    OUT="$(copy_run "$(chip_request "$SREV" end false)" || true)"
+    [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+      fail "add_section_link: $(field "$OUT" code) $(field "$OUT" message)"
+    check_chip "$OUT" "$SNOTE"
+    echo "ok: chip within a note added and verified (minted=$(field "$OUT" paragraphIdMinted), previous status $(field "$OUT" previousParagraphIdStatus)); reader lists $LAST_SECTION_COUNT section link(s)"
+    OUT2="$(copy_run "$(chip_request "$(field "$OUT" revisionAfter)" belowTitle true)" || true)"
+    [ "$(field "$OUT2" status)" = "updated" ] || fail "clear and re-add: $(field "$OUT2" code) $(field "$OUT2" message)"
+    [ "$(field "$OUT2" clearedSectionLinks)" -ge 1 ] || fail "clearExistingSectionLinks cleared nothing"
+    [ "$(field "$OUT2" paragraphIdMinted)" = "false" ] || fail "second chip minted again"
+    check_chip "$OUT2" "$SNOTE"
+    [ "$LAST_SECTION_COUNT" = "1" ] || fail "cleared section links are still listed ($LAST_SECTION_COUNT)"
+    echo "ok: $(field "$OUT2" clearedSectionLinks) chip(s) cleared and one re-added below the title"
+    OUT3="$(copy_run "$(chip_request "$SREV" end false)" || true)"
+    [ "$(field "$OUT3" code)" = "revision_conflict" ] && [ "$(field "$OUT3" committed)" = "false" ] ||
+      fail "stale add_section_link not refused: $(field "$OUT3" code)"
+    echo "ok: stale add_section_link refused, committed=false"
+
+    # A chip in the append note that opens the same heading in SNOTE.
+    NREV="$(field "$(copy_run "$READ")" revision)"
+    TREV="$(field "$(copy_run "$(read_request "$SNOTE")")" revision)"
+    CROSS="{\"protocol\":1,\"action\":\"add_section_link\",\"identifier\":\"$NOTE\",\"target\":\"$SNOTE\",\"ifRevision\":\"$NREV\""
+    OUT4="$(copy_run "$CROSS}" || true)"
+    [ "$(field "$OUT4" code)" = "invalid_request" ] || fail "cross-note chip without ifTargetRevision not refused"
+    OUT4="$(copy_run "$CROSS,\"paragraphId\":\"$(field "$OUT2" paragraphId)\",\"ifTargetRevision\":\"$TREV\"}" || true)"
+    [ "$(field "$OUT4" status)" = "updated" ] && [ "$(field "$OUT4" selfLink)" = "false" ] ||
+      fail "cross-note chip: $(field "$OUT4" code) $(field "$OUT4" message)"
+    [ "$(field "$OUT4" targetRevisionAfter)" = "$TREV" ] || fail "an unminted target note changed"
+    check_chip "$OUT4" "$NOTE"
+    echo "ok: chip into another note added by paragraphId, target note unchanged"
+
+    # A chip into another note's paragraph whose identifier is shared, so
+    # the writer mints it in the target note within the same save.
+    XPARAS="$(paragraphs_on_copy "$SNOTE")"
+    XI=""
+    I=0
+    while [ -z "$XI" ] && [ -n "$(field "$XPARAS" "paragraphs.$I.blockIndex")" ]; do
+      [ "$(field "$XPARAS" "paragraphs.$I.paragraphIdStatus")" = "shared" ] && XI="$I"
+      I=$((I + 1))
+    done
+    if [ -z "$XI" ]; then
+      echo "skip: no shared paragraph left for a minting cross-note chip"
+    else
+      NREV="$(field "$OUT4" revisionAfter)"
+      TREV="$(field "$(copy_run "$(read_request "$SNOTE")")" revision)"
+      OUT5="$(copy_run "{\"protocol\":1,\"action\":\"add_section_link\",\"identifier\":\"$NOTE\",\"target\":\"$SNOTE\",\"ifRevision\":\"$NREV\",\"ifTargetRevision\":\"$TREV\",\"blockIndex\":$(field "$XPARAS" "paragraphs.$XI.blockIndex"),\"expectedText\":$(json_string "$XPARAS" "paragraphs.$XI.text")}" || true)"
+      [ "$(field "$OUT5" status)" = "updated" ] && [ "$(field "$OUT5" paragraphIdMinted)" = "true" ] ||
+        fail "minting cross-note chip: $(field "$OUT5" code) $(field "$OUT5" message)"
+      [ "$(field "$OUT5" targetRevisionAfter)" != "$TREV" ] || fail "the minted target note did not change"
+      check_chip "$OUT5" "$NOTE"
+      echo "ok: chip into another note minted the target paragraph's identifier ($LAST_SECTION_COUNT section links in the source)"
+    fi
+  fi
 fi
 
 # 5. The live note is untouched.

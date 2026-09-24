@@ -188,6 +188,25 @@ static const APIRequirement kParagraphIdAPI[] = {
     {"ICNote", "updateChangeCountWithReason:", NO},
 };
 
+// Native section-link chips (macOS 27): NotesShared builds the paragraph-link
+// inline attachment; the writer inserts its glyph through the mergeable string.
+static const APIRequirement kSectionLinkAPI[] = {
+    {"ICInlineAttachment",
+     "newParagraphLinkAttachmentWithIdentifier:toNote:paragraphName:paragraphID:fromNote:"
+     "parentAttachment:",
+     YES},
+    {"ICInlineAttachment", "isParagraphLinkAttachment", NO},
+    {"ICInlineAttachment", "markForDeletion", NO},
+    {"ICInlineAttachment", "updateChangeCountWithReason:", NO},
+    {"ICNote", "addInlineAttachmentsObject:", NO},
+    {"ICNote", "regenerateTitle:snippet:", NO},
+    {"ICTTAttachment", "setAttachmentIdentifier:", NO},
+    {"ICTTAttachment", "setAttachmentUTI:", NO},
+    {"ICTTAttachment", "attachmentIdentifier", NO},
+    {"ICTTMergeableString", "insertAttributedString:atIndex:", NO},
+    {"ICTTMergeableString", "replaceCharactersInRange:withAttributedString:", NO},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -224,31 +243,41 @@ static NSArray<NSString *> *MissingAPI(const APIRequirement *list, size_t count)
   return missing;
 }
 
-static NSArray<NSString *> *MissingModelProperties(void) {
+static NSArray<NSString *> *MissingModelPropertiesIn(const ModelRequirement *list, size_t count) {
   Class container = objc_getClass("ICPersistentContainer");
   SEL modelSel = sel_registerName("managedObjectModel");
   if (!container || ![container respondsToSelector:modelSel]) return @[ @"managed object model" ];
   NSManagedObjectModel *model = ((id(*)(id, SEL))objc_msgSend)(container, modelSel);
   if (![model isKindOfClass:[NSManagedObjectModel class]]) return @[ @"managed object model" ];
   NSMutableArray *missing = [NSMutableArray array];
-  for (size_t i = 0; i < COUNT(kModelProperties); i++) {
-    NSEntityDescription *entity = model.entitiesByName[@(kModelProperties[i].entity)];
+  for (size_t i = 0; i < count; i++) {
+    NSEntityDescription *entity = model.entitiesByName[@(list[i].entity)];
     if (!entity) {
-      [missing addObject:[NSString stringWithFormat:@"entity %s", kModelProperties[i].entity]];
+      [missing addObject:[NSString stringWithFormat:@"entity %s", list[i].entity]];
       continue;
     }
-    for (NSString *name in [@(kModelProperties[i].properties) componentsSeparatedByString:@","])
+    for (NSString *name in [@(list[i].properties) componentsSeparatedByString:@","])
       if (!entity.propertiesByName[name])
-        [missing addObject:[NSString stringWithFormat:@"%s.%@", kModelProperties[i].entity, name]];
+        [missing addObject:[NSString stringWithFormat:@"%s.%@", list[i].entity, name]];
   }
   return missing;
 }
+
+static NSArray<NSString *> *MissingModelProperties(void) {
+  return MissingModelPropertiesIn(kModelProperties, COUNT(kModelProperties));
+}
+
+static const ModelRequirement kSectionLinkModelProperties[] = {
+    {"ICNote", "inlineAttachments"},
+    {"ICInlineAttachment", "identifier,tokenContentIdentifier,typeUTI,note,markedForDeletion"},
+};
 
 typedef NS_ENUM(NSInteger, Feature) {
   FeatureModel,
   FeatureRead,
   FeatureAppend,
   FeatureParagraphIds,
+  FeatureSectionLinks,
 };
 
 static NSArray<NSString *> *MissingForFeature(Feature feature) {
@@ -263,8 +292,15 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
   }
   if (feature == FeatureAppend)
     [missing addObjectsFromArray:MissingAPI(kAppendAPI, COUNT(kAppendAPI))];
-  if (feature == FeatureParagraphIds)
+  if (feature == FeatureParagraphIds || feature == FeatureSectionLinks)
     [missing addObjectsFromArray:MissingAPI(kParagraphIdAPI, COUNT(kParagraphIdAPI))];
+  if (feature == FeatureSectionLinks) {
+    if (NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27)
+      [missing addObject:@"macOS 27 or later"];
+    [missing addObjectsFromArray:MissingAPI(kSectionLinkAPI, COUNT(kSectionLinkAPI))];
+    [missing addObjectsFromArray:MissingModelPropertiesIn(kSectionLinkModelProperties,
+                                                          COUNT(kSectionLinkModelProperties))];
+  }
   return missing;
 }
 
@@ -525,6 +561,7 @@ static NSDictionary *HandleReadNoteState(NSDictionary *request);
 static NSDictionary *HandleAppendPlainText(NSDictionary *request);
 static NSDictionary *HandleReadSyncState(NSDictionary *request);
 static NSDictionary *HandleSetParagraphId(NSDictionary *request);
+static NSDictionary *HandleAddSectionLink(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -541,6 +578,7 @@ static const ActionSpec kActions[] = {
     {"read_sync_state", "identifiers", HandleReadSyncState},
     {"set_paragraph_id", "identifier,blockIndex,expectedText,paragraphId,ifRevision",
      HandleSetParagraphId},
+    {"add_section_link", "identifier,target,blockIndex,expectedText,paragraphId,heading,position,clearExistingSectionLinks,ifRevision,ifTargetRevision", HandleAddSectionLink},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -623,6 +661,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"readNoteState" : FeatureReport(FeatureRead, contextOK, contextReason),
       @"appendPlainText" : FeatureReport(FeatureAppend, contextOK, contextReason),
       @"setParagraphId" : FeatureReport(FeatureParagraphIds, contextOK, contextReason),
+      @"addSectionLink" : FeatureReport(FeatureSectionLinks, contextOK, contextReason),
     },
   };
 }
@@ -864,7 +903,7 @@ static NSInteger StyleValue(id style) {
 // Text used to compare a caller's expectedText: attachment glyphs removed,
 // surrounding whitespace trimmed.
 static NSString *ComparableText(NSString *text) {
-  NSString *stripped = [text stringByReplacingOccurrencesOfString:@"￼" withString:@""];
+  NSString *stripped = [text stringByReplacingOccurrencesOfString:@"\uFFFC" withString:@""];
   return [stripped stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 
@@ -1116,6 +1155,420 @@ static NSDictionary *HandleSetParagraphId(NSDictionary *request) {
     @"modificationDate" : after[@"modificationDate"],
   }];
   [result addEntriesFromDictionary:SyncFields(after, store)];
+  return result;
+}
+
+#pragma mark - Section-link chips (macOS 27)
+
+// A section link is the chip Notes pastes for "Copy Link to Section": an
+// inline attachment (ICInlineAttachment, type
+// com.apple.notes.inlinetextattachment.link) whose token is an
+// applenotes://showNote?identifier=<note>&paragraphID=<uuid> link, shown in
+// the body as one U+FFFC glyph. NotesShared builds the attachment through
+// +newParagraphLinkAttachmentWithIdentifier:toNote:paragraphName:paragraphID:
+// fromNote:parentAttachment:, which exists from macOS 27. The target
+// paragraph must carry a unique paragraph UUID (upstream's rules, see
+// "Paragraph identifiers"); the writer mints one when it does not.
+
+static NSString *const kAttachmentKey = @"NSAttachment";
+
+static BOOL SectionLinkOSSupported(void) {
+  return NSProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27;
+}
+
+static NSString *OptionalString(NSDictionary *request, NSString *key) {
+  return request[key] ? RequireString(request, key) : nil;
+}
+
+static BOOL OptionalBool(NSDictionary *request, NSString *key) {
+  id value = request[key];
+  if (!value) return NO;
+  // NSJSONSerialization decodes true/false as the CFBoolean singletons.
+  if (value != (id)kCFBooleanTrue && value != (id)kCFBooleanFalse)
+    Fail(@"invalid_request", [NSString stringWithFormat:@"`%@` must be true or false", key], nil);
+  return [value boolValue];
+}
+
+static NSString *GlyphAttachmentIdentifier(id value) {
+  if (!value || ![value respondsToSelector:sel_registerName("attachmentIdentifier")]) return nil;
+  id named = Send(value, "attachmentIdentifier");
+  return [named isKindOfClass:[NSString class]] ? named : nil;
+}
+
+static NSManagedObject *InlineAttachmentNamed(NSManagedObject *note, NSString *identifier) {
+  if (!identifier) return nil;
+  for (NSManagedObject *inlineAttachment in [note valueForKey:@"inlineAttachments"])
+    if ([[inlineAttachment valueForKey:@"identifier"] caseInsensitiveCompare:identifier] ==
+        NSOrderedSame)
+      return inlineAttachment;
+  return nil;
+}
+
+static BOOL IsSectionLinkAttachment(id inlineAttachment) {
+  return inlineAttachment && ![[inlineAttachment valueForKey:@"markedForDeletion"] boolValue] &&
+         SendBool(inlineAttachment, "isParagraphLinkAttachment");
+}
+
+// Number of U+FFFC glyphs in the body that name this attachment.
+static NSUInteger GlyphCount(NSAttributedString *body, NSString *attachmentIdentifier) {
+  __block NSUInteger count = 0;
+  if (!body.length) return 0;
+  [body enumerateAttribute:kAttachmentKey
+                   inRange:NSMakeRange(0, body.length)
+                   options:0
+                usingBlock:^(id value, NSRange range, BOOL *stop) {
+                  (void)stop;
+                  NSString *named = GlyphAttachmentIdentifier(value);
+                  if (!named || [named caseInsensitiveCompare:attachmentIdentifier] != NSOrderedSame)
+                    return;
+                  for (NSUInteger i = range.location; i < NSMaxRange(range); i++)
+                    if ([body.string characterAtIndex:i] == 0xFFFC) count++;
+                }];
+  return count;
+}
+
+// Glyphs whose inline attachment is a section link, each widened to its whole
+// line when it is alone on that line. Note-link chips share the UTI but are
+// not paragraph links, so they are never included.
+static NSArray<NSDictionary *> *SectionLinkGlyphs(NSAttributedString *body, NSManagedObject *note) {
+  NSMutableArray *found = [NSMutableArray array];
+  if (!body.length) return found;
+  NSString *text = body.string;
+  [body enumerateAttribute:kAttachmentKey
+                   inRange:NSMakeRange(0, body.length)
+                   options:0
+                usingBlock:^(id value, NSRange range, BOOL *stop) {
+                  (void)stop;
+                  NSManagedObject *inlineAttachment =
+                      InlineAttachmentNamed(note, GlyphAttachmentIdentifier(value));
+                  if (!IsSectionLinkAttachment(inlineAttachment)) return;
+                  NSRange remove = range;
+                  BOOL startsLine =
+                      range.location == 0 || [text characterAtIndex:range.location - 1] == '\n';
+                  BOOL endsLine = NSMaxRange(range) == text.length ||
+                                  [text characterAtIndex:NSMaxRange(range)] == '\n';
+                  if (startsLine && endsLine) {
+                    if (NSMaxRange(range) < text.length) {
+                      remove.length += 1;
+                    } else if (range.location > 0) {
+                      remove.location -= 1;
+                      remove.length += 1;
+                    }
+                  }
+                  [found addObject:@{
+                    @"range" : [NSValue valueWithRange:remove],
+                    @"attachment" : inlineAttachment,
+                  }];
+                }];
+  return found;
+}
+
+// Index just after the title line and any section chips that directly follow
+// it, one per line.
+static NSUInteger IndexAfterTitleAndSectionChips(NSAttributedString *body, NSManagedObject *note) {
+  NSString *text = body.string;
+  NSRange newline = [text rangeOfString:@"\n"];
+  NSUInteger index = newline.location == NSNotFound ? text.length : NSMaxRange(newline);
+  while (index < text.length && [text characterAtIndex:index] == 0xFFFC) {
+    id value = [body attribute:kAttachmentKey atIndex:index effectiveRange:NULL];
+    if (!IsSectionLinkAttachment(InlineAttachmentNamed(note, GlyphAttachmentIdentifier(value))))
+      break;
+    index += 1;
+    if (index < text.length && [text characterAtIndex:index] == '\n') index += 1;
+  }
+  return index;
+}
+
+// The target block: by blockIndex (+ expectedText), by a paragraphId that
+// is unique in the note, by heading text (title, heading or subheading;
+// exact after trimming, case-insensitive), or the first heading or
+// subheading.
+static NSDictionary *ChooseSectionBlock(NSArray *blocks, NSDictionary *owners,
+                                        NSDictionary *request) {
+  NSString *paragraphId = OptionalString(request, @"paragraphId");
+  NSString *heading = OptionalString(request, @"heading");
+  BOOL byIndex = request[@"blockIndex"] != nil;
+  if ((paragraphId != nil) + (heading != nil) + byIndex > 1)
+    Fail(@"invalid_request", @"Pass at most one of blockIndex, paragraphId, heading", nil);
+  if (byIndex) {
+    NSString *expectedText = RequireString(request, @"expectedText");
+    return ExpectedBlock(blocks, RequireBlockIndex(request), expectedText);
+  }
+  if (request[@"expectedText"])
+    Fail(@"invalid_request", @"`expectedText` goes with blockIndex", nil);
+  if (paragraphId) {
+    if (!IsUUID(paragraphId)) Fail(@"invalid_request", @"`paragraphId` must be a UUID", nil);
+    NSUUID *wanted = [[NSUUID alloc] initWithUUIDString:paragraphId];
+    NSIndexSet *holders = owners[wanted];
+    if (!holders.count) Fail(@"not_found", @"No paragraph of the target note has that paragraphId", nil);
+    NSDictionary *block = blocks[holders.firstIndex];
+    if (holders.count > 1 || ![block[@"uuid"] isEqual:wanted])
+      Fail(@"ambiguous_paragraph",
+           @"That paragraphId is not unique to one paragraph; select the paragraph by blockIndex "
+           @"or heading and the writer mints one",
+           nil);
+    return block;
+  }
+  NSString *wantedHeading = heading ? ComparableText(heading) : nil;
+  NSMutableArray *matches = [NSMutableArray array];
+  for (NSDictionary *block in blocks) {
+    NSInteger style = [block[@"style"] integerValue];
+    NSString *text = ComparableText(block[@"text"]);
+    if (!text.length) continue;
+    if (!wantedHeading) {
+      if (style == 1 || style == 2) return block;
+    } else if (style <= 2 && [text caseInsensitiveCompare:wantedHeading] == NSOrderedSame) {
+      [matches addObject:block];
+    }
+  }
+  if (!wantedHeading) Fail(@"not_found", @"The target note has no heading or subheading", nil);
+  if (!matches.count) Fail(@"not_found", @"No heading of the target note has that text", nil);
+  if (matches.count > 1)
+    Fail(@"ambiguous_paragraph", @"More than one heading of the target note has that text", nil);
+  return matches.firstObject;
+}
+
+// The single block whose first UUID is `uuid`, when no other block carries it.
+static NSDictionary *UniqueBlockWithUUID(NSArray *blocks, NSUUID *uuid) {
+  NSDictionary *owners = BlocksByUUID(blocks);
+  NSIndexSet *holders = owners[uuid];
+  if (holders.count != 1) return nil;
+  NSDictionary *block = blocks[holders.firstIndex];
+  return [block[@"uuid"] isEqual:uuid] ? block : nil;
+}
+
+static NSDictionary *HandleAddSectionLink(NSDictionary *request) {
+  NSString *identifier = RequireIdentifier(request);
+  NSString *targetIdentifier = OptionalString(request, @"target") ?: identifier;
+  if (!IsUUID(targetIdentifier)) Fail(@"invalid_request", @"`target` must be a Notes UUID", nil);
+  BOOL selfLink = [targetIdentifier caseInsensitiveCompare:identifier] == NSOrderedSame;
+  NSString *ifRevision = RequireString(request, @"ifRevision");
+  NSString *ifTargetRevision = OptionalString(request, @"ifTargetRevision");
+  if (selfLink && ifTargetRevision)
+    Fail(@"invalid_request", @"`ifTargetRevision` is only for a link to another note", nil);
+  if (!selfLink && !ifTargetRevision)
+    Fail(@"invalid_request", @"`ifTargetRevision` is required for a link to another note", nil);
+  NSString *position = OptionalString(request, @"position") ?: @"end";
+  if (![position isEqualToString:@"end"] && ![position isEqualToString:@"belowTitle"])
+    Fail(@"invalid_request", @"`position` must be end or belowTitle", nil);
+  BOOL clearExisting = OptionalBool(request, @"clearExistingSectionLinks");
+  if (!SectionLinkOSSupported())
+    Fail(@"private_api_unavailable", @"Native section-link chips need macOS 27 or later",
+         @{@"committed" : @NO});
+  RequireFeature(FeatureSectionLinks);
+
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, NO);
+  NSManagedObject *source = FetchNote(context, identifier);
+  RequireAppendableNote(source);
+  NSManagedObject *target = selfLink ? source : FetchNote(context, targetIdentifier);
+  RequireAppendableNote(target);
+  NSString *sourceRevision = RevisionToken(source);
+  if (![sourceRevision isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : sourceRevision});
+  NSString *targetRevision = selfLink ? sourceRevision : RevisionToken(target);
+  if (!selfLink && ![targetRevision isEqualToString:ifTargetRevision])
+    Fail(@"revision_conflict", @"The target note changed since ifTargetRevision was read",
+         @{@"committed" : @NO, @"currentTargetRevision" : targetRevision});
+  NSString *canonicalTarget = [target valueForKey:@"identifier"];
+
+  // 1. The target paragraph, with a unique UUID (minted when needed).
+  NSAttributedString *targetBody = LoadBody(target);
+  NSArray *targetBlocks = NoteBlocks(targetBody);
+  NSDictionary *owners = BlocksByUUID(targetBlocks);
+  NSDictionary *block = ChooseSectionBlock(targetBlocks, owners, request);
+  NSString *previousStatus = ParagraphIdStatus(block, owners);
+  BOOL minted = ![previousStatus isEqualToString:@"unique"];
+  NSUUID *uuid = minted ? [NSUUID UUID] : block[@"uuid"];
+  NSRange targetRange = [block[@"owned"] rangeValue];
+  NSString *sectionName = ComparableText(block[@"text"]);
+  id targetMs = Send(target, "mergeableString");
+  if (minted) {
+    AssignParagraphUUID(targetMs, targetBody, targetRange, uuid);
+    ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+        target, sel_registerName("edited:range:changeInLength:"), EDITED_ATTRIBUTES, targetRange, 0);
+  }
+
+  // 2. The inline attachment, built by NotesShared.
+  NSString *inlineId = [NSUUID UUID].UUIDString;
+  id inlineAttachment = ((id(*)(id, SEL, id, id, id, id, id, id))objc_msgSend)(
+      objc_getClass("ICInlineAttachment"),
+      sel_registerName("newParagraphLinkAttachmentWithIdentifier:toNote:paragraphName:paragraphID:"
+                       "fromNote:parentAttachment:"),
+      inlineId, target, sectionName, uuid, source, nil);
+  if (!IsSectionLinkAttachment(inlineAttachment)) {
+    [context rollback];
+    Fail(@"save_failed", @"NotesShared did not create a paragraph-link attachment; nothing was saved",
+         @{@"committed" : @NO});
+  }
+  if (![[inlineAttachment valueForKey:@"note"] isEqual:source])
+    ((void (*)(id, SEL, id))objc_msgSend)(source, sel_registerName("addInlineAttachmentsObject:"),
+                                          inlineAttachment);
+  NSString *token = [inlineAttachment valueForKey:@"tokenContentIdentifier"];
+  NSString *typeUTI = [inlineAttachment valueForKey:@"typeUTI"];
+
+  // 3. The source body: optionally drop existing section chips, then insert
+  //    the new glyph at the end or below the title. Loaded after step 1, so a
+  //    link within the note sees the minted identifier.
+  id sourceMs = Send(source, "mergeableString");
+  NSAttributedString *sourceBefore = LoadBody(source);
+  NSMutableAttributedString *expected = [sourceBefore mutableCopy];
+  NSArray *cleared = clearExisting ? SectionLinkGlyphs(sourceBefore, source) : @[];
+  SendVoid(sourceMs, "beginEditing");
+  for (NSDictionary *entry in cleared.reverseObjectEnumerator) {
+    NSRange range = [entry[@"range"] rangeValue];
+    ((void (*)(id, SEL, NSRange, id))objc_msgSend)(
+        sourceMs, sel_registerName("replaceCharactersInRange:withAttributedString:"), range,
+        [[NSAttributedString alloc] initWithString:@""]);
+    [expected deleteCharactersInRange:range];
+  }
+  for (NSDictionary *entry in cleared) SendVoid(entry[@"attachment"], "markForDeletion");
+
+  id glyphAttachment = [[objc_getClass("ICTTAttachment") alloc] init];
+  ((void (*)(id, SEL, id))objc_msgSend)(glyphAttachment, sel_registerName("setAttachmentIdentifier:"),
+                                        inlineId);
+  ((void (*)(id, SEL, id))objc_msgSend)(glyphAttachment, sel_registerName("setAttachmentUTI:"),
+                                        typeUTI);
+  id bodyStyle = [Send(objc_getClass("ICTTParagraphStyle"), "defaultParagraphStyle") mutableCopy];
+  NSDictionary *bodyAttrs = @{kParagraphStyleKey : bodyStyle};
+  NSMutableDictionary *glyphAttrs = [bodyAttrs mutableCopy];
+  glyphAttrs[kAttachmentKey] = glyphAttachment;
+  NSAttributedString *glyph = [[NSAttributedString alloc] initWithString:@"\uFFFC"
+                                                              attributes:glyphAttrs];
+  NSMutableAttributedString *insertion = [NSMutableAttributedString new];
+  NSUInteger at;
+  if ([position isEqualToString:@"belowTitle"]) {
+    at = IndexAfterTitleAndSectionChips(expected, source);
+    if (at == expected.length && expected.length && ![expected.string hasSuffix:@"\n"])
+      [insertion appendAttributedString:
+                     [[NSAttributedString alloc]
+                         initWithString:@"\n"
+                             attributes:[expected attributesAtIndex:expected.length - 1
+                                                     effectiveRange:NULL]]];
+    [insertion appendAttributedString:glyph];
+    [insertion appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+                                                                      attributes:bodyAttrs]];
+  } else {
+    at = expected.length;
+    if (expected.length && ![expected.string hasSuffix:@"\n"]) {
+      // The separator ends the old last paragraph, so it keeps that style.
+      id lastStyle = [expected attribute:kParagraphStyleKey
+                                 atIndex:expected.length - 1
+                          effectiveRange:NULL];
+      [insertion
+          appendAttributedString:[[NSAttributedString alloc]
+                                     initWithString:@"\n"
+                                         attributes:lastStyle ? @{kParagraphStyleKey : lastStyle}
+                                                              : @{}]];
+    }
+    [insertion appendAttributedString:glyph];
+  }
+  ((void (*)(id, SEL, id, NSUInteger))objc_msgSend)(
+      sourceMs, sel_registerName("insertAttributedString:atIndex:"), insertion, at);
+  [expected insertAttributedString:insertion atIndex:at];
+  SendVoid(sourceMs, "endEditing");
+  NSInteger delta = (NSInteger)expected.length - (NSInteger)sourceBefore.length;
+  ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+      source, sel_registerName("edited:range:changeInLength:"),
+      EDITED_ATTRIBUTES | NSTextStorageEditedCharacters, NSMakeRange(0, expected.length), delta);
+  ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(source, sel_registerName("regenerateTitle:snippet:"),
+                                                YES, YES);
+
+  // 4. Serialize, mark for upload, and save once.
+  NSDate *now = [NSDate date];
+  @try {
+    FinishNoteEdit(source, @"apple-notes-mcp add_section_link", now);
+    if (!selfLink && minted) FinishNoteEdit(target, @"apple-notes-mcp add_section_link", now);
+  } @catch (HelperError *e) {
+    [context rollback];
+    @throw;
+  }
+  ((void (*)(id, SEL, id))objc_msgSend)(
+      inlineAttachment, sel_registerName("updateChangeCountWithReason:"),
+      @"apple-notes-mcp add_section_link");
+  SaveOrFail(context);
+
+  // 5. Fresh read-back of both notes and the attachment.
+  NSString *link = ParagraphLink(canonicalTarget, uuid);
+  NSString *verifyDetail = nil;
+  NSDictionary *sourceAfter = nil;
+  NSDictionary *targetAfter = nil;
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *freshSource = FetchNote(fresh, identifier);
+    NSManagedObject *freshTarget = selfLink ? freshSource : FetchNote(fresh, targetIdentifier);
+    NSAttributedString *sourceText = LoadBody(freshSource);
+    NSAttributedString *targetText = selfLink ? sourceText : LoadBody(freshTarget);
+    NSArray *targetBlocksAfter = NoteBlocks(targetText);
+    NSDictionary *blockAfter = UniqueBlockWithUUID(targetBlocksAfter, uuid);
+    NSManagedObject *inlineAfter = InlineAttachmentNamed(freshSource, inlineId);
+    NSString *tokenAfter = [inlineAfter valueForKey:@"tokenContentIdentifier"];
+    BOOL clearedGone = YES;
+    for (NSDictionary *entry in cleared) {
+      NSManagedObject *old =
+          InlineAttachmentNamed(freshSource, [entry[@"attachment"] valueForKey:@"identifier"]);
+      if (old && ![[old valueForKey:@"markedForDeletion"] boolValue]) clearedGone = NO;
+    }
+    if (![sourceText.string isEqualToString:expected.string])
+      verifyDetail = @"The source note text is not the planned text";
+    else if (GlyphCount(sourceText, inlineId) != 1)
+      verifyDetail = @"The section-link glyph is not present exactly once";
+    else if (!IsSectionLinkAttachment(inlineAfter))
+      verifyDetail = @"The section-link attachment was not persisted";
+    else if (![tokenAfter isKindOfClass:[NSString class]] ||
+             [tokenAfter rangeOfString:uuid.UUIDString options:NSCaseInsensitiveSearch].location ==
+                 NSNotFound ||
+             [tokenAfter rangeOfString:canonicalTarget options:NSCaseInsensitiveSearch].location ==
+                 NSNotFound)
+      verifyDetail = @"The section link does not point at the target paragraph";
+    else if (!blockAfter || ![ComparableText(blockAfter[@"text"]) isEqualToString:sectionName])
+      verifyDetail = @"The target paragraph does not carry the link's identifier uniquely";
+    else if (!selfLink && ![targetText.string isEqualToString:targetBody.string])
+      verifyDetail = @"The target note text changed";
+    else if (!selfLink && minted &&
+             !OtherBlocksUnchanged(targetBlocks, targetBlocksAfter,
+                                   [NSSet setWithObject:block[@"index"]]))
+      verifyDetail = @"Another paragraph of the target note changed";
+    else if (!clearedGone)
+      verifyDetail = @"A cleared section link is still active";
+    else {
+      sourceAfter = NoteState(freshSource);
+      targetAfter = selfLink ? sourceAfter : NoteState(freshTarget);
+    }
+  } @catch (HelperError *e) {
+    verifyDetail = e.reason;
+  }
+  if (verifyDetail)
+    Fail(@"verification_failed", verifyDetail,
+         @{@"committed" : @YES, @"revisionBefore" : sourceRevision});
+  NSMutableDictionary *result = [@{
+    @"status" : @"updated",
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"identifier" : [source valueForKey:@"identifier"],
+    @"target" : canonicalTarget,
+    @"selfLink" : @(selfLink),
+    @"section" : sectionName,
+    @"targetStyleType" : block[@"style"],
+    @"paragraphId" : uuid.UUIDString,
+    @"previousParagraphIdStatus" : previousStatus,
+    @"paragraphIdMinted" : @(minted),
+    @"url" : link,
+    @"token" : OrNull(token),
+    @"inlineAttachmentIdentifier" : inlineId,
+    @"position" : position,
+    @"clearedSectionLinks" : @(cleared.count),
+    @"revisionBefore" : sourceRevision,
+    @"revisionAfter" : sourceAfter[@"revision"],
+    @"modificationDate" : sourceAfter[@"modificationDate"],
+  } mutableCopy];
+  [result addEntriesFromDictionary:SyncFields(sourceAfter, store)];
+  if (!selfLink) {
+    result[@"targetRevisionBefore"] = targetRevision;
+    result[@"targetRevisionAfter"] = targetAfter[@"revision"];
+    result[@"targetCloudSync"] = targetAfter[@"cloudSync"];
+  }
   return result;
 }
 
