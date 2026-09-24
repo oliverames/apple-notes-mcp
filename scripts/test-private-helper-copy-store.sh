@@ -136,6 +136,71 @@ echo "ok: replayed append refused"
 
 # Feature write checks go here, each against the copy only.
 
+# 4b. Structured compose: plan, guarded apply with verified read-back, replay,
+#     prepend below the title, and insertion before an exact heading.
+PARAS='[{"style":"heading","runs":[{"text":"Compose check"}]},
+{"style":"body","runs":[{"text":"b","bold":true},{"text":"i","italic":true},{"text":"u","underline":true},{"text":"s","strikethrough":true},{"text":"l","link":"https://example.com/"},{"text":"h","highlight":"mint"},{"text":"c","color":"#FF0000"}]},
+{"style":"body","blockQuote":true,"runs":[{"text":"quote"}]},
+{"style":"monospaced","runs":[{"text":"code"}]},{"style":"monospaced","runs":[]},{"style":"monospaced","runs":[{"text":"\tmore"}]},
+{"style":"bulleted","runs":[{"text":"b1"}]},{"style":"bulleted","indent":1,"runs":[{"text":"b1.1"}]},
+{"style":"dashed","runs":[{"text":"d"}]},{"style":"numbered","runs":[{"text":"n"}]},
+{"style":"checklist","checked":true,"runs":[{"text":"done"}]},{"style":"checklist","checked":false,"indent":1,"runs":[{"text":"open"}]},
+{"style":"subheading","runs":[{"text":"end"}]}]'
+compose_req() { # mode, extra JSON fields (leading comma)
+  printf '{"protocol":1,"action":"compose_note","identifier":"%s","mode":"%s","paragraphs":%s%s}' \
+    "$NOTE" "$1" "$PARAS" "$2"
+}
+GATED="$(run "$(compose_req append ",\"ifRevision\":\"$ZERO\"")" || true)"
+[ "$(field "$GATED" code)" = "writes_disabled" ] && [ "$(field "$GATED" committed)" = "false" ] ||
+  fail "live compose not gated: $(field "$GATED" code)"
+echo "ok: live compose refused without APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES"
+PLAN="$(copy_run "$(compose_req append ',"dryRun":true')" || true)"
+[ "$(field "$PLAN" status)" = "planned" ] || fail "compose plan failed: $(field "$PLAN" code) $(field "$PLAN" message)"
+[ "$(field "$PLAN" committed)" = "false" ] || fail "compose plan reported committed"
+CREV="$(field "$PLAN" revisionBefore)"
+[ "$CREV" = "$(field "$(copy_run "$READ")" revision)" ] || fail "plan revision differs from note state"
+echo "ok: compose dry run planned $(field "$PLAN" paragraphs) paragraphs, nothing written"
+OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$ZERO\"")" || true)"
+[ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "stale compose revision not refused"
+OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\"")" || true)"
+[ "$(field "$OUT" status)" = "updated" ] || fail "compose failed: $(field "$OUT" code) $(field "$OUT" message)"
+[ "$(field "$OUT" verified)" = "true" ] || fail "compose not verified"
+[ "$(field "$OUT" storeKind)" = "copy" ] || fail "compose did not report the copy store"
+[ "$(field "$OUT" readBack)" = "13" ] || fail "compose read back $(field "$OUT" readBack) paragraphs, expected 13"
+[ "$(field "$OUT" readBack.10.checked)" = "true" ] && [ "$(field "$OUT" readBack.11.checked)" = "false" ] ||
+  fail "checklist state did not persist"
+[ "$(field "$OUT" readBack.1.runs.6.attributes.color)" = "#FF0000" ] || fail "run color did not persist"
+[ "$(field "$OUT" unitStart)" = "$(field "$PLAN" unitStart)" ] || fail "unitStart differs between plan and apply"
+[ -n "$(field "$OUT" objectURI)" ] || fail "compose did not report objectURI"
+[ "$(field "$OUT" pushScheduled)" = "false" ] || fail "compose reported a scheduled push"
+echo "ok: compose applied; 13 paragraphs verified (styles, indent, quote, checklist state, runs); unitStart $(field "$OUT" unitStart)"
+OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\"")" || true)"
+[ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "replayed compose not refused"
+echo "ok: stale and replayed compose refused, committed=false"
+PREV="$(field "$(copy_run "$READ")" revision)"
+OUT="$(copy_run "$(compose_req prepend ",\"ifRevision\":\"$PREV\"")" || true)"
+[ "$(field "$OUT" verified)" = "true" ] || fail "prepend failed: $(field "$OUT" code) $(field "$OUT" message)"
+echo "ok: prepend verified at UTF-16 offset $(field "$OUT" insertAt) (below the title line)"
+ANCHOR=',"insertBeforeHeading":{"text":"Compose check","occurrence":2,"expectedCount":2}'
+HREV="$(field "$(copy_run "$READ")" revision)"
+OUT="$(copy_run "$(compose_req append "$ANCHOR,\"ifRevision\":\"$HREV\"")" || true)"
+[ "$(field "$OUT" placementVerified)" = "true" ] || fail "insert before heading failed: $(field "$OUT" code) $(field "$OUT" message)"
+OUT="$(copy_run "$(compose_req append "$ANCHOR,\"dryRun\":true")" || true)"
+[ "$(field "$OUT" code)" = "selector_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "stale heading count not refused"
+echo "ok: insert before heading verified; a stale expectedCount is refused"
+QUICK="$(/usr/bin/sqlite3 "$COPY" "SELECT ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT WHERE ZISSYSTEMPAPER=1
+  AND IFNULL(ZMARKEDFORDELETION,0)=0 AND ZFOLDER IS NOT NULL LIMIT 1;" 2>/dev/null || true)"
+if [ -n "$QUICK" ]; then
+  OUT="$(copy_run "$(compose_req append ',"dryRun":true,"requireNonSystemPaper":true' | sed "s/$NOTE/$QUICK/")" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_note" ] || fail "Quick Note not refused: $(field "$OUT" code)"
+  echo "ok: requireNonSystemPaper refuses a Quick Note"
+else
+  echo "note: no Quick Note in this store; requireNonSystemPaper refusal not exercised"
+fi
+
 # 5. The live note is untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"
 [ "$LIVE_BEFORE" = "$LIVE_AFTER" ] || fail "live note revision changed during the copy test"

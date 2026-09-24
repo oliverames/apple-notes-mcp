@@ -891,6 +891,89 @@ compares the writer's revision token before and after (`contentUnchanged`).
 Notes' own record that the server accepted the version, not a cross-device
 check.
 
+### Structured compose (`compose_note`)
+
+`compose-note` (src/services/privateCompose.ts, src/tools/composeNoteTool.ts)
+validates caller blocks or Markdown on the server and flattens them to one
+wire entry per Notes paragraph:
+`{style, indent?, blockQuote?, checked?, runs:[{text, bold?, italic?, underline?, strikethrough?, link?, highlight?, color?}]}`.
+The writer validates the same shape again (unknown keys, strict JSON
+booleans, style names, indent 0 to 8 on body, list, and checklist paragraphs
+only, `checked` required on checklist paragraphs and refused elsewhere, one
+line per run, link schemes http/https/mailto/tel/notes/applenotes,
+`#RRGGBB` colors, a non-empty last paragraph) before it loads NotesShared, so
+a malformed request fails the same way on every macOS. Every failure raised
+before the save carries `committed: false`.
+
+Extra NotesShared API, reported by the probe as the `composeNote` feature:
+`-[ICTTMutableParagraphStyle setStyle:]`, `-setIndent:`,
+`-setBlockQuoteLevel:`, `-setTodo:`; `-[ICTTParagraphStyle style]`,
+`-indent`, `-blockQuoteLevel`, `-todo`; `-[ICTTTodo initWithIdentifier:done:]`,
+`-done`; and, only for `requireNonSystemPaper`, the model property
+`ICNote.isSystemPaper` (checked on the entity; missing fails closed with
+`unsupported_note`).
+
+| Request | Mergeable-string attribute | Stored as |
+|---------|----------------------------|-----------|
+| `heading`, `subheading`, `monospaced` | `TTStyle` style 1, 2, 4 | ParagraphStyle field 1 = 1, 2, 4 |
+| `body` | `TTStyle` style 3 | no field 1 (body is the default) |
+| `bulleted`, `dashed`, `numbered`, `checklist` | style 100, 101, 102, 103 | field 1 = 100 to 103 |
+| `indent` | `-setIndent:` | ParagraphStyle field 4 |
+| `blockQuote` | `-setBlockQuoteLevel:1` | ParagraphStyle field 8 = 1 |
+| `checked` | `ICTTTodo` with a fresh UUID | ParagraphStyle field 5, done in its field 2 |
+| `bold`, `italic` | `TTHints` 1, 2 (bitmask) | AttributeRun field 5 |
+| `underline`, `strikethrough` | `TTUnderline`, `TTStrikethrough` = 1 | AttributeRun fields 6, 7 |
+| `link` | `NSLink` (an `NSURL`) | AttributeRun field 9 |
+| `highlight` | `TTEmphasis` 1 to 5 (purple, pink, orange, mint, blue) | AttributeRun field 14 |
+| `color` | `TTColor` (a `CGColor`) | AttributeRun field 10 |
+
+The table was recorded on the earlier fork branch (2026-09-23), where the
+same code ran in the combined helper; it has not been re-derived for this
+writer beyond the copy-store run below.
+
+Each paragraph's `TTStyle` covers its text and its own terminating newline.
+Placement: `append` closes the note's last paragraph with a newline carrying
+that paragraph's style; `prepend` inserts after the first newline (the title
+line) and ends the unit with a newline carrying its last paragraph's style;
+a title-only note is closed like an append. `insertBeforeHeading` finds
+paragraphs whose style is Heading and whose text equals the given text,
+requires exactly `expectedCount` of them (`selector_conflict` otherwise, and
+for a match at offset 0), and inserts before the `occurrence`-th.
+
+The dry run opens the store read-only, builds the full unit, resolves the
+placement, and returns `revisionBefore`, `insertAt`, `unitStart`, and the
+per-paragraph plan; it needs both switches (every writer call does) but not
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED`. The apply follows the write contract
+above. Verification opens a new read-only coordinator and requires (1) the
+persisted text to equal the old text with the insertion spliced in at
+`insertAt`, and (2) each written paragraph's signature (style number, indent,
+block-quote flag, checklist done state, the style on its terminator, and its
+runs as `{length, attributes}`) to equal the signature of the unsaved
+insertion. `readBack` returns the persisted signatures without text.
+
+After a successful apply on the live store, the server adds a check that
+does not go through NotesShared: `readNoteBlocks` (utils/noteBlocks) decodes
+the note's `ZICNOTEDATA.ZDATA` by the writer's `objectURI`, and the blocks
+from the one starting at `unitStart` on are compared with `readBack` (style,
+indent, block quote, checklist done state, length, and how many UTF-16 units
+carry each inline attribute), returned as `databaseReadBack`. It only
+reports; the writer's own verification decides success. On a store copy it
+reports `checked: false`.
+
+`create` mode does not create notes in the writer. Notes.app creates the
+note through the same AppleScript as `create-note`, the server resolves its
+UUID from the database, reads a fresh revision through the writer's
+read-only `read_note_state`, and applies an `append`. Keeping creation in
+Notes.app avoids a writer-created record that Notes.app has never seen.
+
+Copy-store run, 2026-09-24, macOS 27.2 (`scripts/test-private-helper-copy-store.sh`):
+the live compose was refused with `writes_disabled`; a 13-paragraph plan and
+apply verified every style, indent, quote, checklist state, and run
+attribute; stale and replayed revisions and a stale heading count were
+refused with `committed: false`; prepend and insert-before-heading verified;
+a Quick Note was refused under `requireNonSystemPaper`; the live note's
+revision was unchanged.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

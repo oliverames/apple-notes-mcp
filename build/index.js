@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid3 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid3}))`);
+        const invalid5 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid5}))`);
       }
     };
     exports.default = def;
@@ -39691,10 +39691,10 @@ function parseRichNote(data, nativeTags = []) {
     const length = varintValue(getField(fields, 1));
     if (length === void 0 || length < 0 || position + length > text2.length)
       throw new Error("Invalid Notes run length");
-    const paragraph = embeddedMessage(getField(fields, 2));
+    const paragraph2 = embeddedMessage(getField(fields, 2));
     styleRuns.push({
-      paragraphStyle: paragraph ? varintValue(getField(paragraph, 1)) ?? 3 : 3,
-      blockQuote: Boolean(paragraph && varintValue(getField(paragraph, 8))),
+      paragraphStyle: paragraph2 ? varintValue(getField(paragraph2, 1)) ?? 3 : 3,
+      blockQuote: Boolean(paragraph2 && varintValue(getField(paragraph2, 8))),
       highlight: Boolean(varintValue(getField(fields, 14))),
       start: position,
       length,
@@ -39706,7 +39706,7 @@ function parseRichNote(data, nativeTags = []) {
       const baseline = varintValue(getField(fields, 8)) ?? 0;
       if (baseline > 0) lossy.add("superscript");
       if (baseline < 0) lossy.add("subscript");
-      if (paragraph && (varintValue(getField(paragraph, 2)) ?? 0) !== 0) lossy.add("alignment");
+      if (paragraph2 && (varintValue(getField(paragraph2, 2)) ?? 0) !== 0) lossy.add("alignment");
       if (varintValue(getField(fields, 14))) lossy.add("highlight");
     }
     const url = stringValue(getField(fields, 9));
@@ -39731,9 +39731,9 @@ function parseRichNote(data, nativeTags = []) {
         length
       });
     }
-    hasChecklist ||= Boolean(paragraph && varintValue(getField(paragraph, 1)) === 103);
-    if (paragraph && varintValue(getField(paragraph, 1)) === 103) {
-      const checklist = embeddedMessage(getField(paragraph, 5));
+    hasChecklist ||= Boolean(paragraph2 && varintValue(getField(paragraph2, 1)) === 103);
+    if (paragraph2 && varintValue(getField(paragraph2, 1)) === 103) {
+      const checklist = embeddedMessage(getField(paragraph2, 5));
       const rawId = checklist && getField(checklist, 1)?.value;
       const itemId = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : "";
       const start = checklistRunLineStart(text2, position, length);
@@ -40400,15 +40400,15 @@ function decodeTable(compressed, strict) {
     }
     return { ids, map };
   };
-  const rows = ordered("crRows"), columns = ordered("crColumns");
-  if (!rows.ids.length || !columns.ids.length || rows.ids.length * columns.ids.length > 1e5)
+  const rows = ordered("crRows"), columns2 = ordered("crColumns");
+  if (!rows.ids.length || !columns2.ids.length || rows.ids.length * columns2.ids.length > 1e5)
     throw new Error("Unsupported table size");
-  const values = rows.ids.map(() => columns.ids.map(() => ""));
+  const values = rows.ids.map(() => columns2.ids.map(() => ""));
   const incomplete = [];
   const cellRef = refs.get("cellColumns");
   if (cellRef === void 0) throw new Error("Missing table cells");
   for (const column of many2(sub2(entry(cellRef), 6), 1)) {
-    const ci = columns.map.get(uuidIndex(num(sub2(column, 1), 6)));
+    const ci = columns2.map.get(uuidIndex(num(sub2(column, 1), 6)));
     const cells = entry(num(sub2(column, 2), 6));
     for (const row of many2(sub2(cells, 6), 1)) {
       const ri = rows.map.get(uuidIndex(num(sub2(row, 1), 6)));
@@ -40434,13 +40434,13 @@ function decodeTable(compressed, strict) {
       (m) => stringValue(getField(sub2(m, 2), 4)) === "CRTableColumnDirectionRightToLeft"
     );
   });
-  const width = columns.ids.length;
+  const width = columns2.ids.length;
   if (rtl) {
     for (const row of values) row.reverse();
-    columns.ids.reverse();
+    columns2.ids.reverse();
   }
   const incompleteCells = incomplete.map(({ ri, ci, reason }) => ({ row: ri, column: rtl ? width - 1 - ci : ci, reason })).sort((a, b) => a.row - b.row || a.column - b.column);
-  return { rows: values, rowIds: rows.ids, columnIds: columns.ids, incompleteCells };
+  return { rows: values, rowIds: rows.ids, columnIds: columns2.ids, incompleteCells };
 }
 
 // src/utils/tableMarkdown.ts
@@ -40868,10 +40868,10 @@ function runSqlite2(dbPath2, sql) {
 function readSmartFolders(dbPath2 = NOTES_DB_PATH3) {
   if (!fs2.existsSync(dbPath2)) return { folders: null, error: "no_fda", message: FDA_MESSAGE };
   try {
-    const columns = new Set(
+    const columns2 = new Set(
       runSqlite2(dbPath2, "SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');").trim().split("\n")
     );
-    const missing = REQUIRED_COLUMNS2.filter((column) => !columns.has(column));
+    const missing = REQUIRED_COLUMNS2.filter((column) => !columns2.has(column));
     if (missing.length) {
       return {
         folders: null,
@@ -40915,12 +40915,12 @@ function readTrashFolderIds(dbPath2 = NOTES_DB_PATH4) {
   }
   try {
     if (!fs3.existsSync(dbPath2)) return [];
-    const columns = new Set(
+    const columns2 = new Set(
       query(dbPath2, "SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');").split("\n").map((line) => line.trim()).filter(Boolean)
     );
     const predicates = [];
-    if (columns.has("ZFOLDERTYPE")) predicates.push("COALESCE(ZFOLDERTYPE, 0) = 1");
-    if (columns.has("ZIDENTIFIER"))
+    if (columns2.has("ZFOLDERTYPE")) predicates.push("COALESCE(ZFOLDERTYPE, 0) = 1");
+    if (columns2.has("ZIDENTIFIER"))
       predicates.push("COALESCE(ZIDENTIFIER, '') LIKE 'TrashFolder%'");
     if (!predicates.length) return [];
     const sql = `SELECT (SELECT Z_UUID FROM Z_METADATA LIMIT 1); SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICFolder') AND (${predicates.join(" OR ")}) ORDER BY Z_PK;`;
@@ -41227,23 +41227,23 @@ function parseNoteId2(noteId3) {
 function attachmentCoreDataId(noteId3, pk) {
   return noteId3.replace(/ICNote\/p\d+$/, `ICAttachment/p${pk}`);
 }
-function buildAttachmentRowsSql(notePk, columns) {
+function buildAttachmentRowsSql(notePk, columns2) {
   if (!Number.isSafeInteger(notePk) || notePk < 0) throw new Error("Invalid note primary key");
-  const col3 = (alias, name) => columns.has(name) ? `${alias}.${name}` : "NULL";
+  const col3 = (alias, name) => columns2.has(name) ? `${alias}.${name}` : "NULL";
   const firstOf = (alias, names) => {
-    const present = names.filter((n) => columns.has(n)).map((n) => `${alias}.${n}`);
+    const present = names.filter((n) => columns2.has(n)).map((n) => `${alias}.${n}`);
     if (present.length === 0) return "NULL";
     return present.length === 1 ? present[0] : `COALESCE(${present.join(", ")})`;
   };
-  const accountCols = [...columns].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
+  const accountCols = [...columns2].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
   const accountRefs = [
     ...accountCols.map((c) => `a.${c}`),
     ...accountCols.map((c) => `n.${c}`)
   ].join(", ");
   const account = accountCols.length ? `(SELECT acc.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT acc WHERE acc.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICAccount') AND acc.Z_PK IN (${accountRefs}) LIMIT 1)` : "NULL";
-  const noteLink = columns.has("ZNOTE") ? "a.ZNOTE" : "NULL";
+  const noteLink = columns2.has("ZNOTE") ? "a.ZNOTE" : "NULL";
   const parent = col3("a", "ZPARENTATTACHMENT");
-  const deleted = columns.has("ZMARKEDFORDELETION") ? " AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
+  const deleted = columns2.has("ZMARKEDFORDELETION") ? " AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
   const fields = [
     `'pk', a.Z_PK`,
     `'identifier', a.ZIDENTIFIER`,
@@ -41257,7 +41257,7 @@ function buildAttachmentRowsSql(notePk, columns) {
     `'fallbackPdfGeneration', ${col3("a", "ZFALLBACKPDFGENERATION")}`,
     `'accountIdentifier', ${account}`
   ].join(", ");
-  const mediaJoin = columns.has("ZMEDIA") ? "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON m.Z_PK = a.ZMEDIA" : "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON 0";
+  const mediaJoin = columns2.has("ZMEDIA") ? "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON m.Z_PK = a.ZMEDIA" : "LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON 0";
   const childClause = parent === "NULL" ? "" : ` OR a.ZPARENTATTACHMENT IN (SELECT p.Z_PK FROM ZICCLOUDSYNCINGOBJECT p WHERE p.ZNOTE = ${notePk})`;
   return [
     "BEGIN;",
@@ -41343,11 +41343,11 @@ function readNoteAttachmentRows(noteId3, dbPath2 = join7(NOTES_CONTAINER_DIR, "N
     dbPath2,
     "SELECT group_concat(name, ',') FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');"
   ).trim();
-  const columns = new Set(columnList.split(",").filter(Boolean));
-  if (!columns.has("ZIDENTIFIER")) {
+  const columns2 = new Set(columnList.split(",").filter(Boolean));
+  if (!columns2.has("ZIDENTIFIER")) {
     throw new AttachmentStoreError("Unsupported Notes database schema", "query_error");
   }
-  const lines = runSqlite3(dbPath2, buildAttachmentRowsSql(pk, columns)).split("\n");
+  const lines = runSqlite3(dbPath2, buildAttachmentRowsSql(pk, columns2)).split("\n");
   if (lines[0]?.trim() !== "1") {
     throw new AttachmentStoreError(
       `No note found in the database for ID "${noteId3}".`,
@@ -41777,15 +41777,15 @@ function readImageInfo(path10) {
     closeSync3(fd);
   }
 }
-function buildDrawingRowsSql(notePk, columns) {
+function buildDrawingRowsSql(notePk, columns2) {
   if (!Number.isSafeInteger(notePk) || notePk < 0) throw new Error("Invalid note primary key");
-  const col3 = (name) => columns.has(name) ? `a.${name}` : "NULL";
-  const accountCols = [...columns].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
+  const col3 = (name) => columns2.has(name) ? `a.${name}` : "NULL";
+  const accountCols = [...columns2].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
   const account = accountCols.length ? `(SELECT acc.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT acc WHERE acc.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICAccount') AND acc.Z_PK IN (${[
     ...accountCols.map((c) => `a.${c}`),
     ...accountCols.map((c) => `n.${c}`)
   ].join(", ")}) LIMIT 1)` : "NULL";
-  const deleted = columns.has("ZMARKEDFORDELETION") ? " AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
+  const deleted = columns2.has("ZMARKEDFORDELETION") ? " AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
   const fields = [
     `'pk', a.Z_PK`,
     `'identifier', a.ZIDENTIFIER`,
@@ -41845,16 +41845,16 @@ function parseDrawingRows(json2) {
 }
 function readDrawingRows(noteId3, dbPath2 = join8(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
   const { pk } = parseNoteId2(noteId3);
-  const columns = new Set(
+  const columns2 = new Set(
     runSqlite4(
       dbPath2,
       "SELECT group_concat(name, ',') FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');"
     ).trim().split(",").filter(Boolean)
   );
-  if (!columns.has("ZIDENTIFIER") || !columns.has("ZTYPEUTI") || !columns.has("ZNOTE")) {
+  if (!columns2.has("ZIDENTIFIER") || !columns2.has("ZTYPEUTI") || !columns2.has("ZNOTE")) {
     throw new AttachmentStoreError("Unsupported Notes database schema", "query_error");
   }
-  const lines = runSqlite4(dbPath2, buildDrawingRowsSql(pk, columns)).split("\n");
+  const lines = runSqlite4(dbPath2, buildDrawingRowsSql(pk, columns2)).split("\n");
   if (lines[0]?.trim() !== "1") {
     throw new AttachmentStoreError(
       `No note found in the database for ID "${noteId3}".`,
@@ -45412,8 +45412,8 @@ function readColumns(dbPath2) {
   );
   return new Set(parseJsonLines(out).map((row) => row.name));
 }
-function requireColumns(columns, required2, tool) {
-  const missing = required2.filter((column) => !columns.has(column));
+function requireColumns(columns2, required2, tool) {
+  const missing = required2.filter((column) => !columns2.has(column));
   if (missing.length) {
     throw new NoteStoreError(
       `This macOS version's Notes database lacks columns ${tool} needs (${missing.join(", ")}).`,
@@ -45421,33 +45421,33 @@ function requireColumns(columns, required2, tool) {
     );
   }
 }
-function col(columns, alias, name, fallback = "NULL") {
-  return columns.has(name) ? `${alias}.${name}` : fallback;
+function col(columns2, alias, name, fallback = "NULL") {
+  return columns2.has(name) ? `${alias}.${name}` : fallback;
 }
 function entity(name) {
   return `(SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME='${name}')`;
 }
-function accountRef(columns, alias) {
-  const refs = [...columns].filter((name) => /^ZACCOUNT\d*$/.test(name)).sort().map((name) => `${alias}.${name}`);
+function accountRef(columns2, alias) {
+  const refs = [...columns2].filter((name) => /^ZACCOUNT\d*$/.test(name)).sort().map((name) => `${alias}.${name}`);
   if (!refs.length) return "NULL";
   return refs.length === 1 ? refs[0] : `COALESCE(${refs.join(", ")})`;
 }
-function trashFolderSql(columns, f) {
+function trashFolderSql(columns2, f) {
   const parts = [];
-  if (columns.has("ZFOLDERTYPE")) parts.push(`COALESCE(${f}.ZFOLDERTYPE, 0) = 1`);
-  if (columns.has("ZIDENTIFIER")) parts.push(`COALESCE(${f}.ZIDENTIFIER, '') LIKE 'TrashFolder%'`);
+  if (columns2.has("ZFOLDERTYPE")) parts.push(`COALESCE(${f}.ZFOLDERTYPE, 0) = 1`);
+  if (columns2.has("ZIDENTIFIER")) parts.push(`COALESCE(${f}.ZIDENTIFIER, '') LIKE 'TrashFolder%'`);
   return parts.length ? `(${parts.join(" OR ")})` : "0";
 }
-function notTombstonedSql(columns, alias) {
-  return columns.has("ZMARKEDFORDELETION") ? `COALESCE(${alias}.ZMARKEDFORDELETION, 0) = 0` : "1";
+function notTombstonedSql(columns2, alias) {
+  return columns2.has("ZMARKEDFORDELETION") ? `COALESCE(${alias}.ZMARKEDFORDELETION, 0) = 0` : "1";
 }
-function activeNoteSql(columns, n, f) {
+function activeNoteSql(columns2, n, f) {
   return [
     `${n}.ZFOLDER IS NOT NULL`,
     `${f}.Z_PK IS NOT NULL`,
-    notTombstonedSql(columns, n),
-    notTombstonedSql(columns, f),
-    `NOT ${trashFolderSql(columns, f)}`
+    notTombstonedSql(columns2, n),
+    notTombstonedSql(columns2, f),
+    `NOT ${trashFolderSql(columns2, f)}`
   ].join(" AND ");
 }
 function coreDataToIso(seconds) {
@@ -45458,12 +45458,12 @@ function coreDataToIso(seconds) {
 function noteIdFor(storeUuid, pk) {
   return `x-coredata://${storeUuid}/ICNote/p${pk}`;
 }
-function readStoreContext(dbPath2, columns) {
+function readStoreContext(dbPath2, columns2) {
   const sql = [
     "BEGIN;",
     "SELECT json_object('k', 'meta', 'uuid', (SELECT Z_UUID FROM Z_METADATA LIMIT 1));",
-    `SELECT json_object('k', 'account', 'pk', a.Z_PK, 'name', ${col(columns, "a", "ZNAME")}, 'identifier', ${col(columns, "a", "ZIDENTIFIER")}) FROM ZICCLOUDSYNCINGOBJECT a WHERE a.Z_ENT = ${entity("ICAccount")} AND ${notTombstonedSql(columns, "a")};`,
-    `SELECT json_object('k', 'folder', 'pk', f.Z_PK, 'name', ${col(columns, "f", "ZTITLE2")}, 'identifier', ${col(columns, "f", "ZIDENTIFIER")}, 'parent', ${col(columns, "f", "ZPARENT")}, 'account', ${col(columns, "f", "ZOWNER", accountRef(columns, "f"))}, 'folderType', ${col(columns, "f", "ZFOLDERTYPE")}, 'trash', ${trashFolderSql(columns, "f")}, 'tombstoned', NOT ${notTombstonedSql(columns, "f")}) FROM ZICCLOUDSYNCINGOBJECT f WHERE f.Z_ENT = ${entity("ICFolder")};`,
+    `SELECT json_object('k', 'account', 'pk', a.Z_PK, 'name', ${col(columns2, "a", "ZNAME")}, 'identifier', ${col(columns2, "a", "ZIDENTIFIER")}) FROM ZICCLOUDSYNCINGOBJECT a WHERE a.Z_ENT = ${entity("ICAccount")} AND ${notTombstonedSql(columns2, "a")};`,
+    `SELECT json_object('k', 'folder', 'pk', f.Z_PK, 'name', ${col(columns2, "f", "ZTITLE2")}, 'identifier', ${col(columns2, "f", "ZIDENTIFIER")}, 'parent', ${col(columns2, "f", "ZPARENT")}, 'account', ${col(columns2, "f", "ZOWNER", accountRef(columns2, "f"))}, 'folderType', ${col(columns2, "f", "ZFOLDERTYPE")}, 'trash', ${trashFolderSql(columns2, "f")}, 'tombstoned', NOT ${notTombstonedSql(columns2, "f")}) FROM ZICCLOUDSYNCINGOBJECT f WHERE f.Z_ENT = ${entity("ICFolder")};`,
     "COMMIT;"
   ].join(" ");
   const rows = parseJsonLines(runReadOnlySql(dbPath2, sql));
@@ -45528,44 +45528,44 @@ var KIND_COLUMN = {
   "recently-deleted": ["ZFOLDERTYPE", "ZIDENTIFIER"],
   locked: ["ZISPASSWORDPROTECTED"]
 };
-function kindSupported(columns, kind) {
-  return KIND_COLUMN[kind].some((name) => columns.has(name));
+function kindSupported(columns2, kind) {
+  return KIND_COLUMN[kind].some((name) => columns2.has(name));
 }
-var flag = (columns, alias, name) => columns.has(name) ? `COALESCE(${alias}.${name}, 0)` : "0";
-function kindPredicate(columns, kind) {
+var flag = (columns2, alias, name) => columns2.has(name) ? `COALESCE(${alias}.${name}, 0)` : "0";
+function kindPredicate(columns2, kind) {
   switch (kind) {
     case "pinned":
-      return `${flag(columns, "n", "ZISPINNED")} = 1 AND ${activeNoteSql(columns, "n", "f")}`;
+      return `${flag(columns2, "n", "ZISPINNED")} = 1 AND ${activeNoteSql(columns2, "n", "f")}`;
     case "quick-notes":
-      return `${flag(columns, "n", "ZISSYSTEMPAPER")} = 1 AND ${activeNoteSql(columns, "n", "f")}`;
+      return `${flag(columns2, "n", "ZISSYSTEMPAPER")} = 1 AND ${activeNoteSql(columns2, "n", "f")}`;
     case "recently-deleted":
-      return `f.Z_PK IS NOT NULL AND ${trashFolderSql(columns, "f")} AND ${notTombstonedSql(columns, "n")}`;
+      return `f.Z_PK IS NOT NULL AND ${trashFolderSql(columns2, "f")} AND ${notTombstonedSql(columns2, "n")}`;
     case "locked":
-      return `${flag(columns, "n", "ZISPASSWORDPROTECTED")} = 1`;
+      return `${flag(columns2, "n", "ZISPASSWORDPROTECTED")} = 1`;
   }
 }
-function folderAccountJoins(columns) {
-  const owner = col(columns, "f", "ZOWNER");
-  const account = owner === "NULL" ? accountRef(columns, "n") : `COALESCE(${owner}, ${accountRef(columns, "n")})`;
+function folderAccountJoins(columns2) {
+  const owner = col(columns2, "f", "ZOWNER");
+  const account = owner === "NULL" ? accountRef(columns2, "n") : `COALESCE(${owner}, ${accountRef(columns2, "n")})`;
   return `LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER AND f.Z_ENT = ${entity("ICFolder")} LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = ${account} AND a.Z_ENT = ${entity("ICAccount")}`;
 }
-function noteFrom(columns) {
-  return `FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns)}`;
+function noteFrom(columns2) {
+  return `FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns2)}`;
 }
 var REQUIRED = ["Z_PK", "Z_ENT", "ZFOLDER", "ZTITLE1"];
-function buildSpecialNotesSql(columns, kind, scoped) {
-  requireColumns(columns, REQUIRED, "list-special-notes");
-  const created = ["ZCREATIONDATE3", "ZCREATIONDATE1", "ZCREATIONDATE"].filter((name) => columns.has(name)).map((name) => `n.${name}`).join(", ") || "NULL";
+function buildSpecialNotesSql(columns2, kind, scoped) {
+  requireColumns(columns2, REQUIRED, "list-special-notes");
+  const created = ["ZCREATIONDATE3", "ZCREATIONDATE1", "ZCREATIONDATE"].filter((name) => columns2.has(name)).map((name) => `n.${name}`).join(", ") || "NULL";
   const createdExpr = created.includes(",") ? `COALESCE(${created})` : created;
-  const modified = col(columns, "n", "ZMODIFICATIONDATE1");
-  const locked = flag(columns, "n", "ZISPASSWORDPROTECTED");
-  const where = `WHERE n.Z_ENT = ${entity("ICNote")} AND ${kindPredicate(columns, kind)}` + (scoped ? " AND a.Z_PK = @account" : "");
-  const snippet = `CASE WHEN ${locked} = 1 THEN NULL ELSE ${col(columns, "n", "ZSNIPPET")} END`;
-  const hint = kind === "locked" ? col(columns, "n", "ZPASSWORDHINT") : "NULL";
-  const row = `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'identifier', ${col(columns, "n", "ZIDENTIFIER")}, 'title', n.ZTITLE1, 'folder', f.Z_PK, 'account', a.Z_PK, 'created', ${createdExpr}, 'modified', ${modified}, 'pinned', ${flag(columns, "n", "ZISPINNED")}, 'locked', ${locked}, 'quick', ${flag(columns, "n", "ZISSYSTEMPAPER")}, 'trash', f.Z_PK IS NOT NULL AND ${trashFolderSql(columns, "f")}, 'tombstoned', NOT ${notTombstonedSql(columns, "n")}, 'snippet', ${snippet}, 'hint', ${hint}) ${noteFrom(columns)} ${where} ORDER BY ${modified} DESC, n.Z_PK DESC LIMIT @limit;`;
+  const modified = col(columns2, "n", "ZMODIFICATIONDATE1");
+  const locked = flag(columns2, "n", "ZISPASSWORDPROTECTED");
+  const where = `WHERE n.Z_ENT = ${entity("ICNote")} AND ${kindPredicate(columns2, kind)}` + (scoped ? " AND a.Z_PK = @account" : "");
+  const snippet = `CASE WHEN ${locked} = 1 THEN NULL ELSE ${col(columns2, "n", "ZSNIPPET")} END`;
+  const hint = kind === "locked" ? col(columns2, "n", "ZPASSWORDHINT") : "NULL";
+  const row = `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'identifier', ${col(columns2, "n", "ZIDENTIFIER")}, 'title', n.ZTITLE1, 'folder', f.Z_PK, 'account', a.Z_PK, 'created', ${createdExpr}, 'modified', ${modified}, 'pinned', ${flag(columns2, "n", "ZISPINNED")}, 'locked', ${locked}, 'quick', ${flag(columns2, "n", "ZISSYSTEMPAPER")}, 'trash', f.Z_PK IS NOT NULL AND ${trashFolderSql(columns2, "f")}, 'tombstoned', NOT ${notTombstonedSql(columns2, "n")}, 'snippet', ${snippet}, 'hint', ${hint}) ${noteFrom(columns2)} ${where} ORDER BY ${modified} DESC, n.Z_PK DESC LIMIT @limit;`;
   return [
     "BEGIN;",
-    `SELECT json_object('k', 'total', 'n', COUNT(*)) ${noteFrom(columns)} ${where};`,
+    `SELECT json_object('k', 'total', 'n', COUNT(*)) ${noteFrom(columns2)} ${where};`,
     row,
     "COMMIT;"
   ].join(" ");
@@ -45576,7 +45576,7 @@ function listSpecialNotes(options) {
     Math.max(1, Math.trunc(options.limit ?? SPECIAL_LIMIT.DEFAULT)),
     SPECIAL_LIMIT.MAX
   );
-  const columns = readColumns(dbPath2);
+  const columns2 = readColumns(dbPath2);
   const empty = {
     kind: options.kind,
     notes: [],
@@ -45585,13 +45585,13 @@ function listSpecialNotes(options) {
     limit,
     supported: false
   };
-  if (!kindSupported(columns, options.kind)) return empty;
-  const context = readStoreContext(dbPath2, columns);
+  if (!kindSupported(columns2, options.kind)) return empty;
+  const context = readStoreContext(dbPath2, columns2);
   const scope2 = options.account ? resolveAccountName(context.accounts, options.account) : void 0;
   const params = { limit: { int: limit } };
   if (scope2) params.account = { int: scope2.pk };
   const rows = parseJsonLines(
-    runReadOnlySql(dbPath2, buildSpecialNotesSql(columns, options.kind, Boolean(scope2)), params)
+    runReadOnlySql(dbPath2, buildSpecialNotesSql(columns2, options.kind, Boolean(scope2)), params)
   );
   const paths = folderPaths(context.folders);
   const accountNames = new Map(context.accounts.map((account) => [account.pk, account.name]));
@@ -45630,8 +45630,8 @@ var EXACT_NOTE_ID = /^x-coredata:\/\/([0-9A-F-]+)\/ICNote\/p(\d+)$/i;
 function quickNoteFlag(noteId3, dbPath2 = NOTES_DB_PATH7) {
   const match = EXACT_NOTE_ID.exec(noteId3);
   if (!match) throw new NoteStoreError(`Not an exact note id: ${noteId3}`, "invalid_input");
-  const columns = readColumns(dbPath2);
-  const sql = `SELECT json_object('uuid', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'quick', (SELECT ${flag(columns, "n", "ZISSYSTEMPAPER")} FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk AND n.Z_ENT = ${entity("ICNote")}));`;
+  const columns2 = readColumns(dbPath2);
+  const sql = `SELECT json_object('uuid', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'quick', (SELECT ${flag(columns2, "n", "ZISSYSTEMPAPER")} FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk AND n.Z_ENT = ${entity("ICNote")}));`;
   const [row] = parseJsonLines(
     runReadOnlySql(dbPath2, sql, { pk: { int: Number(match[2]) } })
   );
@@ -45644,18 +45644,18 @@ function quickNoteFlag(noteId3, dbPath2 = NOTES_DB_PATH7) {
   return row.quick === null ? null : row.quick === 1;
 }
 var TAG_REQUIRED = ["Z_PK", "Z_ENT", "ZFOLDER", "ZNOTE1", "ZTYPEUTI1", "ZALTTEXT", "ZIDENTIFIER"];
-function buildTagInventorySql(columns, scoped) {
-  requireColumns(columns, TAG_REQUIRED, "list-native-tags");
+function buildTagInventorySql(columns2, scoped) {
+  requireColumns(columns2, TAG_REQUIRED, "list-native-tags");
   const accountFilter = scoped ? " AND a.Z_PK = @account" : "";
-  const uses = `FROM ZICCLOUDSYNCINGOBJECT i JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = i.ZNOTE1 AND n.Z_ENT = ${entity("ICNote")} ${folderAccountJoins(columns)} WHERE i.ZTYPEUTI1 = '${HASHTAG_UTI}' AND ${notTombstonedSql(columns, "i")} AND ${activeNoteSql(columns, "n", "f")}${accountFilter}`;
-  const tagAccount = accountRef(columns, "t");
-  const display = ["ZDISPLAYTEXT", "ZSTANDARDIZEDCONTENT", "ZNAME"].filter((name) => columns.has(name)).map((name) => `t.${name}`);
+  const uses = `FROM ZICCLOUDSYNCINGOBJECT i JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = i.ZNOTE1 AND n.Z_ENT = ${entity("ICNote")} ${folderAccountJoins(columns2)} WHERE i.ZTYPEUTI1 = '${HASHTAG_UTI}' AND ${notTombstonedSql(columns2, "i")} AND ${activeNoteSql(columns2, "n", "f")}${accountFilter}`;
+  const tagAccount = accountRef(columns2, "t");
+  const display = ["ZDISPLAYTEXT", "ZSTANDARDIZEDCONTENT", "ZNAME"].filter((name) => columns2.has(name)).map((name) => `t.${name}`);
   const displayExpr = display.length > 1 ? `COALESCE(${display.join(", ")})` : display[0] || "NULL";
   return [
     "BEGIN;",
-    `SELECT json_object('k', 'tag', 'text', ${displayExpr}, 'account', ta.Z_PK) FROM ZICCLOUDSYNCINGOBJECT t LEFT JOIN ZICCLOUDSYNCINGOBJECT ta ON ta.Z_PK = ${tagAccount} AND ta.Z_ENT = ${entity("ICAccount")} WHERE t.Z_ENT = ${entity("ICHashtag")} AND ${notTombstonedSql(columns, "t")}${scoped ? " AND ta.Z_PK = @account" : ""};`,
-    `SELECT json_object('k', 'use', 'note', n.Z_PK, 'object', i.ZIDENTIFIER, 'text', i.ZALTTEXT, 'account', a.Z_PK, 'locked', ${flag(columns, "n", "ZISPASSWORDPROTECTED")}) ${uses};`,
-    `SELECT json_object('k', 'body', 'note', b.Z_PK, 'data', (SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = b.Z_PK ORDER BY d.Z_PK DESC LIMIT 1)) FROM ZICCLOUDSYNCINGOBJECT b WHERE b.Z_PK IN (SELECT n.Z_PK ${uses}) AND ${flag(columns, "b", "ZISPASSWORDPROTECTED")} = 0;`,
+    `SELECT json_object('k', 'tag', 'text', ${displayExpr}, 'account', ta.Z_PK) FROM ZICCLOUDSYNCINGOBJECT t LEFT JOIN ZICCLOUDSYNCINGOBJECT ta ON ta.Z_PK = ${tagAccount} AND ta.Z_ENT = ${entity("ICAccount")} WHERE t.Z_ENT = ${entity("ICHashtag")} AND ${notTombstonedSql(columns2, "t")}${scoped ? " AND ta.Z_PK = @account" : ""};`,
+    `SELECT json_object('k', 'use', 'note', n.Z_PK, 'object', i.ZIDENTIFIER, 'text', i.ZALTTEXT, 'account', a.Z_PK, 'locked', ${flag(columns2, "n", "ZISPASSWORDPROTECTED")}) ${uses};`,
+    `SELECT json_object('k', 'body', 'note', b.Z_PK, 'data', (SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = b.Z_PK ORDER BY d.Z_PK DESC LIMIT 1)) FROM ZICCLOUDSYNCINGOBJECT b WHERE b.Z_PK IN (SELECT n.Z_PK ${uses}) AND ${flag(columns2, "b", "ZISPASSWORDPROTECTED")} = 0;`,
     "COMMIT;"
   ].join(" ");
 }
@@ -45680,13 +45680,13 @@ function referencedObjects(hex3) {
 }
 function nativeTagInventory(options = {}) {
   const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
-  const columns = readColumns(dbPath2);
-  const context = readStoreContext(dbPath2, columns);
+  const columns2 = readColumns(dbPath2);
+  const context = readStoreContext(dbPath2, columns2);
   const scope2 = options.account ? resolveAccountName(context.accounts, options.account) : void 0;
   const rows = parseJsonLines(
     runReadOnlySql(
       dbPath2,
-      buildTagInventorySql(columns, Boolean(scope2)),
+      buildTagInventorySql(columns2, Boolean(scope2)),
       scope2 ? { account: { int: scope2.pk } } : {}
     )
   );
@@ -46206,18 +46206,18 @@ function decodeBodyText(hex3) {
     return null;
   }
 }
-var flag2 = (columns, alias, name) => columns.has(name) ? `COALESCE(${alias}.${name}, 0)` : "0";
+var flag2 = (columns2, alias, name) => columns2.has(name) ? `COALESCE(${alias}.${name}, 0)` : "0";
 var REQUIRED2 = ["Z_PK", "Z_ENT", "ZFOLDER", "ZTITLE1", "ZMODIFICATIONDATE1"];
-function buildRecentNotesSql(columns, options) {
-  requireColumns(columns, REQUIRED2, "list-recent-notes");
-  const owner = col(columns, "f", "ZOWNER");
-  const account = owner === "NULL" ? accountRef(columns, "n") : `COALESCE(${owner}, ${accountRef(columns, "n")})`;
-  const created = ["ZCREATIONDATE3", "ZCREATIONDATE1", "ZCREATIONDATE"].filter((name) => columns.has(name)).map((name) => `n.${name}`).join(", ") || "NULL";
+function buildRecentNotesSql(columns2, options) {
+  requireColumns(columns2, REQUIRED2, "list-recent-notes");
+  const owner = col(columns2, "f", "ZOWNER");
+  const account = owner === "NULL" ? accountRef(columns2, "n") : `COALESCE(${owner}, ${accountRef(columns2, "n")})`;
+  const created = ["ZCREATIONDATE3", "ZCREATIONDATE1", "ZCREATIONDATE"].filter((name) => columns2.has(name)).map((name) => `n.${name}`).join(", ") || "NULL";
   const createdExpr = created.includes(",") ? `COALESCE(${created})` : created;
-  const locked = flag2(columns, "n", "ZISPASSWORDPROTECTED");
-  const cloud = ["ZNEEDSTOBEFETCHEDFROMCLOUD", "ZNEEDSINITIALFETCHFROMCLOUD"].filter((name) => columns.has(name)).map((name) => `COALESCE(n.${name}, 0)`);
+  const locked = flag2(columns2, "n", "ZISPASSWORDPROTECTED");
+  const cloud = ["ZNEEDSTOBEFETCHEDFROMCLOUD", "ZNEEDSINITIALFETCHFROMCLOUD"].filter((name) => columns2.has(name)).map((name) => `COALESCE(n.${name}, 0)`);
   const where = [`n.Z_ENT = ${entity("ICNote")}`];
-  if (!options.includeDeleted) where.push(activeNoteSql(columns, "n", "f"));
+  if (!options.includeDeleted) where.push(activeNoteSql(columns2, "n", "f"));
   if (options.scoped) where.push("a.Z_PK = @account");
   if (options.inFolder) where.push("n.ZFOLDER = @folder");
   if (options.since) {
@@ -46227,7 +46227,7 @@ function buildRecentNotesSql(columns, options) {
   }
   const order = options.since ? "n.ZMODIFICATIONDATE1 ASC, n.Z_PK ASC" : "n.ZMODIFICATIONDATE1 DESC, n.Z_PK DESC";
   const data = options.withBodies ? `CASE WHEN ${locked} = 1 THEN NULL ELSE (SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK ORDER BY d.Z_PK DESC LIMIT 1) END` : "NULL";
-  return `SELECT json_object('pk', n.Z_PK, 'identifier', ${col(columns, "n", "ZIDENTIFIER")}, 'title', n.ZTITLE1, 'folder', f.Z_PK, 'account', a.Z_PK, 'created', ${createdExpr}, 'modified', n.ZMODIFICATIONDATE1, 'bits', hex(ieee754_to_blob(n.ZMODIFICATIONDATE1)), 'pinned', ${flag2(columns, "n", "ZISPINNED")}, 'locked', ${locked}, 'trash', f.Z_PK IS NOT NULL AND ${trashFolderSql(columns, "f")}, 'tombstoned', NOT ${notTombstonedSql(columns, "n")}, 'cloud', ${cloud.length ? cloud.join(" + ") : "0"}, 'snippet', CASE WHEN ${locked} = 1 THEN NULL ELSE ${col(columns, "n", "ZSNIPPET")} END, 'data', ${data}) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER AND f.Z_ENT = ${entity("ICFolder")} LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = ${account} AND a.Z_ENT = ${entity("ICAccount")} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT @limit;`;
+  return `SELECT json_object('pk', n.Z_PK, 'identifier', ${col(columns2, "n", "ZIDENTIFIER")}, 'title', n.ZTITLE1, 'folder', f.Z_PK, 'account', a.Z_PK, 'created', ${createdExpr}, 'modified', n.ZMODIFICATIONDATE1, 'bits', hex(ieee754_to_blob(n.ZMODIFICATIONDATE1)), 'pinned', ${flag2(columns2, "n", "ZISPINNED")}, 'locked', ${locked}, 'trash', f.Z_PK IS NOT NULL AND ${trashFolderSql(columns2, "f")}, 'tombstoned', NOT ${notTombstonedSql(columns2, "n")}, 'cloud', ${cloud.length ? cloud.join(" + ") : "0"}, 'snippet', CASE WHEN ${locked} = 1 THEN NULL ELSE ${col(columns2, "n", "ZSNIPPET")} END, 'data', ${data}) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER AND f.Z_ENT = ${entity("ICFolder")} LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = ${account} AND a.Z_ENT = ${entity("ICAccount")} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT @limit;`;
 }
 function resolveFolderPath(folders, paths, input, accountPk) {
   const candidates = folders.filter(
@@ -46256,8 +46256,8 @@ function listRecentNotes(options = {}) {
     RECENT_LIMIT.MAX
   );
   const since = options.since !== void 0 ? parseSince(options.since) : void 0;
-  const columns = readColumns(dbPath2);
-  const context = readStoreContext(dbPath2, columns);
+  const columns2 = readColumns(dbPath2);
+  const context = readStoreContext(dbPath2, columns2);
   const paths = folderPaths(context.folders);
   const scope2 = options.account ? resolveAccountName(context.accounts, options.account) : void 0;
   const folder = options.folder ? resolveFolderPath(context.folders, paths, options.folder, scope2?.pk) : void 0;
@@ -46267,7 +46267,7 @@ function listRecentNotes(options = {}) {
   if (folder) params.folder = { int: folder.pk };
   if (since) params.since = { double: since.modified };
   if (since?.pk !== void 0) params.sincePk = { int: since.pk };
-  const sql = buildRecentNotesSql(columns, {
+  const sql = buildRecentNotesSql(columns2, {
     includeDeleted: Boolean(options.includeDeleted),
     scoped: Boolean(scope2),
     inFolder: Boolean(folder),
@@ -46323,9 +46323,9 @@ function toRecentRow(row, context, paths, accountNames, options) {
   }
   return note;
 }
-function buildFolderCountsSql(columns) {
-  requireColumns(columns, ["Z_PK", "Z_ENT", "ZFOLDER"], "list-folder-tree");
-  return `SELECT json_object('folder', n.ZFOLDER, 'n', COUNT(*)) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZFOLDER IS NOT NULL AND ${notTombstonedSql(columns, "n")} GROUP BY n.ZFOLDER;`;
+function buildFolderCountsSql(columns2) {
+  requireColumns(columns2, ["Z_PK", "Z_ENT", "ZFOLDER"], "list-folder-tree");
+  return `SELECT json_object('folder', n.ZFOLDER, 'n', COUNT(*)) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZFOLDER IS NOT NULL AND ${notTombstonedSql(columns2, "n")} GROUP BY n.ZFOLDER;`;
 }
 var KIND_ORDER = { folder: 0, smart: 1, trash: 2 };
 function compareNodes(a, b) {
@@ -46333,12 +46333,12 @@ function compareNodes(a, b) {
 }
 function folderTree(options = {}) {
   const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
-  const columns = readColumns(dbPath2);
-  const context = readStoreContext(dbPath2, columns);
+  const columns2 = readColumns(dbPath2);
+  const context = readStoreContext(dbPath2, columns2);
   const scope2 = options.account ? resolveAccountName(context.accounts, options.account) : void 0;
   const counts = new Map(
     parseJsonLines(
-      runReadOnlySql(dbPath2, buildFolderCountsSql(columns))
+      runReadOnlySql(dbPath2, buildFolderCountsSql(columns2))
     ).map((row) => [row.folder, row.n])
   );
   return assembleFolderTree(context, counts, Boolean(options.includeDeleted), scope2);
@@ -47252,9 +47252,9 @@ function decodeNoteBody(data) {
       for (const facet of facetsForAttachmentType(stringValue(getField(attachment, 2)) ?? ""))
         facets.add(facet);
     }
-    const paragraph = embeddedMessage(getField(fields, 2));
-    if (paragraph && varintValue(getField(paragraph, 1)) === CHECKLIST_STYLE) {
-      const item = embeddedMessage(getField(paragraph, 5));
+    const paragraph2 = embeddedMessage(getField(fields, 2));
+    if (paragraph2 && varintValue(getField(paragraph2, 1)) === CHECKLIST_STYLE) {
+      const item = embeddedMessage(getField(paragraph2, 5));
       const rawId = item && getField(item, 1)?.value;
       const key = rawId instanceof Uint8Array ? Buffer.from(rawId).toString("hex") : `line:${text2.lastIndexOf("\n", position - 1) + 1}`;
       checklist.set(key, (item && varintValue(getField(item, 2))) === 1);
@@ -49205,8 +49205,8 @@ function selectParagraph(paragraphs, selector) {
   return matches[occurrence - 1];
 }
 var NOTE_ID = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]{1,15})$/i;
-function titleMatchSql(columns) {
-  return `SELECT json_object('pk', n.Z_PK, 'folder', n.ZFOLDER) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZTITLE1 = CAST(@title AS TEXT) AND ${activeNoteSql(columns, "n", "f")} ORDER BY n.Z_PK;`;
+function titleMatchSql(columns2) {
+  return `SELECT json_object('pk', n.Z_PK, 'folder', n.ZFOLDER) FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.ZFOLDER WHERE n.Z_ENT = ${entity("ICNote")} AND n.ZTITLE1 = CAST(@title AS TEXT) AND ${activeNoteSql(columns2, "n", "f")} ORDER BY n.Z_PK;`;
 }
 function checkNoteSelector(selector) {
   const given = [selector.id, selector.title].filter((value) => value !== void 0).length;
@@ -49223,15 +49223,15 @@ function checkNoteSelector(selector) {
     );
   return Number(pk);
 }
-function resolveNote(dbPath2, columns, selector) {
+function resolveNote(dbPath2, columns2, selector) {
   const idPk = checkNoteSelector(selector);
   if (idPk !== void 0) return { pk: idPk, id: selector.id };
-  requireColumns(columns, ["ZTITLE1", "ZFOLDER"], "title lookup");
-  const context = readStoreContext(dbPath2, columns);
+  requireColumns(columns2, ["ZTITLE1", "ZFOLDER"], "title lookup");
+  const context = readStoreContext(dbPath2, columns2);
   const paths = folderPaths(context.folders);
   const names = new Map(context.folders.map((f) => [f.pk, escapeFolderName(f.name ?? "")]));
   let matches = parseJsonLines(
-    runReadOnlySql(dbPath2, titleMatchSql(columns), {
+    runReadOnlySql(dbPath2, titleMatchSql(columns2), {
       title: { blob: Buffer.from(selector.title, "utf8") }
     })
   );
@@ -49249,14 +49249,14 @@ function resolveNote(dbPath2, columns, selector) {
     );
   return { pk: matches[0].pk, id: noteIdFor(context.uuid, matches[0].pk) };
 }
-function noteBodySql(columns) {
-  return `SELECT json_object('isNote', n.Z_ENT = ${entity("ICNote")}, 'identifier', ${col(columns, "n", "ZIDENTIFIER")}, 'data', (SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK), 'encrypted', (SELECT d.ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK), 'locked', ${col(columns, "n", "ZISPASSWORDPROTECTED")}) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk;`;
+function noteBodySql(columns2) {
+  return `SELECT json_object('isNote', n.Z_ENT = ${entity("ICNote")}, 'identifier', ${col(columns2, "n", "ZIDENTIFIER")}, 'data', (SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK), 'encrypted', (SELECT d.ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK), 'locked', ${col(columns2, "n", "ZISPASSWORDPROTECTED")}) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk;`;
 }
 function readNoteParagraphs(selector, { dbPath: dbPath2 = NOTES_DB_PATH7 } = {}) {
   checkNoteSelector(selector);
-  const columns = readColumns(dbPath2);
-  const { pk, id: id2 } = resolveNote(dbPath2, columns, selector);
-  const [row] = parseJsonLines(runReadOnlySql(dbPath2, noteBodySql(columns), { pk: { int: pk } }));
+  const columns2 = readColumns(dbPath2);
+  const { pk, id: id2 } = resolveNote(dbPath2, columns2, selector);
+  const [row] = parseJsonLines(runReadOnlySql(dbPath2, noteBodySql(columns2), { pk: { int: pk } }));
   if (!row?.isNote) throw new ParagraphLinkError("not-found", `No note found for ID "${id2}"`);
   if (row.encrypted || row.locked)
     throw new ParagraphLinkError(
@@ -49304,18 +49304,18 @@ function pageParagraphs(paragraphs, { offset = 0, limit = 500, maxBytes = 4 * 10
   };
 }
 function paragraphLink(note, selector) {
-  const paragraph = selectParagraph(note.paragraphs, selector);
-  if (paragraph.paragraphIdStatus === "shared")
+  const paragraph2 = selectParagraph(note.paragraphs, selector);
+  if (paragraph2.paragraphIdStatus === "shared")
     throw new ParagraphLinkError(
       "paragraph-id-shared",
-      `This paragraph's ID is shared with ${paragraph.sharedWith} other paragraph(s) in the note, so a link could open the wrong one`
+      `This paragraph's ID is shared with ${paragraph2.sharedWith} other paragraph(s) in the note, so a link could open the wrong one`
     );
-  if (!paragraph.url)
+  if (!paragraph2.url)
     throw new ParagraphLinkError(
       "paragraph-id-missing",
-      paragraph.paragraphId ? "The note has no stored identifier, so no link can be built" : "This paragraph has no stored paragraph ID, so Notes cannot open it directly"
+      paragraph2.paragraphId ? "The note has no stored identifier, so no link can be built" : "This paragraph has no stored paragraph ID, so Notes cannot open it directly"
     );
-  return { url: paragraph.url, paragraph };
+  return { url: paragraph2.url, paragraph: paragraph2 };
 }
 
 // src/utils/noteStructure.ts
@@ -49330,10 +49330,10 @@ function parseNotesShowUrl(url) {
   if (!match) return void 0;
   const query2 = new URLSearchParams(match[1]);
   const note = query2.get("identifier") ?? "";
-  const paragraph = query2.get("paragraphID") ?? "";
+  const paragraph2 = query2.get("paragraphID") ?? "";
   const result = {};
   if (UUID.test(note)) result.targetNote = note.toUpperCase();
-  if (UUID.test(paragraph)) result.paragraphId = paragraph.toUpperCase();
+  if (UUID.test(paragraph2)) result.paragraphId = paragraph2.toUpperCase();
   return result;
 }
 function inlineLinks(doc) {
@@ -49421,15 +49421,15 @@ function lastViewedOf(raw, columnPresent = true, now = Date.now()) {
 var visible = (text2) => text2.replace(/\ufffc/g, "");
 var wordCount = (text2) => visible(text2).split(/\s+/u).filter((word) => word !== "").length;
 var charCount = (text2) => Array.from(visible(text2)).length;
-function noteStructureSql(columns) {
-  const c = (alias, name) => col(columns, alias, name);
-  const sharedExpr = columns.has("ZSERVERSHAREDATA") ? `(n.ZSERVERSHAREDATA IS NOT NULL OR EXISTS (
+function noteStructureSql(columns2) {
+  const c = (alias, name) => col(columns2, alias, name);
+  const sharedExpr = columns2.has("ZSERVERSHAREDATA") ? `(n.ZSERVERSHAREDATA IS NOT NULL OR EXISTS (
          WITH RECURSIVE up(pk, depth) AS (
            SELECT n.ZFOLDER, 0 UNION ALL
            SELECT ${c("p", "ZPARENT")}, depth + 1 FROM up JOIN ZICCLOUDSYNCINGOBJECT p ON p.Z_PK = up.pk
            WHERE depth < 64)
          SELECT 1 FROM up JOIN ZICCLOUDSYNCINGOBJECT s ON s.Z_PK = up.pk WHERE s.ZSERVERSHAREDATA IS NOT NULL))` : "NULL";
-  const children = columns.has("ZPARENTATTACHMENT") ? ` OR att.ZPARENTATTACHMENT IN (SELECT p.Z_PK FROM ZICCLOUDSYNCINGOBJECT p WHERE ${c("p", "ZNOTE")} = @pk)` : "";
+  const children = columns2.has("ZPARENTATTACHMENT") ? ` OR att.ZPARENTATTACHMENT IN (SELECT p.Z_PK FROM ZICCLOUDSYNCINGOBJECT p WHERE ${c("p", "ZNOTE")} = @pk)` : "";
   return [
     "BEGIN;",
     `SELECT json_object('k', 'note',
@@ -49437,7 +49437,7 @@ function noteStructureSql(columns) {
       'identifier', ${c("n", "ZIDENTIFIER")},
       'title', ${c("n", "ZTITLE1")},
       'folder', ${c("f", "ZTITLE2")},
-      'inTrash', CASE WHEN f.Z_PK IS NULL THEN 0 ELSE ${trashFolderSql(columns, "f")} END,
+      'inTrash', CASE WHEN f.Z_PK IS NULL THEN 0 ELSE ${trashFolderSql(columns2, "f")} END,
       'account', ${c("a", "ZNAME")},
       'locked', ${c("n", "ZISPASSWORDPROTECTED")},
       'pinned', ${c("n", "ZISPINNED")},
@@ -49447,7 +49447,7 @@ function noteStructureSql(columns) {
       'encrypted', (SELECT d.ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK))
     FROM ZICCLOUDSYNCINGOBJECT n
     LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = ${c("n", "ZFOLDER")}
-    LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = ${accountRef(columns, "n")} AND a.Z_ENT = ${entity("ICAccount")}
+    LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = ${accountRef(columns2, "n")} AND a.Z_ENT = ${entity("ICAccount")}
     WHERE n.Z_PK = @pk;`,
     `SELECT json_object('k', 'attachment',
       'pk', att.Z_PK,
@@ -49455,7 +49455,7 @@ function noteStructureSql(columns) {
       'url', ${c("att", "ZURLSTRING")},
       'fileSize', ${c("att", "ZFILESIZE")})
     FROM ZICCLOUDSYNCINGOBJECT att
-    WHERE att.Z_ENT = ${entity("ICAttachment")} AND ${notTombstonedSql(columns, "att")}
+    WHERE att.Z_ENT = ${entity("ICAttachment")} AND ${notTombstonedSql(columns2, "att")}
       AND (${c("att", "ZNOTE")} = @pk${children});`,
     `SELECT json_object('k', 'inline',
       'identifier', ${c("i", "ZIDENTIFIER")},
@@ -49464,7 +49464,7 @@ function noteStructureSql(columns) {
       'token', ${c("i", "ZTOKENCONTENTIDENTIFIER")})
     FROM ZICCLOUDSYNCINGOBJECT i
     WHERE i.Z_ENT = ${entity("ICInlineAttachment")} AND ${c("i", "ZNOTE1")} = @pk
-      AND ${notTombstonedSql(columns, "i")} AND ${c("i", "ZTYPEUTI1")} IN ('${HASHTAG_UTI2}', '${NOTE_LINK_UTI}');`,
+      AND ${notTombstonedSql(columns2, "i")} AND ${c("i", "ZTYPEUTI1")} IN ('${HASHTAG_UTI2}', '${NOTE_LINK_UTI}');`,
     "COMMIT;"
   ].join("\n");
 }
@@ -49483,9 +49483,9 @@ function describeNoteStructure(s) {
 }
 function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH7, includeText = true, maxTextBytes = 4 * 1024 * 1024 } = {}) {
   const { pk } = parseNoteId2(id2);
-  const columns = readColumns(dbPath2);
+  const columns2 = readColumns(dbPath2);
   const rows = parseJsonLines(
-    runReadOnlySql(dbPath2, noteStructureSql(columns), { pk: { int: pk } })
+    runReadOnlySql(dbPath2, noteStructureSql(columns2), { pk: { int: pk } })
   );
   const note = rows.find((row) => row.k === "note");
   if (!note?.isNote) throw new NoteStoreError(`No note found for ID "${id2}".`, "invalid_input");
@@ -49569,7 +49569,7 @@ function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH7, includeText 
   }
   const linkCounts = { inline: 0, card: 0, note: 0, section: 0 };
   for (const link of links) linkCounts[link.kind]++;
-  const lastViewed = lastViewedOf(note.lastViewed, columns.has("ZLASTVIEWEDMODIFICATIONDATE"));
+  const lastViewed = lastViewedOf(note.lastViewed, columns2.has("ZLASTVIEWEDMODIFICATIONDATE"));
   const first2 = selectFirstImage(assets);
   return {
     id: id2,
@@ -49656,38 +49656,38 @@ function matchFolder(folders, wanted, account) {
     );
   return { folder: matches[0], path: paths.get(matches[0].pk) };
 }
-function inventorySql(columns) {
-  requireColumns(columns, ["ZFOLDER"], "list-note-links");
-  const c = (alias, name) => col(columns, alias, name);
-  const subtree = columns.has("ZPARENT") ? `WITH RECURSIVE sub(pk) AS (SELECT @folder UNION
+function inventorySql(columns2) {
+  requireColumns(columns2, ["ZFOLDER"], "list-note-links");
+  const c = (alias, name) => col(columns2, alias, name);
+  const subtree = columns2.has("ZPARENT") ? `WITH RECURSIVE sub(pk) AS (SELECT @folder UNION
          SELECT x.Z_PK FROM ZICCLOUDSYNCINGOBJECT x JOIN sub ON x.ZPARENT = sub.pk
          WHERE @subfolders <> 0 AND x.Z_ENT = ${entity("ICFolder")})
        SELECT pk FROM sub` : "SELECT @folder";
   const scopeWhere = `n.Z_ENT = ${entity("ICNote")} AND (
       (@note <> 0 AND n.Z_PK = @note) OR
-      (@note = 0 AND ${activeNoteSql(columns, "n", "f")}
+      (@note = 0 AND ${activeNoteSql(columns2, "n", "f")}
         AND (@account = 0 OR a.Z_PK = @account)
         AND (@folder = 0 OR n.ZFOLDER IN (${subtree}))))`;
-  const scope2 = `SELECT n.Z_PK FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns)} WHERE ${scopeWhere}`;
+  const scope2 = `SELECT n.Z_PK FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns2)} WHERE ${scopeWhere}`;
   return {
     rows: [
       "BEGIN;",
       `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'identifier', ${c("n", "ZIDENTIFIER")},
         'title', ${c("n", "ZTITLE1")}, 'folder', n.ZFOLDER, 'account', a.Z_PK,
         'modified', ${c("n", "ZMODIFICATIONDATE1")})
-      FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns)} WHERE ${scopeWhere};`,
+      FROM ZICCLOUDSYNCINGOBJECT n ${folderAccountJoins(columns2)} WHERE ${scopeWhere};`,
       `SELECT json_object('k', 'card', 'pk', att.Z_PK, 'note', ${c("att", "ZNOTE")},
         'identifier', ${c("att", "ZIDENTIFIER")}, 'url', ${c("att", "ZURLSTRING")},
         'title', ${c("att", "ZTITLE")})
       FROM ZICCLOUDSYNCINGOBJECT att
-      WHERE att.Z_ENT = ${entity("ICAttachment")} AND ${notTombstonedSql(columns, "att")}
+      WHERE att.Z_ENT = ${entity("ICAttachment")} AND ${notTombstonedSql(columns2, "att")}
         AND ${c("att", "ZTYPEUTI")} LIKE 'public.url%' AND ${c("att", "ZURLSTRING")} IS NOT NULL
         AND ${c("att", "ZNOTE")} IN (${scope2});`,
       `SELECT json_object('k', 'chip', 'note', ${c("i", "ZNOTE1")},
         'identifier', ${c("i", "ZIDENTIFIER")}, 'token', ${c("i", "ZTOKENCONTENTIDENTIFIER")},
         'alt', ${c("i", "ZALTTEXT")})
       FROM ZICCLOUDSYNCINGOBJECT i
-      WHERE i.Z_ENT = ${entity("ICInlineAttachment")} AND ${notTombstonedSql(columns, "i")}
+      WHERE i.Z_ENT = ${entity("ICInlineAttachment")} AND ${notTombstonedSql(columns2, "i")}
         AND ${c("i", "ZTYPEUTI1")} = '${NOTE_LINK_UTI}' AND ${c("i", "ZNOTE1")} IN (${scope2});`,
       "COMMIT;"
     ].join("\n"),
@@ -49721,9 +49721,9 @@ function listNoteLinks(options = {}) {
   if (options.id && (options.account || options.folder))
     throw new NoteStoreError("Pass either id or account/folder, not both.", "invalid_input");
   const notePk = options.id ? parseNoteId2(options.id).pk : 0;
-  const columns = readColumns(dbPath2);
-  const sql = inventorySql(columns);
-  const context = readStoreContext(dbPath2, columns);
+  const columns2 = readColumns(dbPath2);
+  const sql = inventorySql(columns2);
+  const context = readStoreContext(dbPath2, columns2);
   const paths = folderPaths(context.folders);
   const scope2 = {};
   let accountPk = 0;
@@ -51149,24 +51149,24 @@ function sqlite(dbPath2, args) {
   }
 }
 function objectColumns(dbPath2 = NOTES_DB_PATH11) {
-  let columns = columnCache.get(dbPath2);
-  if (!columns) {
-    columns = new Set(
+  let columns2 = columnCache.get(dbPath2);
+  if (!columns2) {
+    columns2 = new Set(
       sqlite(dbPath2, ["SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');"]).split("\n").filter(Boolean)
     );
-    columnCache.set(dbPath2, columns);
+    columnCache.set(dbPath2, columns2);
   }
-  return columns;
+  return columns2;
 }
-function attachmentQuery(columns) {
-  const col3 = (alias, name) => columns.has(name) ? `${alias}.${name}` : "NULL";
+function attachmentQuery(columns2) {
+  const col3 = (alias, name) => columns2.has(name) ? `${alias}.${name}` : "NULL";
   const fields = ATTACHMENT_COLUMNS.map(([key, alias, name]) => `'${key}', ${col3(alias, name)}`);
   const uti = `COALESCE(${col3("a", "ZTYPEUTI")}, ${col3("a", "ZTYPEUTI1")})`;
-  const mergeable = columns.has("ZMERGEABLEDATA1") ? columns.has("ZMERGEABLEDATA") ? "COALESCE(a.ZMERGEABLEDATA1, a.ZMERGEABLEDATA)" : "a.ZMERGEABLEDATA1" : col3("a", "ZMERGEABLEDATA");
-  const noteLinks = ["ZNOTE", "ZNOTE1"].filter((c) => columns.has(c)).map((c) => `a.${c} = @pk`);
+  const mergeable = columns2.has("ZMERGEABLEDATA1") ? columns2.has("ZMERGEABLEDATA") ? "COALESCE(a.ZMERGEABLEDATA1, a.ZMERGEABLEDATA)" : "a.ZMERGEABLEDATA1" : col3("a", "ZMERGEABLEDATA");
+  const noteLinks = ["ZNOTE", "ZNOTE1"].filter((c) => columns2.has(c)).map((c) => `a.${c} = @pk`);
   const owner = noteLinks.length ? `(${noteLinks.join(" OR ")})` : "0";
-  const media = columns.has("ZMEDIA") ? "m.Z_PK = a.ZMEDIA" : "0";
-  const live = columns.has("ZMARKEDFORDELETION") ? "AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
+  const media = columns2.has("ZMEDIA") ? "m.Z_PK = a.ZMEDIA" : "0";
+  const live = columns2.has("ZMARKEDFORDELETION") ? "AND COALESCE(a.ZMARKEDFORDELETION, 0) = 0" : "";
   return `SELECT json_object('title', (SELECT ${col3("n", "ZTITLE1")} FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk), 'attachments', (SELECT json_group_array(json_object('pk', a.Z_PK, 'id', a.ZIDENTIFIER, ${fields.join(", ")}, 'table', CASE WHEN ${uti} = 'com.apple.notes.table' THEN hex(${mergeable}) END)) FROM ZICCLOUDSYNCINGOBJECT a LEFT JOIN ZICCLOUDSYNCINGOBJECT m ON ${media} WHERE ${owner} AND a.ZIDENTIFIER IS NOT NULL ${live}));`;
 }
 var text = (value) => typeof value === "string" && value.length ? value : typeof value === "number" ? String(value) : void 0;
@@ -51791,20 +51791,20 @@ function readFolderStoreFacts(pk, dbPath2 = NOTE_STORE_PATH) {
   if (!Number.isSafeInteger(pk) || pk <= 0) {
     throw new FolderStoreError("Folder key must be a positive integer", "query_error");
   }
-  let columns;
+  let columns2;
   let row;
   try {
-    columns = new Set(
+    columns2 = new Set(
       runSqlite7(dbPath2, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT);").split("\n").map((line) => line.split("|")[1]).filter(Boolean)
     );
-    const missing = REQUIRED_FOLDER_COLUMNS.filter((column) => !columns.has(column));
+    const missing = REQUIRED_FOLDER_COLUMNS.filter((column) => !columns2.has(column));
     if (missing.length > 0) {
       throw new FolderStoreError(
         `This macOS Notes schema lacks ${missing.join(", ")}; folder safety cannot be verified`,
         "schema"
       );
     }
-    row = runSqlite7(dbPath2, buildFolderFactsSql(columns.has("ZSMARTFOLDERQUERYJSON")), pk);
+    row = runSqlite7(dbPath2, buildFolderFactsSql(columns2.has("ZSMARTFOLDERQUERYJSON")), pk);
   } catch (error2) {
     if (error2 instanceof FolderStoreError) throw error2;
     throw classify(error2);
@@ -53303,7 +53303,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid3 = () => this.issue(
+      const invalid5 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -53313,7 +53313,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid3();
+          if (paint.kind === "invalid") invalid5();
           else if (name === "fill") style.fill = paint;
           else style.stroke = paint;
           break;
@@ -53321,12 +53321,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid3();
+          else invalid5();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid3();
+          if (w === null || w < 0) invalid5();
           else style.strokeWidth = w;
           break;
         }
@@ -53334,7 +53334,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid3();
+          if (o === null) invalid5();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -53342,7 +53342,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid3();
+          else invalid5();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -53362,14 +53362,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid3();
+          if (!list || list.some((v) => v < 0)) invalid5();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid3();
+          if (o === null) invalid5();
           else style.dashoffset = o;
           break;
         }
@@ -55173,22 +55173,22 @@ function assertNoteReadable(stateLine, noteId3) {
 }
 
 // src/utils/noteDrawings.ts
-function drawingRowsSql(columns, dataColumn) {
+function drawingRowsSql(columns2, dataColumn) {
   return [
     NOTE_STATE_SQL,
-    `SELECT json_group_array(json_object('pk', a.Z_PK, 'identifier', a.ZIDENTIFIER, 'uti', a.ZTYPEUTI, 'data', hex(a.${dataColumn}))) FROM (SELECT * FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = @pk AND a.ZTYPEUTI IN ('com.apple.drawing.2', 'com.apple.drawing') AND ${notTombstonedSql(columns, "a")} ORDER BY a.Z_PK) a;`
+    `SELECT json_group_array(json_object('pk', a.Z_PK, 'identifier', a.ZIDENTIFIER, 'uti', a.ZTYPEUTI, 'data', hex(a.${dataColumn}))) FROM (SELECT * FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = @pk AND a.ZTYPEUTI IN ('com.apple.drawing.2', 'com.apple.drawing') AND ${notTombstonedSql(columns2, "a")} ORDER BY a.Z_PK) a;`
   ].join("\n");
 }
 function readDrawingRows2(noteId3, dbPath2 = NOTES_DB_PATH7) {
   const { store, pk } = parseNoteObjectId(noteId3);
-  const columns = readColumns(dbPath2);
-  const dataColumn = columns.has("ZMERGEABLEDATA1") ? "ZMERGEABLEDATA1" : columns.has("ZMERGEABLEDATA") ? "ZMERGEABLEDATA" : null;
+  const columns2 = readColumns(dbPath2);
+  const dataColumn = columns2.has("ZMERGEABLEDATA1") ? "ZMERGEABLEDATA1" : columns2.has("ZMERGEABLEDATA") ? "ZMERGEABLEDATA" : null;
   if (!dataColumn)
     throw new NoteStoreError(
       "This macOS version's Notes database has no drawing data column.",
       "schema"
     );
-  const [stateLine, rowsLine] = queryNoteScoped(drawingRowsSql(columns, dataColumn), pk, dbPath2);
+  const [stateLine, rowsLine] = queryNoteScoped(drawingRowsSql(columns2, dataColumn), pk, dbPath2);
   assertNoteReadable(stateLine, noteId3);
   const rows = JSON.parse(rowsLine || "[]");
   return rows.map((row) => ({
@@ -55365,12 +55365,12 @@ var EXTRA_AUDIO_UTIS = [
   "public.aifc-audio",
   "com.microsoft.waveform-audio"
 ];
-function audioRowsSql(columns, generationColumn) {
+function audioRowsSql(columns2, generationColumn) {
   const generation = generationColumn ? `m.${generationColumn}` : "NULL";
   const media = (alias) => `json((SELECT json_object('identifier', m.ZIDENTIFIER, 'generation', ${generation}, 'filename', m.ZFILENAME) FROM ZICCLOUDSYNCINGOBJECT m WHERE m.Z_PK = ${alias}.ZMEDIA))`;
-  const live = (alias) => notTombstonedSql(columns, alias);
+  const live = (alias) => notTombstonedSql(columns2, alias);
   const utis = EXTRA_AUDIO_UTIS.map((u) => `'${u}'`).join(", ");
-  const accountCols = [...columns].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
+  const accountCols = [...columns2].filter((c) => /^ZACCOUNT\d*$/.test(c)).sort();
   const account = accountCols.length ? `SELECT (SELECT acc.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT acc WHERE acc.Z_ENT = ${entity("ICAccount")} AND acc.Z_PK IN (${accountCols.map((c) => `n.${c}`).join(", ")}) LIMIT 1) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk;` : "SELECT NULL;";
   return [
     NOTE_STATE_SQL,
@@ -55415,16 +55415,16 @@ var positive = (value) => typeof value === "number" && Number.isFinite(value) &&
 function readAudioAssets(noteId3, options = {}) {
   const { store, pk } = parseNoteId2(noteId3);
   const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
-  const columns = readColumns(dbPath2);
-  const missing = ["ZMEDIA", "ZPARENTATTACHMENT", "ZFILENAME"].filter((c) => !columns.has(c));
+  const columns2 = readColumns(dbPath2);
+  const missing = ["ZMEDIA", "ZPARENTATTACHMENT", "ZFILENAME"].filter((c) => !columns2.has(c));
   if (missing.length)
     throw new NoteStoreError(
       `This macOS version's Notes database lacks ${missing.join(", ")}; audio files cannot be located.`,
       "schema"
     );
-  const generation = columns.has("ZGENERATION1") ? "ZGENERATION1" : columns.has("ZGENERATION") ? "ZGENERATION" : null;
+  const generation = columns2.has("ZGENERATION1") ? "ZGENERATION1" : columns2.has("ZGENERATION") ? "ZGENERATION" : null;
   const [stateLine, rowsLine, accountLine] = queryNoteScoped(
-    audioRowsSql(columns, generation),
+    audioRowsSql(columns2, generation),
     pk,
     dbPath2
   );
@@ -56329,9 +56329,15 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  compose_note: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var COMPOSE_LIVE_VALIDATED = false;
+var WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED }
+];
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56424,7 +56430,11 @@ var writerProbeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema2,
+    appendPlainText: featureSchema2,
+    composeNote: featureSchema2.optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
   available: external_exports.boolean(),
@@ -56594,6 +56604,14 @@ function assertAppendText(text2) {
       false
     );
 }
+function readWriterNoteState(identifier, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(identifier);
+  return parseWriterResult(
+    noteStateSchema,
+    callPrivateWriter("read_note_state", { identifier }, deps),
+    false
+  );
+}
 function probePrivateWriter(deps = defaultWriterDeps()) {
   return parseWriterResult(writerProbeSchema, callPrivateWriter("probe", {}, deps), false);
 }
@@ -56613,9 +56631,10 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const everyFeature = (status) => Object.fromEntries(WRITER_FEATURES.map((f) => [f.key, status]));
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: everyFeature({ available: false, reason, detail })
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56647,34 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
+  const reported = probe.features;
+  const features = everyFeature({ available: true, reason: null, detail: null });
+  for (const { key, probeKey, liveValidated } of WRITER_FEATURES)
+    features[key] = featureStatus(reported[probeKey], liveValidated, deps.env);
+  return { ...base, probe, features };
+}
+function featureStatus(feature, liveValidated, env) {
+  if (!feature)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The installed writer does not report this feature"
+    };
   if (!feature.available) {
     const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57136,6 +57164,727 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateCompose.ts
+var HIGHLIGHTS2 = ["purple", "pink", "orange", "mint", "blue"];
+var MAX_INDENT = 8;
+var MAX_PARAGRAPHS = 2e3;
+var MAX_COMPOSE_UTF16 = 2e5;
+var LINK_SCHEMES2 = /* @__PURE__ */ new Set(["http:", "https:", "mailto:", "tel:", "notes:", "applenotes:"]);
+var runSchema = external_exports.object({
+  text: external_exports.string().min(1),
+  bold: external_exports.boolean().optional(),
+  italic: external_exports.boolean().optional(),
+  underline: external_exports.boolean().optional(),
+  strikethrough: external_exports.boolean().optional(),
+  link: external_exports.string().min(1).max(4096).optional().describe("http(s), mailto, tel, notes, applenotes"),
+  highlight: external_exports.enum(HIGHLIGHTS2).optional(),
+  color: external_exports.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().describe("Text color as #RRGGBB")
+}).strict();
+var indentSchema = external_exports.number().int().min(0).max(MAX_INDENT);
+var inlineShape = {
+  text: external_exports.string().optional().describe("Plain text; each \\n starts a new paragraph"),
+  runs: external_exports.array(runSchema).min(1).optional().describe("Formatted runs forming one paragraph")
+};
+var textBlock = (type) => external_exports.object({ type: external_exports.literal(type), ...inlineShape }).strict();
+var listItem = external_exports.union([
+  external_exports.string().min(1),
+  external_exports.object({ ...inlineShape, indent: indentSchema.optional() }).strict()
+]);
+var checklistItem = external_exports.union([
+  external_exports.string().min(1),
+  external_exports.object({ ...inlineShape, indent: indentSchema.optional(), checked: external_exports.boolean().optional() }).strict()
+]);
+var listBlock = (type) => external_exports.object({
+  type: external_exports.literal(type),
+  items: external_exports.array(listItem).min(1),
+  indent: indentSchema.optional().describe("Base indent added to every item")
+}).strict();
+var blockSchema = external_exports.discriminatedUnion("type", [
+  textBlock("heading"),
+  textBlock("subheading"),
+  textBlock("body"),
+  textBlock("paragraph"),
+  textBlock("quote"),
+  textBlock("code"),
+  textBlock("monospaced"),
+  listBlock("bulleted"),
+  listBlock("dashed"),
+  listBlock("numbered"),
+  external_exports.object({
+    type: external_exports.literal("checklist"),
+    items: external_exports.array(checklistItem).min(1),
+    checked: external_exports.array(external_exports.boolean()).optional().describe("Per-item state, same length as items"),
+    indent: indentSchema.optional()
+  }).strict()
+]);
+function invalid3(message) {
+  return new PrivateWriteError("invalid_request", message, false);
+}
+var FORBIDDEN = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+function assertLine(text2, where) {
+  if (FORBIDDEN.test(text2))
+    throw invalid3(
+      `${where}: text may contain only printable characters and tabs (no \\r, control characters, or attachment glyphs); a newline is allowed only in a block's \`text\``
+    );
+}
+function assertLink(link) {
+  let url;
+  try {
+    url = new URL(link);
+  } catch {
+    throw invalid3(`Run link is not an absolute URL: ${link}`);
+  }
+  if (!LINK_SCHEMES2.has(url.protocol))
+    throw invalid3("Run link must use http, https, mailto, tel, notes, or applenotes");
+}
+function wireRun(run, where) {
+  assertLine(run.text, where);
+  if (run.link) assertLink(run.link);
+  const out = { text: run.text };
+  for (const key of ["bold", "italic", "underline", "strikethrough"])
+    if (run[key]) out[key] = true;
+  if (run.link) out.link = run.link;
+  if (run.highlight) out.highlight = run.highlight;
+  if (run.color) out.color = run.color.toUpperCase();
+  return out;
+}
+function inlineLines(value, where, allowNewlines) {
+  if (value.text === void 0 === (value.runs === void 0))
+    throw invalid3(`${where}: give exactly one of text or runs`);
+  if (value.runs) return [value.runs.map((run) => wireRun(run, where))];
+  const text2 = value.text;
+  if (!text2.length) throw invalid3(`${where}: text must not be empty`);
+  const lines = text2.split("\n");
+  if (lines.length > 1 && !allowNewlines)
+    throw invalid3(`${where}: list and checklist items are one line each`);
+  return lines.map((line) => {
+    assertLine(line, where);
+    return line ? [{ text: line }] : [];
+  });
+}
+function itemFields(item, where) {
+  if (typeof item === "string")
+    return { runs: inlineLines({ text: item }, where, false)[0], indent: 0 };
+  return { runs: inlineLines(item, where, false)[0], indent: item.indent ?? 0 };
+}
+var TEXT_STYLES = {
+  heading: { style: "heading" },
+  subheading: { style: "subheading" },
+  body: { style: "body" },
+  paragraph: { style: "body" },
+  quote: { style: "body", blockQuote: true },
+  code: { style: "monospaced" },
+  monospaced: { style: "monospaced" }
+};
+function blocksToParagraphs(input) {
+  const parsed = external_exports.array(blockSchema).min(1).safeParse(input);
+  if (!parsed.success)
+    throw invalid3(
+      "Invalid blocks: " + parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")
+    );
+  const out = [];
+  parsed.data.forEach((block, index) => {
+    const where = `blocks[${index}] (${block.type})`;
+    if (block.type in TEXT_STYLES) {
+      const { style, blockQuote } = TEXT_STYLES[block.type];
+      const textBlock2 = block;
+      for (const runs of inlineLines(textBlock2, where, true))
+        out.push({ style, ...blockQuote ? { blockQuote } : {}, runs });
+      return;
+    }
+    const list = block;
+    const base = list.indent ?? 0;
+    if (list.type === "checklist") {
+      const perItem = list.items.some((i) => typeof i !== "string" && i.checked !== void 0);
+      if (list.checked && perItem)
+        throw invalid3(`${where}: give checked state per item or as a checked array, not both`);
+      if (list.checked && list.checked.length !== list.items.length)
+        throw invalid3(`${where}: checked must have one boolean per item`);
+      list.items.forEach((item, i) => {
+        const { runs, indent } = itemFields(item, `${where}.items[${i}]`);
+        const checked = typeof item !== "string" && item.checked !== void 0 ? item.checked : list.checked?.[i] ?? false;
+        out.push(paragraph("checklist", runs, base + indent, where, checked));
+      });
+      return;
+    }
+    list.items.forEach((item, i) => {
+      const { runs, indent } = itemFields(item, `${where}.items[${i}]`);
+      out.push(paragraph(list.type, runs, base + indent, where));
+    });
+  });
+  return finalizeParagraphs(out);
+}
+function paragraph(style, runs, indent, where, checked) {
+  if (indent > MAX_INDENT) throw invalid3(`${where}: indent exceeds ${MAX_INDENT}`);
+  return {
+    style,
+    ...indent ? { indent } : {},
+    ...checked !== void 0 ? { checked } : {},
+    runs
+  };
+}
+function finalizeParagraphs(paragraphs) {
+  while (paragraphs.length && paragraphs[paragraphs.length - 1].runs.length === 0) paragraphs.pop();
+  if (!paragraphs.length) throw invalid3("The composed content is empty");
+  if (paragraphs.length > MAX_PARAGRAPHS)
+    throw invalid3(`The composed content has more than ${MAX_PARAGRAPHS} paragraphs`);
+  const length = paragraphs.reduce(
+    (sum, p) => sum + p.runs.reduce((n, r) => n + r.text.length, 0) + 1,
+    0
+  );
+  if (length > MAX_COMPOSE_UTF16)
+    throw invalid3(`The composed content exceeds ${MAX_COMPOSE_UTF16} UTF-16 code units`);
+  return paragraphs;
+}
+var PAIRS = [
+  { open: "**", close: "**", style: { bold: true } },
+  { open: "__", close: "__", style: { bold: true } },
+  { open: "~~", close: "~~", style: { strikethrough: true } },
+  { open: "<u>", close: "</u>", style: { underline: true } },
+  { open: "*", close: "*", style: { italic: true } },
+  { open: "_", close: "_", style: { italic: true } }
+];
+var ESCAPABLE = /[\\`*_{}[\]()#+\-.!~>|<]/;
+var isWord = (ch) => !!ch && /[\p{L}\p{N}]/u.test(ch);
+function findClose(src, open, close, from) {
+  const single = open.length === 1;
+  for (let j = from; j < src.length; j++) {
+    if (src[j] === "\\") {
+      j++;
+      continue;
+    }
+    if (single && src.startsWith(open + open, j)) {
+      j++;
+      continue;
+    }
+    if (!src.startsWith(close, j) || j === from || /\s/.test(src[j - 1])) continue;
+    let end = j;
+    if (!single) while (src.startsWith(close, end + 1)) end++;
+    if (open === "_" && isWord(src[end + 1])) continue;
+    return end;
+  }
+  return -1;
+}
+function parseInline(src, base = {}) {
+  const runs = [];
+  let buffer = "";
+  const flush = () => {
+    if (buffer) runs.push({ text: buffer, ...base });
+    buffer = "";
+  };
+  let i = 0;
+  outer: while (i < src.length) {
+    const ch = src[i];
+    if (ch === "\\" && ESCAPABLE.test(src[i + 1] ?? "")) {
+      buffer += src[i + 1];
+      i += 2;
+      continue;
+    }
+    if (ch === "`") {
+      const end = src.indexOf("`", i + 1);
+      if (end > i + 1) {
+        buffer += src.slice(i + 1, end);
+        i = end + 1;
+        continue;
+      }
+    }
+    if (ch === "[") {
+      const m = /^\[([^\]]+)\]\(\s*<?([^\s)>]+)>?(?:\s+"[^"]*")?\s*\)/.exec(src.slice(i));
+      if (m && safeLink(m[2])) {
+        flush();
+        runs.push(...parseInline(m[1], { ...base, link: m[2] }));
+        i += m[0].length;
+        continue;
+      }
+    }
+    if (ch === "<") {
+      const m = /^<((?:https?|mailto):[^\s>]+)>/.exec(src.slice(i));
+      if (m) {
+        flush();
+        runs.push({ text: m[1], ...base, link: m[1] });
+        i += m[0].length;
+        continue;
+      }
+    }
+    for (const pair of PAIRS) {
+      if (!src.startsWith(pair.open, i)) continue;
+      const from = i + pair.open.length;
+      if (/\s/.test(src[from] ?? " ")) continue;
+      if (pair.open === "_" && isWord(src[i - 1])) continue;
+      const end = findClose(src, pair.open, pair.close, from);
+      if (end < 0) continue;
+      flush();
+      runs.push(...parseInline(src.slice(from, end), { ...base, ...pair.style }));
+      i = end + pair.close.length;
+      continue outer;
+    }
+    buffer += ch;
+    i++;
+  }
+  flush();
+  return mergeRuns(runs);
+}
+function safeLink(link) {
+  try {
+    return LINK_SCHEMES2.has(new URL(link).protocol);
+  } catch {
+    return false;
+  }
+}
+var formatKey = (run) => JSON.stringify({ ...run, text: void 0 });
+function mergeRuns(runs) {
+  const out = [];
+  for (const run of runs) {
+    const last = out[out.length - 1];
+    if (last && formatKey(last) === formatKey(run)) last.text += run.text;
+    else out.push({ ...run });
+  }
+  return out;
+}
+var LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})[.)])[ \t]+(.*)$/;
+var TASK = /^\[([ xX])\][ \t]+(.*)$/;
+function columns(indent) {
+  let width = 0;
+  for (const ch of indent) width += ch === "	" ? 4 - width % 4 : 1;
+  return width;
+}
+function markdownToBlocks(markdown, dropTitle) {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  const warnings = [];
+  let prose = [];
+  let quote = [];
+  let listStack = [];
+  const pushText = (type, text2) => {
+    const runs = parseInline(text2);
+    if (runs.length) blocks.push({ type, runs });
+  };
+  const flushProse = () => {
+    if (prose.length) pushText("body", prose.join(" "));
+    prose = [];
+  };
+  const flushQuote = () => {
+    if (quote.length) pushText("quote", quote.join(" "));
+    quote = [];
+  };
+  const flushAll = () => {
+    flushProse();
+    flushQuote();
+  };
+  const addItem = (kind, level, text2, checked) => {
+    const runs = parseInline(text2);
+    if (!runs.length) return;
+    const item = kind === "checklist" ? { runs, indent: level, checked } : { runs, indent: level };
+    const last = blocks[blocks.length - 1];
+    if (last && last.type === kind) last.items.push(item);
+    else blocks.push({ type: kind, items: [item] });
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = /^[ ]{0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      flushAll();
+      listStack = [];
+      const body = [];
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trimStart().startsWith(fence[1])) body.push(lines[j++]);
+      i = j;
+      while (body.length && !body[body.length - 1].trim()) body.pop();
+      if (body.length) blocks.push({ type: "code", text: body.join("\n") });
+      continue;
+    }
+    if (!line.trim()) {
+      flushAll();
+      continue;
+    }
+    const heading = /^[ ]{0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line);
+    if (heading) {
+      flushAll();
+      listStack = [];
+      const text2 = heading[2];
+      const isTitle = !blocks.length && heading[1] === "#" && text2.trim() === dropTitle?.trim();
+      if (!isTitle) pushText(heading[1].length <= 2 ? "heading" : "subheading", text2);
+      continue;
+    }
+    if (/^[ ]{0,3}([-*_])([ \t]*\1){2,}[ \t]*$/.test(line)) {
+      flushAll();
+      listStack = [];
+      warnings.push(`line ${i + 1}: horizontal rule skipped (dividers are not supported yet)`);
+      continue;
+    }
+    const quoted = /^[ ]{0,3}>[ ]?(.*)$/.exec(line);
+    if (quoted) {
+      flushProse();
+      listStack = [];
+      if (quoted[1].trim()) quote.push(quoted[1].trim());
+      else flushQuote();
+      continue;
+    }
+    const item = LIST_ITEM.exec(line);
+    if (item) {
+      flushAll();
+      const width = columns(item[1]);
+      while (listStack.length && width < listStack[listStack.length - 1]) listStack.pop();
+      if (!listStack.length || width > listStack[listStack.length - 1]) listStack.push(width);
+      const level = Math.min(listStack.length - 1, MAX_INDENT);
+      const task = item[2] ? TASK.exec(item[4]) : null;
+      if (task) addItem("checklist", level, task[2], task[1] !== " ");
+      else addItem(item[2] ? "bulleted" : "numbered", level, item[4], false);
+      continue;
+    }
+    if (/^[ ]{0,3}<\/?[A-Za-z][^>]*>\s*$/.test(line)) {
+      flushAll();
+      warnings.push(`line ${i + 1}: raw HTML block skipped`);
+      continue;
+    }
+    const last = blocks[blocks.length - 1];
+    if (listStack.length && /^[ \t]+\S/.test(line) && last && "items" in last && !prose.length) {
+      const items = last.items;
+      const target = items[items.length - 1];
+      target.runs = mergeRuns([...target.runs, { text: " " }, ...parseInline(line.trim())]);
+      continue;
+    }
+    flushQuote();
+    listStack = [];
+    prose.push(line.trim());
+    if (/( {2}|\\)$/.test(line)) {
+      prose[prose.length - 1] = prose[prose.length - 1].replace(/\\$/, "");
+      flushProse();
+    }
+  }
+  flushAll();
+  return { blocks, warnings };
+}
+var summarySchema = external_exports.array(
+  external_exports.object({
+    style: external_exports.string(),
+    indent: external_exports.number().int(),
+    blockQuote: external_exports.boolean(),
+    checked: external_exports.boolean().optional(),
+    lengthUTF16: external_exports.number().int(),
+    runs: external_exports.array(external_exports.object({ length: external_exports.number().int(), attributes: external_exports.record(external_exports.unknown()) }))
+  }).passthrough()
+);
+var REVISION = /^r1:[a-f0-9]{64}$/;
+var composePlanSchema = external_exports.object({
+  status: external_exports.literal("planned"),
+  dryRun: external_exports.literal(true),
+  committed: external_exports.literal(false),
+  identifier: external_exports.string(),
+  mode: external_exports.enum(["append", "prepend"]),
+  paragraphs: external_exports.number().int(),
+  insertedUTF16: external_exports.number().int(),
+  insertAt: external_exports.number().int(),
+  unitStart: external_exports.number().int(),
+  revisionBefore: external_exports.string().regex(REVISION),
+  plan: summarySchema
+}).passthrough();
+var composeResultSchema = external_exports.object({
+  status: external_exports.literal("updated"),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  placementVerified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  mode: external_exports.enum(["append", "prepend"]),
+  paragraphs: external_exports.number().int(),
+  insertedUTF16: external_exports.number().int(),
+  revisionBefore: external_exports.string().regex(REVISION),
+  revisionAfter: external_exports.string().regex(REVISION),
+  unitStart: external_exports.number().int(),
+  objectURI: external_exports.string(),
+  readBack: summarySchema,
+  ...writeSyncFields
+}).passthrough();
+var RUN_KEYS = ["bold", "italic", "underline", "strikethrough", "link", "highlight", "color"];
+function attributeTotals(runs) {
+  const totals = {};
+  for (const run of runs)
+    for (const key of RUN_KEYS)
+      if (run.attributes[key] !== void 0) totals[key] = (totals[key] ?? 0) + run.length;
+  return totals;
+}
+function crossCheckWithDatabase(result, read = (id2) => readNoteBlocks(id2)) {
+  if (result.storeKind !== "live")
+    return { checked: false, reason: "the writer wrote a store copy, not NoteStore.sqlite" };
+  const { objectURI, unitStart } = result;
+  let blocks;
+  try {
+    blocks = read(objectURI).blocks;
+  } catch (error2) {
+    return { checked: false, reason: error2 instanceof Error ? error2.message : String(error2) };
+  }
+  const first2 = blocks.findIndex((block) => block.start === unitStart);
+  if (first2 < 0)
+    return { checked: true, matches: false, mismatches: ["no paragraph starts at unitStart"] };
+  const mismatches = [];
+  result.readBack.forEach((expected, i) => {
+    const block = blocks[first2 + i];
+    const where = `paragraph ${i}`;
+    if (!block) {
+      mismatches.push(`${where}: missing`);
+      return;
+    }
+    const actual = {
+      style: block.style,
+      indent: block.indent,
+      blockQuote: block.blockQuote,
+      checked: block.checklist?.done,
+      lengthUTF16: block.length,
+      attributes: attributeTotals(
+        block.runs.map((run) => ({ length: run.length, attributes: { ...run } }))
+      )
+    };
+    const want = {
+      style: expected.style,
+      indent: expected.indent,
+      blockQuote: expected.blockQuote,
+      checked: expected.checked,
+      lengthUTF16: expected.lengthUTF16,
+      attributes: attributeTotals(expected.runs)
+    };
+    for (const key of Object.keys(want))
+      if (JSON.stringify(actual[key]) !== JSON.stringify(want[key]))
+        mismatches.push(
+          `${where} ${key}: database ${JSON.stringify(actual[key])}, writer ${JSON.stringify(want[key])}`
+        );
+  });
+  return {
+    checked: true,
+    matches: mismatches.length === 0,
+    ...mismatches.length ? { mismatches } : {}
+  };
+}
+function assertComposeWritesAllowed(env) {
+  requireLiveValidated(COMPOSE_LIVE_VALIDATED, "compose-note", env);
+}
+function composeNote(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  const dryRun = request.dryRun === true;
+  if (dryRun && request.ifRevision !== void 0)
+    throw invalid3("A dry run does not take ifRevision");
+  if (!dryRun) {
+    if (!request.ifRevision || !REVISION.test(request.ifRevision))
+      throw invalid3("ifRevision (the revisionBefore of a dry run) is required to apply");
+    assertComposeWritesAllowed(deps.env);
+  }
+  if (request.insertBeforeHeading && request.mode !== "append")
+    throw invalid3("insertBeforeHeading is valid only in append mode");
+  const fields = {
+    identifier: request.identifier,
+    mode: request.mode,
+    paragraphs: request.paragraphs
+  };
+  if (dryRun) fields.dryRun = true;
+  else fields.ifRevision = request.ifRevision;
+  if (request.requireNonSystemPaper) fields.requireNonSystemPaper = true;
+  if (request.insertBeforeHeading) fields.insertBeforeHeading = request.insertBeforeHeading;
+  try {
+    const response = callPrivateWriter("compose_note", fields, deps);
+    return dryRun ? parseWriterResult(composePlanSchema, response, false) : parseWriterResult(composeResultSchema, response, true);
+  } catch (error2) {
+    if (dryRun && error2 instanceof PrivateWriteError && error2.committed !== false)
+      throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
+    throw error2;
+  }
+}
+
+// src/tools/composeNoteTool.ts
+var composeNoteInput = {
+  mode: external_exports.enum(["create", "append", "prepend"]).describe("create a new note, append at the end, or prepend below the title"),
+  identifier: notesUuid2.optional().describe("append/prepend: target Notes UUID"),
+  id: coreDataId3.optional().describe("append/prepend: x-coredata note id, resolved to a UUID"),
+  title: external_exports.string().min(1).max(1e3).optional().describe("create: the new note's title"),
+  folder: external_exports.string().min(1).optional().describe("create: existing folder (nested paths allowed)"),
+  account: external_exports.string().min(1).optional().describe("create: account name"),
+  blocks: external_exports.array(blockSchema).min(1).max(2e3).optional().describe("Ordered content blocks. Give exactly one of blocks or markdown."),
+  markdown: external_exports.string().min(1).max(2e5).optional().describe(
+    "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
+  ),
+  ifRevision: revisionToken.optional().describe("append/prepend apply: revisionBefore from an identical dry run"),
+  dryRun: external_exports.boolean().optional().describe("Validate and plan without writing"),
+  requireNonSystemPaper: external_exports.boolean().optional().describe("append/prepend: refuse a Quick Note target; repeat in plan and apply"),
+  insertBeforeHeading: external_exports.object({
+    text: external_exports.string().min(1).max(1e3),
+    occurrence: external_exports.number().int().min(1).optional().describe("1-based; default 1"),
+    expectedCount: external_exports.number().int().min(1).optional().describe("Exact number of equal Heading paragraphs; default 1")
+  }).strict().optional().describe("append only: insert before one exact Heading-style paragraph instead of at the end"),
+  nudge: external_exports.boolean().optional().describe(
+    "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
+  ),
+  nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+};
+function invalid4(message) {
+  return new PrivateWriteError("invalid_request", message, false);
+}
+function contentFor(args) {
+  if (args.blocks === void 0 === (args.markdown === void 0))
+    throw invalid4("Give exactly one of blocks or markdown");
+  if (args.blocks) return { paragraphs: blocksToParagraphs(args.blocks), warnings: [] };
+  const imported = markdownToBlocks(args.markdown, args.title);
+  if (!imported.blocks.length) throw invalid4("The Markdown produced no content");
+  return { paragraphs: blocksToParagraphs(imported.blocks), warnings: imported.warnings };
+}
+function checkModeFields(args) {
+  const present = (keys) => keys.filter((k) => args[k] !== void 0);
+  if (args.dryRun && args.nudge) throw invalid4("A dry run does not take nudge");
+  if (args.mode === "create") {
+    const extra2 = present([
+      "identifier",
+      "id",
+      "ifRevision",
+      "requireNonSystemPaper",
+      "insertBeforeHeading"
+    ]);
+    if (extra2.length) throw invalid4(`create does not take ${extra2.join(", ")}`);
+    if (!args.title?.trim()) throw invalid4("create requires a title");
+    return;
+  }
+  const extra = present(["title", "folder", "account"]);
+  if (extra.length) throw invalid4(`${args.mode} does not take ${extra.join(", ")}`);
+  if (args.insertBeforeHeading && args.mode !== "append")
+    throw invalid4("insertBeforeHeading is valid only in append mode");
+  if (args.dryRun && args.ifRevision) throw invalid4("A dry run does not take ifRevision");
+  if (!args.dryRun && !args.ifRevision)
+    throw invalid4("Applying requires ifRevision: run the identical request with dryRun first");
+}
+var UUID_IN_LINK = /identifier=([0-9A-F-]{36})$/i;
+function withDatabaseCheck(result) {
+  if (result.status !== "updated") return result;
+  return { ...result, databaseReadBack: crossCheckWithDatabase(result) };
+}
+function poll(attempt, sleep2) {
+  for (let i = 0; i < 5; i++) {
+    const value = attempt();
+    if (value) return value;
+    sleep2(300);
+  }
+  return null;
+}
+function createAndCompose(args, paragraphs, runtime) {
+  const { manager, deps, sleep: sleep2 } = runtime;
+  assertComposeWritesAllowed(deps.env);
+  const capability = privateWriterCapabilities(deps).features.composeNote;
+  if (!capability.available)
+    throw new PrivateWriteError(
+      capability.reason || "private_api_unavailable",
+      capability.detail || "compose is unavailable",
+      false
+    );
+  const note = manager.createNote(
+    args.title,
+    "",
+    [],
+    args.folder,
+    args.account,
+    "plaintext"
+  );
+  if (!note)
+    throw new PrivateWriteError(
+      "create_failed",
+      "Notes.app did not create the note (check that the folder and account exist)",
+      false
+    );
+  const created = { noteCreated: true, id: note.id };
+  const identifier = poll(
+    () => manager.getNoteLinkById(note.id)?.match(UUID_IN_LINK)?.[1] ?? null,
+    sleep2
+  );
+  if (!identifier)
+    throw new PrivateWriteError(
+      "not_found",
+      "The note was created, but its Notes UUID could not be read (needs Full Disk Access). The note holds only its title; delete it or retry with mode append.",
+      false,
+      created
+    );
+  try {
+    const state = poll(() => {
+      try {
+        return readWriterNoteState(identifier, deps);
+      } catch (error2) {
+        if (error2 instanceof PrivateWriteError && error2.code === "not_found") return null;
+        throw error2;
+      }
+    }, sleep2);
+    if (!state)
+      throw new PrivateWriteError("not_found", "The writer cannot see the new note yet", false);
+    const result = composeNote(
+      { identifier, mode: "append", paragraphs, ifRevision: state.revision },
+      deps
+    );
+    return {
+      ...withDatabaseCheck(result),
+      mode: "create",
+      created: true,
+      id: note.id,
+      identifier
+    };
+  } catch (error2) {
+    if (!(error2 instanceof PrivateWriteError)) throw error2;
+    throw new PrivateWriteError(
+      error2.code,
+      `${error2.message} (the note was created with its title only; identifier ${identifier})`,
+      error2.committed,
+      { ...error2.details, ...created, identifier }
+    );
+  }
+}
+function runComposeNote(args, runtime) {
+  checkModeFields(args);
+  const { paragraphs, warnings } = contentFor(args);
+  const extra = warnings.length ? { warnings } : {};
+  if (args.mode === "create") {
+    if (args.dryRun)
+      return {
+        status: "planned",
+        dryRun: true,
+        committed: false,
+        mode: "create",
+        paragraphs: paragraphs.length,
+        plan: paragraphs.map((p) => ({
+          style: p.style,
+          indent: p.indent ?? 0,
+          blockQuote: p.blockQuote ?? false,
+          ...p.checked !== void 0 ? { checked: p.checked } : {},
+          runs: p.runs.length
+        })),
+        ...extra
+      };
+    return { ...createAndCompose(args, paragraphs, runtime), ...extra };
+  }
+  const identifier = resolveIdentifier(runtime.manager, args);
+  const result = composeNote(
+    {
+      identifier,
+      mode: args.mode,
+      paragraphs,
+      ...args.dryRun ? { dryRun: true } : { ifRevision: args.ifRevision },
+      ...args.requireNonSystemPaper ? { requireNonSystemPaper: true } : {},
+      ...args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {}
+    },
+    runtime.deps
+  );
+  return { ...withDatabaseCheck(result), ...args.id ? { id: args.id } : {}, ...extra };
+}
+var blockingSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function registerComposeNoteTool(server2, manager, depsFactory = defaultWriterToolDeps, sleep2 = blockingSleep) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "compose-note",
+    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, and monospaced blocks. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need tables, dividers, attachments, or note links (not supported here).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph is verified in a fresh read. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    composeNoteInput,
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async (args, deps) => {
+      const result = runComposeNote(args, { manager, deps: deps.writer, sleep: sleep2 });
+      if (!args.nudge || result.status !== "updated") return result;
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(String(result.identifier), args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57922,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerComposeNoteTool(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;
