@@ -221,6 +221,21 @@ describe("private writer source contract", () => {
     );
   });
 
+  it("limits set_highlight to the text and note scopes, keeping note scope off the title and attachments", () => {
+    const parse = CODE.slice(CODE.indexOf("static HighlightTarget ParseHighlightTarget"));
+    const parseBody = parse.slice(0, parse.indexOf("\n}\n"));
+    expect(SOURCE).toMatch(/`match` and `expectedCount` apply only to scope \\"text\\"/);
+    expect(parseBody).toMatch(/request\[""\] \|\| request\[""\]/);
+    const scope = CODE.slice(CODE.indexOf("static NSArray<NSValue *> *NoteScopeRanges"));
+    const scopeBody = scope.slice(0, scope.indexOf("\n}\n"));
+    // Starts after the title paragraph's newline and splits at U+FFFC.
+    expect(scopeBody).toMatch(/NSMaxRange\(firstBreak\)/);
+    expect(scopeBody).toMatch(/characterAtIndex:i\] == 0xFFFC/);
+    expect(SOURCE).toMatch(/Fail\(@"nothing_to_highlight"/);
+    // The whole-note plan still verifies through hasEmphasis.
+    expect(SOURCE).toMatch(/hasEmphasis flag does not match its stored highlights/);
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);

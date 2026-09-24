@@ -118,11 +118,21 @@
   `ifRevision` for a write, changes nothing but the highlight attribute of the
   matched characters, and re-reads the note in a fresh Core Data stack to
   verify the text, every highlight run, and Notes' `hasEmphasis` flag. A
-  request that is already satisfied writes nothing. The action takes a
-  `scope` (only `"text"` today) so a whole-note option can reuse it. Optional
-  `nudge`. Until it passes live validation, writes also require
+  request that is already satisfied writes nothing. Optional `nudge`. Until
+  it passes live validation, writes also require
   `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
   helper branch.
+- `native-highlight-text` takes `scope: "note"` to highlight (or with
+  `color: "none"`, un-highlight) the whole body after the title paragraph.
+  It skips the title paragraph through its newline and every attachment glyph
+  (U+FFFC: images, files, tables, drawings, inline tags), whose contents it
+  never changes, and keeps paragraph separators in the body. `match` and
+  `expectedCount` are refused with this scope. Results, including `dryRun`,
+  report `rangeCount`, `characterCount`, and `skipped` (`titleUTF16`,
+  `attachmentGlyphs`, `highlightedAttachmentGlyphs`); a note with nothing
+  left to highlight is refused as `nothing_to_highlight`. Both scopes now
+  report `characterCount`. Verification, including the `hasEmphasis` check,
+  is the same as for the text scope.
 - `native-writer-status` reports every writer feature from one
   `WRITER_FEATURES` table, each with its own live-validation gate.
 - `scripts/test-private-writer-highlight-copy-store.sh` exercises the

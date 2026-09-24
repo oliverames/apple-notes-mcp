@@ -59837,6 +59837,7 @@ function writerEnvelopeCode(helperCode, message) {
       return "ambiguous";
     case "confirmation_required":
     case "match_count_mismatch":
+    case "nothing_to_highlight":
       return "validation_error";
     default:
       return envelopeCode(helperCode, message);
@@ -60976,6 +60977,7 @@ function registerPrivateWriterChecklistTools(server2, manager, depsFactory = def
 var HIGHLIGHT_COLORS = ["purple", "pink", "orange", "mint", "blue"];
 var MAX_MATCH_UTF16 = 1e3;
 var MAX_HIGHLIGHT_RANGES = 100;
+var HIGHLIGHT_SCOPES = ["text", "note"];
 var revision5 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
 var runSchema3 = external_exports.object({
   start: external_exports.number().int().nonnegative(),
@@ -60987,9 +60989,17 @@ var highlightResultSchema = external_exports.object({
   committed: external_exports.boolean(),
   dryRun: external_exports.boolean(),
   identifier: external_exports.string(),
-  scope: external_exports.literal("text"),
+  scope: external_exports.enum(HIGHLIGHT_SCOPES),
   color: external_exports.string(),
   rangeCount: external_exports.number().int().positive(),
+  /** UTF-16 code units across all target ranges. */
+  characterCount: external_exports.number().int().positive(),
+  /** Scope "note" only: what the whole-note scope left out. */
+  skipped: external_exports.object({
+    titleUTF16: external_exports.number().int().nonnegative(),
+    attachmentGlyphs: external_exports.number().int().nonnegative(),
+    highlightedAttachmentGlyphs: external_exports.number().int().nonnegative()
+  }).optional(),
   revisionBefore: revision5,
   revisionAfter: revision5,
   plan: external_exports.array(
@@ -61029,8 +61039,18 @@ function assertHighlightMatch(match) {
     );
 }
 function targetFields(target) {
+  if (target.scope === "note") {
+    const extra = target;
+    if (extra.match !== void 0 || extra.expectedCount !== void 0)
+      throw new PrivateWriteError(
+        "invalid_request",
+        'match and expectedCount apply only to scope "text"',
+        false
+      );
+    return { scope: "note" };
+  }
   if (target.scope !== "text")
-    throw new PrivateWriteError("invalid_request", 'scope must be "text"', false);
+    throw new PrivateWriteError("invalid_request", 'scope must be "text" or "note"', false);
   assertHighlightMatch(target.match);
   const expectedCount = target.expectedCount ?? 1;
   if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > MAX_HIGHLIGHT_RANGES)
@@ -61081,20 +61101,43 @@ function setHighlight(request, deps = defaultWriterDeps()) {
 }
 
 // src/tools/privateWriterHighlightTools.ts
+function highlightTarget(args) {
+  if (args.scope === "note") {
+    if (args.match !== void 0 || args.expectedCount !== void 0)
+      throw new PrivateWriteError(
+        "invalid_request",
+        'match and expectedCount apply only to scope "text"; omit them with scope "note"',
+        false
+      );
+    return { scope: "note" };
+  }
+  if (args.match === void 0)
+    throw new PrivateWriteError("invalid_request", 'match is required with scope "text"', false);
+  return { scope: "text", match: args.match, expectedCount: args.expectedCount };
+}
 function registerPrivateWriterHighlightTools(server2, manager, depsFactory = defaultWriterToolDeps) {
   registerWriterTool(
     server2,
     depsFactory,
     "native-highlight-text",
-    "Use when: applying or removing Notes' highlight (the purple, pink, orange, mint, and blue highlight colors) on exact text in one note. AppleScript and Shortcuts cannot set it.\nReturns: status (planned for a dry run, unchanged when every match already has that state, updated), rangeCount, a per-match plan with current runs (dry run or no-op) or the stored runs re-read after the write (`ranges`), hasEmphasis (Notes' derived flag), revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the text spans paragraphs, or you need bold, italic, or text color.\nSafety: writes to the Notes database through unsupported private API, changing only the highlight attribute of the matched characters. `match` is literal and case-sensitive; the call refuses (match_count_mismatch, nothing written) unless it occurs exactly `expectedCount` times. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Verifies every highlight run in the note by re-reading it in a new Core Data stack. A timeout is indeterminate (indeterminate: true). Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.",
+    'Use when: applying or removing Notes\' highlight (the purple, pink, orange, mint, and blue highlight colors) on exact text in one note (scope "text", the default) or on the whole note body after the title (scope "note"). AppleScript and Shortcuts cannot set it.\nReturns: status (planned for a dry run, unchanged when every target range already has that state, updated), rangeCount, characterCount (UTF-16 units targeted), a per-range plan with current runs (dry run or no-op) or the stored runs re-read after the write (`ranges`), for scope note `skipped` (titleUTF16, attachmentGlyphs, highlightedAttachmentGlyphs), hasEmphasis (Notes\' derived flag), revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the text spans paragraphs (use scope note for the whole body), or you need bold, italic, or text color.\nSafety: writes to the Notes database through unsupported private API, changing only the highlight attribute of the target characters. Scope text: `match` is literal and case-sensitive; the call refuses (match_count_mismatch, nothing written) unless it occurs exactly `expectedCount` times. Scope note: takes no match or expectedCount; it covers everything after the title paragraph except attachment glyphs (images, files, tables, drawings, inline tags), whose contents it never changes, and refuses with nothing_to_highlight when nothing is left. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Verifies every highlight run in the note by re-reading it in a new Core Data stack. A timeout is indeterminate (indeterminate: true). Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.',
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
-      match: external_exports.string().min(1).max(MAX_MATCH_UTF16).describe("Exact, case-sensitive text to highlight, within one paragraph"),
+      scope: external_exports.enum(HIGHLIGHT_SCOPES).optional().describe(
+        "text (default): every occurrence of `match`; note: the whole body after the title, skipping attachments"
+      ),
+      match: external_exports.string().min(1).max(MAX_MATCH_UTF16).optional().describe(
+        "Exact, case-sensitive text to highlight, within one paragraph. Required for scope text; refused for scope note"
+      ),
       color: external_exports.enum([...HIGHLIGHT_COLORS, "none"]).describe("Highlight color, or none to remove the highlight"),
-      expectedCount: external_exports.number().int().min(1).max(MAX_HIGHLIGHT_RANGES).optional().describe("How many times `match` must occur (default 1); every occurrence is changed"),
+      expectedCount: external_exports.number().int().min(1).max(MAX_HIGHLIGHT_RANGES).optional().describe(
+        "Scope text only: how many times `match` must occur (default 1); every occurrence is changed"
+      ),
       ifRevision: revisionToken.optional().describe("The `revision` from native-note-state; required unless dryRun is true"),
-      dryRun: external_exports.boolean().optional().describe("Report the matches and their current highlight without writing"),
+      dryRun: external_exports.boolean().optional().describe(
+        "Report the target ranges, character count, and current highlight without writing"
+      ),
       nudge: external_exports.boolean().optional().describe(
         "After a verified change, ask Notes.app to upload the note by moving it into its own folder (default false; skipped when nothing was written)"
       ),
@@ -61106,7 +61149,7 @@ function registerPrivateWriterHighlightTools(server2, manager, depsFactory = def
       const result = setHighlight(
         {
           identifier,
-          target: { scope: "text", match: args.match, expectedCount: args.expectedCount },
+          target: highlightTarget(args),
           color: args.color,
           ifRevision: args.ifRevision,
           dryRun: args.dryRun

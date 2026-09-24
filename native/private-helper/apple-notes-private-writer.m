@@ -3578,12 +3578,14 @@ static NSNumber *HasEmphasisFlag(NSManagedObject *note) {
   return @([[note valueForKey:@"hasEmphasis"] boolValue]);
 }
 
-// A highlight request names a scope and the ranges it covers. The only scope
-// is "text": every exact occurrence of `match`, which must occur exactly
-// `expectedCount` times. Everything after target selection (plan, no-op
-// check, edit, whole-note verification) works on any list of ranges, so a
-// later scope such as the whole note only adds a branch here and in
-// HighlightTargets.
+// A highlight request names a scope and the ranges it covers:
+//   "text"  every exact occurrence of `match`, which must occur exactly
+//           `expectedCount` times.
+//   "note"  the whole body after the title paragraph, split around
+//           attachment glyphs (see NoteScopeRanges). Takes no `match` or
+//           `expectedCount`.
+// Everything after target selection (plan, no-op check, edit, whole-note
+// verification) works on any list of ranges.
 typedef struct {
   NSString *scope;
   NSString *match;
@@ -3592,7 +3594,13 @@ typedef struct {
 
 static HighlightTarget ParseHighlightTarget(NSDictionary *request) {
   id scope = request[@"scope"] ?: @"text";
-  if (![scope isEqual:@"text"]) Fail(@"invalid_request", @"`scope` must be \"text\"", nil);
+  if (![scope isEqual:@"text"] && ![scope isEqual:@"note"])
+    Fail(@"invalid_request", @"`scope` must be \"text\" or \"note\"", nil);
+  if ([scope isEqual:@"note"]) {
+    if (request[@"match"] || request[@"expectedCount"])
+      Fail(@"invalid_request", @"`match` and `expectedCount` apply only to scope \"text\"", nil);
+    return (HighlightTarget){scope, nil, 0};
+  }
   NSString *match = RequireString(request, @"match");
   ValidateMatchText(match);
   id expected = request[@"expectedCount"] ?: @1;
@@ -3603,9 +3611,52 @@ static HighlightTarget ParseHighlightTarget(NSDictionary *request) {
   return (HighlightTarget){scope, match, [expected unsignedIntegerValue]};
 }
 
-static NSArray<NSValue *> *HighlightTargets(HighlightTarget target, NSString *text,
-                                            NSString *revision) {
-  NSArray<NSValue *> *ranges = Occurrences(text, target.match);
+// The "note" scope: every character after the title paragraph except
+// attachment glyphs (U+FFFC). The title paragraph runs through its first
+// newline, so the title's own paragraph mark is untouched too. An attachment
+// glyph stands for an object Notes draws itself (image, file, table, drawing,
+// or an inline hashtag or mention), and its text, such as table cells, lives
+// in the attachment's own model, which this action never opens; highlighting
+// the glyph would only rewrite the attachment's run. Paragraph separators
+// inside the body are included, the way a select-all highlight in Notes
+// applies the attribute across the whole selection. `skipped` reports what was
+// left out, including glyphs that already carry a highlight, since those keep
+// Notes' hasEmphasis flag set after a removal.
+static NSArray<NSValue *> *NoteScopeRanges(NSAttributedString *body, NSDictionary **skipped) {
+  NSString *text = body.string;
+  NSRange firstBreak = [text rangeOfString:@"\n"];
+  NSUInteger start = firstBreak.location == NSNotFound ? text.length : NSMaxRange(firstBreak);
+  NSMutableArray<NSValue *> *ranges = [NSMutableArray array];
+  NSUInteger glyphs = 0, highlightedGlyphs = 0, runStart = start;
+  for (NSUInteger i = start; i <= text.length; i++) {
+    BOOL glyph = i < text.length && [text characterAtIndex:i] == 0xFFFC;
+    if (i < text.length && !glyph) continue;
+    if (i > runStart) [ranges addObject:[NSValue valueWithRange:NSMakeRange(runStart, i - runStart)]];
+    runStart = i + 1;
+    if (glyph) {
+      glyphs++;
+      if ([body attribute:kEmphasisKey atIndex:i effectiveRange:NULL]) highlightedGlyphs++;
+    }
+  }
+  *skipped = @{
+    @"titleUTF16" : @(start),
+    @"attachmentGlyphs" : @(glyphs),
+    @"highlightedAttachmentGlyphs" : @(highlightedGlyphs),
+  };
+  return ranges;
+}
+
+static NSArray<NSValue *> *HighlightTargets(HighlightTarget target, NSAttributedString *body,
+                                            NSString *revision, NSDictionary **skipped) {
+  *skipped = nil;
+  if ([target.scope isEqualToString:@"note"]) {
+    NSArray<NSValue *> *ranges = NoteScopeRanges(body, skipped);
+    if (!ranges.count)
+      Fail(@"nothing_to_highlight", @"The note has no text after its title outside attachments",
+           @{@"committed" : @NO, @"revision" : revision, @"skipped" : *skipped});
+    return ranges;
+  }
+  NSArray<NSValue *> *ranges = Occurrences(body.string, target.match);
   if (ranges.count != target.expectedCount)
     Fail(@"match_count_mismatch",
          [NSString stringWithFormat:@"`match` occurs %lu times, not the expected %lu",
@@ -3645,12 +3696,15 @@ static NSDictionary *HandleSetHighlight(NSDictionary *request) {
 
   id ms = nil;
   NSAttributedString *body = LoadBody(note, &ms);
-  NSArray<NSValue *> *ranges = HighlightTargets(target, body.string, revisionBefore);
+  NSDictionary *skipped = nil;
+  NSArray<NSValue *> *ranges = HighlightTargets(target, body, revisionBefore, &skipped);
 
   NSMutableArray *plan = [NSMutableArray array];
   BOOL changes = NO;
+  NSUInteger characterCount = 0;
   for (NSValue *value in ranges) {
     NSRange range = value.rangeValue;
+    characterCount += range.length;
     BOOL satisfied = RangeHasEmphasis(body, range, code);
     if (!satisfied) changes = YES;
     [plan addObject:@{
@@ -3665,8 +3719,10 @@ static NSDictionary *HandleSetHighlight(NSDictionary *request) {
     @"scope" : target.scope,
     @"color" : color,
     @"rangeCount" : @(ranges.count),
+    @"characterCount" : @(characterCount),
     @"revisionBefore" : revisionBefore,
   } mutableCopy];
+  if (skipped) result[@"skipped"] = skipped;
 
   if (dryRun || !changes) {
     [result addEntriesFromDictionary:@{

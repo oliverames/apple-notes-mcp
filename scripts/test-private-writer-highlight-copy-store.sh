@@ -49,8 +49,10 @@ OUT="$(copy_run "$(highlight_request "$MARK" mint 1 "$REV")" || true)"
   [ "$(field "$OUT" committed)" = "false" ] || fail "count guard did not refuse: $(field "$OUT" code)"
 OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$ZERO")" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "stale highlight revision not refused"
-OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$REV" ',"scope":"note"')" || true)"
+OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$REV" ',"scope":"paragraph"')" || true)"
 [ "$(field "$OUT" code)" = "invalid_request" ] || fail "unknown scope not refused"
+OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$REV" ',"scope":"note"')" || true)"
+[ "$(field "$OUT" code)" = "invalid_request" ] || fail "scope note with match not refused"
 OUT="$(copy_run "$(highlight_request "$MARK" teal 2 "$REV")" || true)"
 [ "$(field "$OUT" code)" = "invalid_request" ] || fail "unknown color not refused"
 OUT="$(copy_run "$(highlight_request "$MARK" mint 2 "$REV" ',"dryRun":true')" || true)"
@@ -82,6 +84,55 @@ OUT="$(copy_run "$(highlight_request "$MARK" none 2 "$REV")" || true)"
 [ "$(field "$OUT" hasEmphasis)" = "$FLAG_BEFORE" ] || fail "hasEmphasis did not return to $FLAG_BEFORE"
 echo "ok: two matches highlighted mint, repeat was a no-op, recolored purple, removal read back"
 
-# 5. The live note is untouched.
+# 5. Whole-note scope, preferably on a note with attachments so the glyph
+#    skip is exercised. Falls back to the note above.
+WHOLE=""
+for CANDIDATE in $(writable_candidates "EXISTS (SELECT 1 FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = n.Z_PK AND a.ZTYPEUTI IS NOT NULL)"); do
+  if is_writable "$CANDIDATE"; then
+    WHOLE="$CANDIDATE"
+    break
+  fi
+done
+[ -n "$WHOLE" ] || WHOLE="$NOTE"
+WHOLE_READ="$(read_request "$WHOLE")"
+WHOLE_LIVE_BEFORE="$(field "$(run "$WHOLE_READ")" revision)"
+note_request() {
+  printf '{"protocol":1,"action":"set_highlight","identifier":"%s","scope":"note","color":"%s","ifRevision":"%s"%s}' \
+    "$WHOLE" "$1" "$2" "${3:-}"
+}
+REV="$(field "$(copy_run "$WHOLE_READ")" revision)"
+for EXTRA in ',"match":"x"' ',"expectedCount":1'; do
+  OUT="$(copy_run "$(note_request mint "$REV" "$EXTRA")" || true)"
+  [ "$(field "$OUT" code)" = "invalid_request" ] || fail "scope note accepted $EXTRA"
+done
+OUT="$(copy_run "$(note_request mint "$REV" ',"dryRun":true')" || true)"
+[ "$(field "$OUT" status)" = "planned" ] && [ "$(field "$OUT" scope)" = "note" ] ||
+  fail "whole-note dry run did not plan: $(field "$OUT" code) $(field "$OUT" message)"
+CHARS="$(field "$OUT" characterCount)"
+RANGES="$(field "$OUT" rangeCount)"
+TITLE="$(field "$OUT" skipped.titleUTF16)"
+GLYPHS="$(field "$OUT" skipped.attachmentGlyphs)"
+WHOLE_FLAG_BEFORE="$(field "$OUT" hasEmphasis)"
+[ "$(field "$OUT" plan.0.start)" = "$TITLE" ] || fail "whole-note range does not start after the title"
+[ "$(field "$(copy_run "$WHOLE_READ")" revision)" = "$REV" ] || fail "whole-note dry run changed the note"
+echo "ok: whole-note dry run: ranges=$RANGES chars=$CHARS titleUTF16=$TITLE attachmentGlyphs=$GLYPHS highlightedGlyphs=$(field "$OUT" skipped.highlightedAttachmentGlyphs)"
+OUT="$(copy_run "$(note_request blue "$REV")" || true)"
+[ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] &&
+  [ "$(field "$OUT" characterCount)" = "$CHARS" ] && [ "$(field "$OUT" hasEmphasis)" = "true" ] ||
+  fail "whole-note highlight failed: $(field "$OUT" code) $(field "$OUT" message)"
+LAST=$((RANGES - 1))
+[ "$(field "$OUT" ranges.0.storedRuns.0.color)" = "blue" ] &&
+  [ "$(field "$OUT" "ranges.$LAST.storedRuns.0.color")" = "blue" ] || fail "whole-note stored runs are not blue"
+REV="$(field "$OUT" revisionAfter)"
+OUT="$(copy_run "$(note_request blue "$REV")" || true)"
+[ "$(field "$OUT" status)" = "unchanged" ] && [ "$(field "$OUT" revisionAfter)" = "$REV" ] ||
+  fail "repeat whole-note highlight was not a no-op"
+OUT="$(copy_run "$(note_request none "$REV")" || true)"
+[ "$(field "$OUT" status)" = "updated" ] && [ -z "$(field "$OUT" ranges.0.storedRuns.0.color)" ] ||
+  fail "whole-note removal failed: $(field "$OUT" code)"
+echo "ok: whole note highlighted blue (hasEmphasis $WHOLE_FLAG_BEFORE -> true), repeat was a no-op, removal read back (hasEmphasis $(field "$OUT" hasEmphasis))"
+
+# 6. The live notes are untouched.
 assert_live_unchanged "$NOTE" "$LIVE_BEFORE"
+[ "$WHOLE" = "$NOTE" ] || assert_live_unchanged "$WHOLE" "$WHOLE_LIVE_BEFORE"
 echo "PASS"
