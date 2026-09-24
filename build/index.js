@@ -24465,14 +24465,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join31(output, replacement);
+        return join32(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join31(output, rule.append(self.options));
+          output = join32(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24484,7 +24484,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join31(output, replacement) {
+    function join32(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -51706,16 +51706,16 @@ var NOTE_PLACEHOLDERS = [
   "exportStem"
 ];
 var PLACEHOLDER_MODIFIERS = ["raw", "yaml"];
-var wrap2 = (before, after = "", join31) => ({
+var wrap2 = (before, after = "", join32) => ({
   mode: "wrap",
   before,
   after,
-  ...join31 ? { join: join31 } : {}
+  ...join32 ? { join: join32 } : {}
 });
-var pattern = (value, join31) => ({
+var pattern = (value, join32) => ({
   mode: "pattern",
   value,
-  ...join31 ? { join: join31 } : {}
+  ...join32 ? { join: join32 } : {}
 });
 var STANDARD = {
   schemaVersion: 1,
@@ -52744,12 +52744,12 @@ function pathComponent(value) {
   return clean || "untitled";
 }
 function templateAssetsDir(directory, outputDir, values) {
-  const safe = {};
+  const safe2 = {};
   for (const [key, value] of Object.entries(values)) {
     const raw = typeof value === "string" ? value : value?.raw;
-    if (raw !== void 0) safe[key] = pathComponent(raw);
+    if (raw !== void 0) safe2[key] = pathComponent(raw);
   }
-  const filled = fillPlaceholders(directory, safe);
+  const filled = fillPlaceholders(directory, safe2);
   const base = resolve4(outputDir);
   const dir = resolve4(base, filled);
   if (isAbsolute3(filled) || filled.split("/").includes("..") || !dir.startsWith(base + sep4))
@@ -57131,7 +57131,8 @@ var PUBLIC_HELPER_SETUP_COMMAND = "apple-notes-mcp setup --public-helper";
 var PUBLIC_HELPER_ACTIONS = /* @__PURE__ */ new Set([
   "hello",
   "decode_drawing",
-  "transcribe"
+  "transcribe",
+  "speech_status"
 ]);
 var DEFAULT_TIMEOUT_MS2 = 3e4;
 var MAX_OUTPUT_BYTES2 = 256 * 1024 * 1024;
@@ -58619,6 +58620,678 @@ function formatHelperBuild(report) {
   return lines.join("\n");
 }
 
+// src/services/permissions.ts
+import { spawnSync as spawnSync6 } from "node:child_process";
+import { createInterface } from "node:readline";
+var PRIVACY = "System Settings > Privacy & Security";
+var PANE_ANCHORS = {
+  fullDiskAccess: { anchor: "Privacy_AllFiles", label: "Full Disk Access" },
+  automation: { anchor: "Privacy_Automation", label: "Automation" },
+  speechRecognition: { anchor: "Privacy_SpeechRecognition", label: "Speech Recognition" }
+};
+function settingsUrl(pane, macOSVersion) {
+  const legacy = macOSVersion !== null && compareVersions(macOSVersion, "13.0") < 0;
+  const base = legacy ? "x-apple.systempreferences:com.apple.preference.security" : "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension";
+  return `${base}?${PANE_ANCHORS[pane].anchor}`;
+}
+function paneFields(pane, macOSVersion) {
+  return {
+    settingsPane: `${PRIVACY} > ${PANE_ANCHORS[pane].label}`,
+    settingsUrl: settingsUrl(pane, macOSVersion)
+  };
+}
+function checkPermissions(probes = defaultPermissionProbes()) {
+  const macOSVersion = safe(probes.macOSVersion, null);
+  const launchingApp = safe(probes.launchingApp, null);
+  const who = launchingApp ?? "the app that launches the server";
+  const items = [
+    fullDiskAccessItem(probes, macOSVersion),
+    automationItem(probes, macOSVersion, who),
+    shortcutsItem(probes),
+    speechItem(probes, macOSVersion, who)
+  ];
+  return {
+    ready: items.every((item) => !item.required || item.status === "granted"),
+    launchingApp,
+    execPath: probes.execPath,
+    macOSVersion,
+    items
+  };
+}
+function safe(fn, fallback) {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+function errorText(error2) {
+  return error2 instanceof Error ? error2.message : String(error2);
+}
+function fullDiskAccessItem(probes, macOSVersion) {
+  const base = {
+    id: "fullDiskAccess",
+    title: "Full Disk Access",
+    required: true,
+    ...paneFields("fullDiskAccess", macOSVersion)
+  };
+  let granted;
+  try {
+    granted = probes.fullDiskAccess();
+  } catch (error2) {
+    return {
+      ...base,
+      status: "unknown",
+      detail: `could not probe the Notes database: ${errorText(error2)}`,
+      fix: fdaRemediation(probes.execPath)
+    };
+  }
+  return granted ? {
+    ...base,
+    status: "granted",
+    detail: "the Notes database (NoteStore.sqlite) is readable",
+    fix: null
+  } : {
+    ...base,
+    status: "missing",
+    detail: "the Notes database is not readable, so query-notes, checklist state, note metadata, note links, native objects, exports and the bridges' readback do not work",
+    fix: fdaRemediation(probes.execPath)
+  };
+}
+function automationItem(probes, macOSVersion, who) {
+  const base = {
+    id: "notesAutomation",
+    title: "Automation of Notes.app",
+    required: true,
+    ...paneFields("automation", macOSVersion)
+  };
+  let result;
+  try {
+    result = probes.notesAutomation();
+  } catch (error2) {
+    result = { success: false, error: errorText(error2) };
+  }
+  if (result.success)
+    return {
+      ...base,
+      status: "granted",
+      detail: "Notes.app answered a read-only Apple event",
+      fix: null
+    };
+  if (isPermissionDenied(result.error))
+    return {
+      ...base,
+      status: "missing",
+      detail: "macOS refused the Apple event to Notes.app (Automation denied)",
+      fix: `In ${PRIVACY} > Automation, expand ${who} and turn on Notes. Then fully quit (Cmd+Q) and relaunch that app. If Notes is not listed, run this check again and choose Allow when macOS asks to control Notes.`
+    };
+  return {
+    ...base,
+    status: "unknown",
+    detail: `Notes.app did not answer: ${result.error || "no response"}`,
+    fix: "Open Notes.app once, then run this check again. If macOS asks whether this app may control Notes, choose Allow."
+  };
+}
+function shortcutsItem(probes) {
+  const base = {
+    id: "shortcutBridges",
+    title: "Shortcut bridges",
+    required: false,
+    settingsPane: null,
+    settingsUrl: null
+  };
+  let report;
+  try {
+    report = probes.shortcuts();
+  } catch (error2) {
+    return {
+      ...base,
+      status: "unknown",
+      detail: `could not run the shortcuts command: ${errorText(error2)}`,
+      fix: "Run `apple-notes-mcp setup --check`."
+    };
+  }
+  const required2 = report.items.filter((item) => !item.optional);
+  const failed = required2.filter((item) => item.error && !item.installed);
+  const missing = required2.filter((item) => !item.installed);
+  const consent = "After install or upgrade, run each bridge once in Shortcuts.app and choose Always Allow.";
+  if (missing.length === 0)
+    return {
+      ...base,
+      status: "granted",
+      detail: `both required bridges are installed (${required2.map((item) => item.name).join(", ")}). ${consent}`,
+      fix: null
+    };
+  if (failed.length === missing.length && failed.length > 0)
+    return {
+      ...base,
+      status: "unknown",
+      detail: `could not inspect: ${failed.map((item) => `${item.name}: ${item.error}`).join("; ")}`,
+      fix: "Run `apple-notes-mcp setup --check`."
+    };
+  return {
+    ...base,
+    status: "missing",
+    detail: `not installed: ${missing.map((item) => item.name).join(", ")}. The native-write tools (append-native, checklists, tables, native tags, pinning, note links) need them; everything else works without them`,
+    fix: `Run \`apple-notes-mcp setup\` and approve Add Shortcut in macOS. ${consent}`
+  };
+}
+function speechItem(probes, macOSVersion, who) {
+  const base = {
+    id: "speechRecognition",
+    title: "Speech Recognition",
+    required: false,
+    ...paneFields("speechRecognition", macOSVersion)
+  };
+  let answer;
+  try {
+    answer = probes.speech();
+  } catch (error2) {
+    answer = { ok: false, reason: errorText(error2) };
+  }
+  if (!answer.ok)
+    return {
+      ...base,
+      status: "unknown",
+      detail: `only transcribe-note-audio needs this; could not read the status: ${answer.reason}`,
+      fix: `Build the public native helper with \`${PUBLIC_HELPER_SETUP_COMMAND}\`, then run this check again.`
+    };
+  const state = answer.speechAuthorization;
+  if (state === "authorized")
+    return {
+      ...base,
+      status: "granted",
+      detail: "transcribe-note-audio can use on-device speech recognition",
+      fix: null
+    };
+  if (state === "restricted")
+    return {
+      ...base,
+      status: "missing",
+      detail: "Speech Recognition is restricted on this Mac (for example by a management profile)",
+      fix: "Ask the Mac's administrator; the restriction cannot be lifted in System Settings."
+    };
+  if (state === "denied")
+    return {
+      ...base,
+      status: "missing",
+      detail: "Speech Recognition was denied, so transcribe-note-audio stops with permission_required",
+      fix: `In ${PRIVACY} > Speech Recognition, turn on ${who}, then relaunch it.`
+    };
+  if (!answer.requiresGrant)
+    return {
+      ...base,
+      status: "not_needed",
+      detail: "not granted, and not needed: on macOS 26 and later transcription runs on-device without a Speech Recognition grant",
+      fix: null
+    };
+  return {
+    ...base,
+    status: "missing",
+    detail: `status ${state}. Before macOS 26, transcription needs this grant, and the server never shows the permission prompt`,
+    fix: `In ${PRIVACY} > Speech Recognition, turn on ${who} if it is listed, then relaunch it.`
+  };
+}
+function findLaunchingApp(startPid = process.ppid, readProcess = readProcessEntry) {
+  let pid = startPid;
+  for (let depth = 0; depth < 32 && pid > 1; depth++) {
+    const entry = readProcess(pid);
+    if (!entry) return null;
+    const match = /^(.*?\.app)\//.exec(entry.command);
+    if (match) return match[1];
+    pid = entry.ppid;
+  }
+  return null;
+}
+function readProcessEntry(pid) {
+  const result = spawnSync6("/bin/ps", ["-o", "ppid=", "-o", "comm=", "-p", String(pid)], {
+    encoding: "utf8",
+    timeout: 3e3
+  });
+  const match = /^\s*(\d+)\s+(.+)$/.exec(String(result.stdout ?? "").trim());
+  return match ? { ppid: Number(match[1]), command: match[2] } : null;
+}
+var AUTOMATION_TIMEOUT_MS = 6e4;
+function defaultPermissionProbes() {
+  return {
+    fullDiskAccess: hasFullDiskAccess,
+    notesAutomation: () => {
+      const result = executeAppleScript('tell application "Notes" to get name of account 1', {
+        timeoutMs: AUTOMATION_TIMEOUT_MS,
+        maxRetries: 1
+      });
+      return { success: result.success, error: result.error };
+    },
+    shortcuts: () => setupShortcuts(true),
+    speech: () => {
+      const install = inspectPublicHelper();
+      if (!install.ready)
+        return { ok: false, reason: install.detail ?? "the public native helper is not built" };
+      const answer = callPublicHelper("speech_status");
+      return {
+        ok: true,
+        speechAuthorization: String(answer.speechAuthorization ?? "unknown"),
+        requiresGrant: answer.requiresGrant !== false
+      };
+    },
+    macOSVersion: readMacOSVersion,
+    launchingApp: () => findLaunchingApp(),
+    execPath: process.execPath
+  };
+}
+function openSettingsPane(item, open = openUrl) {
+  if (!item.settingsUrl || !item.settingsUrl.startsWith("x-apple.systempreferences:"))
+    return { ok: false, error: `${item.title} has no System Settings pane` };
+  return open(item.settingsUrl);
+}
+function openUrl(url) {
+  const result = spawnSync6("/usr/bin/open", [url], { encoding: "utf8" });
+  return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
+}
+function pendingItems(report) {
+  return report.items.filter((item) => item.status === "missing" || item.status === "unknown");
+}
+var ICONS = {
+  granted: "\u2713",
+  not_needed: "\u2713",
+  missing: "\u2717",
+  unknown: "?"
+};
+function formatPermissionsReport(report) {
+  const lines = ["Apple Notes MCP permissions", ""];
+  lines.push(
+    report.launchingApp ? `macOS attributes these grants to ${report.launchingApp}, the app that launched this check.` : `No launching app was found above this process, so macOS attributes these grants to ${report.execPath}.`
+  );
+  lines.push(
+    "An MCP host (Claude Desktop, an editor) can hold different grants: run this check from the same app, or use the doctor tool there.",
+    ""
+  );
+  for (const item of report.items) {
+    const tag = item.required ? "" : " (optional)";
+    lines.push(`${ICONS[item.status]} ${item.title}${tag}: ${item.detail}`);
+    if (item.status === "missing" || item.status === "unknown") {
+      if (item.settingsPane) lines.push(`    Pane: ${item.settingsPane}`);
+      if (item.settingsUrl) lines.push(`    URL:  ${item.settingsUrl}`);
+      if (item.fix) lines.push(`    Fix:  ${item.fix}`);
+    }
+  }
+  lines.push("");
+  lines.push(
+    report.ready ? "Every required permission is granted." : "Required permissions are missing; the server works only partly until they are granted."
+  );
+  return lines.join("\n");
+}
+function parsePermissionsArgs(args) {
+  return {
+    open: args.includes("--open"),
+    once: args.includes("--once") || args.includes("--check"),
+    json: args.includes("--json")
+  };
+}
+async function runPermissionsCli(options, deps) {
+  const opened = /* @__PURE__ */ new Set();
+  for (; ; ) {
+    const report = deps.check();
+    deps.write(
+      options.json ? JSON.stringify(report, null, 2) + "\n" : formatPermissionsReport(report) + "\n"
+    );
+    const pending = pendingItems(report);
+    if (options.open) {
+      for (const item of pending) {
+        if (!item.settingsUrl || opened.has(item.id)) continue;
+        opened.add(item.id);
+        const result = deps.open(item);
+        if (!options.json)
+          deps.write(
+            result.ok ? `Opened ${item.settingsPane}.
+` : `Could not open ${item.settingsPane}: ${result.error}
+`
+          );
+      }
+    }
+    if (pending.length === 0 || options.once || !deps.interactive) return report.ready ? 0 : 1;
+    deps.write("\nPress Enter to check again, or type q and press Enter to quit. ");
+    const line = await deps.waitForEnter();
+    if (line === null || line.trim().toLowerCase() === "q") return report.ready ? 0 : 1;
+    deps.write("\n");
+  }
+}
+function defaultPermissionsCliDeps() {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const rl = interactive ? createInterface({ input: process.stdin }) : null;
+  const lines = [];
+  const waiters = [];
+  let closed = false;
+  rl?.on("line", (line) => {
+    const waiter = waiters.shift();
+    if (waiter) waiter(line);
+    else lines.push(line);
+  });
+  rl?.on("close", () => {
+    closed = true;
+    for (const waiter of waiters.splice(0)) waiter(null);
+  });
+  return {
+    check: () => checkPermissions(),
+    open: (item) => openSettingsPane(item),
+    write: (text2) => process.stdout.write(text2),
+    waitForEnter: () => new Promise((resolveLine) => {
+      if (lines.length) resolveLine(lines.shift());
+      else if (closed || !rl) resolveLine(null);
+      else waiters.push(resolveLine);
+    }),
+    interactive,
+    close: () => rl?.close()
+  };
+}
+
+// src/services/permissionsWindow.ts
+import { spawn as spawn2, spawnSync as spawnSync7 } from "node:child_process";
+import {
+  chmodSync as chmodSync3,
+  existsSync as existsSync17,
+  mkdirSync as mkdirSync10,
+  mkdtempSync as mkdtempSync9,
+  readFileSync as readFileSync7,
+  renameSync as renameSync4,
+  rmSync as rmSync9,
+  writeFileSync as writeFileSync8
+} from "node:fs";
+import { homedir as homedir22 } from "node:os";
+import { join as join31 } from "node:path";
+import { createInterface as createInterface2 } from "node:readline";
+var PERMISSIONS_WINDOW_PROTOCOL = 1;
+var PERMISSIONS_WINDOW_DIR_ENV = "APPLE_NOTES_MCP_PERMISSIONS_WINDOW_DIR";
+var PERMISSIONS_WINDOW_BINARY = "apple-notes-permissions-window";
+var PERMISSIONS_WINDOW_SOURCE = "native/permissions-window/apple-notes-permissions-window.swift";
+var PERMISSIONS_WINDOW_MANIFEST = "manifest.json";
+var PERMISSIONS_WINDOW_SETUP_COMMAND = "apple-notes-mcp setup --permissions-window";
+var PERMISSIONS_WINDOW_BUNDLE_ID = "apple-notes-mcp.permissions-window";
+var windowManifestSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  binarySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  builtAt: external_exports.string(),
+  compiler: external_exports.string()
+});
+function defaultPermissionsWindowDeps(overrides = {}) {
+  return {
+    env: process.env,
+    platform: process.platform,
+    sourcePath: join31(packageRoot(), PERMISSIONS_WINDOW_SOURCE),
+    exists: existsSync17,
+    readFile: (path10) => readFileSync7(path10),
+    spawn: spawnSync7,
+    now: () => /* @__PURE__ */ new Date(),
+    ...overrides
+  };
+}
+function permissionsWindowInstallDir(env = process.env) {
+  const override = env[PERMISSIONS_WINDOW_DIR_ENV]?.trim();
+  if (override) return override;
+  return join31(homedir22(), "Library", "Application Support", "apple-notes-mcp", "permissions-window");
+}
+function inspectPermissionsWindow(deps = defaultPermissionsWindowDeps()) {
+  const installDir = permissionsWindowInstallDir(deps.env);
+  const binaryPath = join31(installDir, PERMISSIONS_WINDOW_BINARY);
+  const fail = (reason, detail) => ({ ready: false, reason, detail, installDir, binaryPath });
+  if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
+  const rebuild = `Run \`${PERMISSIONS_WINDOW_SETUP_COMMAND}\`.`;
+  if (!deps.exists(deps.sourcePath))
+    return fail("window_not_installed", `Packaged window source is missing: ${deps.sourcePath}`);
+  const manifestPath = join31(installDir, PERMISSIONS_WINDOW_MANIFEST);
+  if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
+    return fail("window_not_installed", `The permissions window is not built. ${rebuild}`);
+  let manifest;
+  try {
+    manifest = windowManifestSchema.parse(JSON.parse(deps.readFile(manifestPath).toString("utf8")));
+  } catch {
+    return fail("window_manifest_invalid", `The window manifest is unreadable. ${rebuild}`);
+  }
+  if (manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) || manifest.protocolVersion !== PERMISSIONS_WINDOW_PROTOCOL)
+    return fail(
+      "window_stale",
+      `The installed window was built from a different source than this version ships. ${rebuild}`
+    );
+  if (sha256Hex(deps.readFile(binaryPath)) !== manifest.binarySha256)
+    return fail(
+      "window_modified",
+      `The window binary no longer matches the checksum recorded when it was built. ${rebuild}`
+    );
+  return { ready: true, reason: null, detail: null, installDir, binaryPath };
+}
+function permissionsWindowInfoPlist() {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>CFBundleIdentifier</key>",
+    `  <string>${PERMISSIONS_WINDOW_BUNDLE_ID}</string>`,
+    "  <key>CFBundleName</key>",
+    "  <string>Apple Notes MCP Permissions</string>",
+    "  <key>CFBundleInfoDictionaryVersion</key>",
+    "  <string>6.0</string>",
+    "</dict>",
+    "</plist>",
+    ""
+  ].join("\n");
+}
+function permissionsWindowCompileArguments(sourcePath, digestPath, plistPath, outputPath) {
+  return [
+    "swiftc",
+    "-O",
+    "-parse-as-library",
+    "-framework",
+    "AppKit",
+    "-framework",
+    "SwiftUI",
+    "-Xlinker",
+    "-sectcreate",
+    "-Xlinker",
+    "__TEXT",
+    "-Xlinker",
+    "__info_plist",
+    "-Xlinker",
+    plistPath,
+    sourcePath,
+    digestPath,
+    "-o",
+    outputPath
+  ];
+}
+var helloSchema2 = external_exports.object({
+  type: external_exports.literal("hello"),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string()
+});
+function buildPermissionsWindow(checkOnly, deps = defaultPermissionsWindowDeps()) {
+  const steps = [];
+  const finish = () => {
+    const installation2 = inspectPermissionsWindow(deps);
+    return {
+      ok: installation2.ready && steps.every((s) => s.ok),
+      checkOnly,
+      steps,
+      installation: installation2
+    };
+  };
+  if (checkOnly) {
+    const installation2 = inspectPermissionsWindow(deps);
+    steps.push({
+      step: "inspect installed window",
+      ok: installation2.ready,
+      detail: installation2.ready ? installation2.binaryPath : installation2.detail ?? void 0
+    });
+    return finish();
+  }
+  if (deps.platform !== "darwin") {
+    steps.push({ step: "platform", ok: false, detail: "macOS only" });
+    return finish();
+  }
+  if (!deps.exists(deps.sourcePath)) {
+    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
+    return finish();
+  }
+  const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
+  steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
+  const version3 = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
+  if (version3.status !== 0) {
+    steps.push({
+      step: "find compiler",
+      ok: false,
+      detail: "No Swift compiler found. Install the Command Line Tools with `xcode-select --install`."
+    });
+    return finish();
+  }
+  const compiler = String(version3.stdout || version3.stderr || "").split("\n").find((line) => line.includes("Swift version"))?.trim() || "swiftc";
+  steps.push({ step: "find compiler", ok: true, detail: compiler });
+  const installDir = permissionsWindowInstallDir(deps.env);
+  mkdirSync10(installDir, { recursive: true, mode: 448 });
+  const staging = mkdtempSync9(join31(installDir, ".staging-"));
+  try {
+    const stagedBinary = join31(staging, PERMISSIONS_WINDOW_BINARY);
+    const digestPath = join31(staging, "source-digest.swift");
+    const plistPath = join31(staging, "Info.plist");
+    writeFileSync8(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
+    writeFileSync8(plistPath, permissionsWindowInfoPlist(), { mode: 384 });
+    const compile = deps.spawn(
+      "/usr/bin/xcrun",
+      permissionsWindowCompileArguments(deps.sourcePath, digestPath, plistPath, stagedBinary),
+      { encoding: "utf8", timeout: 3e5 }
+    );
+    if (compile.status !== 0) {
+      steps.push({
+        step: "compile",
+        ok: false,
+        detail: String(compile.stderr || compile.error?.message || "swiftc failed").slice(0, 4e3)
+      });
+      return finish();
+    }
+    steps.push({ step: "compile", ok: true });
+    const sign = deps.spawn(
+      "/usr/bin/codesign",
+      ["--force", "--sign", "-", "--identifier", PERMISSIONS_WINDOW_BUNDLE_ID, stagedBinary],
+      { encoding: "utf8" }
+    );
+    if (sign.status !== 0) {
+      steps.push({ step: "ad-hoc sign", ok: false, detail: String(sign.stderr || "failed") });
+      return finish();
+    }
+    steps.push({ step: "ad-hoc sign", ok: true });
+    const hello = deps.spawn(stagedBinary, [], {
+      input: JSON.stringify({ type: "hello" }) + "\n",
+      encoding: "utf8",
+      timeout: 1e4,
+      killSignal: "SIGKILL"
+    });
+    let parsed = null;
+    try {
+      parsed = helloSchema2.parse(JSON.parse(String(hello.stdout ?? "").trim()));
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.protocolVersion !== PERMISSIONS_WINDOW_PROTOCOL || parsed.sourceSha256 !== sourceSha) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: parsed ? `window reported protocol ${parsed.protocolVersion}, source ${parsed.sourceSha256}` : `no valid hello (exit ${hello.status})`
+      });
+      return finish();
+    }
+    steps.push({ step: "handshake", ok: true });
+    const manifest = {
+      schemaVersion: 1,
+      protocolVersion: parsed.protocolVersion,
+      sourceSha256: sourceSha,
+      binarySha256: sha256Hex(deps.readFile(stagedBinary)),
+      builtAt: deps.now().toISOString(),
+      compiler
+    };
+    chmodSync3(stagedBinary, 448);
+    renameSync4(stagedBinary, join31(installDir, PERMISSIONS_WINDOW_BINARY));
+    writeFileSync8(
+      join31(installDir, PERMISSIONS_WINDOW_MANIFEST),
+      JSON.stringify(manifest, null, 2) + "\n",
+      { mode: 384 }
+    );
+    steps.push({ step: "install", ok: true, detail: installDir });
+  } finally {
+    rmSync9(staging, { recursive: true, force: true });
+  }
+  const installation = inspectPermissionsWindow(deps);
+  steps.push({
+    step: "verify installation",
+    ok: installation.ready,
+    detail: installation.ready ? void 0 : installation.detail ?? void 0
+  });
+  return finish();
+}
+function formatPermissionsWindowBuild(report) {
+  const lines = ["Apple Notes MCP permissions window", ""];
+  for (const step of report.steps)
+    lines.push(`${step.ok ? "\u2713" : "\u2717"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
+  lines.push("");
+  if (report.ok)
+    lines.push(
+      `Installed at ${report.installation.binaryPath}. Open it with \`apple-notes-mcp setup --permissions --window\`.`
+    );
+  else if (report.checkOnly) lines.push(`Run \`${PERMISSIONS_WINDOW_SETUP_COMMAND}\` to build it.`);
+  else lines.push("The window was not installed. Fix the failed step above and run setup again.");
+  return lines.join("\n");
+}
+var windowMessageSchema = external_exports.discriminatedUnion("type", [
+  external_exports.object({ type: external_exports.literal("open"), id: external_exports.string().max(64) }),
+  external_exports.object({ type: external_exports.literal("recheck") })
+]);
+function runPermissionsWindow(binaryPath, session) {
+  const launch = session.launch ?? ((path10) => spawn2(path10, [], { stdio: ["pipe", "pipe", "inherit"] }));
+  const log = session.log ?? (() => {
+  });
+  let report = session.check();
+  const child2 = launch(binaryPath);
+  const sendReport = () => {
+    if (child2.stdin && !child2.stdin.destroyed)
+      child2.stdin.write(JSON.stringify({ type: "report", report }) + "\n");
+  };
+  child2.stdin?.on("error", () => {
+  });
+  sendReport();
+  if (child2.stdout) {
+    const lines = createInterface2({ input: child2.stdout });
+    lines.on("line", (line) => {
+      let message;
+      try {
+        message = windowMessageSchema.parse(JSON.parse(line));
+      } catch {
+        return;
+      }
+      if (message.type === "recheck") {
+        report = session.check();
+        sendReport();
+        return;
+      }
+      const item = report.items.find((candidate) => candidate.id === message.id);
+      if (!item) return;
+      const result = session.open(item);
+      log(
+        result.ok ? `Opened ${item.settingsPane}.
+` : `Could not open ${item.settingsPane ?? item.title}: ${result.error}
+`
+      );
+    });
+  }
+  return new Promise((resolveExit) => {
+    child2.on("error", (error2) => {
+      log(`Could not run the permissions window: ${error2.message}
+`);
+      resolveExit(report.ready ? 0 : 1);
+    });
+    child2.on("close", () => resolveExit(report.ready ? 0 : 1));
+  });
+}
+
 // src/tools/privateHelperTools.ts
 var coreDataId2 = external_exports.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
 var notesUuid = external_exports.string().regex(UUID_PATTERN);
@@ -58740,6 +59413,31 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-help
   const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatHelperBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions-window")) {
+  const report = buildPermissionsWindow(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatPermissionsWindowBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions")) {
+  const args = process.argv.slice(3);
+  const cli = defaultPermissionsCliDeps();
+  let code;
+  const window2 = args.includes("--window") ? inspectPermissionsWindow() : null;
+  if (window2?.ready) {
+    code = await runPermissionsWindow(window2.binaryPath, {
+      check: cli.check,
+      open: (item) => openSettingsPane(item),
+      log: cli.write
+    });
+  } else {
+    if (window2) cli.write(`${window2.detail} Showing the checklist here instead.
+
+`);
+    code = await runPermissionsCli(parsePermissionsArgs(args), cli);
+  }
+  cli.close();
+  process.exit(code);
 }
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));

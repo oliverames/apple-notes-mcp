@@ -168,6 +168,18 @@ import {
   transcribeNoteAudio,
 } from "@/services/noteTranscription.js";
 import { buildPrivateHelper, formatHelperBuild } from "@/services/privateHelperBuild.js";
+import {
+  defaultPermissionsCliDeps,
+  openSettingsPane,
+  parsePermissionsArgs,
+  runPermissionsCli,
+} from "@/services/permissions.js";
+import {
+  buildPermissionsWindow,
+  formatPermissionsWindowBuild,
+  inspectPermissionsWindow,
+  runPermissionsWindow,
+} from "@/services/permissionsWindow.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
 
 // Load file-based config FIRST (#24) — before anything reads APPLE_NOTES_MCP_*.
@@ -189,6 +201,31 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-help
   const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatHelperBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions-window")) {
+  // Optional checklist window, compiled locally like the public helper.
+  const report = buildPermissionsWindow(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatPermissionsWindowBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions")) {
+  // Guided permissions check; opens System Settings panes only with --open.
+  const args = process.argv.slice(3);
+  const cli = defaultPermissionsCliDeps();
+  let code: number;
+  const window = args.includes("--window") ? inspectPermissionsWindow() : null;
+  if (window?.ready) {
+    code = await runPermissionsWindow(window.binaryPath, {
+      check: cli.check,
+      open: (item) => openSettingsPane(item),
+      log: cli.write,
+    });
+  } else {
+    if (window) cli.write(`${window.detail} Showing the checklist here instead.\n\n`);
+    code = await runPermissionsCli(parsePermissionsArgs(args), cli);
+  }
+  cli.close();
+  process.exit(code);
 }
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
