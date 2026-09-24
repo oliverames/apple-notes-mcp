@@ -2734,6 +2734,30 @@ apply and reported under `objects`; the writer re-reads each one and every
 table cell. Writes need both writer switches and, until this path passes live
 validation in a release, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; dry runs do not.
 
+#### `native-checklist-state`
+
+Lists a note's native checklist items from Notes' own model: each item's
+`todoIdentifier` (32 hex digits, the same `id` `get-native-objects` reports),
+`done`, `index`, `text`, line and styled-character offsets, plus the note's
+`revision`. Read-only, but it runs through the writer, so it needs both
+switches. Items come from the exact characters that carry each todo identity,
+so a newline stored in the next item's run never shifts an item onto the
+wrong line.
+
+#### `native-set-checklist-item`
+
+Checks (`done: true`) or unchecks (`done: false`) one existing checklist item
+by `todoIdentifier`, guarded by `ifRevision`. Only that item's done bit
+changes: its identity, text, indentation, and every other attribute are kept.
+The writer re-reads the note through a new Core Data stack and reports
+`persistedDone`, and fails verification if the text, the item's characters,
+or any other item changed. When the item already has the requested state it
+writes nothing and returns `status: "unchanged"`, `committed: false`. An
+identifier that matches no item is `not_found`; one that appears in two places
+is `ambiguous_target` (envelope code `ambiguous`). Sync reporting and the
+optional `nudge` match `native-append-plain-text`; the nudge is skipped when
+nothing was written.
+
 ## Usage Patterns
 
 ### Basic Workflow

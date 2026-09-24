@@ -79,6 +79,8 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   plan_edit: "read",
   edit_note: "write",
   compose_note: "write",
+  read_checklist: "read",
+  set_checklist_item: "write",
 };
 
 /**
@@ -96,6 +98,13 @@ export const EDIT_LIVE_VALIDATED = false;
 
 /** Same gate for structured compose (services/privateCompose.ts). */
 export const COMPOSE_LIVE_VALIDATED = false;
+
+/**
+ * Checking or unchecking a checklist item has not passed live end-to-end
+ * validation in a released build of the writer. Until it has, it also
+ * requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ */
+export const CHECKLIST_TOGGLE_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -253,6 +262,7 @@ export const writerProbeSchema = z
         editNote: featureSchema.optional(),
         composeNote: featureSchema.optional(),
         composeObjects: featureSchema.optional(),
+        checklistToggle: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -919,6 +929,11 @@ export const WRITER_FEATURES = [
   { key: "editNote", probeKey: "editNote", liveValidated: EDIT_LIVE_VALIDATED },
   { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED },
   { key: "composeObjects", probeKey: "composeObjects", liveValidated: COMPOSE_LIVE_VALIDATED },
+  {
+    key: "checklistToggle",
+    probeKey: "checklistToggle",
+    liveValidated: CHECKLIST_TOGGLE_LIVE_VALIDATED,
+  },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

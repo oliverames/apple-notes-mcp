@@ -20,6 +20,7 @@ import {
   PrivateWriteError,
   WRITER_ACTIONS,
   WRITER_BINARY_NAME,
+  WRITER_FEATURES,
   WRITER_MANIFEST_NAME,
   WRITER_SOURCE_RELATIVE,
   appendPlainText,
@@ -433,6 +434,22 @@ describe("privateWriterCapabilities", () => {
         .reason
     ).toBe("helper_unreachable");
     expect(probePrivateWriter(deps(ON)).role).toBe("writer");
+  });
+
+  it("reports every feature in WRITER_FEATURES, each with its own gate", () => {
+    const off = privateWriterCapabilities(deps());
+    expect(Object.keys(off.features)).toEqual(WRITER_FEATURES.map((f) => f.key));
+    for (const f of WRITER_FEATURES) expect(off.features[f.key].reason).toBe("disabled");
+    install();
+    // The fake probe reports planEdit/editNote but not checklistToggle.
+    const on = privateWriterCapabilities(deps(ON)).features;
+    expect(on.checklistToggle).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(on.planEdit.available).toBe(true);
+    expect(on.editNote.reason).toBe("not_live_validated");
+    expect(privateWriterCapabilities(deps(UNVERIFIED)).features.editNote.available).toBe(true);
   });
 });
 

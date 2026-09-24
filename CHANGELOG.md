@@ -94,6 +94,22 @@
   cells. The writer probe and `native-writer-status` report the needed API as
   the `composeObjects` feature, and the copy-store script creates two
   dividers and a table on the copy.
+- `native-checklist-state` and `native-set-checklist-item` on the writer
+  (actions `read_checklist` and `set_checklist_item`). The first lists a
+  note's native checklist items with their todo identifiers, done state, and
+  the note's `revision`. The second checks or unchecks one item by identifier
+  under `ifRevision`, changing only that item's done bit through the note's
+  CRDT, verifies it in a fresh Core Data stack (`persistedDone`), and writes
+  nothing when the item already has the requested state. Items are located by
+  the exact characters that carry each todo identity, not by line boundaries.
+  Optional `nudge`. Until it passes live validation it also requires
+  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
+  helper branch.
+- `native-writer-status` reports every writer feature from one
+  `WRITER_FEATURES` table, each with its own live-validation gate.
+- `scripts/test-private-writer-checklist-copy-store.sh` exercises the
+  checklist actions on a store copy, with shared setup in
+  `scripts/private-writer-copy-store-lib.sh`.
 
 ### Fixed
 

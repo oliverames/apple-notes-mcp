@@ -231,6 +231,19 @@ static const APIRequirement kComposeObjectAPI[] = {
     {"ICTable", "columnCount", NO},
 };
 
+// Checklist toggling rewrites the paragraph style of one existing checklist
+// item. It needs the append editing surface above plus these.
+static const APIRequirement kChecklistAPI[] = {
+    {"ICTTParagraphStyle", "style", NO},
+    {"ICTTParagraphStyle", "todo", NO},
+    {"ICTTParagraphStyle", "mutableCopyWithZone:", NO},
+    {"ICTTParagraphStyle", "setTodo:", NO},
+    {"ICTTTodo", "uuid", NO},
+    {"ICTTTodo", "done", NO},
+    {"ICTTTodo", "initWithIdentifier:done:", NO},
+    {"ICTTMergeableAttributedString", "setAttributes:range:", NO},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -289,7 +302,14 @@ static NSArray<NSString *> *MissingModelProperties(void) {
 
 // Features after FeatureAppend need the append API plus their own table,
 // matched with `==` in MissingForFeature.
-typedef NS_ENUM(NSInteger, Feature) { FeatureModel, FeatureRead, FeatureAppend, FeatureEdit, FeatureCompose };
+typedef NS_ENUM(NSInteger, Feature) {
+  FeatureModel,
+  FeatureRead,
+  FeatureAppend,
+  FeatureEdit,
+  FeatureCompose,
+  FeatureChecklist,
+};
 
 static NSArray<NSString *> *MissingForFeature(Feature feature) {
   LoadFramework();
@@ -306,6 +326,8 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
   if (feature == FeatureEdit) [missing addObjectsFromArray:MissingAPI(kEditAPI, COUNT(kEditAPI))];
   if (feature == FeatureCompose)
     [missing addObjectsFromArray:MissingAPI(kComposeAPI, COUNT(kComposeAPI))];
+  if (feature == FeatureChecklist)
+    [missing addObjectsFromArray:MissingAPI(kChecklistAPI, COUNT(kChecklistAPI))];
   return missing;
 }
 
@@ -568,6 +590,8 @@ static NSDictionary *HandleReadSyncState(NSDictionary *request);
 static NSDictionary *HandlePlanEdit(NSDictionary *request);
 static NSDictionary *HandleEditNote(NSDictionary *request);
 static NSDictionary *HandleComposeNote(NSDictionary *request);
+static NSDictionary *HandleReadChecklist(NSDictionary *request);
+static NSDictionary *HandleSetChecklistItem(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -587,6 +611,8 @@ static const ActionSpec kActions[] = {
     {"compose_note",
      "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading",
      HandleComposeNote},
+    {"read_checklist", "identifier", HandleReadChecklist},
+    {"set_checklist_item", "identifier,todoIdentifier,done,ifRevision", HandleSetChecklistItem},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -682,6 +708,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"editNote" : FeatureReport(FeatureEdit, contextOK, contextReason),
       @"composeNote" : FeatureReport(FeatureCompose, contextOK, contextReason),
       @"composeObjects" : ObjectsReport(contextOK, contextReason),
+      @"checklistToggle" : FeatureReport(FeatureChecklist, contextOK, contextReason),
     },
   };
 }
@@ -881,7 +908,17 @@ static void SaveOrFail(NSManagedObjectContext *context) {
        @{@"committed" : @NO, @"detail" : OrNull(saveError.localizedDescription)});
 }
 
-// The sync fields every write result carries. The helper never uploads.
+// Serializes an attribute-only edit of `range` and marks the note for upload.
+static void FinishAttributeEdit(NSManagedObject *note, NSRange range, NSString *reason) {
+  ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+      note, sel_registerName("edited:range:changeInLength:"), NSTextStorageEditedAttributes, range, 0);
+  if (!SendBool(note, "saveNoteData"))
+    Fail(@"save_failed", @"NotesShared did not serialize the edited body", @{@"committed" : @NO});
+  [note setValue:[NSDate date] forKey:@"modificationDate"];
+  ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"), reason);
+}
+
+// The sync fields every write result carries. The writer never uploads.
 static NSDictionary *SyncFields(NSDictionary *after, StoreLocation store) {
   BOOL hostRunning = NotesAppRunning();
   return @{
@@ -892,6 +929,28 @@ static NSDictionary *SyncFields(NSDictionary *after, StoreLocation store) {
     @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",
     @"storeKind" : store.isCopy ? @"copy" : @"live",
   };
+}
+
+// Applies `extra` on top of every existing attribute run in `range`.
+// ICTTMergeableAttributedString's setAttributes:range: replaces a run's whole
+// dictionary, so each run's own attributes (links, fonts, timestamps,
+// attachments) are carried over explicitly. Callers bracket one or more calls
+// with the mergeable string's beginEditing/endEditing.
+static void MergeAttributes(id mergeable, NSAttributedString *snapshot, NSRange range,
+                            NSDictionary *extra, NSArray<NSString *> *remove) {
+  NSMutableArray *updates = [NSMutableArray array];
+  [snapshot enumerateAttributesInRange:range
+                               options:0
+                            usingBlock:^(NSDictionary *attrs, NSRange run, BOOL *stop) {
+                              (void)stop;
+                              NSMutableDictionary *merged = [attrs mutableCopy];
+                              if (remove) [merged removeObjectsForKeys:remove];
+                              if (extra) [merged addEntriesFromDictionary:extra];
+                              [updates addObject:@[ merged, [NSValue valueWithRange:run] ]];
+                            }];
+  for (NSArray *update in updates)
+    ((void (*)(id, SEL, id, NSRange))objc_msgSend)(mergeable, sel_registerName("setAttributes:range:"),
+                                                   update[0], [update[1] rangeValue]);
 }
 
 static NSAttributedString *LoadBody(NSManagedObject *note, id *mergeableOut) {
@@ -3111,6 +3170,302 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     @"syncHostRunning" : @(hostRunning),
     @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",
   }];
+  return result;
+}
+
+#pragma mark - Checklist items
+
+
+// Checklist identities are the 16 raw bytes of the item's ICTTTodo UUID.
+// get-native-objects reports them as 32 lowercase hex digits; the canonical
+// dashed UUID spelling is accepted too.
+static NSUUID *ParseTodoIdentifier(NSString *value) {
+  NSString *hex = [[value stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
+  if (hex.length != 32 ||
+      [hex rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"]
+                                       invertedSet]]
+              .location != NSNotFound)
+    return nil;
+  if ([value containsString:@"-"] && !IsUUID(value)) return nil;
+  NSString *dashed =
+      [NSString stringWithFormat:@"%@-%@-%@-%@-%@", [hex substringWithRange:NSMakeRange(0, 8)],
+                                 [hex substringWithRange:NSMakeRange(8, 4)],
+                                 [hex substringWithRange:NSMakeRange(12, 4)],
+                                 [hex substringWithRange:NSMakeRange(16, 4)],
+                                 [hex substringWithRange:NSMakeRange(20, 12)]];
+  return [[NSUUID alloc] initWithUUIDString:dashed];
+}
+
+static NSString *TodoHex(NSUUID *uuid) {
+  uuid_t bytes;
+  [uuid getUUIDBytes:bytes];
+  NSMutableString *hex = [NSMutableString stringWithCapacity:32];
+  for (int i = 0; i < 16; i++) [hex appendFormat:@"%02x", bytes[i]];
+  return hex;
+}
+
+static NSRange LineAt(NSString *text, NSUInteger index) {
+  NSUInteger start = index, end = index;
+  while (start > 0 && [text characterAtIndex:start - 1] != '\n') start--;
+  while (end < text.length && [text characterAtIndex:end] != '\n') end++;
+  return NSMakeRange(start, end - start);
+}
+
+static BOOL OnlyNewlines(NSString *text, NSRange range) {
+  for (NSUInteger i = range.location; i < NSMaxRange(range); i++)
+    if ([text characterAtIndex:i] != '\n') return NO;
+  return YES;
+}
+
+// Notes stores a checklist item's ICTTTodo (identity and done bit) in the
+// TTStyle of the item's characters. Style runs are NOT aligned to lines:
+// Notes and the Shortcuts append path can store the newline that ends the
+// previous line inside the next item's run. So an item is never inferred from
+// line boundaries. It is the exact set of characters whose style carries its
+// todo UUID; edits touch only those characters. Its `text` is the line holding
+// its first non-newline character, and its `done` comes from that character.
+// One entry per todo UUID, in body order. `contiguous` is NO when the UUID
+// appears in more than one place; `consistent` is NO when its runs disagree
+// on the done bit.
+static NSArray<NSDictionary *> *ChecklistItems(NSAttributedString *body) {
+  NSString *text = body.string;
+  NSMutableArray<NSString *> *order = [NSMutableArray array];
+  NSMutableDictionary<NSString *, NSMutableDictionary *> *byHex = [NSMutableDictionary dictionary];
+  [body enumerateAttribute:kStyleKey
+                   inRange:NSMakeRange(0, body.length)
+                   options:0
+                usingBlock:^(id style, NSRange run, BOOL *stop) {
+                  (void)stop;
+                  if (![NSStringFromClass([style class]) containsString:@"ParagraphStyle"]) return;
+                  unsigned int value =
+                      ((unsigned int (*)(id, SEL))objc_msgSend)(style, sel_registerName("style"));
+                  id todo = value == kStyleChecklist ? Send(style, "todo") : nil;
+                  NSUUID *uuid = todo ? Send(todo, "uuid") : nil;
+                  if (![uuid isKindOfClass:[NSUUID class]]) return;
+                  NSString *hex = TodoHex(uuid);
+                  NSMutableDictionary *entry = byHex[hex];
+                  if (!entry) {
+                    entry = [@{@"uuid" : uuid,
+                               @"runs" : [NSMutableArray array],
+                               @"doneValues" : [NSMutableSet set]} mutableCopy];
+                    byHex[hex] = entry;
+                    [order addObject:hex];
+                  }
+                  BOOL done = SendBool(todo, "done");
+                  [entry[@"runs"] addObject:@[ [NSValue valueWithRange:run], style ]];
+                  [entry[@"doneValues"] addObject:@(done)];
+                  if (!entry[@"fallbackDone"]) entry[@"fallbackDone"] = @(done);
+                  if (!entry[@"done"] && !OnlyNewlines(text, run)) entry[@"done"] = @(done);
+                }];
+  NSMutableArray *items = [NSMutableArray array];
+  for (NSString *hex in order) {
+    NSDictionary *entry = byHex[hex];
+    NSArray *runs = entry[@"runs"];
+    NSRange first = [runs.firstObject[0] rangeValue], last = [runs.lastObject[0] rangeValue];
+    NSRange span = NSMakeRange(first.location, NSMaxRange(last) - first.location);
+    NSUInteger covered = 0;
+    for (NSArray *run in runs) covered += [run[0] rangeValue].length;
+    NSUInteger anchor = span.location;
+    while (anchor < NSMaxRange(span) && [text characterAtIndex:anchor] == '\n') anchor++;
+    if (anchor == NSMaxRange(span)) anchor = span.location;
+    NSRange line = LineAt(text, anchor);
+    [items addObject:@{
+      @"todoIdentifier" : hex,
+      @"uuid" : [entry[@"uuid"] UUIDString],
+      @"index" : @(items.count),
+      @"done" : entry[@"done"] ?: entry[@"fallbackDone"],
+      @"consistent" : @((BOOL)([entry[@"doneValues"] count] == 1)),
+      @"contiguous" : @((BOOL)(covered == span.length)),
+      @"text" : [text substringWithRange:line],
+      @"line" : [NSValue valueWithRange:line],
+      @"span" : [NSValue valueWithRange:span],
+      @"runs" : runs,
+    }];
+  }
+  return items;
+}
+
+// JSON-safe copy of an item (drops the range and style objects).
+static NSDictionary *PublicItem(NSDictionary *item) {
+  NSRange line = [item[@"line"] rangeValue], span = [item[@"span"] rangeValue];
+  return @{
+    @"todoIdentifier" : item[@"todoIdentifier"],
+    @"uuid" : item[@"uuid"],
+    @"index" : item[@"index"],
+    @"done" : item[@"done"],
+    @"text" : item[@"text"],
+    @"lineStart" : @(line.location),
+    @"lineLengthUTF16" : @(line.length),
+    @"styledStart" : @(span.location),
+    @"styledLengthUTF16" : @(span.length),
+    @"contiguous" : item[@"contiguous"],
+    @"consistent" : item[@"consistent"],
+  };
+}
+
+static NSDictionary *ItemWithTodo(NSArray<NSDictionary *> *items, NSString *hex) {
+  for (NSDictionary *item in items)
+    if ([item[@"todoIdentifier"] isEqualToString:hex]) return item;
+  return nil;
+}
+
+static NSDictionary *HandleReadChecklist(NSDictionary *request) {
+  NSString *identifier = RequireIdentifier(request);
+  RequireFeature(FeatureChecklist);
+  NSManagedObjectContext *context = OpenContext(ResolveStore(), YES);
+  NSManagedObject *note = FetchNote(context, identifier);
+  if (SendBool(note, "isPasswordProtected"))
+    Fail(@"unsupported_note", @"Locked notes are not supported", nil);
+  NSArray *items = ChecklistItems(LoadBody(note, NULL));
+  NSMutableArray *out = [NSMutableArray array];
+  NSUInteger checked = 0;
+  for (NSDictionary *item in items) {
+    [out addObject:PublicItem(item)];
+    if ([item[@"done"] boolValue]) checked++;
+  }
+  return @{
+    @"status" : @"ok",
+    @"identifier" : identifier,
+    @"revision" : RevisionToken(note),
+    @"items" : out,
+    @"total" : @(items.count),
+    @"checked" : @(checked),
+    @"syncHostRunning" : @(NotesAppRunning()),
+  };
+}
+
+static NSDictionary *HandleSetChecklistItem(NSDictionary *request) {
+  gWriteRequest = YES;
+  NSString *identifier = RequireIdentifier(request);
+  NSString *todoValue = RequireString(request, @"todoIdentifier");
+  NSUUID *todoUUID = ParseTodoIdentifier(todoValue);
+  if (!todoUUID) Fail(@"invalid_request", @"`todoIdentifier` must be 32 hex digits or a UUID", nil);
+  NSString *todoHex = TodoHex(todoUUID);
+  id doneValue = request[@"done"];
+  if (!IsJSONBool(doneValue)) Fail(@"invalid_request", @"`done` must be true or false", nil);
+  BOOL done = [doneValue boolValue];
+  NSString *ifRevision = RequireString(request, @"ifRevision");
+  RequireFeature(FeatureChecklist);
+
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, NO);
+  NSManagedObject *note = FetchNote(context, identifier);
+  RequireAppendableNote(note);
+
+  NSString *revisionBefore = RevisionToken(note);
+  if (![revisionBefore isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+
+  id ms = nil;
+  NSAttributedString *body = LoadBody(note, &ms);
+  if (![ms respondsToSelector:sel_registerName("setAttributes:range:")])
+    Fail(@"private_api_unavailable", @"The note body does not support attribute edits",
+         @{@"committed" : @NO, @"missing" : @[ @"-[mergeable string setAttributes:range:]" ]});
+  NSArray *items = ChecklistItems(body);
+  NSDictionary *item = ItemWithTodo(items, todoHex);
+  if (!item)
+    Fail(@"not_found", @"No checklist item in this note has that todoIdentifier", @{@"committed" : @NO});
+  if (![item[@"contiguous"] boolValue])
+    Fail(@"ambiguous_target", @"That todoIdentifier appears in more than one place in the note",
+         @{@"committed" : @NO});
+  BOOL previousDone = [item[@"done"] boolValue];
+
+  NSMutableDictionary *result = [@{
+    @"identifier" : identifier,
+    @"todoIdentifier" : todoHex,
+    @"index" : item[@"index"],
+    @"done" : @(done),
+    @"previousDone" : @(previousDone),
+    @"revisionBefore" : revisionBefore,
+  } mutableCopy];
+
+  // Already in the requested state on every run: an idempotent no-op that
+  // writes nothing.
+  if (previousDone == done && [item[@"consistent"] boolValue]) {
+    [result addEntriesFromDictionary:@{
+      @"status" : @"unchanged",
+      @"committed" : @NO,
+      @"verified" : @YES,
+      @"persistedDone" : @(previousDone),
+      @"revisionAfter" : revisionBefore,
+    }];
+    [result addEntriesFromDictionary:SyncFields(NoteState(note), store)];
+    return result;
+  }
+
+  // Each run keeps its own paragraph style (indent, alignment, paragraph
+  // identity) and gets a todo with the item's identity and the new done bit.
+  Class todoClass = objc_getClass("ICTTTodo");
+  id todo = ((id(*)(id, SEL, id, BOOL))objc_msgSend)(
+      [todoClass alloc], sel_registerName("initWithIdentifier:done:"), todoUUID, done);
+  if (!todo) Fail(@"private_api_unavailable", @"Could not build the checklist todo", @{@"committed" : @NO});
+  NSMutableArray *edits = [NSMutableArray array];
+  for (NSArray *run in item[@"runs"]) {
+    id style = [run[1] mutableCopy];
+    if (!style)
+      Fail(@"private_api_unavailable", @"Could not copy the checklist paragraph style",
+           @{@"committed" : @NO});
+    ((void (*)(id, SEL, id))objc_msgSend)(style, sel_registerName("setTodo:"), todo);
+    [edits addObject:@[ run[0], style ]];
+  }
+
+  NSRange span = [item[@"span"] rangeValue];
+  NSString *before = [body.string copy];
+  SendVoid(ms, "beginEditing");
+  for (NSArray *edit in edits)
+    MergeAttributes(ms, body, [edit[0] rangeValue], @{kStyleKey : edit[1]}, nil);
+  SendVoid(ms, "endEditing");
+  FinishAttributeEdit(note, span, @"apple-notes-mcp set_checklist_item");
+  SaveOrFail(context);
+
+  // Fresh read-back through a new coordinator: the text is unchanged, the item
+  // covers the same characters with the requested done bit everywhere, and
+  // every other item kept its identity, position, and state.
+  NSDictionary *after = nil;
+  NSNumber *persistedDone = nil;
+  NSString *verifyDetail = nil;
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *reread = FetchNote(fresh, identifier);
+    NSAttributedString *persisted = LoadBody(reread, NULL);
+    NSArray *freshItems = ChecklistItems(persisted);
+    NSDictionary *freshItem = ItemWithTodo(freshItems, todoHex);
+    persistedDone = freshItem[@"done"];
+    BOOL othersKept = freshItems.count == items.count;
+    for (NSUInteger i = 0; othersKept && i < items.count; i++) {
+      NSDictionary *a = items[i], *b = freshItems[i];
+      othersKept = [a[@"todoIdentifier"] isEqualToString:b[@"todoIdentifier"]] &&
+                   NSEqualRanges([a[@"span"] rangeValue], [b[@"span"] rangeValue]) &&
+                   ([a[@"todoIdentifier"] isEqualToString:todoHex] || [a[@"done"] isEqual:b[@"done"]]);
+    }
+    if (![persisted.string isEqualToString:before])
+      verifyDetail = @"The persisted note text changed";
+    else if (!freshItem || !NSEqualRanges([freshItem[@"span"] rangeValue], span))
+      verifyDetail = @"The checklist item no longer covers the same characters";
+    else if (![freshItem[@"consistent"] boolValue] || [persistedDone boolValue] != done)
+      verifyDetail = @"The persisted done state is not the requested one";
+    else if (!othersKept)
+      verifyDetail = @"Another checklist item changed";
+    after = NoteState(reread);
+  } @catch (NSException *e) {
+    // After a successful save: a committed write that could not be verified.
+    verifyDetail = e.reason ?: e.name;
+  }
+  if (verifyDetail || !after)
+    Fail(@"verification_failed", verifyDetail ?: @"Read-back failed",
+         @{@"committed" : @YES,
+           @"revisionBefore" : revisionBefore,
+           @"persistedDone" : OrNull(persistedDone)});
+
+  [result addEntriesFromDictionary:@{
+    @"status" : @"updated",
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"persistedDone" : persistedDone,
+    @"revisionAfter" : after[@"revision"],
+  }];
+  [result addEntriesFromDictionary:SyncFields(after, store)];
   return result;
 }
 

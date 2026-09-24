@@ -149,12 +149,14 @@ Call `native-writer-status` first. Every write needs a fresh `revision` as
 `ifRevision`; on `revision_conflict` or `indeterminate: true`, read the note
 before retrying.
 
-| Tool                       | Purpose                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `native-writer-status`     | Report both switches, writer build state, and live probe (read-only)             |
-| `native-append-plain-text` | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
-| `native-sync-push`         | Check or get writer changes uploaded later (status, nudge, confirmed relaunch)   |
-| `native-edit-note`         | Edit text, one attachment, or blank lines in place: dry run, then apply          |
+| Tool                        | Purpose                                                                                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `native-writer-status`      | Report both switches, writer build state, and live probe (read-only)                                                  |
+| `native-append-plain-text`  | Append plain paragraphs with a revision guard and read-back; optional sync nudge                                      |
+| `native-sync-push`          | Check or get writer changes uploaded later (status, nudge, confirmed relaunch)                                        |
+| `native-edit-note`          | Edit text, one attachment, or blank lines in place: dry run, then apply                                               |
+| `native-checklist-state`    | List native checklist items with `todoIdentifier`, `done`, and the note `revision` (read-only)                        |
+| `native-set-checklist-item` | Check or uncheck one item by `todoIdentifier` with `ifRevision`; `persistedDone` read-back; same state writes nothing |
 
 ## Usage Patterns
 

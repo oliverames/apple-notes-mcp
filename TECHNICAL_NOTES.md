@@ -1140,6 +1140,68 @@ refused with `committed: false`; prepend and insert-before-heading verified;
 a Quick Note was refused under `requireNonSystemPaper`; the live note's
 revision was unchanged.
 
+### Checklist toggling (`read_checklist`, `set_checklist_item`)
+
+A checklist item's identity and done bit live in an `ICTTTodo` (`-uuid`,
+`-done`, `-initWithIdentifier:done:`) held by the `ICTTParagraphStyle`
+(`style` 103, `-todo`, `-setTodo:`) in the `TTStyle` attribute of the item's
+characters. In the protobuf this is `AttributeRun.paragraphStyle` (field 2)
+`.todo` (field 5): `uuid` bytes (field 1) and `done` (field 2). The 16 UUID
+bytes as 32 lowercase hex digits are the `id` `get-native-objects` reports.
+
+**Style runs are not aligned to lines.** On a note built with
+`create-checklist-item` (macOS 27.2, observed 2026-09-23), each item's run
+began with the newline that ends the previous line: the run for item one
+covered `"\ntoggle alpha"`, and item two's run covered `"\ntoggle beta"`.
+Reading "the style at each line's terminating newline" therefore attributes
+item one's todo to the body line above it, and toggling by line would have
+turned that body line into a checklist item. The writer never infers items
+from line boundaries. `read_checklist` (a read action) collects the exact runs
+whose todo UUID matches and reports `text` from the line holding the item's
+first non-newline character, plus the note's `revision`.
+
+`set_checklist_item` copies the paragraph style of each of the item's runs
+(`-mutableCopyWithZone:`, which keeps indent, alignment, and paragraph UUID),
+sets a todo with the same UUID and the new done bit, and writes it with
+`-[ICTTMergeableAttributedString setAttributes:range:]` inside
+`beginEditing`/`endEditing`. `setAttributes:range:` replaces a run's whole
+attribute dictionary, so the writer merges every existing attribute (fonts,
+links, `TTTimestamp`) back in per run. It then calls
+`edited:range:changeInLength:` with `NSTextStorageEditedAttributes`,
+`saveNoteData`, stamps `modificationDate`, and `updateChangeCountWithReason:`.
+`saveNoteData` also refreshes the derived `ZHASCHECKLISTINPROGRESS` column
+(observed 1 to 0 on a store copy on 2026-09-23 when the last open item was
+checked).
+
+The fresh read-back requires the same text, the item covering the same
+characters with the requested done bit on every run, and every other item
+unchanged in identity, characters, and state. A request for the state the item
+already has writes nothing (`status: "unchanged"`, `committed: false`). A UUID
+found in two separate places is refused as `ambiguous_target`. The MCP tools
+are `native-checklist-state` and `native-set-checklist-item` (optional
+`nudge`, skipped when nothing was written).
+
+`scripts/test-private-writer-checklist-copy-store.sh` runs these actions on a
+store copy. On 2026-09-24 every checklist note in the test library was either
+trashed or shared, so the script moved a trashed checklist note into a regular
+folder of its account in the copy (plain SQL on the disposable copy, never on
+the live store) and then passed: two items, one toggled and back, the no-op
+and every refusal as expected, and the live note unchanged.
+
+Earlier live test (2026-09-23, macOS 27.2, Notes running), run with the same
+edit logic in the earlier combined helper, before it moved into this writer:
+on a note built with two `create-checklist-item` items in an iCloud folder,
+the tool refused a stale revision, checked the second item
+(`persistedDone: true`, protobuf `done` 1 on exactly that item's run, the
+other item and the text unchanged), and then returned `unchanged` for the same
+request. AppleScript still listed both list items, and `get-native-objects`
+reported the new done state under the same identifier. `currentLocalVersion`
+went from 3 to 4 while `latestVersionSyncedToCloud` stayed 3 for the whole
+12-minute read-only poll (every 30 seconds). When checked again about two and
+a half hours later both counters were 4, so Notes.app uploaded the change at
+some point in between; what triggered it was not observed. That test predates
+the sync nudge. The writer build of this action has not been live-tested yet.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this
