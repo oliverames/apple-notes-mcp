@@ -1,5 +1,21 @@
 # Worklog
 
+## 2026-09-24 (evening) - Upstream review from a cloud session
+
+**What changed**: Nothing in code. Read-only review of upstream state from a Linux cloud session, which cannot run live Notes tests.
+
+- Upstream merged #256 (2.9.24), #257 (2.9.25) and #258 (2.9.27). sweetrb commented on each and agreed with every judgement call; he added a Mobile Documents/CloudStorage carve-out to #256 and a `committed:true` fix to #257 (bbc7811).
+- sweetrb then shipped #259 (2.9.26) and #260 (2.9.28): a shared `readAllowedFile()` in `src/utils/attachmentFs.ts` now scopes add-attachment, create-note-with-attachment, analyze-svg and templateFile reads (roots, hidden/`~/Library` rule, realpath re-check, O_NONBLOCK, dev/ino match).
+- Upstream main is `7bcb131` (2.9.28). Open upstream items: draft #250 (no maintainer comment yet), issues #181 (our roadmap), #220 (FDA under Claude Desktop), #248 (ours).
+- #248: #251 fixed the reporting half (refusal now `committed:false`, message suggests search lag). The root cause (Find Notes returning nothing on 27.2) is still unconfirmed and needs a Mac.
+- #220: #227 changed the advice to grant the Node binary, but the reporter had already tried that with `npx -y`. Untested hypothesis: the `npx` wrapper or a shell in the launch chain becomes the responsible process. A cheap test is `command` = absolute node path, `args` = absolute `build/index.js`, then grant that node.
+
+**Findings that block the gap-parity PR**:
+- `origin/feat/gap-parity` does not exist. It lives only in the Mac worktree named in the 2026-09-24 entry, so resume step (1) must run on the Mac.
+- Its release number 2.9.28 now collides with upstream #260. Merge upstream main and renumber to 2.9.29 or higher.
+- `wgap/compose` `composeFileSize()` (`src/services/privateCompose.ts`) accepts any absolute path with only O_NOFOLLOW, and the writer then reads that file into the note. That is the #195 class sweetrb just closed in #259; it also lacks O_NONBLOCK, so a FIFO can block. Route compose attachments and paper `svgPath` (`assertReadableInRoots` in `privatePaperWriterTools.ts`) through `readAllowedFile()` or its policy check after the merge.
+- Fork PR oliverames/apple-notes-mcp#2 is obsolete once fork main syncs with upstream (its CI fix is a port of upstream #152). Fork `main` is still at 2.7.1.
+
 ## 2026-09-23 - Upstream parity push; paused for machine downtime
 
 **What changed**: About 30 of our PRs merged upstream today (#182-#233 range, plus #204 as read-only). This session also opened #241, then closed it because sweetrb fixed #236 himself in #240. It synced #234, #235 and #238 with main and pushed them (2211, 2222 and 2165 tests passing), and replied to and resolved the CodeQL thread on #235.
