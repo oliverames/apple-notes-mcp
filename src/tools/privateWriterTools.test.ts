@@ -184,12 +184,14 @@ describe("writerErrorResult", () => {
       "writes_disabled",
       "not_live_validated",
       "ambiguous",
+      "ambiguous_target",
       "save_failed",
       "timeout",
     ])
       expect(Object.keys(ERROR_CODES)).toContain(writerEnvelopeCode(code, ""));
     expect(writerEnvelopeCode("writes_disabled", "")).toBe("unsupported");
     expect(writerEnvelopeCode("ambiguous", "")).toBe("ambiguous");
+    expect(writerEnvelopeCode("ambiguous_target", "")).toBe("ambiguous");
   });
 });
 

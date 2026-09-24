@@ -56329,9 +56329,20 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  read_checklist: "read",
+  set_checklist_item: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var CHECKLIST_TOGGLE_LIVE_VALIDATED = false;
+var WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  {
+    key: "checklistToggle",
+    probeKey: "checklistToggle",
+    liveValidated: CHECKLIST_TOGGLE_LIVE_VALIDATED
+  }
+];
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56615,7 +56626,9 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const base = { enabled, writesEnabled, installation, probe: null };
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: Object.fromEntries(
+      WRITER_FEATURES.map((f) => [f.key, { available: false, reason, detail }])
+    )
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56641,35 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
+  const features = {};
+  for (const { key, probeKey, liveValidated } of WRITER_FEATURES)
+    features[key] = featureStatus(probe, probeKey, liveValidated, deps.env);
+  return { ...base, probe, features };
+}
+function featureStatus(probe, probeKey, liveValidated, env) {
+  const parsed = featureSchema2.safeParse(probe.features[probeKey]);
+  if (!parsed.success)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: `The writer probe does not report ${probeKey}`
+    };
+  const feature = parsed.data;
   if (!feature.available) {
     const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57017,6 +57040,7 @@ function writerEnvelopeCode(helperCode, message) {
     case "not_live_validated":
       return "unsupported";
     case "ambiguous":
+    case "ambiguous_target":
       return "ambiguous";
     default:
       return envelopeCode(helperCode, message);
@@ -57136,6 +57160,141 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateWriterChecklist.ts
+var TODO_IDENTIFIER = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+var revision4 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
+var checklistItemSchema = external_exports.object({
+  todoIdentifier: external_exports.string().regex(/^[0-9a-f]{32}$/),
+  uuid: external_exports.string(),
+  index: external_exports.number().int().nonnegative(),
+  done: external_exports.boolean(),
+  /** The line holding the item's first non-newline character. */
+  text: external_exports.string(),
+  lineStart: external_exports.number().int().nonnegative(),
+  lineLengthUTF16: external_exports.number().int().nonnegative(),
+  /** The exact characters whose style carries this todo (may start with a borrowed newline). */
+  styledStart: external_exports.number().int().nonnegative(),
+  styledLengthUTF16: external_exports.number().int().positive(),
+  /** false when the identifier appears in more than one place; the toggle refuses it. */
+  contiguous: external_exports.boolean(),
+  /** false when the item's runs disagree on the done bit; a toggle rewrites all of them. */
+  consistent: external_exports.boolean()
+}).passthrough();
+var checklistStateSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  identifier: external_exports.string(),
+  revision: revision4,
+  items: external_exports.array(checklistItemSchema),
+  total: external_exports.number().int().nonnegative(),
+  checked: external_exports.number().int().nonnegative()
+}).passthrough();
+var setChecklistResultSchema = external_exports.object({
+  status: external_exports.enum(["updated", "unchanged"]),
+  committed: external_exports.boolean(),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  todoIdentifier: external_exports.string().regex(/^[0-9a-f]{32}$/),
+  index: external_exports.number().int().nonnegative(),
+  done: external_exports.boolean(),
+  previousDone: external_exports.boolean(),
+  persistedDone: external_exports.boolean(),
+  revisionBefore: revision4,
+  revisionAfter: revision4,
+  modificationDate: external_exports.string().nullable(),
+  ...writeSyncFields
+}).passthrough();
+function assertTodoIdentifier(todoIdentifier) {
+  if (!TODO_IDENTIFIER.test(todoIdentifier))
+    throw new PrivateWriteError(
+      "invalid_request",
+      "todoIdentifier must be 32 hex digits (get-native-objects checklistItems id) or a UUID",
+      false
+    );
+}
+function readNativeChecklist(identifier, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(identifier);
+  return parseWriterResult(
+    checklistStateSchema,
+    callPrivateWriter("read_checklist", { identifier }, deps),
+    false
+  );
+}
+function setChecklistItem(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertTodoIdentifier(request.todoIdentifier);
+  if (typeof request.done !== "boolean")
+    throw new PrivateWriteError("invalid_request", "done must be true or false", false);
+  assertRevision(request.ifRevision, "native-checklist-state or native-note-state");
+  requireLiveValidated(CHECKLIST_TOGGLE_LIVE_VALIDATED, "native-set-checklist-item", deps.env);
+  return parseWriterResult(
+    setChecklistResultSchema,
+    callPrivateWriter(
+      "set_checklist_item",
+      {
+        identifier: request.identifier,
+        todoIdentifier: request.todoIdentifier.toLowerCase(),
+        done: request.done,
+        ifRevision: request.ifRevision
+      },
+      deps
+    ),
+    true
+  );
+}
+
+// src/tools/privateWriterChecklistTools.ts
+function registerPrivateWriterChecklistTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-checklist-state",
+    "Use when: you need a note's native checklist items with their stable todo identifiers and done state, and the note's revision token, before native-set-checklist-item.\nReturns: items (todoIdentifier as 32 hex digits, uuid, index, done, text, line and styled-character offsets, contiguous/consistent flags), total, checked, and `revision` (pass it as ifRevision).\nDo not use when: the writer is off; get-checklist-state and get-native-objects read the same state from the database without it.\nSafety: read-only; the writer opens the store with Core Data's read-only option. Runs through the private writer, so it needs APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID (the notes://showNote identifier)"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database")
+    },
+    { readOnlyHint: true, openWorldHint: false },
+    (args, deps) => ({ ...readNativeChecklist(resolveIdentifier(manager, args), deps.writer) })
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-set-checklist-item",
+    "Use when: checking or unchecking one existing Apple Notes checklist item, addressed by its todo identifier (native-checklist-state todoIdentifier, or get-native-objects checklistItems id). Shortcuts cannot do this.\nReturns: status (updated, or unchanged when the item already had that state and nothing was written), committed, persistedDone (re-read from a fresh Core Data stack), previousDone, index, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: adding checklist items (create-checklist-item), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API, changing only that item's done bit. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` as ifRevision; refuses on any change since, on an identifier that matches no item (not_found), and on one found in two places (ambiguous_target). A timeout is indeterminate (indeterminate: true): read native-checklist-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      todoIdentifier: external_exports.string().regex(TODO_IDENTIFIER).describe("The checklist item's todo identifier: 32 hex digits, or the same UUID dashed"),
+      done: external_exports.boolean().describe("true to check the item, false to uncheck it"),
+      ifRevision: revisionToken.describe(
+        "The `revision` from native-checklist-state or native-note-state for this note"
+      ),
+      nudge: external_exports.boolean().optional().describe(
+        "After a verified change, ask Notes.app to upload the note by moving it into its own folder (default false; skipped when nothing was written)"
+      ),
+      nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = setChecklistItem(
+        {
+          identifier,
+          todoIdentifier: args.todoIdentifier,
+          done: args.done,
+          ifRevision: args.ifRevision
+        },
+        deps.writer
+      );
+      if (!args.nudge || !result.committed) return { ...result };
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57332,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivateWriterChecklistTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

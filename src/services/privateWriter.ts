@@ -73,6 +73,8 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_note_state: "read",
   append_plain_text: "write",
   read_sync_state: "read",
+  read_checklist: "read",
+  set_checklist_item: "write",
 };
 
 /**
@@ -80,6 +82,32 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
  * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
  */
 export const APPEND_LIVE_VALIDATED = false;
+
+/**
+ * Checking or unchecking a checklist item has not passed live end-to-end
+ * validation in a released build of the writer. Until it has, it also
+ * requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ */
+export const CHECKLIST_TOGGLE_LIVE_VALIDATED = false;
+
+/**
+ * Per-feature availability reported by native-writer-status: `key` is the
+ * name in `features`, `probeKey` the writer probe's feature name, and
+ * `liveValidated` whether the feature runs without
+ * APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ */
+export const WRITER_FEATURES: ReadonlyArray<{
+  key: string;
+  probeKey: string;
+  liveValidated: boolean;
+}> = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  {
+    key: "checklistToggle",
+    probeKey: "checklistToggle",
+    liveValidated: CHECKLIST_TOGGLE_LIVE_VALIDATED,
+  },
+];
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -494,7 +522,7 @@ export interface PrivateWriterCapabilities {
   writesEnabled: boolean;
   installation: WriterInstallationReport;
   probe: PrivateWriterProbe | null;
-  features: { appendPlainText: PrivateWriterFeatureStatus };
+  features: Record<string, PrivateWriterFeatureStatus>;
 }
 
 /** Never throws. Runs the live probe only when both switches are on and the writer is installed. */
@@ -510,7 +538,9 @@ export function privateWriterCapabilities(
     detail: string | null
   ): PrivateWriterCapabilities => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } },
+    features: Object.fromEntries(
+      WRITER_FEATURES.map((f) => [f.key, { available: false, reason, detail }])
+    ),
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -523,26 +553,43 @@ export function privateWriterCapabilities(
   } catch (error) {
     return off("helper_unreachable", error instanceof Error ? error.message : String(error));
   }
-  const feature = probe.features.appendPlainText;
-  let append: PrivateWriterFeatureStatus;
+  const features: Record<string, PrivateWriterFeatureStatus> = {};
+  for (const { key, probeKey, liveValidated } of WRITER_FEATURES)
+    features[key] = featureStatus(probe, probeKey, liveValidated, deps.env);
+  return { ...base, probe, features };
+}
+
+/** One feature's availability from the probe and its live-validation gate. */
+export function featureStatus(
+  probe: PrivateWriterProbe,
+  probeKey: string,
+  liveValidated: boolean,
+  env: NodeJS.ProcessEnv
+): PrivateWriterFeatureStatus {
+  const parsed = featureSchema.safeParse((probe.features as Record<string, unknown>)[probeKey]);
+  if (!parsed.success)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: `The writer probe does not report ${probeKey}`,
+    };
+  const feature = parsed.data;
   if (!feature.available) {
     const reason =
       feature.reason === "store_unavailable" || feature.reason === "disabled"
         ? (feature.reason as PrivateWriterUnavailableReason)
         : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }

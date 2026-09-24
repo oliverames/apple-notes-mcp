@@ -64,6 +64,7 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "not_live_validated":
       return "unsupported";
     case "ambiguous":
+    case "ambiguous_target":
       return "ambiguous";
     default:
       return envelopeCode(helperCode, message);
