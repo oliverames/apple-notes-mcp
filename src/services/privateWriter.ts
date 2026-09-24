@@ -73,6 +73,8 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_note_state: "read",
   append_plain_text: "write",
   read_sync_state: "read",
+  plan_edit: "read",
+  edit_note: "write",
 };
 
 /**
@@ -80,6 +82,13 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
  * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
  */
 export const APPEND_LIVE_VALIDATED = false;
+
+/**
+ * Applying an in-place edit (edit_note) has passed the copy-store
+ * preservation checks but not a live validation that includes iCloud sync.
+ * Planning (plan_edit) is read-only and needs no such gate.
+ */
+export const EDIT_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -228,7 +237,14 @@ export const writerProbeSchema = z
       .passthrough(),
     syncHostRunning: z.boolean(),
     features: z
-      .object({ readNoteState: featureSchema, appendPlainText: featureSchema })
+      .object({
+        readNoteState: featureSchema,
+        appendPlainText: featureSchema,
+        // Optional so a probe without a feature reports it as unavailable
+        // instead of failing the whole status call.
+        planEdit: featureSchema.optional(),
+        editNote: featureSchema.optional(),
+      })
       .passthrough(),
   })
   .passthrough();
@@ -483,18 +499,309 @@ export function appendPlainText(
   );
 }
 
+// ---------------------------------------------------------------------------
+// In-place edit (plan_edit, edit_note)
+// ---------------------------------------------------------------------------
+
+export const MAX_EDIT_OPERATIONS = 64;
+const MAX_EDIT_TEXT = 10_000;
+
+/**
+ * Text that must stay inside one paragraph: no control characters other
+ * than tab, no attachment glyph (U+FFFC), and no line or paragraph
+ * separators. Mirrors the writer's rule so a bad request never spawns it.
+ */
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_EDIT_TEXT = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+const paragraphText = (min: number) =>
+  z
+    .string()
+    .min(min)
+    .max(MAX_EDIT_TEXT)
+    .refine((text) => !FORBIDDEN_EDIT_TEXT.test(text), {
+      message:
+        "must stay inside one paragraph: no line breaks, attachment glyphs, or control characters",
+    });
+
+export const EDIT_STYLES = [
+  "title",
+  "heading",
+  "subheading",
+  "body",
+  "monospaced",
+  "bulleted",
+  "dashed",
+  "numbered",
+  "checklist",
+] as const;
+const styleName = z.enum(EDIT_STYLES);
+const count = z.number().int().min(1).max(1000);
+const operationId = z.string().min(1).max(128).optional();
+
+const runSchema = z
+  .object({
+    text: paragraphText(1),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    strikethrough: z.boolean().optional(),
+  })
+  .strict();
+const runsSchema = z.array(runSchema).min(1).max(200);
+
+/** Plain `text` inherits the replaced range's formatting; `runs` states it. */
+const replacementSchema = z.union([
+  z.object({ text: paragraphText(0) }).strict(),
+  z.object({ runs: runsSchema }).strict(),
+]);
+
+/**
+ * Selectors are keyed by `kind` so a later kind (an attachment selector, or
+ * a run of blank lines for line-break trimming) is one more union member
+ * here and one more branch in the writer's ResolveSelector().
+ */
+const textSelector = z
+  .object({
+    kind: z.literal("text").optional(),
+    text: paragraphText(1),
+    scope: z.enum(["body", "title", "all"]).optional(),
+    occurrence: count.optional(),
+  })
+  .strict();
+const styleSelector = z
+  .object({ kind: z.literal("style"), style: styleName, occurrence: count.optional() })
+  .strict();
+const blankSelector = z
+  .object({
+    kind: z.literal("blank"),
+    style: styleName.exclude(["title", "body"]),
+    occurrence: count.optional(),
+  })
+  .strict();
+
+const blockSchema = z
+  .object({
+    type: styleName.exclude(["title"]),
+    text: paragraphText(0).optional(),
+    runs: runsSchema.optional(),
+    checked: z.boolean().optional(),
+  })
+  .strict()
+  .refine((b) => (b.text === undefined) !== (b.runs === undefined), {
+    message: "each block needs exactly one of text or runs",
+  })
+  .refine((b) => b.checked === undefined || b.type === "checklist", {
+    message: "checked is only valid on checklist blocks",
+  });
+
+const insertSchema = (op: "insert_after" | "insert_before") =>
+  z
+    .object({
+      op: z.literal(op),
+      id: operationId,
+      anchor: z.union([textSelector, styleSelector]),
+      blocks: z.array(blockSchema).min(1).max(200),
+      expectedCount: count.optional(),
+    })
+    .strict();
+
+export const editOperationSchema = z.discriminatedUnion("op", [
+  z
+    .object({
+      op: z.literal("replace"),
+      id: operationId,
+      selector: textSelector.extend({ match: z.enum(["substring", "equals"]).optional() }).strict(),
+      replacement: replacementSchema,
+      expectedCount: count.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("delete_paragraph"),
+      id: operationId,
+      selector: z.union([textSelector, blankSelector]),
+      expectedCount: count.optional(),
+    })
+    .strict(),
+  insertSchema("insert_after"),
+  insertSchema("insert_before"),
+  z
+    .object({
+      op: z.literal("set_title"),
+      id: operationId,
+      replacement: z.union([
+        z.object({ text: paragraphText(1) }).strict(),
+        z.object({ runs: runsSchema }).strict(),
+      ]),
+    })
+    .strict(),
+]);
+export type EditOperation = z.infer<typeof editOperationSchema>;
+
+const editTargetSchema = z
+  .object({
+    paragraphIndex: z.number().int(),
+    paragraphStyle: z.string(),
+    location: z.number().int(),
+    length: z.number().int(),
+    newLength: z.number().int(),
+  })
+  .passthrough();
+
+const editPlanFields = {
+  identifier: z.string(),
+  revisionBefore: z.string().regex(/^r1:[a-f0-9]{64}$/),
+  planDigest: z.string(),
+  operationCount: z.number().int(),
+  targetCount: z.number().int(),
+  operations: z.array(
+    z
+      .object({
+        index: z.number().int(),
+        op: z.string(),
+        matchedCount: z.number().int(),
+        targets: z.array(editTargetSchema),
+      })
+      .passthrough()
+  ),
+  lengthBefore: z.number().int(),
+  lengthAfter: z.number().int(),
+  unchangedUTF16: z.number().int(),
+  wouldChange: z.boolean(),
+  titleChanged: z.boolean(),
+  attachmentGlyphs: z.number().int(),
+  storeKind: z.enum(["live", "copy"]),
+};
+
+export const editPlanSchema = z
+  .object({
+    status: z.literal("planned"),
+    dryRun: z.literal(true),
+    committed: z.literal(false),
+    ...editPlanFields,
+  })
+  .passthrough();
+
+/** What the writer's fresh read-back proved about everything outside the edits. */
+const preservationSchema = z
+  .object({
+    unchangedUTF16: z.number().int(),
+    formattingOutsideEditsVerified: z.literal(true),
+    attachmentGlyphs: z.number().int(),
+    attachmentGlyphSequenceVerified: z.literal(true),
+    attachmentRows: z.number().int(),
+    attachmentRowsVerified: z.literal(true),
+  })
+  .passthrough();
+
+export const editResultSchema = z.union([
+  z
+    .object({
+      status: z.literal("updated"),
+      dryRun: z.literal(false),
+      committed: z.literal(true),
+      verified: z.literal(true),
+      revisionAfter: z.string(),
+      modificationDate: z.string().nullable(),
+      preservation: preservationSchema,
+      ...writeSyncFields,
+      ...editPlanFields,
+    })
+    .passthrough(),
+  z
+    .object({
+      status: z.literal("unchanged"),
+      dryRun: z.literal(false),
+      committed: z.literal(false),
+      revisionAfter: z.string(),
+      ...editPlanFields,
+    })
+    .passthrough(),
+]);
+export type PrivateEditPlan = z.infer<typeof editPlanSchema>;
+export type PrivateEditResult = z.infer<typeof editResultSchema>;
+
+export interface EditNoteRequest {
+  identifier: string;
+  operations: EditOperation[];
+  /** true: plan only (plan_edit, read-only). false: apply (edit_note). */
+  dryRun: boolean;
+  /** Required to apply: the plan's revisionBefore. */
+  ifRevision?: string;
+  requireNonSystemPaper?: boolean;
+}
+
+/**
+ * Plan (dryRun: true, the writer's read-only plan_edit) or apply
+ * (dryRun: false, edit_note, with the plan's revisionBefore as ifRevision)
+ * literal in-place edits to one note.
+ */
+export function editNote(
+  request: EditNoteRequest,
+  deps: PrivateHelperDeps = defaultWriterDeps()
+): PrivateEditPlan | PrivateEditResult {
+  const notCommitted = request.dryRun ? undefined : false;
+  const refuse = (message: string) =>
+    new PrivateWriteError("invalid_request", message, notCommitted);
+  try {
+    assertReadIdentifier(request.identifier);
+  } catch (error) {
+    throw refuse(error instanceof Error ? error.message : String(error));
+  }
+  if (!request.operations.length || request.operations.length > MAX_EDIT_OPERATIONS)
+    throw refuse(`operations must hold 1 to ${MAX_EDIT_OPERATIONS} entries`);
+  const operations = z.array(editOperationSchema).safeParse(request.operations);
+  if (!operations.success)
+    throw refuse(
+      `Invalid operations: ${operations.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`
+    );
+  const fields: Record<string, unknown> = {
+    identifier: request.identifier,
+    operations: operations.data,
+  };
+  if (request.requireNonSystemPaper !== undefined)
+    fields.requireNonSystemPaper = request.requireNonSystemPaper;
+  if (request.dryRun) {
+    return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
+  }
+  if (!request.ifRevision)
+    throw refuse(
+      "Applying an edit requires ifRevision: run the identical request with dryRun: true first " +
+        "and pass its revisionBefore."
+    );
+  assertRevision(request.ifRevision, "a dry run's revisionBefore");
+  requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
+  return parseWriterResult(
+    editResultSchema,
+    callPrivateWriter("edit_note", { ...fields, ifRevision: request.ifRevision }, deps),
+    true
+  );
+}
+
 export interface PrivateWriterFeatureStatus {
   available: boolean;
   reason: PrivateWriterUnavailableReason | null;
   detail: string | null;
 }
 
+/**
+ * One row per writer feature: its key in `features`, the probe's key for it,
+ * and whether it has passed live validation (read-only features have nothing
+ * to validate). A branch adding a feature adds one row.
+ */
+export const WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  { key: "planEdit", probeKey: "planEdit", liveValidated: true },
+  { key: "editNote", probeKey: "editNote", liveValidated: EDIT_LIVE_VALIDATED },
+] as const;
+export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
+
 export interface PrivateWriterCapabilities {
   enabled: boolean;
   writesEnabled: boolean;
   installation: WriterInstallationReport;
   probe: PrivateWriterProbe | null;
-  features: { appendPlainText: PrivateWriterFeatureStatus };
+  features: Record<WriterFeatureKey, PrivateWriterFeatureStatus>;
 }
 
 /** Never throws. Runs the live probe only when both switches are on and the writer is installed. */
@@ -505,12 +812,19 @@ export function privateWriterCapabilities(
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const every = (
+    status: (row: (typeof WRITER_FEATURES)[number]) => PrivateWriterFeatureStatus
+  ): Record<WriterFeatureKey, PrivateWriterFeatureStatus> =>
+    Object.fromEntries(WRITER_FEATURES.map((row) => [row.key, status(row)])) as Record<
+      WriterFeatureKey,
+      PrivateWriterFeatureStatus
+    >;
   const off = (
     reason: PrivateWriterUnavailableReason,
     detail: string | null
   ): PrivateWriterCapabilities => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } },
+    features: every(() => ({ available: false, reason, detail })),
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -523,26 +837,33 @@ export function privateWriterCapabilities(
   } catch (error) {
     return off("helper_unreachable", error instanceof Error ? error.message : String(error));
   }
-  const feature = probe.features.appendPlainText;
-  let append: PrivateWriterFeatureStatus;
-  if (!feature.available) {
-    const reason =
-      feature.reason === "store_unavailable" || feature.reason === "disabled"
-        ? (feature.reason as PrivateWriterUnavailableReason)
-        : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  const probed = probe.features as Record<string, z.infer<typeof featureSchema> | undefined>;
+  const features = every((row): PrivateWriterFeatureStatus => {
+    const feature = probed[row.probeKey];
+    if (!feature)
+      return {
+        available: false,
+        reason: "private_api_unavailable",
+        detail: `The installed writer does not report ${row.probeKey}`,
+      };
+    if (!feature.available) {
+      const reason =
+        feature.reason === "store_unavailable" || feature.reason === "disabled"
+          ? (feature.reason as PrivateWriterUnavailableReason)
+          : "private_api_unavailable";
+      return {
+        available: false,
+        reason,
+        detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
+      };
+    }
+    if (!row.liveValidated && deps.env[ALLOW_UNVERIFIED_ENV] !== "1")
+      return {
+        available: false,
+        reason: "not_live_validated",
+        detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
+      };
+    return { available: true, reason: null, detail: null };
+  });
+  return { ...base, probe, features };
 }

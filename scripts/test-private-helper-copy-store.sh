@@ -15,6 +15,9 @@
 #   NOTE_UUID  note to write to in the copy. Default: the most recently
 #              modified unlocked note with a folder, chosen from the copy.
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
+#   EDIT_NOTES="UUID ..." notes for the plan_edit / edit_note round trip.
+#              Default: up to EDIT_SAMPLE (5) recent editable notes that own
+#              attachments, plus up to 3 without.
 #
 # Prints states and counts only, never note titles or bodies. Needs Full Disk
 # Access for the terminal running it. Removes the copy on exit.
@@ -136,8 +139,122 @@ echo "ok: replayed append refused"
 
 # Feature write checks go here, each against the copy only.
 
-# 5. The live note is untouched.
+# 4b. plan_edit / edit_note on the copy, checked by an independent decoder
+# (scripts/check-edit-preservation.mjs decodes the stored protobuf itself, with
+# no writer and no NotesShared). Each note gets a content-free round trip:
+# insert styled blocks after the first body paragraph, restyle one of them,
+# then delete them all. Every step must keep each character outside the edited
+# ranges on its exact serialized attribute run and leave attachment rows and
+# every other row byte-identical; the last step must restore the note exactly.
+# Every plan must leave the store unchanged.
+CHECK="$REPO/scripts/check-edit-preservation.mjs"
+edit_request() { # action identifier ifRevision(or empty) operations-json
+  if [ -n "$3" ]; then
+    printf '{"protocol":1,"action":"%s","identifier":"%s","ifRevision":"%s","operations":%s}' \
+      "$1" "$2" "$3" "$4"
+  else
+    printf '{"protocol":1,"action":"%s","identifier":"%s","operations":%s}' "$1" "$2" "$4"
+  fi
+}
+snap() { node "$CHECK" snapshot "$COPY" "$1" "$WORK/$2.json" >/dev/null; }
+edit_step() { # uuid label operations-json
+  snap "$1" before
+  PLAN="$(copy_run "$(edit_request plan_edit "$1" "" "$3")" || true)"
+  [ "$(field "$PLAN" status)" = "planned" ] || fail "$2 plan: $(field "$PLAN" code) $(field "$PLAN" message)"
+  snap "$1" planned
+  node "$CHECK" same "$WORK/before.json" "$WORK/planned.json" >/dev/null || fail "$2: plan_edit changed the store"
+  OUT="$(copy_run "$(edit_request edit_note "$1" "$(field "$PLAN" revisionBefore)" "$3")" || true)"
+  [ "$(field "$OUT" status)" = "updated" ] || fail "$2 apply: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$OUT" verified)" = "true" ] || fail "$2 apply not verified"
+  [ "$(field "$OUT" preservation.formattingOutsideEditsVerified)" = "true" ] || fail "$2: no preservation report"
+  [ "$(field "$OUT" planDigest)" = "$(field "$PLAN" planDigest)" ] || fail "$2: apply planned differently"
+  printf '%s' "$OUT" >"$WORK/response.json"
+  snap "$1" after
+  node "$CHECK" compare "$WORK/before.json" "$WORK/after.json" "$WORK/response.json" ||
+    fail "$2: independent preservation check failed"
+  echo "ok: $2 ($(field "$OUT" targetCount) targets, $(field "$OUT" preservation.unchangedUTF16) units kept, $(field "$OUT" preservation.attachmentGlyphs) glyphs; writer verified; independent check passed)"
+}
+
+EDIT_NOTES="${EDIT_NOTES:-}"
+if [ -z "$EDIT_NOTES" ]; then
+  editable() {
+    local state
+    state="$(copy_run "$(read_request "$1")" || true)"
+    [ "$(field "$state" editable)" = "true" ] && [ "$(field "$state" sharedViaICloud)" = "false" ] &&
+      [ "$(field "$state" deletedOrInTrash)" = "false" ] && [ "$(field "$state" passwordProtected)" = "false" ]
+  }
+  pick() { # "" or "NOT" (owns attachments or not), how many
+    local found=0 candidate
+    for candidate in $(/usr/bin/sqlite3 -readonly "$COPY" "SELECT n.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT n
+      JOIN ZICNOTEDATA d ON d.ZNOTE = n.Z_PK
+      WHERE n.ZIDENTIFIER IS NOT NULL AND n.ZFOLDER IS NOT NULL
+        AND IFNULL(n.ZISPASSWORDPROTECTED,0)=0 AND IFNULL(n.ZMARKEDFORDELETION,0)=0
+        AND $1 EXISTS (SELECT 1 FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = n.Z_PK)
+      ORDER BY n.ZMODIFICATIONDATE1 DESC LIMIT 60;"); do
+      [ "$found" -lt "$2" ] || break
+      if editable "$candidate"; then
+        EDIT_NOTES="$EDIT_NOTES $candidate"
+        found=$((found + 1))
+      fi
+    done
+  }
+  pick "" "${EDIT_SAMPLE:-5}"
+  pick "NOT" 3
+fi
+[ -n "$EDIT_NOTES" ] || fail "no editable candidate notes for edit_note"
+
+MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","occurrence":1},"expectedCount":COUNT,"blocks":[{"type":"heading","text":"copy-store edit marker"},{"type":"checklist","text":"copy-store checklist","checked":true},{"type":"body","runs":[{"text":"copy-store "},{"text":"bold","bold":true}]}]}]'
+RESTYLE_OPS='[{"op":"replace","selector":{"kind":"text","text":"copy-store edit marker","match":"equals"},"replacement":{"runs":[{"text":"copy-store edit marker 2","italic":true}]}}]'
+DELETE_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store edit marker 2"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store checklist"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store bold"}}]'
+EDITED=0
+REFUSED_NOTES=0
+EDIT_LIVE_BEFORE=""
+for EDIT_NOTE in $EDIT_NOTES; do
+  EDIT_LIVE_BEFORE="$EDIT_LIVE_BEFORE $EDIT_NOTE=$(field "$(run "$(read_request "$EDIT_NOTE")")" revision)"
+  # Guard rails: the live store is gated, a missing ifRevision is refused, a
+  # stale one is a conflict, and none of them commit.
+  OUT="$(run "$(edit_request edit_note "$EDIT_NOTE" "$ZERO" "$RESTYLE_OPS")" || true)"
+  [ "$(field "$OUT" code)" = "writes_disabled" ] || fail "live edit_note not gated: $(field "$OUT" code)"
+  OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "" "$RESTYLE_OPS")" || true)"
+  [ "$(field "$OUT" code)" = "invalid_request" ] || fail "edit_note without ifRevision was not refused"
+  OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "$ZERO" "$RESTYLE_OPS")" || true)"
+  if [ "$(field "$OUT" code)" != "revision_conflict" ] || [ "$(field "$OUT" committed)" != "false" ]; then
+    fail "stale edit ifRevision not refused: $(field "$OUT" code)"
+  fi
+  # How many body paragraphs the style anchor sees (a count mismatch reports it).
+  PROBE="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "${MARK_OPS/COUNT/1000}")" || true)"
+  COUNT="$(field "$PROBE" matchedCount)"
+  [ "$(field "$PROBE" status)" = "planned" ] && COUNT=1000
+  if [ -z "$COUNT" ] || [ "$COUNT" = "0" ]; then
+    echo "skip: a candidate has no body paragraph to anchor on ($(field "$PROBE" code))"
+    continue
+  fi
+  # A note whose edit would dirty another object (for example Notes
+  # re-deriving the title from an attachment) must be refused at the plan.
+  PROBE="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "${MARK_OPS/COUNT/$COUNT}")" || true)"
+  if [ "$(field "$PROBE" code)" = "unexpected_side_effect" ]; then
+    REFUSED_NOTES=$((REFUSED_NOTES + 1))
+    echo "ok: plan refused a note whose edit would change another object"
+    continue
+  fi
+  snap "$EDIT_NOTE" original
+  edit_step "$EDIT_NOTE" "insert blocks" "${MARK_OPS/COUNT/$COUNT}"
+  edit_step "$EDIT_NOTE" "restyle inserted text" "$RESTYLE_OPS"
+  edit_step "$EDIT_NOTE" "delete inserted paragraphs" "$DELETE_OPS"
+  snap "$EDIT_NOTE" final
+  node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
+    fail "the round trip did not restore the original text and runs"
+  EDITED=$((EDITED + 1))
+done
+[ "$EDITED" -gt 0 ] || fail "the edit_note round trip ran on no note"
+echo "ok: edit_note round trip restored $EDITED note(s) exactly; $REFUSED_NOTES refused at plan"
+
+# 5. The live notes are untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"
-[ "$LIVE_BEFORE" = "$LIVE_AFTER" ] || fail "live note revision changed during the copy test"
-echo "ok: live note revision unchanged"
+[ "$LIVE_BEFORE" = "$LIVE_AFTER" ] || fail "live note revision changed during the copy test (a concurrent edit in Notes also causes this; rerun)"
+for PAIR in $EDIT_LIVE_BEFORE; do
+  [ "$(field "$(run "$(read_request "${PAIR%%=*}")")" revision)" = "${PAIR#*=}" ] ||
+    fail "a live edit-note revision changed during the copy test (a concurrent edit in Notes also causes this; rerun)"
+done
+echo "ok: live note revisions unchanged"
 echo "PASS"

@@ -6,6 +6,7 @@ vi.mock(import("../services/privateWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   privateWriterCapabilities: vi.fn(),
   appendPlainText: vi.fn(),
+  editNote: vi.fn(),
 }));
 vi.mock(import("../services/privateSyncNudge.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -17,6 +18,7 @@ import { nudgeInPlace, syncPush } from "../services/privateSyncNudge.js";
 import {
   PrivateWriteError,
   appendPlainText,
+  editNote,
   privateWriterCapabilities,
 } from "../services/privateWriter.js";
 import { ERROR_CODES } from "../utils/errorCodes.js";
@@ -58,9 +60,15 @@ describe("private writer tools", () => {
       "native-writer-status",
       "native-append-plain-text",
       "native-sync-push",
+      "native-edit-note",
     ]);
     expect(config("native-sync-push").description).toMatch(/requires confirm: true/);
     expect(config("native-sync-push").annotations.destructiveHint).toBe(false);
+    expect(config("native-edit-note").annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(config("native-edit-note").description).toMatch(/dryRun: true.*revisionBefore/s);
     expect(config("native-writer-status").annotations.readOnlyHint).toBe(true);
     const append = config("native-append-plain-text");
     expect(append.annotations.readOnlyHint).toBe(false);
@@ -162,6 +170,73 @@ describe("private writer tools", () => {
       helperCode: "confirmation_required",
       committed: false,
     });
+  });
+
+  it("plans and applies edits with the resolved identifier, nudging only a committed apply", async () => {
+    const operations = [
+      { op: "replace", selector: { text: "Draft" }, replacement: { text: "Final" } },
+    ];
+    vi.mocked(editNote).mockReturnValueOnce({ status: "planned", revisionBefore: REV } as never);
+    const plan = await fixture().call("native-edit-note", {
+      id: CD,
+      dryRun: true,
+      operations,
+      nudge: true,
+    });
+    expect(vi.mocked(editNote).mock.calls[0][0]).toEqual({
+      identifier: NOTE,
+      dryRun: true,
+      ifRevision: undefined,
+      requireNonSystemPaper: undefined,
+      operations,
+    });
+    expect(plan.structuredContent).toEqual({ ok: true, status: "planned", revisionBefore: REV });
+    expect(nudgeInPlace).not.toHaveBeenCalled();
+
+    vi.mocked(editNote).mockReturnValueOnce({ status: "updated", committed: true } as never);
+    vi.mocked(nudgeInPlace).mockResolvedValueOnce({
+      allUploadsRecorded: true,
+      targets: [],
+    } as never);
+    const applied = await fixture().call("native-edit-note", {
+      identifier: NOTE,
+      dryRun: false,
+      ifRevision: REV,
+      requireNonSystemPaper: true,
+      operations,
+      nudge: true,
+    });
+    expect(vi.mocked(editNote).mock.calls[1][0]).toMatchObject({
+      ifRevision: REV,
+      requireNonSystemPaper: true,
+    });
+    expect(applied.structuredContent.sync).toMatchObject({ ok: true, allUploadsRecorded: true });
+
+    vi.mocked(editNote).mockImplementationOnce(() => {
+      throw new PrivateWriteError("mixed_formatting", "mixed", false, { operationIndex: 0 });
+    });
+    const refused = await fixture().call("native-edit-note", {
+      identifier: NOTE,
+      dryRun: false,
+      ifRevision: REV,
+      operations,
+    });
+    expect(refused.structuredContent).toMatchObject({
+      helperCode: "mixed_formatting",
+      committed: false,
+      indeterminate: false,
+      operationIndex: 0,
+    });
+  });
+
+  it("validates edit input with the declared schema", () => {
+    const edit = fixture().config("native-edit-note").inputSchema;
+    expect(edit.operations.safeParse([]).success).toBe(false);
+    expect(
+      edit.operations.safeParse([{ op: "set_title", replacement: { text: "T" } }]).success
+    ).toBe(true);
+    expect(edit.dryRun.safeParse(undefined).success).toBe(false);
+    expect(edit.ifRevision.safeParse("sha256:abc").success).toBe(false);
   });
 
   it("refuses identifier plus id, and an id that cannot be resolved", async () => {

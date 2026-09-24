@@ -99,6 +99,23 @@ describe("private writer source contract", () => {
     // The read-back after a successful save catches every exception.
     expect(append).toMatch(/@catch \(NSException \*e\)/);
     expect(append).not.toMatch(/@catch \(HelperError \*e\)/);
+    // Every other write action marks itself first, saves only through a
+    // bracketed save, and catches every exception in its read-back.
+    for (const row of actionRows()) {
+      if (WRITER_ACTIONS[row.name] !== "write") continue;
+      const body = handlerBody(row.handler);
+      expect(body, row.name).toMatch(/^\*\w+\(NSDictionary \*request\) \{\s*gWriteRequest = YES;/);
+      expect(body, row.name).toMatch(/SaveOrFail\(|gSaveAttempted = YES;/);
+      expect(body, row.name).not.toMatch(/@catch \(HelperError \*e\)/);
+    }
+    // Each -save: in the file is bracketed.
+    for (const m of CODE.matchAll(/save:&(\w+)\]/g)) {
+      const before = CODE.slice(Math.max(0, m.index - 120), m.index);
+      expect(before).toMatch(/gSaveAttempted = YES;\s*if \(!?\[context $/);
+    }
+    expect(CODE).toMatch(
+      /gSaveAttempted = YES;\s*if \(\[context save:&saveError\]\) \{\s*gSaveSucceeded = YES;/
+    );
     // main(): refusals before the save are committed: false; an exception
     // after a successful save is a committed, unverified write.
     expect(SOURCE).toMatch(
@@ -130,6 +147,38 @@ describe("private writer source contract", () => {
   it("never issues SQL or a batch request", () => {
     expect(CODE).not.toMatch(/sqlite3_(?:exec|prepare)/);
     expect(CODE).not.toMatch(/NSBatch(?:Update|Delete|Insert)Request/);
+  });
+
+  it("plans edits read-only and verifies an applied edit outside its ranges", () => {
+    const plan = handlerBody("HandlePlanEdit");
+    expect(plan).toMatch(/OpenContext\(store, YES\)/);
+    expect(plan).toMatch(/\[context rollback\]/);
+    const apply = handlerBody("HandleEditNote");
+    expect(apply).toMatch(/RequireString\(request, ""\)/);
+    expect(apply).toMatch(
+      /OpenContext\(store, NO\)[\s\S]*SaveOrFail\(context\)[\s\S]*OpenContext\(store, YES\)/
+    );
+    expect(apply).toMatch(/VerifyAgainstPlan\(persisted, plan\)/);
+    expect(apply).toMatch(/AttachmentIdentifiers\(reread\)/);
+    // Formatting outside the edits is compared run by run, including
+    // timestamps, and the glyph sequence against the planned text.
+    expect(CODE).toMatch(/CanonicalRuns\(plan\.snapshot, oldRange, NO\)/);
+    expect(CODE).toMatch(
+      /AttachmentGlyphs\(persisted\) isEqual:AttachmentGlyphs\(plan\.expected\)/
+    );
+    // One entry per glyph character, so two adjacent glyphs of one attachment
+    // (Notes stores AppleScript-added images that way) are not merged into one run.
+    expect(CODE).toMatch(
+      /for \(NSUInteger i = 0; i < range\.length; i\+\+\) \[glyphs addObject:canonical\]/
+    );
+    // No target may contain an attachment glyph unless its selector kind allows it.
+    expect(CODE).toMatch(
+      /static BOOL TargetMayTouchAttachment\(NSString \*kind\) \{\s*\(void\)kind;\s*return NO;/
+    );
+    // Only the note, its data, and its cloud state may be dirty before a save.
+    expect(SOURCE).toMatch(
+      /Fail\(@"unexpected_side_effect",[\s\S]{0,400}?@"objects" : unexpected\}/
+    );
   });
 
   it("identifies itself as the writer in hello and probe", () => {

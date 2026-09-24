@@ -902,6 +902,52 @@ place. It never writes to the store and adds no writer action. Not verified
 live: the relaunch path (it would quit Notes.app while others use it) and the
 upload of a writer-changed folder after a relaunch.
 
+### In-place edit
+
+`native-edit-note` uses two writer actions: `plan_edit` (read) and
+`edit_note` (write). Both run the same planner, `PlanEdit()`, against one
+snapshot of the note's attributed string. Each operation becomes one or more
+`(range, replacement)` targets. Overlapping targets, and two insertions at
+the same point, are refused (`conflicting_operations`). The targets are
+applied through the mergeable string's
+`replaceCharactersInRange:withAttributedString:`, last range first, so
+characters outside them keep their CRDT identity and attributes.
+
+- `plan_edit` opens the store read-only, rehearses the native edit in memory,
+  runs the side-effect check, and rolls back. It returns the plan,
+  `planDigest`, and `revisionBefore`.
+- `edit_note` requires `ifRevision`. With the same operations and the plan's
+  `revisionBefore` it reproduces exactly the planned targets. The writer
+  does not compare the two plans itself; both return `planDigest`, so a
+  caller can.
+- Before the save, only the note, its note data, and its cloud state may be
+  dirty. Anything else, such as Notes re-pointing an attachment it uses for
+  the title, rolls back as `unexpected_side_effect`.
+- After the save, a new read-only stack re-reads the note. It checks that
+  the text equals the plan, that every unchanged stretch has the same
+  canonical attribute runs as before (paragraph style and todo, fonts, hints,
+  links, timestamps, attachment references), that the edited ranges carry the
+  planned formatting (timestamps ignored), that the attachment glyph sequence
+  equals the one in the planned text, and that the note's attachment rows are
+  the same set. The result reports this as `preservation`.
+
+Canonical attribute values use each value's description with pointers
+removed, so a class whose description is unstable makes verification fail,
+never pass. The copy-store script also checks each step with
+`scripts/check-edit-preservation.mjs`, which decodes the stored protobuf
+itself (no writer, no NotesShared) and compares every UTF-16 unit outside the
+edits with its serialized attribute run, plus a digest of every other row.
+
+Room for later work: selectors resolve through `ResolveSelector()` by `kind`
+(`text`, `style`, `blank`), and the client schema is a union on the same key.
+An attachment selector would add a kind whose targets may contain U+FFFC
+(`TargetMayTouchAttachment()`). Verification already compares glyphs with
+the planned text, not the old one, so a planned attachment removal would
+verify there, but the attachment-row check would then need the planned set.
+Line-break trimming (for example collapsing runs of empty body paragraphs)
+fits the same way, as a selector kind that returns the ranges of the extra
+newlines.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

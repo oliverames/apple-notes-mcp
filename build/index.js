@@ -2227,20 +2227,20 @@ var require_resolve = __commonJS({
       return false;
     }
     function countKeys(schema) {
-      let count = 0;
+      let count2 = 0;
       for (const key in schema) {
         if (key === "$ref")
           return Infinity;
-        count++;
+        count2++;
         if (SIMPLE_INLINED.has(key))
           continue;
         if (typeof schema[key] == "object") {
-          (0, util_1.eachItem)(schema[key], (sch) => count += countKeys(sch));
+          (0, util_1.eachItem)(schema[key], (sch) => count2 += countKeys(sch));
         }
-        if (count === Infinity)
+        if (count2 === Infinity)
           return Infinity;
       }
-      return count;
+      return count2;
     }
     function getFullPath(resolver, id2 = "", normalize) {
       if (normalize !== false)
@@ -5710,8 +5710,8 @@ var require_contains = __commonJS({
         cxt.result(valid, () => cxt.reset());
         function validateItemsWithCount() {
           const schValid = gen.name("_valid");
-          const count = gen.let("count", 0);
-          validateItems(schValid, () => gen.if(schValid, () => checkLimits(count)));
+          const count2 = gen.let("count", 0);
+          validateItems(schValid, () => gen.if(schValid, () => checkLimits(count2)));
         }
         function validateItems(_valid, block) {
           gen.forRange("i", 0, len, (i) => {
@@ -5724,16 +5724,16 @@ var require_contains = __commonJS({
             block();
           });
         }
-        function checkLimits(count) {
-          gen.code((0, codegen_1._)`${count}++`);
+        function checkLimits(count2) {
+          gen.code((0, codegen_1._)`${count2}++`);
           if (max === void 0) {
-            gen.if((0, codegen_1._)`${count} >= ${min}`, () => gen.assign(valid, true).break());
+            gen.if((0, codegen_1._)`${count2} >= ${min}`, () => gen.assign(valid, true).break());
           } else {
-            gen.if((0, codegen_1._)`${count} > ${max}`, () => gen.assign(valid, false).break());
+            gen.if((0, codegen_1._)`${count2} > ${max}`, () => gen.assign(valid, false).break());
             if (min === 1)
               gen.assign(valid, true);
             else
-              gen.if((0, codegen_1._)`${count} >= ${min}`, () => gen.assign(valid, true));
+              gen.if((0, codegen_1._)`${count2} >= ${min}`, () => gen.assign(valid, true));
           }
         }
       }
@@ -11232,16 +11232,16 @@ var require_CharacterData = __commonJS({
       //     Return a DOMString whose value is the UTF-16 code
       //     units from the offsetth UTF-16 code unit to the
       //     offset+countth UTF-16 code unit in data.
-      substringData: { value: function substringData(offset, count) {
+      substringData: { value: function substringData(offset, count2) {
         if (arguments.length < 2) {
           throw new TypeError("Not enough arguments");
         }
         offset = offset >>> 0;
-        count = count >>> 0;
-        if (offset > this.data.length || offset < 0 || count < 0) {
+        count2 = count2 >>> 0;
+        if (offset > this.data.length || offset < 0 || count2 < 0) {
           utils.IndexSizeError();
         }
-        return this.data.substring(offset, offset + count);
+        return this.data.substring(offset, offset + count2);
       } },
       // void appendData(DOMString data);
       // The appendData(data) method must append data to the context
@@ -11277,8 +11277,8 @@ var require_CharacterData = __commonJS({
       //
       //     Starting from offset UTF-16 code units remove count
       //     UTF-16 code units from the context object's data.
-      deleteData: { value: function deleteData(offset, count) {
-        return this.replaceData(offset, count, "");
+      deleteData: { value: function deleteData(offset, count2) {
+        return this.replaceData(offset, count2, "");
       } },
       // void replaceData(unsigned long offset, unsigned long count,
       //          DOMString data);
@@ -11288,15 +11288,15 @@ var require_CharacterData = __commonJS({
       // count as arguments followed by the insertData() method
       // with offset and data as arguments and re-throw any
       // exceptions these methods might have thrown.
-      replaceData: { value: function replaceData(offset, count, data) {
+      replaceData: { value: function replaceData(offset, count2, data) {
         var curtext = this.data, len = curtext.length;
         offset = offset >>> 0;
-        count = count >>> 0;
+        count2 = count2 >>> 0;
         data = String(data);
         if (offset > len || offset < 0) utils.IndexSizeError();
-        if (offset + count > len)
-          count = len - offset;
-        var prefix = curtext.substring(0, offset), suffix = curtext.substring(offset + count);
+        if (offset + count2 > len)
+          count2 = len - offset;
+        var prefix = curtext.substring(0, offset), suffix = curtext.substring(offset + count2);
         this.data = prefix + data + suffix;
       } },
       // Utility method that Node.isEqualNode() calls to test Text and
@@ -18235,12 +18235,12 @@ var require_HTMLParser = __commonJS({
       this.attrs.push(this.MARKER);
     };
     HTMLParser.ActiveFormattingElements.prototype.push = function(elt, attrs) {
-      var count = 0;
+      var count2 = 0;
       for (var i = this.list.length - 1; i >= 0; i--) {
         if (this.list[i] === this.MARKER) break;
         if (equal(elt, this.list[i], this.attrs[i])) {
-          count++;
-          if (count === 3) {
+          count2++;
+          if (count2 === 3) {
             this.list.splice(i, 1);
             this.attrs.splice(i, 1);
             break;
@@ -23866,8 +23866,8 @@ var require_turndown_cjs = __commonJS({
       }
       return destination;
     }
-    function repeat(character, count) {
-      return Array(count + 1).join(character);
+    function repeat(character, count2) {
+      return Array(count2 + 1).join(character);
     }
     function trimLeadingNewlines(string3) {
       return string3.replace(/^\n*/, "");
@@ -40045,9 +40045,9 @@ function assertLinkedWrite(rich, content, format, allowLinkChanges = false) {
     needed.set(key, (needed.get(key) || 0) + 1);
   }
   const incoming = linkSignature(next);
-  for (const [key, count] of needed) {
+  for (const [key, count2] of needed) {
     const sequence = key.slice(1, -1);
-    if (incoming.split(sequence).length - 1 < count)
+    if (incoming.split(sequence).length - 1 < count2)
       throw new Error(
         "Update would remove or change an existing link. Preserve its label and URL from get-note-content."
       );
@@ -40394,9 +40394,9 @@ var clock = (seconds) => {
   return `${h ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
 };
 function formatTranscriptsText(result) {
-  const count = result.attachments.length;
-  if (count === 0) return `No audio attachments found in note ${result.id}.`;
-  const lines = [`${count} audio attachment${count === 1 ? "" : "s"} in note ${result.id}:`];
+  const count2 = result.attachments.length;
+  if (count2 === 0) return `No audio attachments found in note ${result.id}.`;
+  const lines = [`${count2} audio attachment${count2 === 1 ? "" : "s"} in note ${result.id}:`];
   result.attachments.forEach((a, i) => {
     const facts = [
       `status ${a.status}`,
@@ -43761,7 +43761,7 @@ var AppleNotesManager = class {
     if (!result.success) throw new Error(result.error || "Folder not found");
     const parts = result.output.replace(/\n$/, "").split(FIELD_SEP);
     if (parts.length !== 7 || !parts[0] || !parts[2]) throw new Error("Incomplete folder metadata");
-    const count = (value) => {
+    const count2 = (value) => {
       const parsed = Number(value.trim());
       if (!Number.isInteger(parsed) || parsed < 0) throw new Error("Incomplete folder metadata");
       return parsed;
@@ -43773,8 +43773,8 @@ var AppleNotesManager = class {
       accountId: parts[2],
       defaultFolderId: parts[3] || null,
       shared: parts[4].trim() === "true",
-      childFolderCount: count(parts[5]),
-      noteCount: count(parts[6])
+      childFolderCount: count2(parts[5]),
+      noteCount: count2(parts[6])
     };
   }
   /**
@@ -47504,11 +47504,11 @@ function decodeBodyHex(hex3) {
   }
 }
 function countWords(text2) {
-  let count = 0;
+  let count2 = 0;
   for (const word of text2.replace(/\ufffc/gu, " ").split(/\s+/u)) {
-    if (/[\p{L}\p{N}]/u.test(word)) count++;
+    if (/[\p{L}\p{N}]/u.test(word)) count2++;
   }
-  return count;
+  return count2;
 }
 var REQUIRED_COLUMNS3 = ["Z_PK", "Z_ENT", "ZTITLE1", "ZFOLDER", "ZMODIFICATIONDATE1"];
 function col2(available, alias, name) {
@@ -53237,11 +53237,11 @@ function replyError(code, reply) {
     return new PasteboardError(code, message, { accessBehavior });
   }
   if (code === "multiple_files") {
-    const count = typeof reply.count === "number" ? reply.count : void 0;
+    const count2 = typeof reply.count === "number" ? reply.count : void 0;
     return new PasteboardError(
       code,
-      count ? `The pasteboard holds ${count} copied files. Copy exactly one file, or attach each file with add-attachment.` : MESSAGES[code],
-      count ? { count } : {}
+      count2 ? `The pasteboard holds ${count2} copied files. Copy exactly one file, or attach each file with add-attachment.` : MESSAGES[code],
+      count2 ? { count: count2 } : {}
     );
   }
   if (code === "unsupported_content" && Array.isArray(reply.types)) {
@@ -58755,9 +58755,12 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  plan_edit: "read",
+  edit_note: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var EDIT_LIVE_VALIDATED = false;
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join31(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -58850,7 +58853,14 @@ var writerProbeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema2,
+    appendPlainText: featureSchema2,
+    // Optional so a probe without a feature reports it as unavailable
+    // instead of failing the whole status call.
+    planEdit: featureSchema2.optional(),
+    editNote: featureSchema2.optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
   available: external_exports.boolean(),
@@ -59034,14 +59044,205 @@ function appendPlainText(request, deps = defaultWriterDeps()) {
     true
   );
 }
+var MAX_EDIT_OPERATIONS = 64;
+var MAX_EDIT_TEXT = 1e4;
+var FORBIDDEN_EDIT_TEXT = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+var paragraphText = (min) => external_exports.string().min(min).max(MAX_EDIT_TEXT).refine((text2) => !FORBIDDEN_EDIT_TEXT.test(text2), {
+  message: "must stay inside one paragraph: no line breaks, attachment glyphs, or control characters"
+});
+var EDIT_STYLES = [
+  "title",
+  "heading",
+  "subheading",
+  "body",
+  "monospaced",
+  "bulleted",
+  "dashed",
+  "numbered",
+  "checklist"
+];
+var styleName = external_exports.enum(EDIT_STYLES);
+var count = external_exports.number().int().min(1).max(1e3);
+var operationId = external_exports.string().min(1).max(128).optional();
+var runSchema = external_exports.object({
+  text: paragraphText(1),
+  bold: external_exports.boolean().optional(),
+  italic: external_exports.boolean().optional(),
+  underline: external_exports.boolean().optional(),
+  strikethrough: external_exports.boolean().optional()
+}).strict();
+var runsSchema = external_exports.array(runSchema).min(1).max(200);
+var replacementSchema = external_exports.union([
+  external_exports.object({ text: paragraphText(0) }).strict(),
+  external_exports.object({ runs: runsSchema }).strict()
+]);
+var textSelector = external_exports.object({
+  kind: external_exports.literal("text").optional(),
+  text: paragraphText(1),
+  scope: external_exports.enum(["body", "title", "all"]).optional(),
+  occurrence: count.optional()
+}).strict();
+var styleSelector = external_exports.object({ kind: external_exports.literal("style"), style: styleName, occurrence: count.optional() }).strict();
+var blankSelector = external_exports.object({
+  kind: external_exports.literal("blank"),
+  style: styleName.exclude(["title", "body"]),
+  occurrence: count.optional()
+}).strict();
+var blockSchema = external_exports.object({
+  type: styleName.exclude(["title"]),
+  text: paragraphText(0).optional(),
+  runs: runsSchema.optional(),
+  checked: external_exports.boolean().optional()
+}).strict().refine((b) => b.text === void 0 !== (b.runs === void 0), {
+  message: "each block needs exactly one of text or runs"
+}).refine((b) => b.checked === void 0 || b.type === "checklist", {
+  message: "checked is only valid on checklist blocks"
+});
+var insertSchema = (op) => external_exports.object({
+  op: external_exports.literal(op),
+  id: operationId,
+  anchor: external_exports.union([textSelector, styleSelector]),
+  blocks: external_exports.array(blockSchema).min(1).max(200),
+  expectedCount: count.optional()
+}).strict();
+var editOperationSchema = external_exports.discriminatedUnion("op", [
+  external_exports.object({
+    op: external_exports.literal("replace"),
+    id: operationId,
+    selector: textSelector.extend({ match: external_exports.enum(["substring", "equals"]).optional() }).strict(),
+    replacement: replacementSchema,
+    expectedCount: count.optional()
+  }).strict(),
+  external_exports.object({
+    op: external_exports.literal("delete_paragraph"),
+    id: operationId,
+    selector: external_exports.union([textSelector, blankSelector]),
+    expectedCount: count.optional()
+  }).strict(),
+  insertSchema("insert_after"),
+  insertSchema("insert_before"),
+  external_exports.object({
+    op: external_exports.literal("set_title"),
+    id: operationId,
+    replacement: external_exports.union([
+      external_exports.object({ text: paragraphText(1) }).strict(),
+      external_exports.object({ runs: runsSchema }).strict()
+    ])
+  }).strict()
+]);
+var editTargetSchema = external_exports.object({
+  paragraphIndex: external_exports.number().int(),
+  paragraphStyle: external_exports.string(),
+  location: external_exports.number().int(),
+  length: external_exports.number().int(),
+  newLength: external_exports.number().int()
+}).passthrough();
+var editPlanFields = {
+  identifier: external_exports.string(),
+  revisionBefore: external_exports.string().regex(/^r1:[a-f0-9]{64}$/),
+  planDigest: external_exports.string(),
+  operationCount: external_exports.number().int(),
+  targetCount: external_exports.number().int(),
+  operations: external_exports.array(
+    external_exports.object({
+      index: external_exports.number().int(),
+      op: external_exports.string(),
+      matchedCount: external_exports.number().int(),
+      targets: external_exports.array(editTargetSchema)
+    }).passthrough()
+  ),
+  lengthBefore: external_exports.number().int(),
+  lengthAfter: external_exports.number().int(),
+  unchangedUTF16: external_exports.number().int(),
+  wouldChange: external_exports.boolean(),
+  titleChanged: external_exports.boolean(),
+  attachmentGlyphs: external_exports.number().int(),
+  storeKind: external_exports.enum(["live", "copy"])
+};
+var editPlanSchema = external_exports.object({
+  status: external_exports.literal("planned"),
+  dryRun: external_exports.literal(true),
+  committed: external_exports.literal(false),
+  ...editPlanFields
+}).passthrough();
+var preservationSchema = external_exports.object({
+  unchangedUTF16: external_exports.number().int(),
+  formattingOutsideEditsVerified: external_exports.literal(true),
+  attachmentGlyphs: external_exports.number().int(),
+  attachmentGlyphSequenceVerified: external_exports.literal(true),
+  attachmentRows: external_exports.number().int(),
+  attachmentRowsVerified: external_exports.literal(true)
+}).passthrough();
+var editResultSchema = external_exports.union([
+  external_exports.object({
+    status: external_exports.literal("updated"),
+    dryRun: external_exports.literal(false),
+    committed: external_exports.literal(true),
+    verified: external_exports.literal(true),
+    revisionAfter: external_exports.string(),
+    modificationDate: external_exports.string().nullable(),
+    preservation: preservationSchema,
+    ...writeSyncFields,
+    ...editPlanFields
+  }).passthrough(),
+  external_exports.object({
+    status: external_exports.literal("unchanged"),
+    dryRun: external_exports.literal(false),
+    committed: external_exports.literal(false),
+    revisionAfter: external_exports.string(),
+    ...editPlanFields
+  }).passthrough()
+]);
+function editNote(request, deps = defaultWriterDeps()) {
+  const notCommitted = request.dryRun ? void 0 : false;
+  const refuse = (message) => new PrivateWriteError("invalid_request", message, notCommitted);
+  try {
+    assertNoteIdentifier(request.identifier);
+  } catch (error2) {
+    throw refuse(error2 instanceof Error ? error2.message : String(error2));
+  }
+  if (!request.operations.length || request.operations.length > MAX_EDIT_OPERATIONS)
+    throw refuse(`operations must hold 1 to ${MAX_EDIT_OPERATIONS} entries`);
+  const operations = external_exports.array(editOperationSchema).safeParse(request.operations);
+  if (!operations.success)
+    throw refuse(
+      `Invalid operations: ${operations.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`
+    );
+  const fields = {
+    identifier: request.identifier,
+    operations: operations.data
+  };
+  if (request.requireNonSystemPaper !== void 0)
+    fields.requireNonSystemPaper = request.requireNonSystemPaper;
+  if (request.dryRun) {
+    return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
+  }
+  if (!request.ifRevision)
+    throw refuse(
+      "Applying an edit requires ifRevision: run the identical request with dryRun: true first and pass its revisionBefore."
+    );
+  assertRevision(request.ifRevision, "a dry run's revisionBefore");
+  requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
+  return parseWriterResult(
+    editResultSchema,
+    callPrivateWriter("edit_note", { ...fields, ifRevision: request.ifRevision }, deps),
+    true
+  );
+}
+var WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  { key: "planEdit", probeKey: "planEdit", liveValidated: true },
+  { key: "editNote", probeKey: "editNote", liveValidated: EDIT_LIVE_VALIDATED }
+];
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const every = (status) => Object.fromEntries(WRITER_FEATURES.map((row) => [row.key, status(row)]));
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: every(() => ({ available: false, reason, detail }))
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -59054,25 +59255,32 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
-  if (!feature.available) {
-    const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  const probed = probe.features;
+  const features = every((row) => {
+    const feature = probed[row.probeKey];
+    if (!feature)
+      return {
+        available: false,
+        reason: "private_api_unavailable",
+        detail: `The installed writer does not report ${row.probeKey}`
+      };
+    if (!feature.available) {
+      const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
+      return {
+        available: false,
+        reason,
+        detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
+      };
+    }
+    if (!row.liveValidated && deps.env[ALLOW_UNVERIFIED_ENV] !== "1")
+      return {
+        available: false,
+        reason: "not_live_validated",
+        detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
+      };
+    return { available: true, reason: null, detail: null };
+  });
+  return { ...base, probe, features };
 }
 
 // src/services/privateWriterBuild.ts
@@ -59660,6 +59868,45 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     async (args, deps) => ({ ...await syncPush(args, deps.nudge) })
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-edit-note",
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text or by style and position (for example the 2nd subheading), delete a paragraph or list row, or retitle. Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\nReturns: per-operation matched counts and target ranges, lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and the attachment rows), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never touches attachments or inline objects.\nSafety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      dryRun: external_exports.boolean().describe("true: plan only and return revisionBefore. false: apply; requires ifRevision"),
+      ifRevision: revisionToken.optional().describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
+      requireNonSystemPaper: external_exports.boolean().optional().describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
+      operations: external_exports.array(editOperationSchema).min(1).max(MAX_EDIT_OPERATIONS).describe(
+        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}. expectedCount (default 1) must equal the full match count; occurrence picks one of them."
+      ),
+      nudge: external_exports.boolean().optional().describe(
+        "After a verified apply, ask Notes.app to upload the note by moving it into its own folder (default false)"
+      ),
+      nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+    },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = editNote(
+        {
+          identifier,
+          dryRun: args.dryRun,
+          ifRevision: args.ifRevision,
+          requireNonSystemPaper: args.requireNonSystemPaper,
+          operations: args.operations
+        },
+        deps.writer
+      );
+      if (!args.nudge || result.status !== "updated") return { ...result };
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
   );
 }
 async function nudgeAfterWrite(identifier, waitSeconds, deps) {
@@ -60728,14 +60975,14 @@ registerTool(
       );
     }
     const result = notesManager.getNoteTablesById(id2);
-    const count = result.tables.length;
-    const summary = count === 0 ? "This note has no native tables." : `${count} table(s)${result.tableCellsComplete ? "" : " (some content could not be decoded; see tables[].reason)"}:
+    const count2 = result.tables.length;
+    const summary = count2 === 0 ? "This note has no native tables." : `${count2} table(s)${result.tableCellsComplete ? "" : " (some content could not be decoded; see tables[].reason)"}:
 
 ${result.markdown}`;
     return successResponse(summary, {
       id: id2,
       tables: result.tables,
-      tableCount: count,
+      tableCount: count2,
       tableCellsComplete: result.tableCellsComplete,
       markdown: result.markdown
     });
@@ -60770,7 +61017,7 @@ registerTool(
       return errorResponse(`Error reading note blocks [${error2.code}]: ${error2.message}${hint}`);
     }
     const { summary } = page;
-    const styles = Object.entries(summary.styles).map(([style, count]) => `${style} ${count}`).join(", ");
+    const styles = Object.entries(summary.styles).map(([style, count2]) => `${style} ${count2}`).join(", ");
     return successResponse(
       `Decoded ${summary.blocks} blocks (${styles || "none"}); returned ${page.page.returned} from offset ${page.page.offset}` + (page.page.hasMore ? `; more available at offset ${page.page.nextOffset}` : "") + ".",
       { id: id2, ...page }
