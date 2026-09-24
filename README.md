@@ -2672,6 +2672,63 @@ another object, for example an attachment Notes uses for the title). Takes
 switches; applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until the
 edit path is live-validated.
 
+#### `compose-note`
+
+Writes natively formatted content through the writer in one save: headings,
+subheadings, body paragraphs, block quotes, monospaced blocks, bulleted,
+dashed, and numbered lists with indent, and checklists with their checked
+state. Inline runs carry bold, italic, underline, strikethrough, links (http,
+https, mailto, tel, notes, applenotes), named highlights (purple, pink,
+orange, mint, blue), and `#RRGGBB` text color. Give `blocks` or `markdown`,
+not both.
+
+| `mode` | Target | Guard |
+|--------|--------|-------|
+| `create` | `title` plus optional `folder` and `account` | Notes.app creates the note (AppleScript), then the writer appends the content below the title under a revision read immediately after |
+| `append` | `identifier` or `id` | `dryRun: true`, then the identical request with `ifRevision` set to the plan's `revisionBefore` |
+| `prepend` | `identifier` or `id` | Same; inserts directly below the title line |
+
+`append` also takes `insertBeforeHeading` (`text`, `occurrence`,
+`expectedCount`) to insert before one exact Heading-style paragraph; a count
+mismatch returns `selector_conflict` with nothing written.
+`requireNonSystemPaper` refuses a Quick Note target. After saving, the writer
+re-reads the note through a new Core Data stack and compares every written
+paragraph's style, indent, block quote, checklist state, and runs with the
+request; `readBack` reports them, and `unitStart` and `objectURI` say where
+the written paragraphs begin. A mismatch returns `verification_failed` with
+`committed: true` and `indeterminate: true`. On the live store the server then
+decodes the same paragraphs from NoteStore.sqlite with its own block decoder
+(the one behind `get-note-blocks`) and reports the comparison as
+`databaseReadBack` (`matches`, or `checked: false` with a reason). With
+`nudge: true` a verified write is followed by the same move-in-place nudge as
+`native-append-plain-text`. If a `create` fails after the note exists, the
+error names it (`noteCreated`, `id`, `identifier`) and the note holds only its
+title.
+
+```json
+{
+  "mode": "append",
+  "identifier": "D629A948-0C61-43BA-8FDE-04CD6DED38C7",
+  "dryRun": true,
+  "blocks": [
+    { "type": "heading", "text": "Review" },
+    { "type": "body", "runs": [{ "text": "Ready", "bold": true }, { "text": " to ship" }] },
+    { "type": "checklist", "items": ["Draft", "Publish"], "checked": [true, false] },
+    { "type": "bulleted", "items": ["Owner", { "text": "Backup owner", "indent": 1 }] },
+    { "type": "code", "text": "npm test\nnpm run build" }
+  ]
+}
+```
+
+The Markdown importer maps `#` and `##` to Heading and `###` and deeper to
+Subheading, and imports `-`/`*`/`+` and `1.` lists with nesting, `- [ ]` and
+`- [x]` checklists, `>` quotes, fenced code, `**bold**`, `*italic*`,
+`~~strikethrough~~`, `<u>underline</u>`, and links. In `create` mode a leading
+`# ` line equal to the title is dropped. Horizontal rules are skipped with a
+warning. Tables, dividers, attachments, and note links are not supported by
+this tool. Writes need both writer switches and, until this path passes live
+validation in a release, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; dry runs do not.
+
 ## Usage Patterns
 
 ### Basic Workflow

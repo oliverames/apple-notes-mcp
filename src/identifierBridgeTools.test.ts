@@ -264,6 +264,7 @@ describe("id inputs accept Notes UUIDs and numeric keys", () => {
       "native-note-state.id",
       "native-append-plain-text.id",
       "native-edit-note.id",
+      "compose-note.id",
     ]);
     const idFields: string[] = [];
     for (const [tool, { config }] of registered) {

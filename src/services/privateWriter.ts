@@ -38,11 +38,13 @@ import {
   defaultDeps,
   helperInstallDir,
   manifestSchema,
+  noteStateSchema,
   packageRoot,
   privateHelperEnabled,
   sha256Hex,
   type PrivateHelperDeps,
   type PrivateHelperManifest,
+  type PrivateNoteState,
   type PrivateUnavailableReason,
 } from "./privateHelper.js";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
@@ -76,6 +78,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_sync_state: "read",
   plan_edit: "read",
   edit_note: "write",
+  compose_note: "write",
 };
 
 /**
@@ -90,6 +93,9 @@ export const APPEND_LIVE_VALIDATED = false;
  * Planning (plan_edit) is read-only and needs no such gate.
  */
 export const EDIT_LIVE_VALIDATED = false;
+
+/** Same gate for structured compose (services/privateCompose.ts). */
+export const COMPOSE_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -245,6 +251,7 @@ export const writerProbeSchema = z
         // instead of failing the whole status call.
         planEdit: featureSchema.optional(),
         editNote: featureSchema.optional(),
+        composeNote: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -476,6 +483,19 @@ export function assertAppendText(text: string): void {
       "text may contain only printable characters, tabs and \\n newlines",
       false
     );
+}
+
+/** One note's native state and `revision`, read by the writer with the store opened read-only. */
+export function readWriterNoteState(
+  identifier: string,
+  deps: PrivateHelperDeps = defaultWriterDeps()
+): PrivateNoteState {
+  assertNoteIdentifier(identifier);
+  return parseWriterResult(
+    noteStateSchema,
+    callPrivateWriter("read_note_state", { identifier }, deps),
+    false
+  );
 }
 
 export function probePrivateWriter(
@@ -896,6 +916,7 @@ export const WRITER_FEATURES = [
   { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
   { key: "planEdit", probeKey: "planEdit", liveValidated: true },
   { key: "editNote", probeKey: "editNote", liveValidated: EDIT_LIVE_VALIDATED },
+  { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

@@ -64,6 +64,26 @@
 - The copy-store script runs a plan, apply, and restore round trip on up to
   eight notes and checks each step with `scripts/check-edit-preservation.mjs`,
   an independent decoder of the stored note.
+- `compose-note`: structured, natively formatted writes through the writer's
+  new `compose_note` action. Content comes as ordered blocks (heading,
+  subheading, body/paragraph, quote, code/monospaced, bulleted, dashed, and
+  numbered lists with indent, and checklists with checked state) whose runs
+  carry bold, italic, underline, strikethrough, links, named highlights, and
+  `#RRGGBB` color, or as Markdown imported into the same native styles. Modes:
+  `create` (Notes.app creates the note, then the writer appends below the
+  title under a fresh revision), `append` (optionally before one exact
+  Heading, `insertBeforeHeading`), and `prepend` (below the title). Apply
+  follows a `dryRun` plan with its `revisionBefore` as `ifRevision`. The writer
+  compares every written paragraph's style, indent, block quote, checklist
+  state, and runs in a fresh read-only stack, reports `unitStart` and
+  `objectURI`, and the server cross-checks the same paragraphs with its own
+  NoteStore decoder (`databaseReadBack`). Every refusal before the save
+  reports `committed: false`. Optional `nudge`. Gated by
+  `COMPOSE_LIVE_VALIDATED = false`, so writes also need
+  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. The writer probe and
+  `native-writer-status` report a `composeNote` feature, and the copy-store
+  script exercises plan, apply, stale and replayed revisions, prepend,
+  heading placement, and the Quick Note refusal.
 
 ### Fixed
 

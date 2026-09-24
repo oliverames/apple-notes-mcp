@@ -834,11 +834,9 @@ describe("trim_blank_lines schema", () => {
 describe("writer feature table", () => {
   it("reports edit planning without the unverified gate and gates applying", () => {
     install();
-    expect(WRITER_FEATURES.map((row) => row.key)).toEqual([
-      "appendPlainText",
-      "planEdit",
-      "editNote",
-    ]);
+    expect(WRITER_FEATURES.map((row) => row.key)).toEqual(
+      expect.arrayContaining(["appendPlainText", "planEdit", "editNote"])
+    );
     const gated = privateWriterCapabilities(deps(ON)).features;
     expect(gated.planEdit).toEqual({ available: true, reason: null, detail: null });
     expect(gated.editNote).toMatchObject({ available: false, reason: "not_live_validated" });

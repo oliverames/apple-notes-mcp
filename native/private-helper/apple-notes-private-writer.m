@@ -190,6 +190,22 @@ static const APIRequirement kEditAPI[] = {
     {"ICTTTodo", "initWithIdentifier:done:", NO},
 };
 
+// Structured compose: paragraph styles, checklist todos, and inline runs.
+// Paragraph-style accessors are inherited by the mutable subclass, which
+// instancesRespondToSelector: sees.
+static const APIRequirement kComposeAPI[] = {
+    {"ICTTMutableParagraphStyle", "setStyle:", NO},
+    {"ICTTMutableParagraphStyle", "setIndent:", NO},
+    {"ICTTMutableParagraphStyle", "setBlockQuoteLevel:", NO},
+    {"ICTTMutableParagraphStyle", "setTodo:", NO},
+    {"ICTTParagraphStyle", "style", NO},
+    {"ICTTParagraphStyle", "indent", NO},
+    {"ICTTParagraphStyle", "blockQuoteLevel", NO},
+    {"ICTTParagraphStyle", "todo", NO},
+    {"ICTTTodo", "initWithIdentifier:done:", NO},
+    {"ICTTTodo", "done", NO},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -246,7 +262,9 @@ static NSArray<NSString *> *MissingModelProperties(void) {
   return missing;
 }
 
-typedef NS_ENUM(NSInteger, Feature) { FeatureModel, FeatureRead, FeatureAppend, FeatureEdit };
+// Features after FeatureAppend need the append API plus their own table,
+// matched with `==` in MissingForFeature.
+typedef NS_ENUM(NSInteger, Feature) { FeatureModel, FeatureRead, FeatureAppend, FeatureEdit, FeatureCompose };
 
 static NSArray<NSString *> *MissingForFeature(Feature feature) {
   LoadFramework();
@@ -261,6 +279,8 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
   if (feature >= FeatureAppend)
     [missing addObjectsFromArray:MissingAPI(kAppendAPI, COUNT(kAppendAPI))];
   if (feature == FeatureEdit) [missing addObjectsFromArray:MissingAPI(kEditAPI, COUNT(kEditAPI))];
+  if (feature == FeatureCompose)
+    [missing addObjectsFromArray:MissingAPI(kComposeAPI, COUNT(kComposeAPI))];
   return missing;
 }
 
@@ -522,6 +542,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request);
 static NSDictionary *HandleReadSyncState(NSDictionary *request);
 static NSDictionary *HandlePlanEdit(NSDictionary *request);
 static NSDictionary *HandleEditNote(NSDictionary *request);
+static NSDictionary *HandleComposeNote(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -538,6 +559,9 @@ static const ActionSpec kActions[] = {
     {"read_sync_state", "identifiers", HandleReadSyncState},
     {"plan_edit", "identifier,requireNonSystemPaper,operations", HandlePlanEdit},
     {"edit_note", "identifier,ifRevision,requireNonSystemPaper,operations", HandleEditNote},
+    {"compose_note",
+     "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading",
+     HandleComposeNote},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -621,6 +645,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"appendPlainText" : FeatureReport(FeatureAppend, contextOK, contextReason),
       @"planEdit" : FeatureReport(FeatureEdit, contextOK, contextReason),
       @"editNote" : FeatureReport(FeatureEdit, contextOK, contextReason),
+      @"composeNote" : FeatureReport(FeatureCompose, contextOK, contextReason),
     },
   };
 }
@@ -842,6 +867,49 @@ static NSAttributedString *LoadBody(NSManagedObject *note, id *mergeableOut) {
   return body;
 }
 
+#pragma mark - Structured compose
+
+// Notes stores paragraph and inline formatting as attributes on the
+// mergeable string: TTStyle holds an ICTTParagraphStyle (style number,
+// indent, block-quote level, checklist todo); TTHints is a bold/italic
+// bitmask; TTUnderline and TTStrikethrough are flags; TTEmphasis is the named
+// highlight (1-5); TTColor is a text color; NSLink is a hyperlink.
+static NSString *const kStyleKey = @"TTStyle";
+static NSString *const kHintsKey = @"TTHints";
+static NSString *const kUnderlineKey = @"TTUnderline";
+static NSString *const kStrikethroughKey = @"TTStrikethrough";
+static NSString *const kEmphasisKey = @"TTEmphasis";
+static NSString *const kColorKey = @"TTColor";
+
+#define MAX_COMPOSE_PARAGRAPHS 2000
+#define MAX_COMPOSE_RUNS 20000
+#define MAX_COMPOSE_UTF16 200000
+#define MAX_INDENT 8
+#define STYLE_HEADING 1
+
+typedef struct {
+  const char *name;
+  unsigned int value;
+  BOOL indentable;
+} StyleSpec;
+
+// The only paragraph styles compose writes. Title (0) is never written: a
+// note's title is its first paragraph, which compose does not replace.
+static const StyleSpec kStyles[] = {
+    {"heading", 1, NO},   {"subheading", 2, NO}, {"body", 3, YES},      {"monospaced", 4, NO},
+    {"bulleted", 100, YES}, {"dashed", 101, YES},  {"numbered", 102, YES}, {"checklist", 103, YES},
+};
+
+static const char *kHighlights[] = {"purple", "pink", "orange", "mint", "blue"};  // TTEmphasis 1-5
+
+static NSString *StyleName(unsigned int value);
+
+static const StyleSpec *StyleNamed(NSString *name) {
+  for (size_t i = 0; i < COUNT(kStyles); i++)
+    if ([name isEqualToString:@(kStyles[i].name)]) return &kStyles[i];
+  return NULL;
+}
+
 static BOOL IsJSONBool(id value) {
   return [value isKindOfClass:[NSNumber class]] &&
          CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
@@ -896,10 +964,6 @@ static BOOL IsJSONBool(id value) {
 #define MAX_EDIT_BLOCKS 200
 #define MAX_EDIT_RUNS 200
 
-static NSString *const kStyleKey = @"TTStyle";
-static NSString *const kHintsKey = @"TTHints";
-static NSString *const kUnderlineKey = @"TTUnderline";
-static NSString *const kStrikethroughKey = @"TTStrikethrough";
 static NSString *const kTimestampKey = @"TTTimestamp";
 static NSString *const kAttachmentKey = @"NSAttachment";
 static NSString *const kEditChangeReason = @"apple-notes-mcp edit_note";
@@ -2273,6 +2337,546 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   };
   [response addEntriesFromDictionary:SyncFields(after, store)];
   return response;
+}
+
+static void RequireOnlyKeys(NSDictionary *object, NSString *allowedCSV, NSString *label) {
+  NSSet *allowed = [NSSet setWithArray:[allowedCSV componentsSeparatedByString:@","]];
+  for (NSString *key in object)
+    if (![allowed containsObject:key])
+      Fail(@"invalid_request", [NSString stringWithFormat:@"Unknown %@ field `%@`", label, key], nil);
+}
+
+static BOOL ComposeBool(NSDictionary *object, NSString *key, NSString *label) {
+  id value = object[key];
+  if (!value) return NO;
+  if (!IsJSONBool(value))
+    Fail(@"invalid_request", [NSString stringWithFormat:@"%@ `%@` must be a boolean", label, key], nil);
+  return [value boolValue];
+}
+
+static NSUInteger ComposeCount(NSDictionary *object, NSString *key, NSUInteger min, NSUInteger max,
+                                NSUInteger fallback, NSString *label) {
+  id value = object[key];
+  if (!value) return fallback;
+  double number = [value isKindOfClass:[NSNumber class]] && !IsJSONBool(value) ? [value doubleValue] : -1;
+  if (number != floor(number) || number < min || number > max)
+    Fail(@"invalid_request",
+         [NSString stringWithFormat:@"%@ `%@` must be an integer from %lu to %lu", label, key,
+                                    (unsigned long)min, (unsigned long)max],
+         nil);
+  return (NSUInteger)number;
+}
+
+// Run text is one line of one paragraph: printable characters and tabs only.
+static void ValidateRunText(NSString *text) {
+  if ([text rangeOfCharacterFromSet:ForbiddenTextCharacters(NO)].location != NSNotFound)
+    Fail(@"invalid_request",
+         @"Run `text` may contain only printable characters and tabs (no newlines, attachment "
+         @"glyphs, or other control characters); each paragraph is one line",
+         nil);
+}
+
+static NSURL *ValidatedLink(NSString *value) {
+  NSURL *url = [NSURL URLWithString:value];
+  NSString *scheme = url.scheme.lowercaseString;
+  NSSet *allowed = [NSSet setWithArray:@[ @"http", @"https", @"mailto", @"tel", @"notes", @"applenotes" ]];
+  if (!url || value.length > 4096 || ![allowed containsObject:scheme])
+    Fail(@"invalid_request",
+         @"Run `link` must be an absolute http, https, mailto, tel, notes, or applenotes URL", nil);
+  return url;
+}
+
+static id ColorFromHex(NSString *hex) {
+  NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"^#[0-9A-Fa-f]{6}$"
+                                                                      options:0
+                                                                        error:nil];
+  if (![hex isKindOfClass:[NSString class]] ||
+      [re numberOfMatchesInString:hex options:0 range:NSMakeRange(0, hex.length)] != 1)
+    Fail(@"invalid_request", @"Run `color` must be #RRGGBB", nil);
+  unsigned int rgb = 0;
+  [[NSScanner scannerWithString:[hex substringFromIndex:1]] scanHexInt:&rgb];
+  NSColor *color = [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
+                                       green:((rgb >> 8) & 0xFF) / 255.0
+                                        blue:(rgb & 0xFF) / 255.0
+                                       alpha:1.0];
+  return (__bridge id)color.CGColor;
+}
+
+static NSDictionary *RunAttributes(NSDictionary *run) {
+  NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
+  unsigned int hints = (ComposeBool(run, @"bold", @"Run") ? 1 : 0) |
+                       (ComposeBool(run, @"italic", @"Run") ? 2 : 0);
+  if (hints) attrs[kHintsKey] = @(hints);
+  if (ComposeBool(run, @"underline", @"Run")) attrs[kUnderlineKey] = @1;
+  if (ComposeBool(run, @"strikethrough", @"Run")) attrs[kStrikethroughKey] = @1;
+  id link = run[@"link"];
+  if (link) {
+    if (![link isKindOfClass:[NSString class]]) Fail(@"invalid_request", @"Run `link` must be a string", nil);
+    attrs[NSLinkAttributeName] = ValidatedLink(link);
+  }
+  id highlight = run[@"highlight"];
+  if (highlight) {
+    NSUInteger code = 0;
+    for (size_t i = 0; i < COUNT(kHighlights); i++)
+      if ([highlight isKindOfClass:[NSString class]] && [highlight isEqualToString:@(kHighlights[i])])
+        code = i + 1;
+    if (!code)
+      Fail(@"invalid_request", @"Run `highlight` must be purple, pink, orange, mint, or blue", nil);
+    attrs[kEmphasisKey] = @(code);
+  }
+  if (run[@"color"]) attrs[kColorKey] = ColorFromHex(run[@"color"]);
+  return attrs;
+}
+
+static id ComposeParagraphStyle(const StyleSpec *spec, NSUInteger indent, BOOL blockQuote, id checked) {
+  id style = [[objc_getClass("ICTTMutableParagraphStyle") alloc] init];
+  if (!style) Fail(@"private_api_unavailable", @"Could not create a paragraph style", nil);
+  ((void (*)(id, SEL, unsigned int))objc_msgSend)(style, sel_registerName("setStyle:"), spec->value);
+  if (indent)
+    ((void (*)(id, SEL, NSUInteger))objc_msgSend)(style, sel_registerName("setIndent:"), indent);
+  if (blockQuote)
+    ((void (*)(id, SEL, NSUInteger))objc_msgSend)(style, sel_registerName("setBlockQuoteLevel:"), 1);
+  if (checked) {
+    id todo = ((id(*)(id, SEL, id, BOOL))objc_msgSend)([objc_getClass("ICTTTodo") alloc],
+                                                        sel_registerName("initWithIdentifier:done:"),
+                                                        [NSUUID UUID], [checked boolValue]);
+    if (!todo) Fail(@"private_api_unavailable", @"Could not create a checklist item", nil);
+    ((void (*)(id, SEL, id))objc_msgSend)(style, sel_registerName("setTodo:"), todo);
+  }
+  return style;
+}
+
+// One composed unit: paragraphs joined by "\n". Every paragraph's TTStyle
+// covers its text AND its own terminating newline, which is where Notes keeps
+// a paragraph's style; the last paragraph's terminator is supplied by the
+// placement (or is the end of the note).
+typedef struct {
+  NSMutableAttributedString *text;
+  NSMutableArray<NSValue *> *ranges;  // content range of each paragraph within `text`
+  NSMutableArray<NSDictionary *> *styles;  // validated paragraph-style parameters
+} ComposedUnit;
+
+// Validates the whole request and builds the text with its inline runs. Pure
+// Foundation: nothing here needs NotesShared, so a malformed request fails the
+// same way on every macOS. ApplyParagraphStyles adds the private styles.
+static ComposedUnit BuildUnit(id paragraphsValue) {
+  if (![paragraphsValue isKindOfClass:[NSArray class]] || [paragraphsValue count] == 0)
+    Fail(@"invalid_request", @"`paragraphs` must be a non-empty array", nil);
+  NSArray *paragraphs = paragraphsValue;
+  if (paragraphs.count > MAX_COMPOSE_PARAGRAPHS)
+    Fail(@"invalid_request", @"`paragraphs` exceeds 2000 entries", nil);
+  ComposedUnit unit = {[NSMutableAttributedString new], [NSMutableArray array], [NSMutableArray array]};
+  NSUInteger runCount = 0;
+  for (NSUInteger index = 0; index < paragraphs.count; index++) {
+    id value = paragraphs[index];
+    if (![value isKindOfClass:[NSDictionary class]])
+      Fail(@"invalid_request", @"Each paragraph must be an object", nil);
+    NSDictionary *paragraph = value;
+    RequireOnlyKeys(paragraph, @"style,indent,blockQuote,checked,runs", @"paragraph");
+    id styleName = paragraph[@"style"];
+    const StyleSpec *spec = [styleName isKindOfClass:[NSString class]] ? StyleNamed(styleName) : NULL;
+    if (!spec)
+      Fail(@"invalid_request",
+           @"Paragraph `style` must be heading, subheading, body, monospaced, bulleted, dashed, "
+           @"numbered, or checklist",
+           nil);
+    NSUInteger indent = ComposeCount(paragraph, @"indent", 0, MAX_INDENT, 0, @"Paragraph");
+    if (indent && !spec->indentable)
+      Fail(@"invalid_request", @"Only body, list, and checklist paragraphs take `indent`", nil);
+    BOOL blockQuote = ComposeBool(paragraph, @"blockQuote", @"Paragraph");
+    id checked = paragraph[@"checked"];
+    BOOL isChecklist = spec->value == 103;
+    if (isChecklist ? !IsJSONBool(checked) : checked != nil)
+      Fail(@"invalid_request", @"`checked` is a required boolean on checklist paragraphs and invalid elsewhere",
+           nil);
+    // An empty `runs` array is a blank line. The unit's last paragraph must
+    // have text: with no terminator of its own, its style needs a character.
+    id runs = paragraph[@"runs"];
+    if (![runs isKindOfClass:[NSArray class]] || ([runs count] == 0 && index + 1 == paragraphs.count))
+      Fail(@"invalid_request", @"Paragraph `runs` must be an array, non-empty on the last paragraph", nil);
+    runCount += [runs count];
+    if (runCount > MAX_COMPOSE_RUNS) Fail(@"invalid_request", @"Too many runs (max 20000)", nil);
+
+    if (unit.text.length) [unit.text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
+    NSUInteger start = unit.text.length;
+    for (id runValue in runs) {
+      if (![runValue isKindOfClass:[NSDictionary class]]) Fail(@"invalid_request", @"Each run must be an object", nil);
+      NSDictionary *run = runValue;
+      RequireOnlyKeys(run, @"text,bold,italic,underline,strikethrough,link,highlight,color", @"run");
+      NSString *text = run[@"text"];
+      if (![text isKindOfClass:[NSString class]] || text.length == 0)
+        Fail(@"invalid_request", @"Run `text` must be a non-empty string", nil);
+      ValidateRunText(text);
+      [unit.text appendAttributedString:[[NSAttributedString alloc] initWithString:text
+                                                                       attributes:RunAttributes(run)]];
+      if (unit.text.length > MAX_COMPOSE_UTF16)
+        Fail(@"invalid_request", @"Composed text exceeds 200000 UTF-16 code units", nil);
+    }
+    [unit.ranges addObject:[NSValue valueWithRange:NSMakeRange(start, unit.text.length - start)]];
+    [unit.styles addObject:@{
+      @"spec" : [NSValue valueWithPointer:spec],
+      @"indent" : @(indent),
+      @"blockQuote" : @(blockQuote),
+      @"checked" : isChecklist ? checked : [NSNull null],
+    }];
+  }
+  return unit;
+}
+
+static void ApplyParagraphStyles(ComposedUnit unit) {
+  for (NSUInteger i = 0; i < unit.ranges.count; i++) {
+    NSDictionary *p = unit.styles[i];
+    id style = ComposeParagraphStyle([p[@"spec"] pointerValue], [p[@"indent"] unsignedIntegerValue],
+                                 [p[@"blockQuote"] boolValue], p[@"checked"] == [NSNull null] ? nil : p[@"checked"]);
+    NSRange range = unit.ranges[i].rangeValue;
+    if (i + 1 < unit.ranges.count) range.length += 1;  // own terminator
+    [unit.text addAttribute:kStyleKey value:style range:range];
+  }
+}
+
+#pragma mark Read-back signatures
+
+static NSString *ColorHex(id value) {
+  NSColor *color = nil;
+  if (CFGetTypeID((__bridge CFTypeRef)value) == CGColorGetTypeID())
+    color = [NSColor colorWithCGColor:(__bridge CGColorRef)value];
+  else if ([value isKindOfClass:[NSColor class]])
+    color = value;
+  NSColor *srgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+  if (!srgb) return [NSString stringWithFormat:@"<%@>", NSStringFromClass([value class])];
+  return [NSString stringWithFormat:@"#%02lX%02lX%02lX", lround(srgb.redComponent * 255),
+                                    lround(srgb.greenComponent * 255), lround(srgb.blueComponent * 255)];
+}
+
+static NSDictionary *RunSignature(NSDictionary *attrs) {
+  NSMutableDictionary *sig = [NSMutableDictionary dictionary];
+  unsigned int hints = [attrs[kHintsKey] unsignedIntValue];
+  if (hints & 1) sig[@"bold"] = @YES;
+  if (hints & 2) sig[@"italic"] = @YES;
+  if ([attrs[kUnderlineKey] boolValue]) sig[@"underline"] = @YES;
+  if ([attrs[kStrikethroughKey] boolValue]) sig[@"strikethrough"] = @YES;
+  id link = attrs[NSLinkAttributeName];
+  if (link) sig[@"link"] = [link isKindOfClass:[NSURL class]] ? [link absoluteString] : [link description];
+  NSUInteger emphasis = [attrs[kEmphasisKey] unsignedIntegerValue];
+  if (emphasis >= 1 && emphasis <= COUNT(kHighlights)) sig[@"highlight"] = @(kHighlights[emphasis - 1]);
+  else if (emphasis) sig[@"highlight"] = @(emphasis);
+  if (attrs[kColorKey]) sig[@"color"] = ColorHex(attrs[kColorKey]);
+  return sig;
+}
+
+static NSDictionary *StyleSignature(id style) {
+  if (!style) return @{@"style" : @"none"};
+  unsigned int value = ((unsigned int (*)(id, SEL))objc_msgSend)(style, sel_registerName("style"));
+  NSUInteger indent = ((NSUInteger(*)(id, SEL))objc_msgSend)(style, sel_registerName("indent"));
+  NSUInteger quote = ((NSUInteger(*)(id, SEL))objc_msgSend)(style, sel_registerName("blockQuoteLevel"));
+  id todo = Send(style, "todo");
+  NSMutableDictionary *sig = [@{
+    @"style" : StyleName(value),
+    @"indent" : @(indent),
+    @"blockQuote" : @((BOOL)(quote > 0)),
+  } mutableCopy];
+  if (todo) sig[@"checked"] = @(SendBool(todo, "done"));
+  return sig;
+}
+
+// What a paragraph looks like to Notes: its paragraph style (read at its
+// first character and, when it has one, at its terminator) and its inline
+// runs as {length, attributes}, adjacent equal runs merged.
+static NSDictionary *ParagraphSignature(NSAttributedString *string, NSRange content, BOOL hasTerminator) {
+  NSMutableDictionary *sig = [StyleSignature([string attribute:kStyleKey
+                                                       atIndex:content.location
+                                                effectiveRange:NULL]) mutableCopy];
+  if (hasTerminator)
+    sig[@"terminator"] = StyleSignature([string attribute:kStyleKey
+                                                  atIndex:NSMaxRange(content)
+                                           effectiveRange:NULL]);
+  NSMutableArray *runs = [NSMutableArray array];
+  [string enumerateAttributesInRange:content
+                             options:0
+                          usingBlock:^(NSDictionary *attrs, NSRange range, BOOL *stop) {
+                            (void)stop;
+                            NSDictionary *run = RunSignature(attrs);
+                            NSMutableDictionary *last = runs.lastObject;
+                            if (last && [last[@"attributes"] isEqual:run])
+                              last[@"length"] = @([last[@"length"] unsignedIntegerValue] + range.length);
+                            else
+                              [runs addObject:[@{@"length" : @(range.length), @"attributes" : run} mutableCopy]];
+                          }];
+  sig[@"runs"] = runs;
+  sig[@"lengthUTF16"] = @(content.length);
+  return sig;
+}
+
+static NSArray *UnitSignatures(NSAttributedString *string, NSUInteger offset, NSArray<NSValue *> *ranges,
+                               BOOL lastHasTerminator) {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSUInteger i = 0; i < ranges.count; i++) {
+    NSRange range = ranges[i].rangeValue;
+    range.location += offset;
+    [out addObject:ParagraphSignature(string, range, i + 1 < ranges.count || lastHasTerminator)];
+  }
+  return out;
+}
+
+#pragma mark Placement
+
+typedef struct {
+  NSUInteger index;          // insertion point in the existing body
+  NSAttributedString *prefix;  // closes the paragraph before the unit, or nil
+  BOOL trailingTerminator;   // the unit needs its own closing newline
+  NSUInteger headingIndex;   // for insertBeforeHeading: start of the matched heading
+} Placement;
+
+static NSUInteger StyleValueAt(NSAttributedString *string, NSUInteger index) {
+  id style = [string attribute:kStyleKey atIndex:index effectiveRange:NULL];
+  if (!style || ![style respondsToSelector:sel_registerName("style")]) return 3;
+  return ((unsigned int (*)(id, SEL))objc_msgSend)(style, sel_registerName("style"));
+}
+
+// A newline carrying the paragraph style found at `index`, which becomes that
+// paragraph's terminator.
+static NSAttributedString *TerminatorFor(NSAttributedString *string, NSUInteger index) {
+  id style = [string attribute:kStyleKey atIndex:index effectiveRange:NULL];
+  return [[NSAttributedString alloc] initWithString:@"\n" attributes:style ? @{kStyleKey : style} : @{}];
+}
+
+static Placement ResolvePlacement(NSAttributedString *existing, NSString *mode, NSDictionary *beforeHeading) {
+  NSString *body = existing.string;
+  Placement p = {body.length, nil, NO, NSNotFound};
+  if (beforeHeading) {
+    NSString *text = beforeHeading[@"text"];
+    NSUInteger occurrence = ComposeCount(beforeHeading, @"occurrence", 1, 100000, 1, @"insertBeforeHeading");
+    NSUInteger expected = ComposeCount(beforeHeading, @"expectedCount", 1, 100000, 1, @"insertBeforeHeading");
+    NSMutableArray<NSNumber *> *matches = [NSMutableArray array];
+    [body enumerateSubstringsInRange:NSMakeRange(0, body.length)
+                             options:NSStringEnumerationByParagraphs
+                          usingBlock:^(NSString *line, NSRange range, NSRange enclosing, BOOL *stop) {
+                            (void)enclosing;
+                            (void)stop;
+                            if (range.length && [line isEqualToString:text] &&
+                                StyleValueAt(existing, range.location) == STYLE_HEADING)
+                              [matches addObject:@(range.location)];
+                          }];
+    if (matches.count != expected || occurrence > matches.count)
+      Fail(@"selector_conflict",
+           [NSString stringWithFormat:@"Found %lu Heading paragraphs equal to the text; expected %lu",
+                                      (unsigned long)matches.count, (unsigned long)expected],
+           @{@"committed" : @NO, @"matchCount" : @(matches.count)});
+    NSUInteger at = matches[occurrence - 1].unsignedIntegerValue;
+    if (at == 0)
+      Fail(@"selector_conflict", @"Cannot insert above the note's first paragraph (its title)",
+           @{@"committed" : @NO});
+    p.index = at;
+    p.headingIndex = at;
+    p.trailingTerminator = YES;
+    return p;
+  }
+  if ([mode isEqualToString:@"prepend"]) {
+    NSRange newline = [body rangeOfString:@"\n"];
+    if (newline.location != NSNotFound) {
+      p.index = newline.location + 1;
+      p.trailingTerminator = p.index < body.length;
+      return p;
+    }
+  }
+  // Append, or prepend to a title-only note: close the last paragraph first.
+  if (body.length && ![body hasSuffix:@"\n"]) p.prefix = TerminatorFor(existing, body.length - 1);
+  return p;
+}
+
+static NSMutableAttributedString *Insertion(ComposedUnit unit, Placement p) {
+  NSMutableAttributedString *insertion = [NSMutableAttributedString new];
+  if (p.prefix) [insertion appendAttributedString:p.prefix];
+  [insertion appendAttributedString:unit.text];
+  if (p.trailingTerminator) [insertion appendAttributedString:TerminatorFor(unit.text, unit.text.length - 1)];
+  return insertion;
+}
+
+static void RequireNonSystemPaper(NSManagedObject *note) {
+  if (!note.entity.propertiesByName[@"isSystemPaper"])
+    Fail(@"unsupported_note", @"Cannot determine whether this note is a Quick Note on this macOS",
+         @{@"committed" : @NO});
+  if ([[note valueForKey:@"isSystemPaper"] boolValue])
+    Fail(@"unsupported_note", @"The note is a Quick Note and requireNonSystemPaper is set",
+         @{@"committed" : @NO});
+}
+
+static NSArray *ReadBackSummary(NSArray *signatures) {
+  NSMutableArray *out = [NSMutableArray array];
+  for (NSDictionary *sig in signatures) {
+    NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+    for (NSString *key in @[ @"style", @"indent", @"blockQuote", @"checked", @"lengthUTF16" ])
+      if (sig[key]) entry[key] = sig[key];
+    NSMutableArray *runs = [NSMutableArray array];
+    for (NSDictionary *run in sig[@"runs"])
+      [runs addObject:@{@"length" : run[@"length"], @"attributes" : run[@"attributes"]}];
+    entry[@"runs"] = runs;
+    [out addObject:entry];
+  }
+  return out;
+}
+
+// Every failure raised before the save reports committed: NO (main() sees
+// gWriteRequest without gSaveAttempted), so the client never reports a
+// refused compose as indeterminate. Failures from the save on set committed
+// themselves.
+static NSDictionary *HandleComposeNote(NSDictionary *request) {
+  gWriteRequest = YES;
+  NSString *identifier = RequireIdentifier(request);
+  NSString *mode = RequireString(request, @"mode");
+  if (![mode isEqualToString:@"append"] && ![mode isEqualToString:@"prepend"])
+    Fail(@"invalid_request", @"`mode` must be append or prepend", nil);
+  BOOL dryRun = ComposeBool(request, @"dryRun", @"Request");
+  BOOL requireNonSystemPaper = ComposeBool(request, @"requireNonSystemPaper", @"Request");
+  NSString *ifRevision = nil;
+  if (dryRun) {
+    if (request[@"ifRevision"]) Fail(@"invalid_request", @"`dryRun` does not take `ifRevision`", nil);
+  } else {
+    ifRevision = RequireString(request, @"ifRevision");
+  }
+  NSDictionary *beforeHeading = request[@"insertBeforeHeading"];
+  if (beforeHeading) {
+    if (![beforeHeading isKindOfClass:[NSDictionary class]])
+      Fail(@"invalid_request", @"`insertBeforeHeading` must be an object", nil);
+    if (![mode isEqualToString:@"append"])
+      Fail(@"invalid_request", @"`insertBeforeHeading` is valid only in append mode", nil);
+    RequireOnlyKeys(beforeHeading, @"text,occurrence,expectedCount", @"insertBeforeHeading");
+    NSString *text = RequireString(beforeHeading, @"text");
+    if ([text rangeOfCharacterFromSet:NSCharacterSet.newlineCharacterSet].location != NSNotFound)
+      Fail(@"invalid_request", @"`insertBeforeHeading.text` must be one line", nil);
+    ComposeCount(beforeHeading, @"occurrence", 1, 100000, 1, @"insertBeforeHeading");
+    ComposeCount(beforeHeading, @"expectedCount", 1, 100000, 1, @"insertBeforeHeading");
+  }
+  ComposedUnit unit = BuildUnit(request[@"paragraphs"]);
+  RequireFeature(FeatureCompose);
+  ApplyParagraphStyles(unit);
+
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, dryRun);
+  NSManagedObject *note = FetchNote(context, identifier);
+  RequireAppendableNote(note);
+  if (requireNonSystemPaper) RequireNonSystemPaper(note);
+
+  NSString *revisionBefore = RevisionToken(note);
+  if (!dryRun && ![revisionBefore isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+
+  id ms = Send(note, "mergeableString");
+  NSAttributedString *existing = ms ? Send(ms, "attributedString") : nil;
+  if (![existing isKindOfClass:[NSAttributedString class]])
+    Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
+  existing = [existing copy];
+  Placement placement = ResolvePlacement(existing, mode, beforeHeading);
+  NSMutableAttributedString *insertion = Insertion(unit, placement);
+  NSUInteger unitOffset = placement.prefix ? placement.prefix.length : 0;
+  NSArray *expected = UnitSignatures(insertion, unitOffset, unit.ranges, placement.trailingTerminator);
+
+  NSMutableDictionary *result = [@{
+    @"identifier" : identifier,
+    @"mode" : mode,
+    @"paragraphs" : @(unit.ranges.count),
+    @"insertedUTF16" : @(insertion.length),
+    @"insertAt" : @(placement.index),
+    // UTF-16 offset of the first composed paragraph in the new body (after
+    // any separator), so a caller can locate the unit in an independent read.
+    @"unitStart" : @(placement.index + unitOffset),
+    @"objectURI" : note.objectID.URIRepresentation.absoluteString,
+    @"revisionBefore" : revisionBefore,
+    @"requiredNonSystemPaper" : @(requireNonSystemPaper),
+    @"storeKind" : store.isCopy ? @"copy" : @"live",
+  } mutableCopy];
+  if (beforeHeading) result[@"insertBeforeHeading"] = beforeHeading;
+  if (dryRun) {
+    [result addEntriesFromDictionary:@{
+      @"status" : @"planned",
+      @"dryRun" : @YES,
+      @"committed" : @NO,
+      @"plan" : ReadBackSummary(expected),
+    }];
+    return result;
+  }
+
+  SendVoid(ms, "beginEditing");
+  ((void (*)(id, SEL, id, NSUInteger))objc_msgSend)(ms, sel_registerName("insertAttributedString:atIndex:"),
+                                                    insertion, placement.index);
+  SendVoid(ms, "endEditing");
+  ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+      note, sel_registerName("edited:range:changeInLength:"),
+      NSTextStorageEditedCharacters | NSTextStorageEditedAttributes,
+      NSMakeRange(placement.index, insertion.length), (NSInteger)insertion.length);
+  ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(note, sel_registerName("regenerateTitle:snippet:"), YES, YES);
+  if (!SendBool(note, "saveNoteData"))
+    Fail(@"save_failed", @"NotesShared did not serialize the edited body", @{@"committed" : @NO});
+  [note setValue:[NSDate date] forKey:@"modificationDate"];
+  ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"),
+                                        @"apple-notes-mcp compose_note");
+
+  SaveOrFail(context);
+
+  // Fresh read-back through a new coordinator: the full text must equal the
+  // old body with the insertion spliced in, and every composed paragraph must
+  // carry the expected style, checklist state, and inline runs.
+  NSMutableString *expectedText = [existing.string mutableCopy];
+  [expectedText insertString:insertion.string atIndex:placement.index];
+  NSDictionary *after = nil;
+  NSArray *persisted = nil;
+  NSString *verifyDetail = nil;
+  BOOL placementVerified = !beforeHeading;
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *reread = FetchNote(fresh, identifier);
+    NSAttributedString *body = Send(Send(reread, "mergeableString"), "attributedString");
+    after = NoteState(reread);
+    if (![body isKindOfClass:[NSAttributedString class]] || ![body.string isEqualToString:expectedText]) {
+      verifyDetail = @"The persisted body does not equal the previous body with the composed text inserted";
+    } else {
+      persisted = UnitSignatures(body, placement.index + unitOffset, unit.ranges, placement.trailingTerminator);
+      if (![persisted isEqualToArray:expected])
+        verifyDetail = @"A composed paragraph's persisted style, checklist state, or runs differ from the request";
+      if (beforeHeading) {
+        NSUInteger headingAt = placement.index + insertion.length;
+        NSString *line = nil;
+        if (headingAt < body.length) {
+          NSRange range = [body.string paragraphRangeForRange:NSMakeRange(headingAt, 0)];
+          line = [[body.string substringWithRange:range]
+              stringByTrimmingCharactersInSet:NSCharacterSet.newlineCharacterSet];
+        }
+        placementVerified = line && StyleValueAt(body, headingAt) == STYLE_HEADING &&
+                            [line isEqualToString:beforeHeading[@"text"]];
+        if (!placementVerified) verifyDetail = @"The heading no longer follows the composed text";
+      }
+    }
+  } @catch (NSException *e) {
+    // After a successful save: a committed write that could not be verified.
+    verifyDetail = e.reason ?: e.name;
+  }
+  if (verifyDetail) {
+    NSMutableDictionary *extra = [@{@"committed" : @YES, @"indeterminate" : @YES, @"revisionBefore" : revisionBefore}
+        mutableCopy];
+    if (persisted) {
+      extra[@"expected"] = ReadBackSummary(expected);
+      extra[@"persisted"] = ReadBackSummary(persisted);
+    }
+    Fail(@"verification_failed", verifyDetail, extra);
+  }
+
+  BOOL hostRunning = NotesAppRunning();
+  [result addEntriesFromDictionary:@{
+    @"status" : @"updated",
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"placementVerified" : @(placementVerified),
+    @"revisionAfter" : after[@"revision"],
+    @"modificationDate" : after[@"modificationDate"],
+    @"title" : after[@"title"],
+    @"cloudSync" : after[@"cloudSync"],
+    @"readBack" : ReadBackSummary(persisted),
+    @"pushScheduled" : @NO,
+    @"syncHostRunning" : @(hostRunning),
+    @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",
+  }];
+  return result;
 }
 
 #pragma mark - Sync state
