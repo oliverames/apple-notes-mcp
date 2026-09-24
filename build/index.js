@@ -56329,9 +56329,15 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  add_url_card: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var LINK_CARD_LIVE_VALIDATED = false;
+var WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  { key: "linkCard", probeKey: "linkCard", liveValidated: LINK_CARD_LIVE_VALIDATED }
+];
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56615,7 +56621,9 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const base = { enabled, writesEnabled, installation, probe: null };
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: Object.fromEntries(
+      WRITER_FEATURES.map((f) => [f.key, { available: false, reason, detail }])
+    )
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56636,35 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
+  const features = {};
+  for (const { key, probeKey, liveValidated } of WRITER_FEATURES)
+    features[key] = featureStatus(probe, probeKey, liveValidated, deps.env);
+  return { ...base, probe, features };
+}
+function featureStatus(probe, probeKey, liveValidated, env) {
+  const parsed = featureSchema2.safeParse(probe.features[probeKey]);
+  if (!parsed.success)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: `The writer probe does not report ${probeKey}`
+    };
+  const feature = parsed.data;
   if (!feature.available) {
     const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57018,6 +57036,8 @@ function writerEnvelopeCode(helperCode, message) {
       return "unsupported";
     case "ambiguous":
       return "ambiguous";
+    case "match_count_mismatch":
+      return "validation_error";
     default:
       return envelopeCode(helperCode, message);
   }
@@ -57136,6 +57156,129 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateWriterLinkCard.ts
+var MAX_URL_UTF16 = 2048;
+var MAX_ANCHOR_UTF16 = 2e3;
+var revision4 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
+var urlCardResultSchema = external_exports.object({
+  status: external_exports.enum(["planned", "updated"]),
+  committed: external_exports.boolean(),
+  dryRun: external_exports.boolean(),
+  identifier: external_exports.string(),
+  url: external_exports.string(),
+  placement: external_exports.enum(["end", "afterParagraph"]),
+  insertedAtUTF16: external_exports.number().int().nonnegative(),
+  glyphIndexUTF16: external_exports.number().int().nonnegative(),
+  separatorInserted: external_exports.boolean(),
+  revisionBefore: revision4,
+  revisionAfter: revision4,
+  attachment: external_exports.object({
+    attachmentIdentifier: external_exports.string(),
+    typeUTI: external_exports.string().nullable(),
+    urlString: external_exports.string().nullable(),
+    glyphIndexUTF16: external_exports.number().int().nullable(),
+    /** The attachment's own upload counters; it is a separate cloud object. */
+    cloudSync: cloudSyncSchema2.optional()
+  }).passthrough().optional(),
+  previewFetched: external_exports.boolean().optional(),
+  modificationDate: external_exports.string().nullable(),
+  ...writeSyncFields
+}).passthrough();
+function assertCardUrl(url) {
+  let parsed = null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || url.length > MAX_URL_UTF16 || // eslint-disable-next-line no-control-regex
+  /[\s\x00-\x1F\x7F]/.test(url) || !["http:", "https:"].includes(parsed.protocol) || !parsed.hostname)
+    throw new PrivateWriteError(
+      "invalid_request",
+      `url must be an absolute http or https URL with a host (at most ${MAX_URL_UTF16} characters)`,
+      false
+    );
+}
+function addUrlCard(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertCardUrl(request.url);
+  if (request.afterParagraph !== void 0 && (!request.afterParagraph.length || request.afterParagraph.length > MAX_ANCHOR_UTF16 || request.afterParagraph.includes("\n")))
+    throw new PrivateWriteError(
+      "invalid_request",
+      `afterParagraph must be the full text of one paragraph (1 to ${MAX_ANCHOR_UTF16} characters, no newline)`,
+      false
+    );
+  const dryRun = request.dryRun === true;
+  const fields = { identifier: request.identifier, url: request.url };
+  if (request.afterParagraph !== void 0) fields.afterParagraph = request.afterParagraph;
+  if (request.ifRevision !== void 0) {
+    assertRevision(request.ifRevision);
+    fields.ifRevision = request.ifRevision;
+  } else if (!dryRun) {
+    throw new PrivateWriteError(
+      "invalid_request",
+      "ifRevision is required unless dryRun is true",
+      false
+    );
+  }
+  if (dryRun) fields.dryRun = true;
+  else requireLiveValidated(LINK_CARD_LIVE_VALIDATED, "native-add-url-card", deps.env);
+  try {
+    return parseWriterResult(
+      urlCardResultSchema,
+      callPrivateWriter("add_url_card", fields, deps),
+      true
+    );
+  } catch (error2) {
+    if (dryRun && error2 instanceof PrivateWriteError && error2.committed === "unknown")
+      throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
+    throw error2;
+  }
+}
+
+// src/tools/privateWriterLinkCardTools.ts
+function registerPrivateWriterLinkCardTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-add-url-card",
+    "Use when: adding a rich web link card (the preview tile Notes shows for a pasted URL) to one note, at the end or right after one exact paragraph. Neither AppleScript nor Shortcuts can create one.\nReturns: status (planned for a dry run, updated), the attachment identifier, its stored type and URL, its own cloudSync counters, the glyph position re-read from a fresh Core Data stack, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: you want a plain or labeled text link (insert-link or append-native), or a link to another note (insert-note-link).\nSafety: writes to the Notes database through unsupported private API: one new public.url attachment and one attachment glyph on its own line; no other text changes. `url` must be absolute http(s). `afterParagraph` must equal the full text of exactly one paragraph, or nothing is written (match_count_mismatch). The writer makes no network request; Notes fetches the card title and preview image itself later. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Not idempotent: a repeat adds a second card, but the replayed revision is refused. A timeout is indeterminate (indeterminate: true): read the note before any retry. Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      url: external_exports.string().min(1).max(MAX_URL_UTF16).describe("Absolute http or https URL for the card"),
+      afterParagraph: external_exports.string().min(1).max(MAX_ANCHOR_UTF16).optional().describe(
+        "Full text of the one paragraph the card should follow; omit to append at the end"
+      ),
+      ifRevision: revisionToken.optional().describe("The `revision` from native-note-state; required unless dryRun is true"),
+      dryRun: external_exports.boolean().optional().describe("Report where the card would go without writing"),
+      nudge: external_exports.boolean().optional().describe(
+        "After a verified write, ask Notes.app to upload the note by moving it into its own folder (default false)"
+      ),
+      nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = addUrlCard(
+        {
+          identifier,
+          url: args.url,
+          afterParagraph: args.afterParagraph,
+          ifRevision: args.ifRevision,
+          dryRun: args.dryRun
+        },
+        deps.writer
+      );
+      if (!args.nudge || !result.committed) return { ...result };
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57316,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivateWriterLinkCardTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

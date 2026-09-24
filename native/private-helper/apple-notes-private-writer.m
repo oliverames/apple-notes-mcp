@@ -162,6 +162,10 @@ static const ModelRequirement kModelProperties[] = {
     {"ICFolder", "identifier"},
 };
 
+static const ModelRequirement kLinkCardModel[] = {
+    {"ICAttachment", "identifier,typeUTI,urlString,note,cloudState"},
+};
+
 static const APIRequirement kAppendAPI[] = {
     {"ICTTMergeableString", "beginEditing", NO},
     {"ICTTMergeableString", "endEditing", NO},
@@ -170,6 +174,18 @@ static const APIRequirement kAppendAPI[] = {
     {"ICNote", "saveNoteData", NO},
     {"ICNote", "updateChangeCountWithReason:", NO},
     {"ICNote", "regenerateTitle:snippet:", NO},
+};
+
+// URL link cards add an ICAttachment and its attachment glyph. They need the
+// append editing surface above plus these, and the ICAttachment model
+// properties in kLinkCardModel below.
+static const APIRequirement kLinkCardAPI[] = {
+    {"ICNote", "addURLAttachmentWithURL:", NO},
+    {"ICNote", "rangeForAttachment:", NO},
+    {"ICAttachment", "updateChangeCountWithReason:", NO},
+    {"ICTTAttachment", "setAttachmentIdentifier:", NO},
+    {"ICTTAttachment", "setAttachmentUTI:", NO},
+    {"ICTTAttachment", "attachmentIdentifier", NO},
 };
 
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
@@ -208,27 +224,29 @@ static NSArray<NSString *> *MissingAPI(const APIRequirement *list, size_t count)
   return missing;
 }
 
-static NSArray<NSString *> *MissingModelProperties(void) {
+static NSArray<NSString *> *MissingModelProperties(const ModelRequirement *list, size_t count) {
   Class container = objc_getClass("ICPersistentContainer");
   SEL modelSel = sel_registerName("managedObjectModel");
   if (!container || ![container respondsToSelector:modelSel]) return @[ @"managed object model" ];
   NSManagedObjectModel *model = ((id(*)(id, SEL))objc_msgSend)(container, modelSel);
   if (![model isKindOfClass:[NSManagedObjectModel class]]) return @[ @"managed object model" ];
   NSMutableArray *missing = [NSMutableArray array];
-  for (size_t i = 0; i < COUNT(kModelProperties); i++) {
-    NSEntityDescription *entity = model.entitiesByName[@(kModelProperties[i].entity)];
+  for (size_t i = 0; i < count; i++) {
+    NSEntityDescription *entity = model.entitiesByName[@(list[i].entity)];
     if (!entity) {
-      [missing addObject:[NSString stringWithFormat:@"entity %s", kModelProperties[i].entity]];
+      [missing addObject:[NSString stringWithFormat:@"entity %s", list[i].entity]];
       continue;
     }
-    for (NSString *name in [@(kModelProperties[i].properties) componentsSeparatedByString:@","])
+    for (NSString *name in [@(list[i].properties) componentsSeparatedByString:@","])
       if (!entity.propertiesByName[name])
-        [missing addObject:[NSString stringWithFormat:@"%s.%@", kModelProperties[i].entity, name]];
+        [missing addObject:[NSString stringWithFormat:@"%s.%@", list[i].entity, name]];
   }
   return missing;
 }
 
-typedef NS_ENUM(NSInteger, Feature) { FeatureModel, FeatureRead, FeatureAppend };
+// Each feature up to FeatureAppend includes everything before it. Features
+// after FeatureAppend add their own requirement table on top of FeatureAppend.
+typedef NS_ENUM(NSInteger, Feature) { FeatureModel, FeatureRead, FeatureAppend, FeatureLinkCard };
 
 static NSArray<NSString *> *MissingForFeature(Feature feature) {
   LoadFramework();
@@ -237,11 +255,15 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
   [missing addObjectsFromArray:MissingAPI(kModelAPI, COUNT(kModelAPI))];
   if (missing.count) return missing;
   if (feature >= FeatureRead) {
-    [missing addObjectsFromArray:MissingModelProperties()];
+    [missing addObjectsFromArray:MissingModelProperties(kModelProperties, COUNT(kModelProperties))];
     [missing addObjectsFromArray:MissingAPI(kReadAPI, COUNT(kReadAPI))];
   }
   if (feature >= FeatureAppend)
     [missing addObjectsFromArray:MissingAPI(kAppendAPI, COUNT(kAppendAPI))];
+  if (feature == FeatureLinkCard) {
+    [missing addObjectsFromArray:MissingAPI(kLinkCardAPI, COUNT(kLinkCardAPI))];
+    [missing addObjectsFromArray:MissingModelProperties(kLinkCardModel, COUNT(kLinkCardModel))];
+  }
   return missing;
 }
 
@@ -501,6 +523,7 @@ static NSDictionary *HandleProbe(NSDictionary *request);
 static NSDictionary *HandleReadNoteState(NSDictionary *request);
 static NSDictionary *HandleAppendPlainText(NSDictionary *request);
 static NSDictionary *HandleReadSyncState(NSDictionary *request);
+static NSDictionary *HandleAddURLCard(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -515,6 +538,7 @@ static const ActionSpec kActions[] = {
     {"read_note_state", "identifier", HandleReadNoteState},
     {"append_plain_text", "identifier,text,ifRevision", HandleAppendPlainText},
     {"read_sync_state", "identifiers", HandleReadSyncState},
+    {"add_url_card", "identifier,url,afterParagraph,ifRevision,dryRun", HandleAddURLCard},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -596,6 +620,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
     @"features" : @{
       @"readNoteState" : FeatureReport(FeatureRead, contextOK, contextReason),
       @"appendPlainText" : FeatureReport(FeatureAppend, contextOK, contextReason),
+      @"linkCard" : FeatureReport(FeatureLinkCard, contextOK, contextReason),
     },
   };
 }
@@ -753,6 +778,313 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
     @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",
     @"storeKind" : store.isCopy ? @"copy" : @"live",
   };
+}
+
+#pragma mark - Shared write plumbing
+
+// Saves an edited note with the same optimistic-locking rules as the append
+// path: a concurrent save by Notes becomes revision_conflict, anything else
+// save_failed, and in both cases nothing is written.
+static void SaveOrFail(NSManagedObjectContext *context) {
+  NSError *saveError = nil;
+  if ([context save:&saveError]) return;
+  [context rollback];
+  BOOL conflict = saveError.code == NSManagedObjectMergeError ||
+                  saveError.code == NSPersistentStoreSaveConflictsError;
+  Fail(conflict ? @"revision_conflict" : @"save_failed",
+       conflict ? @"Notes changed the note during the write; nothing was saved"
+                : @"The Core Data save failed; nothing was saved",
+       @{@"committed" : @NO, @"detail" : OrNull(saveError.localizedDescription)});
+}
+
+// The sync fields every write result carries. The writer never uploads.
+static NSDictionary *SyncFields(NSDictionary *after, StoreLocation store) {
+  BOOL hostRunning = NotesAppRunning();
+  return @{
+    @"modificationDate" : after[@"modificationDate"],
+    @"cloudSync" : after[@"cloudSync"],
+    @"pushScheduled" : @NO,
+    @"syncHostRunning" : @(hostRunning),
+    @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",
+    @"storeKind" : store.isCopy ? @"copy" : @"live",
+  };
+}
+
+static NSAttributedString *LoadBody(NSManagedObject *note, id *mergeableOut) {
+  id ms = Send(note, "mergeableString");
+  NSAttributedString *body = ms ? Send(ms, "attributedString") : nil;
+  if (![body isKindOfClass:[NSAttributedString class]])
+    Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
+  if (mergeableOut) *mergeableOut = ms;
+  return body;
+}
+
+static BOOL IsJSONBool(id value) {
+  return [value isKindOfClass:[NSNumber class]] &&
+         CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
+}
+
+#pragma mark - URL link card
+
+#define MAX_URL_UTF16 2048
+#define MAX_ANCHOR_UTF16 2000
+static const unichar kAttachmentGlyph = 0xFFFC;
+static NSString *const kURLCardUTI = @"public.url";
+
+// Only absolute http(s) URLs with a host become cards. Everything else (file,
+// data, javascript, notes deep links) is refused.
+static NSURL *CardURL(NSString *value) {
+  if (value.length > MAX_URL_UTF16)
+    Fail(@"invalid_request", @"`url` exceeds 2048 UTF-16 code units", nil);
+  if ([value rangeOfCharacterFromSet:[NSCharacterSet controlCharacterSet]].location != NSNotFound ||
+      [value rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]].location != NSNotFound)
+    Fail(@"invalid_request", @"`url` must not contain whitespace or control characters", nil);
+  NSURLComponents *parts = [NSURLComponents componentsWithString:value];
+  NSString *scheme = parts.scheme.lowercaseString;
+  if (!parts.URL || !([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) ||
+      !parts.host.length)
+    Fail(@"invalid_request", @"`url` must be an absolute http or https URL with a host", nil);
+  return parts.URL;
+}
+
+// Where the card goes: at the end of one paragraph's text, so it becomes the
+// next paragraph. With no anchor that is the note's last paragraph. Returns
+// the insertion index and fills `styleSource` with the index whose paragraph
+// style the separating newline copies (NSNotFound for none) and `found` with
+// how many paragraphs matched the anchor.
+static NSUInteger CardInsertionIndex(NSString *text, NSString *anchor, NSUInteger *styleSource,
+                                     NSUInteger *found) {
+  *styleSource = NSNotFound;
+  if (!anchor) {
+    *found = 1;
+    // A body that already ends in a newline gets the card as its own last
+    // paragraph without a separator.
+    if (text.length == 0 || [text hasSuffix:@"\n"]) return text.length;
+    *styleSource = text.length - 1;
+    return text.length;
+  }
+  NSUInteger start = 0, hits = 0, end = NSNotFound;
+  while (start <= text.length) {
+    NSRange newline = [text rangeOfString:@"\n"
+                                  options:NSLiteralSearch
+                                    range:NSMakeRange(start, text.length - start)];
+    NSUInteger lineEnd = newline.location == NSNotFound ? text.length : newline.location;
+    if ([[text substringWithRange:NSMakeRange(start, lineEnd - start)] isEqualToString:anchor]) {
+      hits++;
+      end = lineEnd;
+    }
+    if (newline.location == NSNotFound) break;
+    start = lineEnd + 1;
+  }
+  *found = hits;
+  if (hits != 1) return NSNotFound;
+  *styleSource = end > 0 && [text characterAtIndex:end - 1] != '\n' ? end - 1 : NSNotFound;
+  return end;
+}
+
+// The inserted text: an optional newline that carries the anchor paragraph's
+// style, then the card glyph. A Notes-made card is one U+FFFC whose only
+// attribute is the NSAttachment (an ICTTAttachment naming the ICAttachment);
+// its paragraph is body text.
+static NSAttributedString *CardInsertion(NSAttributedString *body, NSUInteger styleSource,
+                                         BOOL separator, id ttAttachment) {
+  NSMutableAttributedString *insertion = [NSMutableAttributedString new];
+  if (separator) {
+    NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
+    if (styleSource != NSNotFound) {
+      id style = [body attribute:@"TTStyle" atIndex:styleSource effectiveRange:NULL];
+      if ([NSStringFromClass([style class]) containsString:@"ParagraphStyle"]) attrs[@"TTStyle"] = style;
+    }
+    [insertion appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"
+                                                                      attributes:attrs]];
+  }
+  NSString *glyph = [NSString stringWithCharacters:&kAttachmentGlyph length:1];
+  [insertion appendAttributedString:[[NSAttributedString alloc]
+                                        initWithString:glyph
+                                            attributes:@{NSAttachmentAttributeName : ttAttachment}]];
+  return insertion;
+}
+
+static NSManagedObject *FetchAttachment(NSManagedObjectContext *context, NSString *identifier) {
+  NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ICAttachment"];
+  request.predicate = [NSPredicate predicateWithFormat:@"identifier == %@", identifier];
+  request.fetchLimit = 2;
+  NSArray *rows = [context executeFetchRequest:request error:nil];
+  return rows.count == 1 ? rows.firstObject : nil;
+}
+
+static NSDictionary *HandleAddURLCard(NSDictionary *request) {
+  NSString *identifier = RequireIdentifier(request);
+  NSURL *url = CardURL(RequireString(request, @"url"));
+  NSString *anchor = nil;
+  if (request[@"afterParagraph"]) {
+    anchor = RequireString(request, @"afterParagraph");
+    if (anchor.length > MAX_ANCHOR_UTF16 || [anchor containsString:@"\n"])
+      Fail(@"invalid_request", @"`afterParagraph` must be one paragraph of at most 2000 UTF-16 units",
+           nil);
+  }
+  id dryRunValue = request[@"dryRun"];
+  if (dryRunValue && !IsJSONBool(dryRunValue))
+    Fail(@"invalid_request", @"`dryRun` must be true or false", nil);
+  BOOL dryRun = [dryRunValue boolValue];
+  NSString *ifRevision = nil;
+  if (!dryRun || request[@"ifRevision"]) ifRevision = RequireString(request, @"ifRevision");
+  RequireFeature(dryRun ? FeatureRead : FeatureLinkCard);
+
+  // A dry run opens the store read-only and can never write.
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, dryRun);
+  NSManagedObject *note = FetchNote(context, identifier);
+  RequireAppendableNote(note);
+  NSString *revisionBefore = RevisionToken(note);
+  if (ifRevision && ![revisionBefore isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+
+  id ms = nil;
+  NSAttributedString *body = LoadBody(note, &ms);
+  NSUInteger styleSource = NSNotFound, found = 0;
+  NSUInteger at = CardInsertionIndex(body.string, anchor, &styleSource, &found);
+  if (at == NSNotFound)
+    Fail(@"match_count_mismatch",
+         [NSString stringWithFormat:@"`afterParagraph` matches %lu paragraphs, not exactly one",
+                                    (unsigned long)found],
+         @{@"committed" : @NO, @"found" : @(found), @"revision" : revisionBefore});
+  BOOL separator = anchor ? YES : (body.length > 0 && ![body.string hasSuffix:@"\n"]);
+  NSUInteger glyphIndex = at + (separator ? 1 : 0);
+
+  NSMutableDictionary *result = [@{
+    @"identifier" : identifier,
+    @"url" : url.absoluteString,
+    @"placement" : anchor ? @"afterParagraph" : @"end",
+    @"insertedAtUTF16" : @(at),
+    @"glyphIndexUTF16" : @(glyphIndex),
+    @"separatorInserted" : @(separator),
+    @"revisionBefore" : revisionBefore,
+  } mutableCopy];
+  if (dryRun) {
+    [result addEntriesFromDictionary:@{
+      @"status" : @"planned",
+      @"committed" : @NO,
+      @"dryRun" : @YES,
+      @"revisionAfter" : revisionBefore,
+    }];
+    [result addEntriesFromDictionary:SyncFields(NoteState(note), store)];
+    return result;
+  }
+
+  // The attachment row. NotesShared creates it with the URL and the
+  // public.url type; the card's title and preview image are left for Notes to
+  // fetch, so the writer makes no network request.
+  id attachment =
+      ((id(*)(id, SEL, id))objc_msgSend)(note, sel_registerName("addURLAttachmentWithURL:"), url);
+  NSString *attachmentID = [attachment isKindOfClass:[NSManagedObject class]]
+                               ? [attachment valueForKey:@"identifier"]
+                               : nil;
+  NSString *uti = attachmentID ? [attachment valueForKey:@"typeUTI"] : nil;
+  if (!attachmentID.length || ![uti isEqualToString:kURLCardUTI]) {
+    [context rollback];
+    Fail(@"private_api_unavailable", @"NotesShared did not create a public.url attachment",
+         @{@"committed" : @NO, @"typeUTI" : OrNull(uti)});
+  }
+  NSRange placed = ((NSRange(*)(id, SEL, id))objc_msgSend)(
+      note, sel_registerName("rangeForAttachment:"), attachment);
+  if (placed.location != NSNotFound && placed.length > 0) {
+    [context rollback];
+    Fail(@"private_api_unavailable", @"NotesShared placed the attachment glyph itself; refusing to guess",
+         @{@"committed" : @NO});
+  }
+
+  id tt = [objc_getClass("ICTTAttachment") new];
+  ((void (*)(id, SEL, id))objc_msgSend)(tt, sel_registerName("setAttachmentIdentifier:"), attachmentID);
+  ((void (*)(id, SEL, id))objc_msgSend)(tt, sel_registerName("setAttachmentUTI:"), kURLCardUTI);
+  NSAttributedString *insertion = CardInsertion(body, styleSource, separator, tt);
+  NSString *before = [body.string copy];
+
+  SendVoid(ms, "beginEditing");
+  ((void (*)(id, SEL, id, NSUInteger))objc_msgSend)(
+      ms, sel_registerName("insertAttributedString:atIndex:"), insertion, at);
+  SendVoid(ms, "endEditing");
+  ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
+      note, sel_registerName("edited:range:changeInLength:"), NSTextStorageEditedCharacters,
+      NSMakeRange(at, insertion.length), (NSInteger)insertion.length);
+  ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(note, sel_registerName("regenerateTitle:snippet:"), YES,
+                                                YES);
+  if (!SendBool(note, "saveNoteData")) {
+    [context rollback];
+    Fail(@"save_failed", @"NotesShared did not serialize the edited body", @{@"committed" : @NO});
+  }
+  [note setValue:[NSDate date] forKey:@"modificationDate"];
+  ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"),
+                                        @"apple-notes-mcp add_url_card");
+  // The attachment is its own cloud object; without its own bump it would not
+  // be eligible for upload even when the note is.
+  ((void (*)(id, SEL, id))objc_msgSend)(attachment, sel_registerName("updateChangeCountWithReason:"),
+                                        @"apple-notes-mcp add_url_card");
+  SaveOrFail(context);
+
+  // Fresh read-back: the text is the old text plus the insertion at the
+  // expected index, the glyph there names the new attachment, no other glyph
+  // does, and the attachment row is a public.url card for this URL on this
+  // note.
+  NSDictionary *after = nil;
+  NSString *verifyDetail = nil;
+  NSMutableDictionary *stored = [NSMutableDictionary dictionaryWithObject:attachmentID
+                                                                   forKey:@"attachmentIdentifier"];
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *reread = FetchNote(fresh, identifier);
+    NSAttributedString *persisted = LoadBody(reread, NULL);
+    NSMutableString *expected = [before mutableCopy];
+    [expected insertString:insertion.string atIndex:at];
+    __block NSUInteger glyphsForAttachment = 0;
+    __block NSUInteger glyphAt = NSNotFound;
+    [persisted enumerateAttribute:NSAttachmentAttributeName
+                          inRange:NSMakeRange(0, persisted.length)
+                          options:0
+                       usingBlock:^(id value, NSRange run, BOOL *stop) {
+                         (void)stop;
+                         if (!value || ![value respondsToSelector:sel_registerName("attachmentIdentifier")])
+                           return;
+                         if ([Send(value, "attachmentIdentifier") isEqual:attachmentID]) {
+                           glyphsForAttachment += run.length;
+                           glyphAt = run.location;
+                         }
+                       }];
+    NSManagedObject *row = FetchAttachment(fresh, attachmentID);
+    stored[@"typeUTI"] = OrNull(row ? [row valueForKey:@"typeUTI"] : nil);
+    stored[@"urlString"] = OrNull(row ? [row valueForKey:@"urlString"] : nil);
+    stored[@"glyphIndexUTF16"] = glyphAt == NSNotFound ? [NSNull null] : @(glyphAt);
+    if (row) stored[@"cloudSync"] = CloudSyncState(row);
+    if (![persisted.string isEqualToString:expected])
+      verifyDetail = @"The persisted text is not the previous text plus the card glyph";
+    else if (glyphsForAttachment != 1 || glyphAt != glyphIndex)
+      verifyDetail = @"The card glyph is not present exactly once at the expected position";
+    else if (!row || ![[row valueForKey:@"typeUTI"] isEqual:kURLCardUTI])
+      verifyDetail = @"The attachment row is missing or is not a public.url attachment";
+    else if (![[row valueForKey:@"note"] isEqual:reread])
+      verifyDetail = @"The attachment row does not belong to this note";
+    else if (![[row valueForKey:@"urlString"] isEqual:url.absoluteString])
+      verifyDetail = @"The attachment row does not carry the requested URL";
+    after = NoteState(reread);
+  } @catch (HelperError *e) {
+    verifyDetail = e.reason;
+  }
+  if (verifyDetail || !after)
+    Fail(@"verification_failed", verifyDetail ?: @"Read-back failed",
+         @{@"committed" : @YES, @"revisionBefore" : revisionBefore, @"attachment" : stored});
+
+  [result addEntriesFromDictionary:@{
+    @"status" : @"updated",
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"dryRun" : @NO,
+    @"attachment" : stored,
+    @"previewFetched" : @NO,
+    @"revisionAfter" : after[@"revision"],
+  }];
+  [result addEntriesFromDictionary:SyncFields(after, store)];
+  return result;
 }
 
 #pragma mark - Sync state
