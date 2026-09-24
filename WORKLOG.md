@@ -58,6 +58,12 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
 - [ ] Gap analysis against the reference tool in ~/Downloads (private; never name it publicly): ~/Documents/apple-notes-mcp-gap-analysis-2026-09-24.md.
 - [ ] README coverage + SEO PR: agent preparing `docs/readme-coverage-seo`; GitHub topics/description go in the PR body as suggestions for sweetrb.
 - #250 resynced to 2.9.21 over main 2.9.20 (`b8d94a1`).
+- [ ] **Gap parity (Oliver, 2026-09-24): build ALL gaps from ~/Documents/apple-notes-mcp-gap-analysis-2026-09-24.md, including infra #34 editor, #35 tailnet editor, #39 permissions dashboard, #40 signed broker, #85 resolver; ship as ONE upstream DRAFT PR (Oliver chose upstream over the fork-only rule for this).** Plan/resume point:
+  - A. `feat/writer-suite` from `feat/native-writes-upstream` (78d40d8, upstream wording + foundation fix 3474030): merge every -v2 branch + edit-attachment-selector, edit-trim-breaks, highlight-whole-note; keep upstream wording; gate. Apply the bug-audit fixes for writer code HERE, once.
+  - B (parallel, from upstream/main): `gap/query-facets-svg-export` (#13, #32), `gap/template-editor` (#34, #35), `gap/permissions-dashboard` (#39), `gap/permission-broker` (#40), `gap/paragraph-anchors` (#84 registry/resolver, #85 service).
+  - C (after A): fork-writer gaps #77 rich edit runs, #62 inline link, #70 attachments in compose, #72 frozen attachment proof, #57 scope guards, #58 checklist replace-all, #78 attachment replace, #26 Paper shapes, #52 folder adoption, #89 purge-flag repair, #84 heal step.
+  - D. Merge B and C into `feat/writer-suite`, serial live tests in `apple-notes-mcp test`, open one upstream draft PR. Network pieces default off; loopback or tailnet only, token-gated. NotesCTL never named.
+  - Agents never write live notes; only this session does, serially.
 
 **Verification**: macOS 27.2 (26B5091g), Node 26.9.0, pnpm 11.9.0. Every branch named above passed lint, typecheck, format check, the full unit suite (no skips) and build with a matching bundle before it was pushed. Every live test used disposable notes, a smart folder and a subfolder inside `apple-notes-mcp test`, and all were deleted afterwards (they are in Recently Deleted; one test note was permanently tombstoned by the Recently Deleted to smart folder reproduction). Writer installs went to scratch directories, never to the plugin's install directory.
 
