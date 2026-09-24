@@ -197,13 +197,22 @@ describe("private writer source contract", () => {
       /TargetMayTouchAttachment[\s\S]{0,200}return \[kind isEqualToString:@"attachment"\]/
     );
     expect(CODE).toMatch(
-      /if \(!TargetMayTouchAttachment\(kind\)\) allowedGlyph = NSNotFound;[\s\S]{0,400}if \(found\.location != allowedGlyph\)/
+      /if \(!TargetMayTouchAttachment\(kind\)\) allowedGlyphs = NSMakeRange\(NSNotFound, 0\);[\s\S]{0,400}if \(!NSLocationInRange\(found\.location, allowedGlyphs\)\)/
     );
-    // Every RequireNoAttachmentGlyph call passes the glyph its selector named
-    // (or NSNotFound), never a free-form location.
+    // Every RequireNoAttachmentGlyph call passes the glyphs its selector named
+    // (or none), never a free-form range.
     const calls = [...CODE.matchAll(/RequireNoAttachmentGlyph\(snapshot,[^;]*\);/g)];
-    expect(calls.length).toBeGreaterThanOrEqual(3);
-    for (const call of calls) expect(call[0]).toMatch(/, (?:NSNotFound|glyph|HitGlyph\(hit\))\);$/);
+    expect(calls.length).toBeGreaterThanOrEqual(4);
+    for (const call of calls)
+      expect(call[0]).toMatch(/, (?:NSMakeRange\(NSNotFound, 0\)|glyphs|HitGlyphs\(hit\))\);$/);
+    // An attachment selector counts and targets attachments, not glyphs:
+    // adjacent glyphs naming one attachment are one span.
+    expect(CODE).toMatch(/for \(NSDictionary \*entry in AttachmentSpans\(snapshot\)\)/);
+    expect(CODE).toMatch(/: glyphs;\s*\} else \{\s*range = p\.content;/);
+    // Deleting the last paragraph removes only its text, never the previous
+    // paragraph's terminator, and touching deletions from one operation merge.
+    expect(CODE).toMatch(/NSRange range = p\.terminated \? p\.full : p\.content;/);
+    expect(CODE).toMatch(/created = MergeDeletions\(created\);/);
     // A removed attachment's row may be updated before the save, never deleted.
     expect(CODE).toMatch(
       /for \(NSString \*key in plan\.removedAttachments\)[\s\S]{0,200}\[allowed addObject:row\]/
@@ -231,8 +240,66 @@ describe("private writer source contract", () => {
     // Each removed paragraph goes with its own terminator and nothing else,
     // and the glyph guard still runs with a kind that may not touch one.
     expect(CODE).toMatch(
-      /RequireNoAttachmentGlyph\(snapshot, p\.full, index, "", NSNotFound\);\s*NSMutableDictionary \*target = Target\(p\.full, \[NSAttributedString new\], index, p\);/
+      /RequireNoAttachmentGlyph\(snapshot, p\.full, index, "", NSMakeRange\(NSNotFound, 0\)\);\s*NSMutableDictionary \*target = Target\(p\.full, \[NSAttributedString new\], index, p\);/
     );
+  });
+
+  it("compares stored runs field by field and refuses what it cannot compare", () => {
+    const canonical = CODE.slice(CODE.indexOf("static NSString *CanonicalValue(id value) {"));
+    const body = canonical.slice(0, canonical.indexOf("\n}\n"));
+    // No description fallback: an unknown class is nil (unverifiable).
+    expect(body).not.toMatch(/description/);
+    expect(body).toMatch(/return nil;\s*$/);
+    expect(body).toMatch(/CanonicalParagraphStyle\(value\)/);
+    const style = SOURCE.slice(
+      SOURCE.indexOf("static NSString *CanonicalParagraphStyle(id style) {")
+    );
+    const styleBody = style.slice(0, style.indexOf("\n}\n"));
+    for (const field of ["startingItemNumber", "hints", "uuid", "todo", "done", "alignment"])
+      expect(styleBody).toContain(field);
+    // A plan refuses a note holding an unverifiable value; a read-back fails on one.
+    expect(CODE).toMatch(
+      /NSArray \*unverifiable = UnverifiableAttributeClasses\(snapshot\);\s*if \(unverifiable\.count\)\s*Fail\(""/
+    );
+    expect(CODE).toMatch(/if \(UnverifiableAttributeClasses\(persisted\)\.count\)/);
+    // Every accessor it reads is probed with the edit feature.
+    const editAPI = SOURCE.slice(SOURCE.indexOf("kEditAPI[] = {"));
+    const table = editAPI.slice(0, editAPI.indexOf("};"));
+    for (const sel of ["startingItemNumber", "writingDirection", "fontHints", "attachmentUTI"])
+      expect(table).toContain(`"${sel}"`);
+  });
+
+  it("guards an apply with the dry run's plan digest", () => {
+    const apply = handlerBody("HandleEditNote");
+    expect(apply).toMatch(
+      /if \(ifPlanDigest && !\[ifPlanDigest isEqualToString:response\[""\]\]\)\s*Fail\(""/
+    );
+    expect(SOURCE).toMatch(/\{"edit_note", "[^"]*ifPlanDigest[^"]*", HandleEditNote\}/);
+    const digest = CODE.slice(CODE.indexOf("static NSString *PlanDigest("));
+    expect(digest.slice(0, digest.indexOf("\n}\n"))).toMatch(/requireNonSystemPaper/);
+  });
+
+  it("creates a replacement file's attachment only on apply and removes it on failure", () => {
+    const plan = handlerBody("HandlePlanEdit");
+    expect(plan).not.toMatch(/MaterializeReplacementFiles/);
+    const apply = handlerBody("HandleEditNote");
+    // The copy-store sandbox is installed before the first file is written.
+    expect(apply).toMatch(
+      /if \(store\.isCopy\) InstallAccountSandbox\([^;]*\);\s*plan\.createdObjects = MaterializeReplacementFiles/
+    );
+    expect(apply).toMatch(
+      /@catch \(NSException \*e\) \{[\s\S]{0,400}if \(nothingSaved\) \{\s*\[context rollback\];\s*for \(NSString \*container in mediaContainers\)/
+    );
+    expect(apply).toMatch(/verifyError = VerifyReplacementFiles\(fresh, reread, plan\.files\)/);
+    // The file is read once, without following a final link.
+    expect(CODE).toMatch(
+      /open\(\[path fileSystemRepresentation\], O_RDONLY \| O_NOFOLLOW \| O_CLOEXEC\)/
+    );
+  });
+
+  it("honours copy-store fault injection only on a copy", () => {
+    const fault = CODE.slice(CODE.indexOf("static NSString *TestFault(StoreLocation store) {"));
+    expect(fault.slice(0, fault.indexOf("\n}\n"))).toMatch(/if \(!store\.isCopy\) return nil;/);
   });
 
   it("limits set_highlight to the text and note scopes, keeping note scope off the title and attachments", () => {

@@ -58740,7 +58740,8 @@ import {
 import { join as join32 } from "node:path";
 
 // src/services/privateWriter.ts
-import { join as join31 } from "node:path";
+import { lstatSync as lstatSync6 } from "node:fs";
+import { extname as extname8, join as join31 } from "node:path";
 var PRIVATE_WRITER_PROTOCOL = 1;
 var WRITES_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
 var ALLOW_UNVERIFIED_ENV = "APPLE_NOTES_MCP_ALLOW_UNVERIFIED";
@@ -58896,7 +58897,8 @@ var writerProbeSchema = external_exports.object({
     tables: featureSchema2.optional(),
     pruneOrphanTable: featureSchema2.optional(),
     smartFolders: featureSchema2.optional(),
-    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional()
+    addPaper: featureSchema2.extend({ formats: external_exports.array(external_exports.string()) }).optional(),
+    editReplaceFile: featureSchema2.optional()
   }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
@@ -59091,9 +59093,9 @@ function appendPlainText(request, deps = defaultWriterDeps()) {
 }
 var MAX_EDIT_OPERATIONS = 64;
 var MAX_EDIT_TEXT = 1e4;
-var FORBIDDEN_EDIT_TEXT = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+var FORBIDDEN_EDIT_TEXT = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029\uD800-\uDFFF]/u;
 var paragraphText = (min) => external_exports.string().min(min).max(MAX_EDIT_TEXT).refine((text2) => !FORBIDDEN_EDIT_TEXT.test(text2), {
-  message: "must stay inside one paragraph: no line breaks, attachment glyphs, or control characters"
+  message: "must stay inside one paragraph: no line breaks, attachment glyphs, control characters, or unpaired surrogates"
 });
 var EDIT_STYLES = [
   "title",
@@ -59109,17 +59111,40 @@ var EDIT_STYLES = [
 var styleName = external_exports.enum(EDIT_STYLES);
 var count = external_exports.number().int().min(1).max(1e3);
 var operationId = external_exports.string().min(1).max(128).optional();
+var EDIT_HIGHLIGHTS = ["purple", "pink", "orange", "mint", "blue"];
+var EDIT_LINK_SCHEMES = /* @__PURE__ */ new Set(["http:", "https:", "mailto:", "tel:", "notes:", "applenotes:"]);
+var editLink = external_exports.string().min(1).max(4096).refine(
+  (link) => {
+    try {
+      return EDIT_LINK_SCHEMES.has(new URL(link).protocol);
+    } catch {
+      return false;
+    }
+  },
+  { message: "must be an absolute http, https, mailto, tel, notes, or applenotes URL" }
+);
 var runSchema = external_exports.object({
   text: paragraphText(1),
   bold: external_exports.boolean().optional(),
   italic: external_exports.boolean().optional(),
   underline: external_exports.boolean().optional(),
-  strikethrough: external_exports.boolean().optional()
+  strikethrough: external_exports.boolean().optional(),
+  link: editLink.optional(),
+  highlight: external_exports.enum(EDIT_HIGHLIGHTS).optional(),
+  color: external_exports.string().regex(/^#[0-9A-Fa-f]{6}$/).optional()
 }).strict();
-var runsSchema = external_exports.array(runSchema).min(1).max(200);
+var runsSchema = external_exports.array(runSchema).min(1).max(200).refine((runs) => runs.reduce((sum, run) => sum + run.text.length, 0) <= MAX_EDIT_TEXT, {
+  message: `runs must hold at most ${MAX_EDIT_TEXT} UTF-16 code units together`
+});
+var MAX_REPLACEMENT_FILE_BYTES = 64 * 1024 * 1024;
+var fileReplacementSchema = external_exports.object({
+  file: external_exports.string().min(1).max(4096),
+  filename: external_exports.string().min(1).max(255).optional()
+}).strict();
 var replacementSchema = external_exports.union([
   external_exports.object({ text: paragraphText(0) }).strict(),
-  external_exports.object({ runs: runsSchema }).strict()
+  external_exports.object({ runs: runsSchema }).strict(),
+  fileReplacementSchema
 ]);
 var textSelector = external_exports.object({
   kind: external_exports.literal("text").optional(),
@@ -59156,6 +59181,8 @@ var blockSchema = external_exports.object({
   message: "each block needs exactly one of text or runs"
 }).refine((b) => b.checked === void 0 || b.type === "checklist", {
   message: "checked is only valid on checklist blocks"
+}).refine((b) => b.text !== "" || b.type === "body", {
+  message: "only a body block may have empty text"
 });
 var insertSchema = (op) => external_exports.object({
   op: external_exports.literal(op),
@@ -59172,6 +59199,31 @@ var trimSchema = external_exports.object({
   keep: external_exports.number().int().min(0).max(MAX_TRIM_KEEP).optional(),
   anchor: external_exports.union([textSelector, styleSelector]).optional(),
   side: external_exports.enum(["before", "after", "both"]).optional(),
+  expectedCount: count.optional()
+}).strict();
+var appendToParagraphSchema = external_exports.object({
+  op: external_exports.literal("append_to_paragraph"),
+  id: operationId,
+  anchor: external_exports.union([textSelector, styleSelector, attachmentSelector]),
+  runs: runsSchema,
+  expectedCount: count.optional()
+}).strict();
+var MAX_CHECKLIST_ITEMS = 200;
+var checklistItemSchema = external_exports.object({
+  text: paragraphText(1).optional(),
+  runs: runsSchema.optional(),
+  checked: external_exports.boolean(),
+  indent: external_exports.number().int().min(0).max(8).optional()
+}).strict().refine((item) => item.text === void 0 !== (item.runs === void 0), {
+  message: "each item needs exactly one of text or runs"
+});
+var replaceChecklistSchema = external_exports.object({
+  op: external_exports.literal("replace_checklist"),
+  id: operationId,
+  select: external_exports.enum(["block", "all"]).optional(),
+  containing: paragraphText(1).optional(),
+  occurrence: count.optional(),
+  items: external_exports.array(checklistItemSchema).min(1).max(MAX_CHECKLIST_ITEMS),
   expectedCount: count.optional()
 }).strict();
 var editOperationUnion = external_exports.discriminatedUnion("op", [
@@ -59201,23 +59253,62 @@ var editOperationUnion = external_exports.discriminatedUnion("op", [
       external_exports.object({ runs: runsSchema }).strict()
     ])
   }).strict(),
-  trimSchema
+  trimSchema,
+  appendToParagraphSchema,
+  replaceChecklistSchema
 ]);
 var editOperationSchema = editOperationUnion.superRefine((operation, context) => {
+  const issue2 = (path10, message) => context.addIssue({ code: external_exports.ZodIssueCode.custom, path: path10, message });
+  if (operation.op === "replace" || operation.op === "delete_paragraph" || operation.op === "insert_after" || operation.op === "insert_before" || operation.op === "append_to_paragraph") {
+    const expected = operation.expectedCount ?? 1;
+    const picker = "selector" in operation ? { key: "selector", value: operation.selector } : "anchor" in operation && operation.anchor ? { key: "anchor", value: operation.anchor } : null;
+    const occurrence = picker?.value.occurrence;
+    if (occurrence !== void 0 && occurrence > expected)
+      issue2(
+        [picker.key, "occurrence"],
+        `occurrence ${occurrence} exceeds expectedCount ${expected}; the writer would refuse it`
+      );
+  }
+  if (operation.op === "replace") {
+    const selector = operation.selector;
+    const replacement = operation.replacement;
+    const attachment = selector.kind === "attachment";
+    const beside = attachment && selector.position !== void 0 && selector.position !== "self";
+    if (replacement.file !== void 0 && (!attachment || beside))
+      issue2(
+        ["replacement", "file"],
+        "a file replacement needs an attachment selector with position self"
+      );
+    if (beside && replacement.text === "")
+      issue2(["replacement", "text"], "text inserted beside an attachment must not be empty");
+  }
+  if (operation.op === "replace_checklist" && operation.select === "all") {
+    if (operation.containing !== void 0)
+      issue2(["containing"], "containing is only valid with select block");
+    if (operation.occurrence !== void 0)
+      issue2(["occurrence"], "occurrence is only valid with select block");
+  }
   if (operation.op !== "trim_blank_lines") return;
   const around = operation.mode === "around";
-  if (around && !operation.anchor)
-    context.addIssue({
-      code: external_exports.ZodIssueCode.custom,
-      path: ["anchor"],
-      message: "mode around needs an anchor"
-    });
+  if (around && !operation.anchor) issue2(["anchor"], "mode around needs an anchor");
   if (!around && (operation.anchor || operation.side))
-    context.addIssue({
-      code: external_exports.ZodIssueCode.custom,
-      path: [operation.anchor ? "anchor" : "side"],
-      message: "anchor and side are only valid with mode around"
-    });
+    issue2(
+      [operation.anchor ? "anchor" : "side"],
+      "anchor and side are only valid with mode around"
+    );
+});
+var editOperationsSchema = external_exports.array(editOperationSchema).min(1).max(MAX_EDIT_OPERATIONS).superRefine((operations, context) => {
+  const seen = /* @__PURE__ */ new Set();
+  operations.forEach((operation, index) => {
+    if (operation.id === void 0) return;
+    if (seen.has(operation.id))
+      context.addIssue({
+        code: external_exports.ZodIssueCode.custom,
+        path: [index, "id"],
+        message: "operation ids must be unique"
+      });
+    seen.add(operation.id);
+  });
 });
 var editTargetSchema = external_exports.object({
   paragraphIndex: external_exports.number().int(),
@@ -59252,6 +59343,21 @@ var editPlanFields = {
   attachmentGlyphsAfter: external_exports.number().int().optional(),
   /** Identifiers of attachments the plan removes from the body (attachment selectors only). */
   removedAttachments: external_exports.array(external_exports.string()).optional(),
+  /** Attachments and inline objects in the body, adjacent glyphs of one attachment counted once. */
+  attachmentSpans: external_exports.number().int().optional(),
+  /** Each file that replaces an attachment: name, type, size, and SHA-256 (never its bytes). */
+  replacementFiles: external_exports.array(
+    external_exports.object({
+      operationIndex: external_exports.number().int(),
+      replaces: external_exports.string(),
+      filename: external_exports.string(),
+      uti: external_exports.string(),
+      sizeBytes: external_exports.number().int(),
+      sha256: external_exports.string(),
+      attachmentIdentifier: external_exports.string().optional()
+    }).passthrough()
+  ).optional(),
+  requireNonSystemPaper: external_exports.boolean().optional(),
   storeKind: external_exports.enum(["live", "copy"])
 };
 var editPlanSchema = external_exports.object({
@@ -59298,6 +59404,25 @@ var editResultSchema = external_exports.union([
     ...editPlanFields
   }).passthrough()
 ]);
+var planDigestToken = external_exports.string().regex(/^p2:[a-f0-9]{64}$/);
+function assertReplacementFiles(operations) {
+  for (const operation of operations) {
+    if (operation.op !== "replace" || !("file" in operation.replacement)) continue;
+    const { file, filename } = operation.replacement;
+    const path10 = assertReadableInRoots(file, allowedSaveRoots(), "Replacement file");
+    const link = lstatSync6(path10);
+    if (link.isSymbolicLink()) throw new Error("Replacement file must not be a symbolic link");
+    if (!link.isFile() || link.size === 0 || link.size > MAX_REPLACEMENT_FILE_BYTES)
+      throw new Error("Replacement file must be a non-empty regular file of at most 64 MiB");
+    if (filename === void 0) continue;
+    if (filename !== filename.trim() || filename.startsWith(".") || Buffer.byteLength(filename, "utf8") > 255 || /[/:\\\p{Cc}]/u.test(filename))
+      throw new Error(
+        "Replacement filename must be one path component with no slash, colon, backslash, control character, leading dot, or surrounding spaces"
+      );
+    if (!extname8(filename) || extname8(filename).toLowerCase() !== extname8(file).toLowerCase())
+      throw new Error(`Replacement filename must keep the file's extension (${extname8(file)})`);
+  }
+}
 function editNote(request, deps = defaultWriterDeps()) {
   const notCommitted = request.dryRun ? void 0 : false;
   const refuse = (message) => new PrivateWriteError("invalid_request", message, notCommitted);
@@ -59308,11 +59433,16 @@ function editNote(request, deps = defaultWriterDeps()) {
   }
   if (!request.operations.length || request.operations.length > MAX_EDIT_OPERATIONS)
     throw refuse(`operations must hold 1 to ${MAX_EDIT_OPERATIONS} entries`);
-  const operations = external_exports.array(editOperationSchema).safeParse(request.operations);
+  const operations = editOperationsSchema.safeParse(request.operations);
   if (!operations.success)
     throw refuse(
       `Invalid operations: ${operations.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`
     );
+  try {
+    assertReplacementFiles(operations.data);
+  } catch (error2) {
+    throw refuse(error2 instanceof Error ? error2.message : String(error2));
+  }
   const fields = {
     identifier: request.identifier,
     operations: operations.data
@@ -59320,6 +59450,8 @@ function editNote(request, deps = defaultWriterDeps()) {
   if (request.requireNonSystemPaper !== void 0)
     fields.requireNonSystemPaper = request.requireNonSystemPaper;
   if (request.dryRun) {
+    if (request.ifPlanDigest !== void 0)
+      throw refuse("ifPlanDigest belongs on the apply (dryRun: false), not on the dry run");
     return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
   }
   if (!request.ifRevision)
@@ -59327,6 +59459,11 @@ function editNote(request, deps = defaultWriterDeps()) {
       "Applying an edit requires ifRevision: run the identical request with dryRun: true first and pass its revisionBefore."
     );
   assertRevision(request.ifRevision, "a dry run's revisionBefore");
+  if (request.ifPlanDigest !== void 0) {
+    if (!planDigestToken.safeParse(request.ifPlanDigest).success)
+      throw refuse("ifPlanDigest must be a dry run's planDigest (p2: followed by 64 hex digits)");
+    fields.ifPlanDigest = request.ifPlanDigest;
+  }
   requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
   return parseWriterResult(
     editResultSchema,
@@ -59370,7 +59507,9 @@ var WRITER_FEATURES = [
     probeKey: "smartFolders",
     liveValidated: SMART_FOLDERS_LIVE_VALIDATED
   },
-  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED }
+  { key: "addPaper", probeKey: "addPaper", liveValidated: PAPER_WRITE_LIVE_VALIDATED },
+  // native-edit-note replacing an attachment with a file (replacement.file).
+  { key: "editReplaceFile", probeKey: "editReplaceFile", liveValidated: EDIT_LIVE_VALIDATED }
 ];
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
@@ -59885,6 +60024,7 @@ function writerEnvelopeCode(helperCode, message) {
     case "paragraph_changed":
     // the selected paragraph moved or changed since it was listed
     case "attachment_conflict":
+    case "plan_mismatch":
       return "revision_conflict";
     case "unsupported_attachment":
       return "unsupported";
@@ -60035,15 +60175,18 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
     server2,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, delete a paragraph or list row, retitle, replace, remove, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\nReturns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. removedAttachments (identifiers the plan takes out of the body). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive and never crosses a line break. Only an attachment selector touches an attachment, and only the one it names; inline objects (hashtags, mentions, note links) are never selectable.\nSafety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence) with plain text or formatted runs (bold, italic, underline, strikethrough, link, highlight, color), insert paragraphs (checklist rows checked or not) before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, add inline runs such as a link at the end of one exact paragraph (append_to_paragraph), replace a note's checklist with new items (replace_checklist), delete a paragraph or list row, retitle, replace, remove, or add text beside one named attachment, or swap it for a new image or PDF file (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan, revisionBefore, and planDigest, then the IDENTICAL request with dryRun: false, ifRevision set to that revisionBefore, and ifPlanDigest set to that planDigest.\nReturns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16; replace_checklist lists removedItems with their text and checked state), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, attachmentSpans, revisionBefore, and planDigest. removedAttachments (identifiers the plan takes out of the body) and replacementFiles (name, type, size, SHA-256 of each file that replaces an attachment). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, each replacement file's bytes, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never splits a character. Only an attachment selector touches an attachment, and only the one it names (all of its glyphs); inline objects (hashtags, mentions, note links) are never selectable.\nSafety: a dry run is read-only and never writes a file. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run, or plan_mismatch: the request or a replacement file differs from the dry run's planDigest), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unsupported_attachment, unexpected_side_effect. A failed apply removes any attachment it created. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
       dryRun: external_exports.boolean().describe("true: plan only and return revisionBefore. false: apply; requires ifRevision"),
       ifRevision: revisionToken.optional().describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
+      ifPlanDigest: planDigestToken.optional().describe(
+        "The planDigest of the identical dry run (recommended on apply; refuses with plan_mismatch if the request or a replacement file changed)"
+      ),
       requireNonSystemPaper: external_exports.boolean().optional().describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
-      operations: external_exports.array(editOperationSchema).min(1).max(MAX_EDIT_OPERATIONS).describe(
-        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. An attachment replace with position 'self' and text '' removes that attachment from the body; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else. ordinal counts the note's attachments in body order. expectedCount (default 1) must equal the full match count; occurrence picks one of them. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
+      operations: editOperationsSchema.describe(
+        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}|{file, filename?}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, append_to_paragraph {anchor (as for inserts), runs}, replace_checklist {select?:'block'|'all', containing?, occurrence?, items:[{text|runs, checked, indent?}], expectedCount?}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. A run is {text, bold?, italic?, underline?, strikethrough?, link? (http, https, mailto, tel, notes, applenotes), highlight? (purple, pink, orange, mint, blue), color? (#RRGGBB)}; its formatting replaces the replaced text's inline formatting. An attachment replace with position 'self' and text '' removes that attachment from the body, and with {file, filename?} (an absolute path to an image or PDF of at most 64 MiB in home, temp, or /Volumes) puts a new attachment in its place in the same save; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else; deleting the last paragraph leaves the previous paragraph's line break. ordinal counts the note's attachments in body order. append_to_paragraph adds the runs at the end of the anchor paragraph, on the same line (put a leading space in the first run). replace_checklist replaces one contiguous run of checklist rows (the one holding a row whose text equals containing, the occurrence-th, or the only one) or, with select 'all', every checklist row; all other text and attachments stay. expectedCount (default 1) must equal the full match count; occurrence picks one of them and may not exceed it. For replace_checklist, expectedCount is optional and counts replaced rows. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
       ),
       nudge: external_exports.boolean().optional().describe(
         "After a verified apply, ask Notes.app to upload the note by moving it into its own folder (default false)"
@@ -60058,6 +60201,7 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
           identifier,
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
+          ifPlanDigest: args.ifPlanDigest,
           requireNonSystemPaper: args.requireNonSystemPaper,
           operations: args.operations
         },
@@ -60914,7 +61058,7 @@ function registerComposeNoteTool(server2, manager, depsFactory = defaultWriterTo
 // src/services/privateWriterChecklist.ts
 var TODO_IDENTIFIER = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 var revision4 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
-var checklistItemSchema = external_exports.object({
+var checklistItemSchema2 = external_exports.object({
   todoIdentifier: external_exports.string().regex(/^[0-9a-f]{32}$/),
   uuid: external_exports.string(),
   index: external_exports.number().int().nonnegative(),
@@ -60935,7 +61079,7 @@ var checklistStateSchema = external_exports.object({
   status: external_exports.literal("ok"),
   identifier: external_exports.string(),
   revision: revision4,
-  items: external_exports.array(checklistItemSchema),
+  items: external_exports.array(checklistItemSchema2),
   total: external_exports.number().int().nonnegative(),
   checked: external_exports.number().int().nonnegative()
 }).passthrough();

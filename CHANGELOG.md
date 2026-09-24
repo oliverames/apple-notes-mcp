@@ -1,5 +1,48 @@
 ## [Unreleased]
 
+### Added
+
+- `native-edit-note` runs take `link`, `highlight`, and `color`, the same
+  fields as `compose-note` runs, in replacements, inserted blocks, and the new
+  operations below. A run's formatting is exactly what it states: a run
+  without `link` over linked text removes the link (before, runs inherited the
+  replaced text's link, highlight, and color).
+- `native-edit-note` operation `append_to_paragraph`: adds runs, such as a
+  source link, at the end of one exact existing paragraph on its own line.
+- `native-edit-note` operation `replace_checklist`: replaces one contiguous
+  checklist, or with `select: "all"` every checklist row, with new items and
+  their checked states, leaving every other paragraph and attachment as it
+  is. The dry run lists the rows it would remove.
+- `native-edit-note` can replace an attachment with a new image or PDF file
+  (`replacement: {file, filename?}` with an attachment selector) in one save.
+  The dry run reports the file's size and SHA-256; the apply verifies the new
+  attachment's type, name, and bytes and removes it again if anything fails
+  before the save. The writer probe reports it as `editReplaceFile`.
+- `native-edit-note` apply takes `ifPlanDigest`, the dry run's `planDigest`,
+  and refuses a request, `requireNonSystemPaper` value, or replacement file
+  that differs from the dry run (`plan_mismatch`).
+
+### Fixed
+
+- `native-edit-note` attachment selectors count and edit attachments, not
+  glyphs. Notes stores some attachments (for example an image added through
+  AppleScript) as two adjacent glyphs; `ordinal`, `expectedCount`, removal,
+  and text beside the attachment now treat them as one.
+- The edit read-back compares every stored field of paragraph styles
+  (including list numbering and hints), checklist todos, attachment
+  references, fonts, and colors explicitly instead of through `description`,
+  and a note holding formatting it cannot compare is refused at the dry run.
+- `delete_paragraph` on the last paragraph no longer removes the previous
+  paragraph's line break (or an empty paragraph before it), and adjacent
+  paragraphs deleted by one operation no longer conflict with each other.
+- A text selector that would match part of an emoji or of a letter with a
+  combining mark is refused instead of splitting the character, and text with
+  an unpaired surrogate is rejected.
+- The client rejects edit requests the writer would refuse before starting
+  it: `occurrence` above `expectedCount`, empty text in a non-body block,
+  empty text beside an attachment, duplicate operation ids, and runs over
+  10,000 UTF-16 units together.
+
 ## [2.9.21] - 2026-09-24
 
 ### Added

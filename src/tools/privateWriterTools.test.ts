@@ -305,6 +305,9 @@ describe("writerErrorResult", () => {
     expect(writerEnvelopeCode("ambiguous", "")).toBe("ambiguous");
     expect(writerEnvelopeCode("ambiguous_target", "")).toBe("ambiguous");
     expect(writerEnvelopeCode("match_count_mismatch", "")).toBe("validation_error");
+    // An apply whose request or replacement file differs from the dry run.
+    expect(writerEnvelopeCode("plan_mismatch", "")).toBe("revision_conflict");
+    expect(writerEnvelopeCode("unsupported_attachment", "")).toBe("unsupported");
   });
 });
 

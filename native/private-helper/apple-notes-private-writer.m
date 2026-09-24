@@ -225,6 +225,24 @@ static const APIRequirement kEditAPI[] = {
     {"ICTTMutableParagraphStyle", "setStyle:", NO},
     {"ICTTMutableParagraphStyle", "setTodo:", NO},
     {"ICTTTodo", "initWithIdentifier:done:", NO},
+    // Everything CanonicalValue reads to compare stored runs field by field.
+    {"ICTTParagraphStyle", "alignment", NO},
+    {"ICTTParagraphStyle", "writingDirection", NO},
+    {"ICTTParagraphStyle", "indent", NO},
+    {"ICTTParagraphStyle", "blockQuoteLevel", NO},
+    {"ICTTParagraphStyle", "startingItemNumber", NO},
+    {"ICTTParagraphStyle", "hints", NO},
+    {"ICTTParagraphStyle", "uuid", NO},
+    {"ICTTParagraphStyle", "todo", NO},
+    {"ICTTTodo", "uuid", NO},
+    {"ICTTTodo", "done", NO},
+    {"ICTTAttachment", "attachmentIdentifier", NO},
+    {"ICTTAttachment", "attachmentUTI", NO},
+    {"ICTTFont", "fontName", NO},
+    {"ICTTFont", "pointSize", NO},
+    {"ICTTFont", "fontHints", NO},
+    // replace_checklist items and inline runs (links, highlights, colors).
+    {"ICTTMutableParagraphStyle", "setIndent:", NO},
 };
 
 // Structured compose: paragraph styles, checklist todos, and inline runs.
@@ -822,6 +840,7 @@ static NSDictionary *HandleUpdateSmartFolder(NSDictionary *request);
 static NSDictionary *HandleDeleteSmartFolder(NSDictionary *request);
 static NSDictionary *HandleAddPaper(NSDictionary *request);
 static NSDictionary *PaperWriteFeatureReport(BOOL contextOK, NSString *contextReason);
+static NSDictionary *EditFileFeatureReport(BOOL contextOK, NSString *contextReason);
 
 typedef struct {
   const char *name;
@@ -837,7 +856,7 @@ static const ActionSpec kActions[] = {
     {"append_plain_text", "identifier,text,ifRevision", HandleAppendPlainText},
     {"read_sync_state", "identifiers", HandleReadSyncState},
     {"plan_edit", "identifier,requireNonSystemPaper,operations", HandlePlanEdit},
-    {"edit_note", "identifier,ifRevision,requireNonSystemPaper,operations", HandleEditNote},
+    {"edit_note", "identifier,ifRevision,requireNonSystemPaper,operations,ifPlanDigest", HandleEditNote},
     {"compose_note",
      "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading",
      HandleComposeNote},
@@ -967,6 +986,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"pruneOrphanTable" : FeatureReport(FeaturePruneTable, contextOK, contextReason),
       @"smartFolders" : FeatureReport(FeatureSmartFolders, contextOK, contextReason),
       @"addPaper" : PaperWriteFeatureReport(contextOK, contextReason),
+      @"editReplaceFile" : EditFileFeatureReport(contextOK, contextReason),
     },
   };
 }
@@ -1300,12 +1320,17 @@ static BOOL IsJSONBool(id value) {
 // - edit_note requires `ifRevision`, which must equal the current revision.
 //   Sending the same operations with the plan's revisionBefore reproduces
 //   exactly the planned targets.
-// - Matching is literal, case-sensitive, and confined to one paragraph. No
-//   selector, replacement, or block text may contain a line break or the
-//   attachment glyph U+FFFC. A target range may contain an attachment glyph
+// - Matching is literal, case-sensitive, and confined to one paragraph, and a
+//   match must start and end on whole characters. No selector, replacement,
+//   or block text may contain a line break, the attachment glyph U+FFFC, or
+//   an unpaired surrogate. A target range may contain an attachment glyph
 //   only when an explicit attachment selector named that one attachment, and
-//   then only that attachment's glyph, so every other attachment, table, and
+//   then only that attachment's glyphs, so every other attachment, table, and
 //   inline object is never inside an edited range.
+// - edit_note takes an optional `ifPlanDigest` (the dry run's planDigest),
+//   which also covers requireNonSystemPaper and each replacement file's bytes.
+// - A note holding an attribute value whose class the writer cannot compare
+//   field by field (CanonicalValue) is refused at the plan.
 // - Before saving, only the note, its note data, its cloud state, and the row
 //   of an attachment the plan removes from the body may be dirty; anything
 //   else rolls back (unexpected_side_effect).
@@ -1410,30 +1435,104 @@ static id ParagraphStyleAt(NSAttributedString *text, EditParagraph *p) {
   return [text attribute:kStyleKey atIndex:p.full.location effectiveRange:NULL];
 }
 
-// Canonical, pointer-free text for an attribute value so two reads of the
-// same stored run compare equal. Unknown classes use their description with
-// memory addresses removed; a class whose description is unstable makes
-// verification fail closed, never pass.
+static NSString *ColorHex(id value);
+
+// Every stored field of a native paragraph style, read through its own
+// accessors: style, alignment, writing direction, indent, block quote level,
+// list start number, hints, paragraph UUID, and the checklist todo (its UUID
+// and done state). nil when an accessor is missing, which fails closed.
+static NSString *CanonicalParagraphStyle(id style) {
+  for (NSString *sel in @[
+         @"style", @"alignment", @"writingDirection", @"indent", @"blockQuoteLevel", @"startingItemNumber", @"hints",
+         @"uuid", @"todo"
+       ])
+    if (![style respondsToSelector:NSSelectorFromString(sel)]) return nil;
+  unsigned int (*u32)(id, SEL) = (unsigned int (*)(id, SEL))objc_msgSend;
+  long long (*i64)(id, SEL) = (long long (*)(id, SEL))objc_msgSend;
+  id uuid = Send(style, "uuid");
+  id todo = Send(style, "todo");
+  NSString *todoText = @"none";
+  if (todo) {
+    if (![todo respondsToSelector:sel_registerName("uuid")] || ![todo respondsToSelector:sel_registerName("done")])
+      return nil;
+    todoText = [NSString stringWithFormat:@"%@/%d", [Send(todo, "uuid") UUIDString] ?: @"nil", SendBool(todo, "done")];
+  }
+  return [NSString stringWithFormat:@"p:%u|%lld|%lld|%lld|%lld|%lld|%u|%@|%@", u32(style, sel_registerName("style")),
+                                    i64(style, sel_registerName("alignment")),
+                                    i64(style, sel_registerName("writingDirection")),
+                                    i64(style, sel_registerName("indent")),
+                                    i64(style, sel_registerName("blockQuoteLevel")),
+                                    i64(style, sel_registerName("startingItemNumber")),
+                                    u32(style, sel_registerName("hints")),
+                                    [uuid isKindOfClass:[NSUUID class]] ? [uuid UUIDString] : @"nil", todoText];
+}
+
+// Canonical, pointer-free text for an attribute value, built from the
+// fields of each class Notes stores in a note body, so two reads of the same
+// stored run compare equal and any change to a stored field compares
+// unequal. A value of any other class returns nil: it cannot be verified, so
+// a plan refuses the note (UnverifiableAttributeClasses) instead of relying
+// on a description that might omit a field.
 static NSString *CanonicalValue(id value) {
+  if (!value) return @"nil";
   if ([value isKindOfClass:[NSNumber class]]) return [NSString stringWithFormat:@"n:%@", value];
   if ([value isKindOfClass:[NSString class]]) return [NSString stringWithFormat:@"s:%@", value];
   if ([value isKindOfClass:[NSURL class]])
     return [NSString stringWithFormat:@"u:%@", [value absoluteString]];
-  static NSRegularExpression *pointer;
-  if (!pointer)
-    pointer = [NSRegularExpression regularExpressionWithPattern:@"0x[0-9a-fA-F]+" options:0 error:nil];
-  NSString *d = [value description] ?: @"";
-  d = [pointer stringByReplacingMatchesInString:d options:0 range:NSMakeRange(0, d.length) withTemplate:@""];
-  return [NSString stringWithFormat:@"%@:%@", NSStringFromClass([value class]), d];
+  if ([value isKindOfClass:[NSUUID class]]) return [@"id:" stringByAppendingString:[value UUIDString]];
+  if ([value isKindOfClass:[NSDate class]])
+    return [NSString stringWithFormat:@"t:%.6f", [value timeIntervalSinceReferenceDate]];
+  Class paragraphStyle = objc_getClass("ICTTParagraphStyle");
+  if (paragraphStyle && [value isKindOfClass:paragraphStyle]) return CanonicalParagraphStyle(value);
+  Class attachment = objc_getClass("ICTTAttachment");
+  if (attachment && [value isKindOfClass:attachment]) {
+    if (![value respondsToSelector:sel_registerName("attachmentIdentifier")] ||
+        ![value respondsToSelector:sel_registerName("attachmentUTI")])
+      return nil;
+    return [NSString stringWithFormat:@"a:%@|%@", Send(value, "attachmentUTI") ?: @"nil",
+                                      Send(value, "attachmentIdentifier") ?: @"nil"];
+  }
+  Class font = objc_getClass("ICTTFont");
+  if (font && [value isKindOfClass:font]) {
+    for (NSString *sel in @[ @"fontName", @"pointSize", @"fontHints" ])
+      if (![value respondsToSelector:NSSelectorFromString(sel)]) return nil;
+    return [NSString stringWithFormat:@"f:%@|%.4f|%u", Send(value, "fontName") ?: @"nil",
+                                      ((double (*)(id, SEL))objc_msgSend)(value, sel_registerName("pointSize")),
+                                      ((unsigned int (*)(id, SEL))objc_msgSend)(value, sel_registerName("fontHints"))];
+  }
+  if (CFGetTypeID((__bridge CFTypeRef)value) == CGColorGetTypeID() || [value isKindOfClass:[NSColor class]]) {
+    NSString *hex = ColorHex(value);
+    return [hex hasPrefix:@"#"] ? [@"c:" stringByAppendingString:hex] : nil;
+  }
+  return nil;
 }
 
 static NSString *CanonicalAttributes(NSDictionary *attributes, BOOL ignoreTimestamp) {
   NSMutableArray *parts = [NSMutableArray array];
   for (NSString *key in [attributes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
     if (ignoreTimestamp && [key isEqualToString:kTimestampKey]) continue;
-    [parts addObject:[NSString stringWithFormat:@"%@=%@", key, CanonicalValue(attributes[key])]];
+    // An unverifiable value never compares equal to anything, itself included.
+    NSString *canonical = CanonicalValue(attributes[key]) ?: [NSString stringWithFormat:@"?%@", NSUUID.UUID];
+    [parts addObject:[NSString stringWithFormat:@"%@=%@", key, canonical]];
   }
   return [parts componentsJoinedByString:@"\x1f"];
+}
+
+// Classes of attribute values in `text` that CanonicalValue cannot verify.
+static NSArray<NSString *> *UnverifiableAttributeClasses(NSAttributedString *text) {
+  NSMutableSet *classes = [NSMutableSet set];
+  if (!text.length) return @[];
+  [text enumerateAttributesInRange:NSMakeRange(0, text.length)
+                           options:0
+                        usingBlock:^(NSDictionary *attrs, NSRange range, BOOL *stop) {
+                          (void)range;
+                          (void)stop;
+                          for (NSString *key in attrs)
+                            if (!CanonicalValue(attrs[key]))
+                              [classes addObject:[NSString stringWithFormat:@"%@ (%@)", key,
+                                                                             NSStringFromClass([attrs[key] class])]];
+                        }];
+  return [classes.allObjects sortedArrayUsingSelector:@selector(compare:)];
 }
 
 // Runs of equal canonical attributes over `range`, as [relativeStart, length,
@@ -1550,6 +1649,29 @@ static NSArray<NSDictionary *> *AttachmentGlyphEntries(NSAttributedString *text)
   return entries;
 }
 
+// One entry per attachment in body order. Notes stores some attachments (for
+// example an image added through AppleScript) as two or more adjacent glyphs
+// that name the same attachment; those glyphs form one span, so an ordinal
+// counts attachments, not glyphs, and a selector targets the whole span.
+// Each entry is an AttachmentGlyphEntries entry plus `length` (glyphs).
+static NSArray<NSDictionary *> *AttachmentSpans(NSAttributedString *text) {
+  NSMutableArray *spans = [NSMutableArray array];
+  for (NSDictionary *entry in AttachmentGlyphEntries(text)) {
+    NSMutableDictionary *last = spans.lastObject;
+    NSString *identifier = [entry[@"identifier"] lowercaseString];
+    NSUInteger location = [entry[@"location"] unsignedIntegerValue];
+    if (last && identifier.length && [[last[@"identifier"] lowercaseString] isEqualToString:identifier] &&
+        [last[@"location"] unsignedIntegerValue] + [last[@"length"] unsignedIntegerValue] == location) {
+      last[@"length"] = @([last[@"length"] unsignedIntegerValue] + 1);
+      continue;
+    }
+    NSMutableDictionary *span = [entry mutableCopy];
+    span[@"length"] = @1;
+    [spans addObject:span];
+  }
+  return spans;
+}
+
 #pragma mark Request parsing
 
 static void RejectUnknownKeys(NSDictionary *object, NSArray *allowed, NSString *what) {
@@ -1596,8 +1718,27 @@ static NSString *OptionalEnum(NSDictionary *object, NSString *key, NSArray *allo
   return value;
 }
 
+// Whether `text` holds a UTF-16 surrogate without its partner. JSON can carry
+// one (\ud800), and neither a match nor a write may split a character.
+static BOOL HasUnpairedSurrogate(NSString *text) {
+  NSUInteger length = text.length;
+  for (NSUInteger i = 0; i < length; i++) {
+    unichar c = [text characterAtIndex:i];
+    if (CFStringIsSurrogateHighCharacter(c)) {
+      if (i + 1 < length && CFStringIsSurrogateLowCharacter([text characterAtIndex:i + 1])) {
+        i++;
+        continue;
+      }
+      return YES;
+    }
+    if (CFStringIsSurrogateLowCharacter(c)) return YES;
+  }
+  return NO;
+}
+
 // Text that must stay inside one paragraph: no line or paragraph breaks, no
-// attachment glyph, no control characters other than tab.
+// attachment glyph, no control characters other than tab, and no unpaired
+// surrogate.
 static NSString *EditText(id value, NSString *what, BOOL allowEmpty) {
   if (![value isKindOfClass:[NSString class]])
     Fail(@"invalid_request", [NSString stringWithFormat:@"%@ must be a string", what], nil);
@@ -1613,6 +1754,8 @@ static NSString *EditText(id value, NSString *what, BOOL allowEmpty) {
                                     @"glyphs, or control characters",
                                     what],
          nil);
+  if (HasUnpairedSurrogate(text))
+    Fail(@"invalid_request", [NSString stringWithFormat:@"%@ contains an unpaired UTF-16 surrogate", what], nil);
   return text;
 }
 
@@ -1640,14 +1783,27 @@ static NSArray *EditOperations(NSDictionary *request) {
 
 #pragma mark Replacement construction
 
+// The replaced range's attributes without the inline formatting a run states
+// (bold/italic, underline, strikethrough, link, highlight, color), the
+// per-edit timestamp, and any attachment. A run's formatting is exactly what
+// it says: a run with no `link` is not linked, even over linked text.
 static NSMutableDictionary *InlineBase(NSDictionary *attributes) {
   NSMutableDictionary *base = [attributes mutableCopy] ?: [NSMutableDictionary dictionary];
-  [base removeObjectsForKeys:@[ kHintsKey, kUnderlineKey, kStrikethroughKey, kTimestampKey, kAttachmentKey ]];
+  [base removeObjectsForKeys:@[
+    kHintsKey, kUnderlineKey, kStrikethroughKey, kTimestampKey, kAttachmentKey, NSLinkAttributeName, kEmphasisKey,
+    kColorKey
+  ]];
   return base;
 }
 
-// `runs` replacement: each run is plain text plus explicit inline flags laid
-// over `base` (the paragraph style and font of the replaced range).
+static NSDictionary *RunAttributes(NSDictionary *run);
+
+// `runs` replacement: each run is plain text plus explicit inline formatting
+// laid over `base` (the paragraph style and font of the replaced range). A
+// run takes the same fields as a compose run and is built by compose's
+// RunAttributes: bold, italic, underline, strikethrough, link (http, https,
+// mailto, tel, notes, applenotes), highlight (purple, pink, orange, mint,
+// blue), and color (#RRGGBB).
 static NSAttributedString *AttributedRuns(id value, NSDictionary *base, NSString *what) {
   if (![value isKindOfClass:[NSArray class]] || ![value count] || [value count] > MAX_EDIT_RUNS)
     Fail(@"invalid_request",
@@ -1656,14 +1812,12 @@ static NSAttributedString *AttributedRuns(id value, NSDictionary *base, NSString
   for (id run in value) {
     if (![run isKindOfClass:[NSDictionary class]])
       Fail(@"invalid_request", [NSString stringWithFormat:@"%@ entries must be objects", what], nil);
-    RejectUnknownKeys(run, @[ @"text", @"bold", @"italic", @"underline", @"strikethrough" ], what);
+    RejectUnknownKeys(run,
+                      @[ @"text", @"bold", @"italic", @"underline", @"strikethrough", @"link", @"highlight", @"color" ],
+                      what);
     NSString *text = EditText(run[@"text"], [what stringByAppendingString:@" text"], NO);
     NSMutableDictionary *attrs = [base mutableCopy];
-    NSUInteger hints =
-        (OptionalBool(run, @"bold", NO) ? 1 : 0) | (OptionalBool(run, @"italic", NO) ? 2 : 0);
-    if (hints) attrs[kHintsKey] = @(hints);
-    if (OptionalBool(run, @"underline", NO)) attrs[kUnderlineKey] = @1;
-    if (OptionalBool(run, @"strikethrough", NO)) attrs[kStrikethroughKey] = @1;
+    [attrs addEntriesFromDictionary:RunAttributes(run)];
     [out appendAttributedString:[[NSAttributedString alloc] initWithString:text attributes:attrs]];
   }
   if (out.length > MAX_EDIT_TEXT_UTF16)
@@ -1756,6 +1910,15 @@ static NSArray<NSDictionary *> *ResolveText(NSDictionary *selector, NSString *ma
                                   options:NSLiteralSearch
                                     range:NSMakeRange(cursor, end - cursor)];
       if (found.location == NSNotFound) break;
+      // Matching is on UTF-16 units, so a literal can match inside one
+      // character (half of an emoji's surrogate pair, a base letter without
+      // its combining accent). Such a hit is refused rather than skipped, so
+      // the match count never silently differs from what the caller sees.
+      if (!NSEqualRanges([text rangeOfComposedCharacterSequencesForRange:found], found))
+        Fail(@"unsupported_selection",
+             @"The selector text matches part of a composed character (an emoji, or a letter with a combining "
+             @"mark); widen the selector text to whole characters",
+             @{@"committed" : @NO});
       [hits addObject:@{@"range" : [NSValue valueWithRange:found], @"paragraph" : p}];
       cursor = NSMaxRange(found);
     }
@@ -1793,18 +1956,21 @@ static EditParagraph *ParagraphAt(NSArray<EditParagraph *> *paragraphs, NSUInteg
 // An attachment selector names one of the note's attachment rows by
 // `identifier` (its Notes UUID), `id` (its x-coredata ICAttachment URI, as
 // list-attachments and get-note-structure return it), or `ordinal` (1-based
-// position among the body's attachment glyphs that belong to the note's
+// position among the body's attachments that belong to the note's
 // attachment rows; inline objects such as hashtags and note links are not
-// counted and cannot be selected). Per role:
-//   replace  `position` self (default) targets the glyph itself, so the
-//            replacement text takes its place (empty text removes it);
-//            before/after target the empty range next to the glyph, so the
+// counted and cannot be selected). An attachment is its span of glyphs
+// (AttachmentSpans): adjacent glyphs naming the same attachment count once
+// and are edited together. Per role:
+//   replace  `position` self (default) targets the span itself, so the
+//            replacement takes its place (empty text removes it; a file
+//            replaces it with a new attachment); before/after target the
+//            empty range at the span's first or last edge, so the
 //            replacement text is inserted inline beside it.
-//   delete   the paragraph holding the glyph, which must hold nothing else
+//   delete   the paragraph holding the span, which must hold nothing else
 //            but whitespace.
-//   anchor   the paragraph holding the glyph.
-// Each hit carries `glyph` (the one glyph location its target may contain)
-// and `attachment` (what the plan reports about it).
+//   anchor   the paragraph holding the span.
+// Each hit carries `glyphs` (the only glyph range its target may contain),
+// `row` (the attachment row), and `attachment` (what the plan reports).
 static NSArray<NSDictionary *> *ResolveAttachment(NSDictionary *selector, NSString *role,
                                                   NSAttributedString *snapshot,
                                                   NSArray<EditParagraph *> *paragraphs,
@@ -1844,25 +2010,26 @@ static NSArray<NSDictionary *> *ResolveAttachment(NSDictionary *selector, NSStri
 
   NSMutableArray *hits = [NSMutableArray array];
   NSUInteger seen = 0;
-  for (NSDictionary *entry in AttachmentGlyphEntries(snapshot)) {
+  for (NSDictionary *entry in AttachmentSpans(snapshot)) {
     NSString *key = [entry[@"identifier"] lowercaseString];
     if (!rows[key]) continue;  // inline objects are never selectable
     seen++;
     if (ordinal ? seen != ordinal : ![key isEqualToString:wanted]) continue;
-    NSUInteger glyph = [entry[@"location"] unsignedIntegerValue];
-    EditParagraph *p = ParagraphAt(paragraphs, glyph);
+    // Every glyph of the attachment: one, or several adjacent ones.
+    NSRange glyphs = NSMakeRange([entry[@"location"] unsignedIntegerValue], [entry[@"length"] unsignedIntegerValue]);
+    EditParagraph *p = ParagraphAt(paragraphs, glyphs.location);
     if (!p) continue;
     NSRange range;
     if (replace) {
-      range = [position isEqualToString:@"before"] ? NSMakeRange(glyph, 0)
-              : [position isEqualToString:@"after"] ? NSMakeRange(glyph + 1, 0)
-                                                    : NSMakeRange(glyph, 1);
+      range = [position isEqualToString:@"before"] ? NSMakeRange(glyphs.location, 0)
+              : [position isEqualToString:@"after"] ? NSMakeRange(NSMaxRange(glyphs), 0)
+                                                    : glyphs;
     } else {
       range = p.content;
     }
     if ([role isEqualToString:@"delete"]) {
       NSMutableString *rest = [[snapshot.string substringWithRange:p.content] mutableCopy];
-      [rest deleteCharactersInRange:NSMakeRange(glyph - p.content.location, 1)];
+      [rest deleteCharactersInRange:NSMakeRange(glyphs.location - p.content.location, glyphs.length)];
       if ([rest rangeOfString:@"￼"].location != NSNotFound ||
           [rest stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length)
         Fail(@"unsupported_selection",
@@ -1873,12 +2040,14 @@ static NSArray<NSDictionary *> *ResolveAttachment(NSDictionary *selector, NSStri
     [hits addObject:@{
       @"range" : [NSValue valueWithRange:range],
       @"paragraph" : p,
-      @"glyph" : @(glyph),
+      @"glyphs" : [NSValue valueWithRange:glyphs],
       @"position" : position,
+      @"row" : rows[key],
       @"attachment" : @{
         @"identifier" : [rows[key] valueForKey:@"identifier"] ?: entry[@"identifier"],
         @"uti" : entry[@"uti"],
         @"ordinal" : @(seen),
+        @"glyphCount" : @(glyphs.length),
       },
     }];
   }
@@ -1960,12 +2129,13 @@ static NSMutableDictionary *Target(NSRange range, NSAttributedString *replacemen
   } mutableCopy];
 }
 
-// Refuses a target range that contains an attachment glyph, except the one
-// glyph (`allowedGlyph`) an attachment selector named. Every other glyph,
-// including a second attachment in the same paragraph, is refused.
+// Refuses a target range that contains an attachment glyph, except the glyphs
+// of the one attachment (`allowedGlyphs`, its span) an attachment selector
+// named. Every other glyph, including a second attachment in the same
+// paragraph, is refused.
 static void RequireNoAttachmentGlyph(NSAttributedString *snapshot, NSRange range, NSUInteger index,
-                                     NSString *kind, NSUInteger allowedGlyph) {
-  if (!TargetMayTouchAttachment(kind)) allowedGlyph = NSNotFound;
+                                     NSString *kind, NSRange allowedGlyphs) {
+  if (!TargetMayTouchAttachment(kind)) allowedGlyphs = NSMakeRange(NSNotFound, 0);
   NSString *text = snapshot.string;
   NSUInteger cursor = range.location, end = NSMaxRange(range);
   while (cursor < end) {
@@ -1973,7 +2143,7 @@ static void RequireNoAttachmentGlyph(NSAttributedString *snapshot, NSRange range
                                 options:NSLiteralSearch
                                   range:NSMakeRange(cursor, end - cursor)];
     if (found.location == NSNotFound) return;
-    if (found.location != allowedGlyph)
+    if (!NSLocationInRange(found.location, allowedGlyphs))
       Fail(@"unsupported_selection",
            [NSString stringWithFormat:@"Operation %lu would touch an attachment, table, or inline object it "
                                       @"did not select; those are never edited",
@@ -1983,8 +2153,8 @@ static void RequireNoAttachmentGlyph(NSAttributedString *snapshot, NSRange range
   }
 }
 
-static NSUInteger HitGlyph(NSDictionary *hit) {
-  return hit[@"glyph"] ? [hit[@"glyph"] unsignedIntegerValue] : NSNotFound;
+static NSRange HitGlyphs(NSDictionary *hit) {
+  return hit[@"glyphs"] ? [hit[@"glyphs"] rangeValue] : NSMakeRange(NSNotFound, 0);
 }
 
 // Plain replacement text inherits the replaced range's attributes, which is
@@ -2013,6 +2183,443 @@ static NSAttributedString *ReplacementFor(NSDictionary *replacement, NSAttribute
   NSMutableDictionary *inherited = [attributes mutableCopy];
   [inherited removeObjectsForKeys:@[ kTimestampKey, kAttachmentKey ]];
   return [[NSAttributedString alloc] initWithString:text attributes:inherited];
+}
+
+#pragma mark Replacing an attachment with a file
+
+// An attachment selector's replacement may be `{file, filename?}`: a local
+// file that becomes a new attachment in the old one's place, in the same
+// save. The writer reads the file itself, once per request, through a
+// descriptor opened with O_NOFOLLOW; the plan reports its size and SHA-256
+// and folds the digest into planDigest, so an apply with ifPlanDigest refuses
+// a file that changed after the dry run. The attachment is created only on
+// apply (MaterializeReplacementFiles); a dry run never writes a file.
+
+#define MAX_REPLACEMENT_FILE_BYTES (64LL * 1024 * 1024)
+#define MAX_REPLACEMENT_FILENAME 255
+
+static NSString *const kPDFUTI = @"com.adobe.pdf";
+
+static const APIRequirement kEditFileAPI[] = {
+    {"ICNote", "addAttachmentWithUTI:data:filename:", NO},
+    {"ICNote", "rangeForAttachment:", NO},
+    {"ICAttachment", "typeUTIIsImage:", YES},
+    {"ICAttachment", "updateChangeCountWithReason:", NO},
+    {"ICMedia", "mediaURL", NO},
+    {"ICMedia", "containerDirectoryURL", NO},
+    {"ICMedia", "updateChangeCountWithReason:", NO},
+    {"ICAccount", "mediaDirectoryURL", NO},
+    {"ICTTAttachment", "setAttachmentIdentifier:", NO},
+    {"ICTTAttachment", "setAttachmentUTI:", NO},
+    {"UTType", "typeWithFilenameExtension:", YES},
+    {"UTType", "identifier", NO},
+};
+
+static const ModelRequirement kEditFileModel[] = {
+    {"ICAttachment", "identifier,typeUTI,note,media"},
+    {"ICMedia", "identifier,filename,attachment,cloudState"},
+    {"ICAccount", "attachments,media"},
+};
+
+static NSArray<NSString *> *MissingForEditFile(void) {
+  NSMutableArray *missing = [MissingForFeature(FeatureEdit) mutableCopy];
+  if (!gFrameworkLoaded) return missing;
+  [missing addObjectsFromArray:MissingAPI(kEditFileAPI, COUNT(kEditFileAPI))];
+  [missing addObjectsFromArray:MissingModelProperties(kEditFileModel, COUNT(kEditFileModel))];
+  return missing;
+}
+
+static NSDictionary *EditFileFeatureReport(BOOL contextOK, NSString *contextReason) {
+  NSArray *missing = MissingForEditFile();
+  if (missing.count) return @{@"available" : @NO, @"reason" : @"private_api_unavailable", @"missing" : missing};
+  if (!contextOK)
+    return @{@"available" : @NO, @"reason" : contextReason ?: @"store_unavailable", @"missing" : @[]};
+  return @{@"available" : @YES, @"reason" : [NSNull null], @"missing" : @[]};
+}
+
+static void InstallAccountSandbox(NSString *root);
+
+// The UTI Notes stores for a file name's extension, or nil.
+static NSString *UTIForFilename(NSString *filename) {
+  NSString *extension = filename.pathExtension;
+  if (!extension.length) return nil;
+  id type = ((id(*)(id, SEL, id))objc_msgSend)(objc_getClass("UTType"), sel_registerName("typeWithFilenameExtension:"),
+                                               extension);
+  id identifier = type ? Send(type, "identifier") : nil;
+  return [identifier isKindOfClass:[NSString class]] ? identifier : nil;
+}
+
+// Reads and checks one replacement file: an absolute path to a non-empty
+// regular file of at most 64 MiB (the final component may not be a link),
+// named `filename` (default: the file's own name; it must keep the file's
+// extension), whose type is an image or a PDF. Returns
+// {data, sha256, sizeBytes, filename, uti, path}.
+static NSMutableDictionary *ReadReplacementFile(NSDictionary *replacement) {
+  RejectUnknownKeys(replacement, @[ @"file", @"filename" ], @"file replacement");
+  NSArray *missing = MissingForEditFile();
+  if (missing.count)
+    Fail(@"private_api_unavailable", @"Replacing an attachment with a file needs NotesShared API missing on this macOS",
+         @{@"missing" : missing, @"committed" : @NO});
+  id path = replacement[@"file"];
+  if (![path isKindOfClass:[NSString class]] || ![path isAbsolutePath] || [path length] > 4096 ||
+      [path rangeOfCharacterFromSet:ForbiddenTextCharacters(NO)].location != NSNotFound)
+    Fail(@"invalid_request", @"replacement `file` must be an absolute path", @{@"committed" : @NO});
+  id filename = replacement[@"filename"] ?: [path lastPathComponent];
+  if (![filename isKindOfClass:[NSString class]] || ![filename length] ||
+      [filename length] > MAX_REPLACEMENT_FILENAME || [filename containsString:@"/"] ||
+      [filename containsString:@":"] || [filename isEqualToString:@"."] || [filename isEqualToString:@".."] ||
+      [filename rangeOfCharacterFromSet:ForbiddenTextCharacters(NO)].location != NSNotFound ||
+      HasUnpairedSurrogate(filename))
+    Fail(@"invalid_request", @"replacement `filename` must be one file name of at most 255 characters",
+         @{@"committed" : @NO});
+  if (![[filename pathExtension] length] ||
+      [[filename pathExtension] caseInsensitiveCompare:[path pathExtension]] != NSOrderedSame)
+    Fail(@"invalid_request", @"replacement `filename` must keep the file's extension", @{@"committed" : @NO});
+  NSString *uti = UTIForFilename(filename);
+  BOOL image = uti && ((BOOL(*)(id, SEL, id))objc_msgSend)(objc_getClass("ICAttachment"),
+                                                           sel_registerName("typeUTIIsImage:"), uti);
+  if (!image && ![uti isEqualToString:kPDFUTI])
+    Fail(@"unsupported_attachment", @"A replacement file must be an image or a PDF",
+         @{@"committed" : @NO, @"uti" : OrNull(uti)});
+
+  int fd = open([path fileSystemRepresentation], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0)
+    Fail(@"invalid_request", @"The replacement file cannot be opened (missing, unreadable, or a symbolic link)",
+         @{@"committed" : @NO});
+  NSMutableData *data = nil;
+  struct stat st;
+  BOOL ok = fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= MAX_REPLACEMENT_FILE_BYTES;
+  if (ok) {
+    data = [NSMutableData dataWithCapacity:(NSUInteger)st.st_size];
+    char buffer[65536];
+    ssize_t n;
+    while ((n = read(fd, buffer, sizeof buffer)) > 0) {
+      [data appendBytes:buffer length:(NSUInteger)n];
+      if ((long long)data.length > st.st_size) break;
+    }
+    ok = n == 0 && (long long)data.length == st.st_size;
+  }
+  close(fd);
+  if (!ok)
+    Fail(@"invalid_request",
+         @"The replacement file must be a non-empty regular file of at most 64 MiB that does not change while "
+         @"it is read",
+         @{@"committed" : @NO});
+  return [@{
+    @"data" : data,
+    @"sha256" : SHA256Hex(data),
+    @"sizeBytes" : @(data.length),
+    @"filename" : filename,
+    @"uti" : uti,
+    @"path" : path,
+  } mutableCopy];
+}
+
+// The glyph that stands for the new attachment: the old glyph's attributes
+// (paragraph style and so on) with a fresh ICTTAttachment. Its identifier is
+// a placeholder until the apply creates the attachment and fills it in.
+static NSAttributedString *FileGlyph(NSAttributedString *snapshot, NSRange glyphs, NSDictionary *file,
+                                     id *placeholderOut) {
+  NSMutableDictionary *attrs = [[snapshot attributesAtIndex:glyphs.location effectiveRange:NULL] mutableCopy];
+  [attrs removeObjectsForKeys:@[ kTimestampKey, kAttachmentKey ]];
+  id tt = [objc_getClass("ICTTAttachment") new];
+  if (!tt) Fail(@"private_api_unavailable", @"Could not create an attachment glyph", @{@"committed" : @NO});
+  SendVoid1(tt, "setAttachmentIdentifier:", NSUUID.UUID.UUIDString);
+  SendVoid1(tt, "setAttachmentUTI:", file[@"uti"]);
+  attrs[kAttachmentKey] = tt;
+  *placeholderOut = tt;
+  return [[NSAttributedString alloc] initWithString:@"￼" attributes:attrs];
+}
+
+// What a plan reports about a replacement file (never its bytes).
+static NSDictionary *PublicFile(NSDictionary *file) {
+  NSMutableDictionary *out = [NSMutableDictionary dictionary];
+  for (NSString *key in @[ @"filename", @"uti", @"sizeBytes", @"sha256", @"attachmentIdentifier", @"mediaIdentifier" ])
+    if (file[key]) out[key] = file[key];
+  return out;
+}
+
+// The media container NotesShared wrote for a new attachment, but only when
+// it sits exactly where the account keeps media (<mediaDirectory>/<media id>),
+// so a cleanup can never remove anything else.
+static NSString *OwnedMediaContainer(id media, NSManagedObject *note) {
+  @try {
+    id account = [note valueForKey:@"account"];
+    NSURL *root = account ? Send(account, "mediaDirectoryURL") : nil;
+    NSURL *container = media ? Send(media, "containerDirectoryURL") : nil;
+    NSString *identifier = media ? [media valueForKey:@"identifier"] : nil;
+    if (![root isKindOfClass:[NSURL class]] || ![container isKindOfClass:[NSURL class]] ||
+        ![identifier isKindOfClass:[NSString class]] || !identifier.length || [identifier containsString:@"/"])
+      return nil;
+    NSString *expected = [root.path.stringByStandardizingPath stringByAppendingPathComponent:identifier];
+    return [container.path.stringByStandardizingPath isEqualToString:expected] ? expected : nil;
+  } @catch (NSException *e) {
+    return nil;
+  }
+}
+
+// Creates each replacement file's attachment on the note, checks it, and
+// points its placeholder glyph at it. Runs only on apply, after the revision
+// and plan checks, inside the caller's @try: a failure before the save rolls
+// the context back and removes every media container recorded in
+// `containers`. Returns the objects the apply may insert or update beyond the
+// note (the attachments, their media, and their cloud states).
+static NSSet *MaterializeReplacementFiles(NSArray<NSMutableDictionary *> *files, NSManagedObject *note,
+                                          NSMutableArray<NSString *> *containers) {
+  NSMutableSet *created = [NSMutableSet set];
+  if ([note respondsToSelector:sel_registerName("canAddAttachment")] && !SendBool(note, "canAddAttachment"))
+    Fail(@"unsupported_note", @"Notes does not allow attachments in this note", @{@"committed" : @NO});
+  for (NSMutableDictionary *file in files) {
+    NSManagedObject *attachment = ((id(*)(id, SEL, id, id, id))objc_msgSend)(
+        note, sel_registerName("addAttachmentWithUTI:data:filename:"), file[@"uti"], file[@"data"], file[@"filename"]);
+    id media = [attachment isKindOfClass:[NSManagedObject class]] ? [attachment valueForKey:@"media"] : nil;
+    NSString *container = OwnedMediaContainer(media, note);
+    if (container) [containers addObject:container];
+    NSString *identifier = attachment ? [attachment valueForKey:@"identifier"] : nil;
+    if (![identifier isKindOfClass:[NSString class]] || !identifier.length || !media ||
+        ![[attachment valueForKey:@"typeUTI"] isEqual:file[@"uti"]])
+      Fail(@"materialization_failed", @"NotesShared did not create the replacement attachment", @{@"committed" : @NO});
+    if (!container)
+      Fail(@"materialization_failed", @"The new attachment's file is not where Notes keeps media",
+           @{@"committed" : @NO});
+    NSRange placed = ((NSRange(*)(id, SEL, id))objc_msgSend)(note, sel_registerName("rangeForAttachment:"), attachment);
+    if (placed.location != NSNotFound && placed.length > 0)
+      Fail(@"materialization_failed", @"NotesShared placed the attachment glyph itself; refusing to guess",
+           @{@"committed" : @NO});
+    NSURL *mediaURL = Send(media, "mediaURL");
+    NSData *written = [mediaURL isKindOfClass:[NSURL class]] ? [NSData dataWithContentsOfURL:mediaURL] : nil;
+    if (!written || ![SHA256Hex(written) isEqualToString:file[@"sha256"]])
+      Fail(@"materialization_failed", @"Notes did not store the replacement file's exact bytes", @{@"committed" : @NO});
+    // Each is its own cloud object; without its own bump it would not be
+    // eligible for upload even when the note is.
+    SendVoid1(attachment, "updateChangeCountWithReason:", kEditChangeReason);
+    SendVoid1(media, "updateChangeCountWithReason:", kEditChangeReason);
+    SendVoid1(file[@"placeholder"], "setAttachmentIdentifier:", identifier);
+    SendVoid1(file[@"placeholder"], "setAttachmentUTI:", file[@"uti"]);
+    file[@"attachmentIdentifier"] = identifier;
+    file[@"mediaIdentifier"] = OrNull([media valueForKey:@"identifier"]);
+    file[@"attachment"] = attachment;
+    [created addObject:attachment];
+    [created addObject:media];
+    for (id object in @[ attachment, media ]) {
+      id cloudState = [object valueForKey:@"cloudState"];
+      if (cloudState) [created addObject:cloudState];
+    }
+  }
+  return created;
+}
+
+// Fresh-context proof for each replacement file: the new attachment row
+// belongs to the note, has the planned type, and its media file holds the
+// planned bytes under the planned name.
+static NSString *VerifyReplacementFiles(NSManagedObjectContext *fresh, NSManagedObject *reread, NSArray *files) {
+  for (NSDictionary *file in files) {
+    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ICAttachment"];
+    request.predicate = [NSPredicate predicateWithFormat:@"identifier == %@", file[@"attachmentIdentifier"]];
+    NSArray *rows = [fresh executeFetchRequest:request error:nil];
+    if (rows.count != 1) return @"The replacement attachment was not persisted";
+    NSManagedObject *row = rows.firstObject;
+    if (![row valueForKey:@"note"] || ![[[row valueForKey:@"note"] objectID] isEqual:reread.objectID])
+      return @"The replacement attachment does not belong to the note";
+    if (![[row valueForKey:@"typeUTI"] isEqual:file[@"uti"]]) return @"The replacement attachment has another type";
+    id media = [row valueForKey:@"media"];
+    if (!media || ![[media valueForKey:@"filename"] isEqual:file[@"filename"]])
+      return @"The replacement attachment's media is missing or has another name";
+    NSURL *url = Send(media, "mediaURL");
+    NSData *bytes = [url isKindOfClass:[NSURL class]] ? [NSData dataWithContentsOfURL:url] : nil;
+    if (!bytes || ![SHA256Hex(bytes) isEqualToString:file[@"sha256"]])
+      return @"The replacement attachment's file does not hold the planned bytes";
+  }
+  return nil;
+}
+
+#pragma mark Checklist replacement
+
+// replace_checklist swaps a note's checklist for new items in one edit. With
+// `select` "block" (default) it replaces one contiguous run of checklist rows:
+// the one holding a row whose whole text is `containing`, or the
+// `occurrence`-th (1-based), or the only one. With "all" it replaces every
+// checklist row: the first block becomes the new items and every other block
+// is removed. Each replaced block goes with its rows' own terminators, so no
+// other paragraph loses a character, its terminator, or its style; a block
+// that ends the note without a terminator leaves the previous terminator in
+// place. A block that holds the title or an attachment is refused.
+
+#define MAX_CHECKLIST_ITEMS 200
+
+static id ComposeParagraphStyle(const StyleSpec *spec, NSUInteger indent, BOOL blockQuote, id checked);
+static NSUInteger ComposeCount(NSDictionary *object, NSString *key, NSUInteger min, NSUInteger max,
+                                NSUInteger fallback, NSString *label);
+
+static BOOL IsChecklistParagraph(NSAttributedString *snapshot, EditParagraph *p) {
+  return StyleValueOf(ParagraphStyleAt(snapshot, p)) == kStyleChecklist;
+}
+
+// Maximal runs of consecutive checklist paragraphs.
+static NSArray<NSArray<EditParagraph *> *> *ChecklistBlocks(NSAttributedString *snapshot,
+                                                            NSArray<EditParagraph *> *paragraphs) {
+  NSMutableArray *blocks = [NSMutableArray array];
+  NSMutableArray *current = nil;
+  for (EditParagraph *p in paragraphs) {
+    if (IsChecklistParagraph(snapshot, p)) {
+      if (!current) current = [NSMutableArray array];
+      [current addObject:p];
+    } else if (current) {
+      [blocks addObject:current];
+      current = nil;
+    }
+  }
+  if (current) [blocks addObject:current];
+  return blocks;
+}
+
+// The range a block occupies with its rows' terminators.
+static NSRange ChecklistBlockRange(NSArray<EditParagraph *> *block) {
+  EditParagraph *first = block.firstObject, *last = block.lastObject;
+  NSUInteger end = last.terminated ? NSMaxRange(last.full) : NSMaxRange(last.content);
+  return NSMakeRange(first.full.location, end - first.full.location);
+}
+
+static BOOL ChecklistRowDone(NSAttributedString *snapshot, EditParagraph *p) {
+  id todo = Send(ParagraphStyleAt(snapshot, p), "todo");
+  return todo ? SendBool(todo, "done") : NO;
+}
+
+// New checklist rows, each with a fresh todo in the requested state and its
+// own terminator, except the last when `terminateLast` is NO.
+static NSAttributedString *NewChecklistRows(id value, BOOL terminateLast) {
+  if (![value isKindOfClass:[NSArray class]] || ![value count] || [value count] > MAX_CHECKLIST_ITEMS)
+    Fail(@"invalid_request",
+         [NSString stringWithFormat:@"`items` must be an array of 1 to %d items", MAX_CHECKLIST_ITEMS], nil);
+  NSMutableAttributedString *out = [NSMutableAttributedString new];
+  NSUInteger count = [value count], i = 0;
+  for (id item in value) {
+    if (![item isKindOfClass:[NSDictionary class]]) Fail(@"invalid_request", @"Every item must be an object", nil);
+    RejectUnknownKeys(item, @[ @"text", @"runs", @"checked", @"indent" ], @"checklist item");
+    if (!IsJSONBool(item[@"checked"])) Fail(@"invalid_request", @"Every item needs a boolean `checked`", nil);
+    if ((item[@"text"] != nil) == (item[@"runs"] != nil))
+      Fail(@"invalid_request", @"Each item needs exactly one of `text` or `runs`", nil);
+    NSUInteger indent = ComposeCount(item, @"indent", 0, MAX_INDENT, 0, @"Item");
+    id style = [ComposeParagraphStyle(StyleNamed(@"checklist"), indent, NO, item[@"checked"]) copy];
+    NSDictionary *base = @{kStyleKey : style};
+    NSAttributedString *content =
+        item[@"runs"] ? AttributedRuns(item[@"runs"], base, @"item runs")
+                      : [[NSAttributedString alloc] initWithString:EditText(item[@"text"], @"item text", NO)
+                                                        attributes:base];
+    [out appendAttributedString:content];
+    if (++i < count || terminateLast)
+      [out appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:base]];
+  }
+  if (out.length > MAX_EDIT_TEXT_UTF16 * 2)
+    Fail(@"invalid_request", @"The checklist items exceed 20000 UTF-16 code units", nil);
+  return out;
+}
+
+// Resolves a replace_checklist operation into targets appended to `created`.
+static void PlanChecklistReplace(NSDictionary *operation, NSUInteger index, NSAttributedString *snapshot,
+                                 NSArray<EditParagraph *> *paragraphs, NSMutableArray *created,
+                                 NSMutableDictionary *summary) {
+  RejectUnknownKeys(operation, @[ @"op", @"id", @"select", @"containing", @"occurrence", @"items", @"expectedCount" ],
+                    @"replace_checklist operation");
+  NSString *select = OptionalEnum(operation, @"select", @[ @"block", @"all" ], @"block");
+  BOOL all = [select isEqualToString:@"all"];
+  if (all && (operation[@"containing"] || operation[@"occurrence"]))
+    Fail(@"invalid_request", @"`containing` and `occurrence` are only valid with select block", nil);
+  NSArray<NSArray<EditParagraph *> *> *blocks = ChecklistBlocks(snapshot, paragraphs);
+  NSMutableArray<NSArray<EditParagraph *> *> *chosen = [NSMutableArray array];
+  if (all) {
+    [chosen addObjectsFromArray:blocks];
+  } else {
+    NSArray *candidates = blocks;
+    if (operation[@"containing"]) {
+      NSString *literal = EditText(operation[@"containing"], @"`containing`", NO);
+      NSMutableArray *matching = [NSMutableArray array];
+      for (NSArray<EditParagraph *> *block in blocks)
+        for (EditParagraph *p in block)
+          if ([[snapshot.string substringWithRange:p.content] isEqualToString:literal]) {
+            [matching addObject:block];
+            break;
+          }
+      candidates = matching;
+    }
+    NSUInteger occurrence = OptionalCount(operation, @"occurrence", 0, MAX_EDIT_TARGETS);
+    if (occurrence ? occurrence > candidates.count : candidates.count != 1)
+      Fail(@"match_count_mismatch",
+           [NSString stringWithFormat:@"Operation %lu matched %lu checklist block(s); it must name exactly one "
+                                      @"(use containing or occurrence)",
+                                      (unsigned long)index, (unsigned long)candidates.count],
+           @{@"committed" : @NO, @"operationIndex" : @(index), @"matchedCount" : @(candidates.count)});
+    [chosen addObject:candidates[occurrence ? occurrence - 1 : 0]];
+  }
+  if (!chosen.count)
+    Fail(@"match_count_mismatch",
+         [NSString stringWithFormat:@"Operation %lu found no checklist; insert checklist blocks instead",
+                                    (unsigned long)index],
+         @{@"committed" : @NO, @"operationIndex" : @(index), @"matchedCount" : @0});
+
+  NSMutableArray *removedItems = [NSMutableArray array];
+  for (NSArray<EditParagraph *> *block in chosen)
+    for (EditParagraph *p in block) {
+      if (p.index == 0)
+        Fail(@"title_invariant", @"The checklist includes the title paragraph", @{@"committed" : @NO});
+      [removedItems addObject:@{
+        @"paragraphIndex" : @(p.index),
+        @"text" : [snapshot.string substringWithRange:p.content],
+        @"checked" : @(ChecklistRowDone(snapshot, p)),
+      }];
+    }
+  if (operation[@"expectedCount"]) {
+    NSUInteger expected = OptionalCount(operation, @"expectedCount", 1, MAX_EDIT_TARGETS);
+    if (removedItems.count != expected)
+      Fail(@"match_count_mismatch",
+           [NSString stringWithFormat:@"Operation %lu would replace %lu checklist row(s); expectedCount is %lu",
+                                      (unsigned long)index, (unsigned long)removedItems.count,
+                                      (unsigned long)expected],
+           @{@"committed" : @NO, @"operationIndex" : @(index), @"matchedCount" : @(removedItems.count)});
+  }
+  for (NSUInteger i = 0; i < chosen.count; i++) {
+    NSRange range = ChecklistBlockRange(chosen[i]);
+    RequireNoAttachmentGlyph(snapshot, range, index, @"checklist", NSMakeRange(NSNotFound, 0));
+    NSAttributedString *replacement =
+        i == 0 ? NewChecklistRows(operation[@"items"], chosen[i].lastObject.terminated) : [NSAttributedString new];
+    NSMutableDictionary *target = Target(range, replacement, index, chosen[i].firstObject);
+    target[@"checklistRows"] = @(chosen[i].count);
+    [created addObject:target];
+  }
+  summary[@"select"] = select;
+  summary[@"checklistBlocks"] = @(blocks.count);
+  summary[@"replacedBlocks"] = @(chosen.count);
+  summary[@"removedItems"] = removedItems;
+  summary[@"itemCount"] = @([operation[@"items"] count]);
+}
+
+#pragma mark Deletion ranges
+
+// delete_paragraph targets from one operation that overlap or touch become
+// one target, so deleting adjacent paragraphs is one removal rather than a
+// conflict between the operation and itself.
+static NSMutableArray *MergeDeletions(NSMutableArray *created) {
+  NSArray *sorted = [created sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *x, NSDictionary *y) {
+    NSUInteger a = [x[@"range"] rangeValue].location, b = [y[@"range"] rangeValue].location;
+    return a == b ? NSOrderedSame : (a < b ? NSOrderedAscending : NSOrderedDescending);
+  }];
+  NSMutableArray *merged = [NSMutableArray array];
+  for (NSMutableDictionary *t in sorted) {
+    NSMutableDictionary *last = merged.lastObject;
+    NSRange r = [t[@"range"] rangeValue];
+    NSRange l = last ? [last[@"range"] rangeValue] : NSMakeRange(NSNotFound, 0);
+    if (last && r.location <= NSMaxRange(l)) {
+      NSUInteger end = MAX(NSMaxRange(l), NSMaxRange(r));
+      last[@"range"] = [NSValue valueWithRange:NSMakeRange(l.location, end - l.location)];
+      NSMutableArray *paragraphs = [last[@"mergedParagraphs"] ?: @[ last[@"paragraph"] ] mutableCopy];
+      [paragraphs addObject:t[@"paragraph"]];
+      last[@"mergedParagraphs"] = paragraphs;
+      if (!last[@"attachment"] && t[@"attachment"]) last[@"attachment"] = t[@"attachment"];
+      continue;
+    }
+    [merged addObject:t];
+  }
+  return merged;
 }
 
 #pragma mark Line-break trimming
@@ -2154,7 +2761,10 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
                                    NSDictionary<NSString *, NSManagedObject *> *rows, NSMutableArray *targets) {
   NSString *op = OptionalEnum(
       operation, @"op",
-      @[ @"replace", @"delete_paragraph", @"insert_after", @"insert_before", @"set_title", @"trim_blank_lines" ],
+      @[
+        @"replace", @"delete_paragraph", @"insert_after", @"insert_before", @"set_title", @"trim_blank_lines",
+        @"append_to_paragraph", @"replace_checklist"
+      ],
       nil);
   if (!op) Fail(@"invalid_request", @"Every operation needs `op`", nil);
   NSMutableDictionary *summary = [@{@"index" : @(index), @"op" : op} mutableCopy];
@@ -2166,12 +2776,13 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
   }
   NSMutableArray *created = [NSMutableArray array];
   NSString *kind = nil;
+  NSUInteger matched = NSNotFound;  // set when it differs from the target count
 
   if ([op isEqualToString:@"set_title"]) {
     RejectUnknownKeys(operation, @[ @"op", @"id", @"replacement" ], @"set_title operation");
     EditParagraph *title = paragraphs.firstObject;
     NSDictionary *replacement = RequireObject(operation, @"replacement");
-    RequireNoAttachmentGlyph(snapshot, title.content, index, @"title", NSNotFound);
+    RequireNoAttachmentGlyph(snapshot, title.content, index, @"title", NSMakeRange(NSNotFound, 0));
     NSAttributedString *text =
         ReplacementFor(replacement, snapshot, title.content, title, index, NO, NSNotFound);
     [created addObject:Target(title.content, text, index, title)];
@@ -2181,16 +2792,35 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
     NSDictionary *selector = RequireObject(operation, @"selector");
     NSDictionary *replacement = RequireObject(operation, @"replacement");
     NSArray *hits = ResolveSelector(selector, @"replace", snapshot, paragraphs, rows, &kind);
+    NSMutableDictionary *file = nil;
     for (NSDictionary *hit in CountAndPick(hits, operation, selector, index)) {
       NSRange range = [hit[@"range"] rangeValue];
       EditParagraph *p = hit[@"paragraph"];
-      NSUInteger glyph = HitGlyph(hit);
-      RequireNoAttachmentGlyph(snapshot, range, index, kind, glyph);
-      // Text beside an attachment must not be empty: an empty insertion is
-      // no edit at all. Replacing the glyph itself may be empty (removal).
-      BOOL allowEmpty = range.length > 0;
-      NSMutableDictionary *target =
-          Target(range, ReplacementFor(replacement, snapshot, range, p, index, allowEmpty, glyph), index, p);
+      NSRange glyphs = HitGlyphs(hit);
+      RequireNoAttachmentGlyph(snapshot, range, index, kind, glyphs);
+      NSMutableDictionary *target;
+      if (replacement[@"file"]) {
+        // A file takes the place of the attachment's whole span.
+        if (![kind isEqualToString:@"attachment"] || !range.length)
+          Fail(@"invalid_request", @"A file replacement needs an attachment selector with position self", nil);
+        if (![hit[@"row"] valueForKey:@"media"])
+          Fail(@"unsupported_attachment", @"Only an image, PDF, or other file attachment can be replaced with a file",
+               @{@"committed" : @NO, @"operationIndex" : @(index)});
+        if (!file) file = ReadReplacementFile(replacement);
+        NSMutableDictionary *copy = [file mutableCopy];
+        id placeholder = nil;
+        target = Target(range, FileGlyph(snapshot, glyphs, copy, &placeholder), index, p);
+        copy[@"placeholder"] = placeholder;
+        copy[@"operation"] = @(index);
+        copy[@"replaces"] = hit[@"attachment"][@"identifier"];
+        target[@"file"] = copy;
+      } else {
+        // Text beside an attachment must not be empty: an empty insertion is
+        // no edit at all. Replacing the glyph itself may be empty (removal).
+        BOOL allowEmpty = range.length > 0;
+        target = Target(range, ReplacementFor(replacement, snapshot, range, p, index, allowEmpty, glyphs.location),
+                        index, p);
+      }
       if (hit[@"attachment"]) target[@"attachment"] = hit[@"attachment"];
       [created addObject:target];
     }
@@ -2206,30 +2836,51 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
       EditParagraph *p = hit[@"paragraph"];
       if (p.index == 0)
         Fail(@"title_invariant", @"The title paragraph cannot be deleted", @{@"committed" : @NO});
-      NSRange range = p.full;
-      if (!p.terminated) {
-        // The last paragraph has no terminator: remove the newline before it
-        // instead, which leaves the previous paragraph as the last one.
-        EditParagraph *previous = paragraphs[p.index - 1];
-        range = NSMakeRange(NSMaxRange(previous.content),
-                            NSMaxRange(p.content) - NSMaxRange(previous.content));
-      }
-      RequireNoAttachmentGlyph(snapshot, range, index, kind, HitGlyph(hit));
+      // A paragraph goes with its own terminator. The last paragraph has
+      // none, so only its text goes and the previous terminator stays, as in
+      // trim_blank_lines: no other paragraph loses its newline or its style.
+      NSRange range = p.terminated ? p.full : p.content;
+      RequireNoAttachmentGlyph(snapshot, range, index, kind, HitGlyphs(hit));
       NSMutableDictionary *target = Target(range, [NSAttributedString new], index, p);
       if (hit[@"attachment"]) target[@"attachment"] = hit[@"attachment"];
       [created addObject:target];
     }
+    matched = created.count;
+    created = MergeDeletions(created);
     summary[@"selectorKind"] = kind;
   } else if ([op isEqualToString:@"trim_blank_lines"]) {
     for (EditParagraph *p in PlanTrim(operation, index, snapshot, paragraphs, rows, summary)) {
       // Each paragraph goes with its own terminator; an unterminated last
       // paragraph (whitespace only) goes alone and leaves the previous
       // terminator in place, so no other paragraph loses its newline.
-      RequireNoAttachmentGlyph(snapshot, p.full, index, @"trim", NSNotFound);
+      RequireNoAttachmentGlyph(snapshot, p.full, index, @"trim", NSMakeRange(NSNotFound, 0));
       NSMutableDictionary *target = Target(p.full, [NSAttributedString new], index, p);
       target[@"blankUTF16"] = @(p.content.length);
       [created addObject:target];
     }
+  } else if ([op isEqualToString:@"append_to_paragraph"]) {
+    // Inline runs added at the end of one existing paragraph (for example a
+    // link after a bullet's text), on the paragraph's own line. The runs lay
+    // their stated formatting over the paragraph's style and font; nothing
+    // is inherited from the inline formatting of the paragraph's last run.
+    RejectUnknownKeys(operation, @[ @"op", @"id", @"anchor", @"runs", @"expectedCount" ],
+                      @"append_to_paragraph operation");
+    NSDictionary *anchor = RequireObject(operation, @"anchor");
+    NSArray *hits = ResolveSelector(anchor, @"anchor", snapshot, paragraphs, rows, &kind);
+    for (NSDictionary *hit in CountAndPick(hits, operation, anchor, index)) {
+      EditParagraph *p = hit[@"paragraph"];
+      NSUInteger at = NSMaxRange(p.content);
+      NSUInteger source = p.content.length ? at - 1 : p.full.location;
+      NSDictionary *attributes = source < snapshot.length ? [snapshot attributesAtIndex:source effectiveRange:NULL] : @{};
+      NSMutableDictionary *target =
+          Target(NSMakeRange(at, 0), AttributedRuns(operation[@"runs"], InlineBase(attributes), @"runs"), index, p);
+      if (hit[@"attachment"]) target[@"attachment"] = hit[@"attachment"];
+      [created addObject:target];
+    }
+    summary[@"anchorKind"] = kind;
+  } else if ([op isEqualToString:@"replace_checklist"]) {
+    PlanChecklistReplace(operation, index, snapshot, paragraphs, created, summary);
+    matched = [summary[@"removedItems"] count];
   } else {
     BOOL after = [op isEqualToString:@"insert_after"];
     RejectUnknownKeys(operation, @[ @"op", @"id", @"anchor", @"blocks", @"expectedCount" ], @"insert operation");
@@ -2279,10 +2930,14 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
     if (t[@"attachment"]) description[@"attachment"] = t[@"attachment"];
     // For a trimmed paragraph: how many whitespace characters it held.
     if (t[@"blankUTF16"]) description[@"blankUTF16"] = t[@"blankUTF16"];
+    // Adjacent deleted paragraphs merged into this one target.
+    if (t[@"mergedParagraphs"]) description[@"mergedParagraphs"] = t[@"mergedParagraphs"];
+    if (t[@"checklistRows"]) description[@"checklistRows"] = t[@"checklistRows"];
+    if (t[@"file"]) description[@"file"] = PublicFile(t[@"file"]);
     [described addObject:description];
   }
   [targets addObjectsFromArray:created];
-  summary[@"matchedCount"] = @(created.count);
+  summary[@"matchedCount"] = @(matched != NSNotFound ? matched : created.count);
   summary[@"targets"] = described;
   return summary;
 }
@@ -2347,11 +3002,23 @@ static void Segments(NSArray<NSDictionary *> *targets, NSUInteger oldLength, NSM
     ]];
 }
 
-static NSString *PlanDigest(NSString *identifier, NSArray *operations) {
-  NSData *ops = [NSJSONSerialization dataWithJSONObject:operations options:NSJSONWritingSortedKeys error:nil];
-  NSMutableData *data = [[identifier dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
-  [data appendData:ops ?: [NSData data]];
-  return [@"p1:" stringByAppendingString:SHA256Hex(data)];
+// A digest of everything the plan depends on besides the note: the note
+// identifier, the operations, requireNonSystemPaper, and the SHA-256 of each
+// replacement file in plan order. edit_note's `ifPlanDigest` refuses an apply
+// whose request or files differ from the dry run's.
+static NSString *PlanDigest(NSString *identifier, NSArray *operations, BOOL requireNonSystemPaper,
+                            NSArray<NSDictionary *> *files) {
+  NSMutableArray *fileDigests = [NSMutableArray array];
+  for (NSDictionary *file in files) [fileDigests addObject:file[@"sha256"]];
+  NSDictionary *document = @{
+    @"identifier" : identifier,
+    @"operations" : operations,
+    @"requireNonSystemPaper" : @(requireNonSystemPaper),
+    @"files" : fileDigests,
+  };
+  NSData *data = [NSJSONSerialization dataWithJSONObject:document options:NSJSONWritingSortedKeys error:nil];
+  if (!data) Fail(@"invalid_request", @"The operations cannot be serialized", nil);
+  return [@"p2:" stringByAppendingString:SHA256Hex(data)];
 }
 
 @interface EditPlan : NSObject
@@ -2370,6 +3037,10 @@ static NSString *PlanDigest(NSString *identifier, NSArray *operations) {
 // whose glyph the plan removes from the body.
 @property(nonatomic, copy) NSDictionary<NSString *, NSManagedObject *> *attachmentRows;
 @property(nonatomic, copy) NSArray<NSString *> *removedAttachments;
+// Replacement files in plan order (ReadReplacementFile entries), and after
+// materialization the objects the apply may insert for them.
+@property(nonatomic, strong) NSMutableArray<NSMutableDictionary *> *files;
+@property(nonatomic, strong) NSSet *createdObjects;
 @end
 @implementation EditPlan
 @end
@@ -2413,6 +3084,13 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   NSAttributedString *snapshot = [LoadBody(note, &ms) copy];
   plan.mergeable = ms;
   plan.snapshot = snapshot;
+  // Verification compares stored runs field by field; a value of a class it
+  // cannot read field by field would make that comparison blind, so such a
+  // note is refused before anything is planned or written.
+  NSArray *unverifiable = UnverifiableAttributeClasses(snapshot);
+  if (unverifiable.count)
+    Fail(@"unsupported_note", @"The note holds formatting the writer cannot verify after an edit; nothing was changed",
+         @{@"committed" : @NO, @"attributes" : unverifiable});
   plan.attachmentRows = AttachmentRows(note);
   NSArray<EditParagraph *> *paragraphs = Paragraphs(snapshot.string);
 
@@ -2429,6 +3107,9 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   }
   RejectOverlaps(targets);
   plan.targets = targets;
+  plan.files = [NSMutableArray array];
+  for (NSDictionary *t in targets)
+    if (t[@"file"]) [plan.files addObject:t[@"file"]];
 
   NSMutableAttributedString *expected = [snapshot mutableCopy];
   for (NSDictionary *t in Descending(targets))
@@ -2463,11 +3144,23 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
                          isEqual:CanonicalRuns(snapshot, NSMakeRange(0, snapshot.length), YES)];
   NSUInteger unchangedUTF16 = 0;
   for (NSArray *segment in plan.unchanged) unchangedUTF16 += [segment[0] rangeValue].length;
+  NSMutableArray *replacementFiles = [NSMutableArray array];
+  for (NSDictionary *file in plan.files) {
+    NSMutableDictionary *entry = [PublicFile(file) mutableCopy];
+    entry[@"operationIndex"] = file[@"operation"];
+    entry[@"replaces"] = file[@"replaces"];
+    [replacementFiles addObject:entry];
+  }
 
   plan.response = [@{
     @"identifier" : identifier,
     @"revisionBefore" : plan.revisionBefore,
-    @"planDigest" : PlanDigest(identifier, operations),
+    @"planDigest" : PlanDigest(identifier, operations, requireNonSystemPaper, plan.files),
+    @"requireNonSystemPaper" : @(requireNonSystemPaper),
+    // Attachments and inline objects in the body, adjacent glyphs of one
+    // attachment counted once (attachmentGlyphs counts every glyph).
+    @"attachmentSpans" : @(AttachmentSpans(snapshot).count),
+    @"replacementFiles" : replacementFiles,
     @"operationCount" : @(operations.count),
     @"targetCount" : @(targets.count),
     @"operations" : summaries,
@@ -2491,6 +3184,8 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
 static NSString *VerifyAgainstPlan(NSAttributedString *persisted, EditPlan *plan) {
   if (![persisted.string isEqualToString:plan.expected.string])
     return @"The persisted text does not equal the planned text";
+  if (UnverifiableAttributeClasses(persisted).count)
+    return @"The persisted note holds formatting the writer cannot verify";
   for (NSArray *segment in plan.unchanged) {
     NSRange oldRange = [segment[0] rangeValue], newRange = [segment[1] rangeValue];
     if (![CanonicalRuns(plan.snapshot, oldRange, NO) isEqual:CanonicalRuns(persisted, newRange, NO)])
@@ -2512,7 +3207,8 @@ static NSString *VerifyAgainstPlan(NSAttributedString *persisted, EditPlan *plan
 
 // Every attachment row the note had, other than one whose glyph the plan
 // removed, must still be the note's with the same stored values, and no row
-// may appear. A removed attachment's row may be gone or changed.
+// may appear except the one each replacement file created. A removed
+// attachment's row may be gone or changed.
 static NSString *VerifyAttachmentRows(NSDictionary<NSString *, NSString *> *before,
                                       NSDictionary<NSString *, NSString *> *after, EditPlan *plan) {
   NSSet *removed = [NSSet setWithArray:plan.removedAttachments];
@@ -2522,8 +3218,13 @@ static NSString *VerifyAttachmentRows(NSDictionary<NSString *, NSString *> *befo
     if (![after[key] isEqualToString:before[key]])
       return @"An attachment the edit did not target changed its stored values";
   }
+  NSMutableSet *created = [NSMutableSet set];
+  for (NSDictionary *file in plan.files)
+    if (file[@"attachmentIdentifier"]) [created addObject:[file[@"attachmentIdentifier"] lowercaseString]];
   for (NSString *key in after)
-    if (!before[key]) return @"A new attachment row appeared in the note";
+    if (!before[key] && ![created containsObject:key]) return @"A new attachment row appeared in the note";
+  for (NSString *key in created)
+    if (!after[key]) return @"A replacement attachment is not in the note";
   return nil;
 }
 
@@ -2589,9 +3290,17 @@ static void ApplyInContext(NSManagedObjectContext *context, EditPlan *plan, BOOL
           [row.changedValues.allKeys sortedArrayUsingSelector:@selector(compare:)];
   }
   plan.response[@"removedAttachmentRowChanges"] = removedRowChanges;
+  // A replacement file's new attachment, its media, and their cloud states
+  // may be inserted; creating them updates only the attachment and media
+  // relationships of the note's account.
+  id account = plan.createdObjects.count ? [note valueForKey:@"account"] : nil;
+  NSSet *accountKeys = [NSSet setWithArray:@[ @"attachments", @"media" ]];
+  if (account && [[NSSet setWithArray:[account changedValues].allKeys] isSubsetOfSet:accountKeys])
+    [allowed addObject:account];
   NSMutableArray *unexpected = [NSMutableArray array];
   for (NSManagedObject *object in context.insertedObjects)
-    [unexpected addObject:[@"inserted " stringByAppendingString:object.entity.name ?: @"?"]];
+    if (![plan.createdObjects containsObject:object])
+      [unexpected addObject:[@"inserted " stringByAppendingString:object.entity.name ?: @"?"]];
   for (NSManagedObject *object in context.deletedObjects)
     [unexpected addObject:[@"deleted " stringByAppendingString:object.entity.name ?: @"?"]];
   for (NSManagedObject *object in context.updatedObjects)
@@ -2608,6 +3317,55 @@ static void ApplyInContext(NSManagedObjectContext *context, EditPlan *plan, BOOL
          @"from an attachment); nothing was saved. Edit this note in Notes.app.",
          @{@"committed" : @NO, @"objects" : unexpected});
   }
+}
+
+// Copy-store fault injection for scripts/test-private-helper-copy-store.sh,
+// which must prove that a failure before the save leaves nothing behind and
+// that the read-back catches a changed stored field outside the edits.
+// APPLE_NOTES_MCP_PRIVATE_TEST_FAULT is read only when the store is a copy
+// (APPLE_NOTES_MCP_PRIVATE_STORE); on the live store it is ignored.
+//   fail_before_save   fail after the edit and any new attachment, before the save
+//   tamper_todo        verify a read-back with one checklist todo toggled
+//   tamper_attachment  verify a read-back with one attachment glyph re-pointed
+static NSString *const kTestFaultEnv = @"APPLE_NOTES_MCP_PRIVATE_TEST_FAULT";
+
+static NSString *TestFault(StoreLocation store) {
+  if (!store.isCopy) return nil;
+  NSString *fault = NSProcessInfo.processInfo.environment[kTestFaultEnv];
+  return fault.length ? fault : nil;
+}
+
+// The persisted text with one stored field changed at the first place in an
+// unchanged segment that has one, or nil when there is none.
+static NSAttributedString *TamperedReadBack(NSAttributedString *persisted, EditPlan *plan, NSString *fault) {
+  NSMutableAttributedString *copy = [persisted mutableCopy];
+  BOOL todo = [fault isEqualToString:@"tamper_todo"];
+  if (!todo && ![fault isEqualToString:@"tamper_attachment"]) return nil;
+  for (NSArray *segment in plan.unchanged) {
+    NSRange range = [segment[1] rangeValue];
+    for (NSUInteger i = range.location; i < NSMaxRange(range); i++) {
+      if (todo) {
+        id style = [copy attribute:kStyleKey atIndex:i effectiveRange:NULL];
+        id item = style ? Send(style, "todo") : nil;
+        if (!item) continue;
+        id changed = [style mutableCopy];
+        id toggled = ((id(*)(id, SEL, id, BOOL))objc_msgSend)([objc_getClass("ICTTTodo") alloc],
+                                                              sel_registerName("initWithIdentifier:done:"),
+                                                              Send(item, "uuid"), !SendBool(item, "done"));
+        SendVoid1(changed, "setTodo:", toggled);
+        [copy addAttribute:kStyleKey value:[changed copy] range:NSMakeRange(i, 1)];
+        return copy;
+      }
+      id glyph = [copy attribute:kAttachmentKey atIndex:i effectiveRange:NULL];
+      if (!glyph) continue;
+      id swapped = [objc_getClass("ICTTAttachment") new];
+      SendVoid1(swapped, "setAttachmentIdentifier:", NSUUID.UUID.UUIDString);
+      SendVoid1(swapped, "setAttachmentUTI:", Send(glyph, "attachmentUTI"));
+      [copy addAttribute:kAttachmentKey value:swapped range:NSMakeRange(i, 1)];
+      return copy;
+    }
+  }
+  return nil;
 }
 
 static NSDictionary *HandlePlanEdit(NSDictionary *request) {
@@ -2636,6 +3394,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   NSString *ifRevision = RequireString(request, @"ifRevision");
   NSArray *operations = EditOperations(request);
   BOOL requireNonSystemPaper = OptionalBool(request, @"requireNonSystemPaper", NO);
+  NSString *ifPlanDigest = request[@"ifPlanDigest"] ? RequireString(request, @"ifPlanDigest") : nil;
   RequireFeature(FeatureEdit);
 
   StoreLocation store = ResolveStore();
@@ -2643,6 +3402,12 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   EditPlan *plan = PlanEdit(context, store, identifier, operations, requireNonSystemPaper, ifRevision);
   NSMutableDictionary *response = plan.response;
   response[@"dryRun"] = @NO;
+  // The dry run's planDigest: the same identifier, operations,
+  // requireNonSystemPaper, and replacement file bytes.
+  if (ifPlanDigest && ![ifPlanDigest isEqualToString:response[@"planDigest"]])
+    Fail(@"plan_mismatch",
+         @"The request or a replacement file differs from the dry run that produced ifPlanDigest; nothing was saved",
+         @{@"committed" : @NO, @"planDigest" : response[@"planDigest"]});
   if (!plan.wouldChange) {
     response[@"status"] = @"unchanged";
     response[@"committed"] = @NO;
@@ -2651,8 +3416,35 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   }
 
   NSDictionary *attachmentsBefore = AttachmentRowDigests(plan.attachmentRows);
-  ApplyInContext(context, plan, YES);
-  SaveOrFail(context);
+  NSString *fault = TestFault(store);
+  NSMutableArray<NSString *> *mediaContainers = [NSMutableArray array];
+  @try {
+    if (plan.files.count) {
+      // On a copy store every file NotesShared writes goes beside the copy,
+      // never into the live container; this must precede the first write.
+      if (store.isCopy) InstallAccountSandbox([store.path stringByDeletingLastPathComponent]);
+      plan.createdObjects = MaterializeReplacementFiles(plan.files, plan.note, mediaContainers);
+    }
+    ApplyInContext(context, plan, YES);
+    if ([fault isEqualToString:@"fail_before_save"]) {
+      [context rollback];
+      Fail(@"test_fault", @"Copy-store fault injection: failed after the edit, before the save",
+           @{@"committed" : @NO});
+    }
+    SaveOrFail(context);
+  } @catch (NSException *e) {
+    // Nothing reached the store (the save was never tried, or it failed and
+    // rolled back): drop the new attachments and remove the media files
+    // NotesShared already wrote for them.
+    BOOL nothingSaved = !gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
+                                            [e.userInfo[@"committed"] isEqual:@NO]);
+    if (nothingSaved) {
+      [context rollback];
+      for (NSString *container in mediaContainers)
+        [NSFileManager.defaultManager removeItemAtPath:container error:NULL];
+    }
+    @throw;
+  }
 
   // Fresh read-back through a new coordinator opened read-only.
   NSString *verifyError = nil;
@@ -2663,11 +3455,15 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
     NSManagedObjectContext *fresh = OpenContext(store, YES);
     NSManagedObject *reread = FetchNote(fresh, identifier);
     NSAttributedString *persisted = LoadBody(reread, NULL);
+    if ([fault hasPrefix:@"tamper_"])
+      persisted = TamperedReadBack(persisted, plan, fault)
+                      ?: [[NSAttributedString alloc] initWithString:@"test fault found nothing to change"];
     verifyError = VerifyAgainstPlan(persisted, plan);
     NSDictionary<NSString *, NSManagedObject *> *rowsAfter = AttachmentRows(reread);
     attachmentRows = rowsAfter.count;
     if (!verifyError)
       verifyError = VerifyAttachmentRows(attachmentsBefore, AttachmentRowDigests(rowsAfter), plan);
+    if (!verifyError) verifyError = VerifyReplacementFiles(fresh, reread, plan.files);
     for (NSString *key in plan.removedAttachments) {
       NSManagedObject *row = rowsAfter[key];
       [removedReport addObject:@{
@@ -2704,7 +3500,20 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
     // stored values; and what became of each removed attachment's row.
     @"otherAttachmentRowsUnchanged" : @(otherRows),
     @"removedAttachments" : removedReport,
+    // Each replacement file's new attachment, proven in the note with the
+    // planned type, name, and bytes.
+    @"replacementFilesVerified" : @(plan.files.count),
   };
+  if (plan.files.count) {
+    NSMutableArray *files = [NSMutableArray array];
+    for (NSDictionary *file in plan.files) {
+      NSMutableDictionary *entry = [PublicFile(file) mutableCopy];
+      entry[@"operationIndex"] = file[@"operation"];
+      entry[@"replaces"] = file[@"replaces"];
+      [files addObject:entry];
+    }
+    response[@"replacementFiles"] = files;
+  }
   [response addEntriesFromDictionary:SyncFields(after, store)];
   return response;
 }

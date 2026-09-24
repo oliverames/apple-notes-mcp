@@ -15,7 +15,10 @@
 //       other than one the writer reported in `removedAttachments` and every
 //       other note and object row are byte-identical, and that the text
 //       inside the edits is what the writer reported. A removed attachment's
-//       row may be unchanged, changed, or gone; its state is printed.
+//       row may be unchanged, changed, or gone; its state is printed. A file
+//       that replaced an attachment may add exactly the attachment and media
+//       rows the response lists in `replacementFiles`, and bump the version
+//       counter (Z_OPT, nothing else) of one row, the note's account.
 //
 // Prints counts and offsets only, never note text.
 import { execFileSync } from "node:child_process";
@@ -117,12 +120,28 @@ function snapshot(store, uuid, out) {
       digest: sha(JSON.stringify(row)),
       markedForDeletion: Boolean(row.ZMARKEDFORDELETION),
     };
-  // Everything else: the note's own row is compared through its text and
-  // runs, its attachment rows row by row above.
-  const others = sql(
+  // Everything else, one digest per row: the note's own row is compared
+  // through its text and runs, its attachment rows row by row above. Each
+  // row also keeps a digest without Z_OPT (Core Data's version counter), so
+  // a row that only had its counter bumped can be told apart.
+  const others = {};
+  const otherJson = sql(
     store,
-    `${param}SELECT * FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK != :pk AND ZNOTE IS NOT :pk ORDER BY Z_PK;\n` +
-      `SELECT Z_PK, ZNOTE, hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE IS NOT :pk ORDER BY Z_PK;\n`
+    `.parameter set :pk ${pk}\n.mode json\n` +
+      `SELECT * FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK != :pk AND ZNOTE IS NOT :pk ORDER BY Z_PK;\n`
+  ).trim();
+  for (const row of otherJson ? JSON.parse(otherJson) : []) {
+    const { Z_OPT, ...rest } = row;
+    void Z_OPT;
+    others[`o${row.Z_PK}`] = {
+      digest: sha(JSON.stringify(row)),
+      withoutVersion: sha(JSON.stringify(rest)),
+      identifier: row.ZIDENTIFIER ? String(row.ZIDENTIFIER).toLowerCase() : null,
+    };
+  }
+  const noteData = sql(
+    store,
+    `${param}SELECT Z_PK, ZNOTE, hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE IS NOT :pk ORDER BY Z_PK;\n`
   );
   const state = {
     uuid,
@@ -131,7 +150,8 @@ function snapshot(store, uuid, out) {
     keys: note.keys,
     attachmentRows: Object.keys(attachments).length,
     attachments,
-    othersDigest: sha(others),
+    others,
+    noteDataDigest: sha(noteData),
   };
   writeFileSync(out, JSON.stringify(state));
   console.log(
@@ -200,12 +220,44 @@ function compare(beforePath, afterPath, responsePath) {
     else if (after.attachments[id].digest !== row.digest)
       failures.push("an untargeted attachment row (including table data) changed");
   }
+  // A file that replaced an attachment adds exactly the attachment and media
+  // rows the writer reported; creating them may bump the version counter
+  // (and nothing else) of the note's account row.
+  const files = response.replacementFiles ?? [];
+  const created = new Set(
+    files.map((f) => String(f.attachmentIdentifier ?? "").toLowerCase()).filter(Boolean)
+  );
+  const createdMedia = new Set(
+    files.map((f) => String(f.mediaIdentifier ?? "").toLowerCase()).filter(Boolean)
+  );
   for (const id of Object.keys(after.attachments))
-    if (!before.attachments[id]) failures.push("a new attachment row appeared in the note");
+    if (!before.attachments[id] && !created.has(id))
+      failures.push("a new attachment row appeared in the note");
+  for (const id of created)
+    if (!after.attachments[id]) failures.push("a replacement attachment row is not in the note");
   // EDIT_CHECK_NOTE_ONLY=1 skips the whole-store comparison, for reading a
   // live store where Notes and sync legitimately change other rows.
-  if (process.env.EDIT_CHECK_NOTE_ONLY !== "1" && before.othersDigest !== after.othersDigest)
-    failures.push("another note, folder, or object row changed");
+  let versionBumps = 0;
+  if (process.env.EDIT_CHECK_NOTE_ONLY !== "1") {
+    if (before.noteDataDigest !== after.noteDataDigest)
+      failures.push("another note's body changed");
+    for (const [key, row] of Object.entries(after.others)) {
+      const old = before.others[key];
+      if (!old) {
+        if (!row.identifier || !createdMedia.has(row.identifier))
+          failures.push("an object row appeared that the edit did not report");
+      } else if (old.digest !== row.digest) {
+        if (files.length && old.withoutVersion === row.withoutVersion) versionBumps++;
+        else failures.push("another note, folder, or object row changed");
+      }
+    }
+    for (const key of Object.keys(before.others))
+      if (!after.others[key]) failures.push("an object row disappeared");
+    for (const id of createdMedia)
+      if (!Object.values(after.others).some((row) => row.identifier === id))
+        failures.push("a replacement file's media row is missing");
+    if (versionBumps > 1) failures.push(`${versionBumps} rows changed their version counter`);
+  }
   if (failures.length) {
     for (const f of failures) console.error(`FAIL: ${f}`);
     process.exit(1);
@@ -215,9 +267,10 @@ function compare(beforePath, afterPath, responsePath) {
       `${targets.length} edited range(s); ${before.attachmentRows - removedState.length} ` +
       `untargeted attachment rows identical` +
       (removedState.length ? `; removed attachment rows: ${removedState.join(", ")}` : "") +
+      (created.size ? `; ${created.size} replacement attachment(s) with their media rows` : "") +
       (process.env.EDIT_CHECK_NOTE_ONLY === "1"
         ? " (note-only check)"
-        : "; all other rows identical")
+        : `; all other rows identical${versionBumps ? " (account version counter bumped)" : ""}`)
   );
 }
 

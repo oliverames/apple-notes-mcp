@@ -17,8 +17,16 @@
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
 #   EDIT_NOTES="UUID ..." notes for the plan_edit / edit_note round trip.
 #              Default: up to EDIT_SAMPLE (5) recent editable notes that own
-#              attachments, plus up to 3 without. Notes with an attachment in
-#              the body also run the attachment selector steps (4c).
+#              attachments, plus up to 3 without. The first note also runs
+#              the rich-run, inline-link, and checklist steps (4c2); notes
+#              with an attachment in the body also run the attachment
+#              selector steps (4d), including a file replacement when one
+#              of the first five attachments is a file (image, PDF). If the
+#              default sample has none, name such notes in EDIT_NOTES.
+#
+# Some steps use the writer's copy-only fault injection
+# (APPLE_NOTES_MCP_PRIVATE_TEST_FAULT), which the writer ignores unless
+# APPLE_NOTES_MCP_PRIVATE_STORE names a copy.
 #
 # Prints states and counts only, never note titles or bodies. Needs Full Disk
 # Access for the terminal running it. Removes the copy on exit.
@@ -154,12 +162,15 @@ READER="$WORK/paragraph-reader.mjs"
 cat >"$WORK/paragraph-reader.ts" <<'TS'
 import { readNoteParagraphs } from "@/utils/noteParagraphs.js";
 import { listNoteLinks } from "@/utils/noteLinkInventory.js";
+import { readNoteBlocks } from "@/utils/noteBlocks.js";
 const [mode, id, dbPath] = process.argv.slice(2);
 try {
   const result =
     mode === "links"
       ? listNoteLinks({ id, kinds: ["section"], dbPath })
-      : readNoteParagraphs({ id }, { dbPath });
+      : mode === "blocks"
+        ? readNoteBlocks(id, { dbPath }).blocks
+        : readNoteParagraphs({ id }, { dbPath });
   process.stdout.write(JSON.stringify(result));
 } catch (error) {
   process.stdout.write(JSON.stringify({ error: String(error) }));
@@ -171,6 +182,16 @@ TS
   --outfile="$READER")
 object_uri() { field "$(copy_run "$(read_request "$1")")" objectURI; }
 paragraphs_on_copy() { node "$READER" paragraphs "$(object_uri "$1")" "$COPY"; }
+blocks_on_copy() { node "$READER" blocks "$(object_uri "$1")" "$COPY"; }
+# The first block whose text is exactly $2 in blocks JSON $1, as JSON ({} if none).
+block_with_text() {
+  printf '%s' "$1" | node -e '
+    let s = "";
+    process.stdin.on("data", (c) => (s += c)).on("end", () => {
+      const hit = (JSON.parse(s) || []).find((b) => b.text === process.argv[1]);
+      process.stdout.write(JSON.stringify(hit || {}));
+    });' "$2"
+}
 section_links_on_copy() { node "$READER" links "$(object_uri "$1")" "$COPY"; }
 # JSON-encode one string field (plutil cannot emit a bare JSON string).
 json_string() {
@@ -390,13 +411,18 @@ fi
 # every other row byte-identical; the last step must restore the note exactly.
 # Every plan must leave the store unchanged.
 CHECK="$REPO/scripts/check-edit-preservation.mjs"
-edit_request() { # action identifier ifRevision(or empty) operations-json
+edit_request() { # action identifier ifRevision(or empty) operations-json [extra fields, leading comma]
   if [ -n "$3" ]; then
-    printf '{"protocol":1,"action":"%s","identifier":"%s","ifRevision":"%s","operations":%s}' \
-      "$1" "$2" "$3" "$4"
+    printf '{"protocol":1,"action":"%s","identifier":"%s","ifRevision":"%s","operations":%s%s}' \
+      "$1" "$2" "$3" "$4" "${5:-}"
   else
-    printf '{"protocol":1,"action":"%s","identifier":"%s","operations":%s}' "$1" "$2" "$4"
+    printf '{"protocol":1,"action":"%s","identifier":"%s","operations":%s%s}' "$1" "$2" "$4" "${5:-}"
   fi
+}
+# A copy-store run with the writer's copy-only fault injection switched on.
+fault_run() { # fault request
+  printf '%s' "$2" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES APPLE_NOTES_MCP_PRIVATE_STORE="$COPY" \
+    APPLE_NOTES_MCP_PRIVATE_TEST_FAULT="$1" "$HELPER" 2>/dev/null
 }
 snap() { node "$CHECK" snapshot "$COPY" "$1" "$WORK/$2.json" >/dev/null; }
 edit_step() { # uuid label operations-json
@@ -405,7 +431,8 @@ edit_step() { # uuid label operations-json
   [ "$(field "$PLAN" status)" = "planned" ] || fail "$2 plan: $(field "$PLAN" code) $(field "$PLAN" message)"
   snap "$1" planned
   node "$CHECK" same "$WORK/before.json" "$WORK/planned.json" >/dev/null || fail "$2: plan_edit changed the store"
-  OUT="$(copy_run "$(edit_request edit_note "$1" "$(field "$PLAN" revisionBefore)" "$3")" || true)"
+  OUT="$(copy_run "$(edit_request edit_note "$1" "$(field "$PLAN" revisionBefore)" "$3" \
+    ",\"ifPlanDigest\":\"$(field "$PLAN" planDigest)\"")" || true)"
   [ "$(field "$OUT" status)" = "updated" ] || fail "$2 apply: $(field "$OUT" code) $(field "$OUT" message)"
   [ "$(field "$OUT" verified)" = "true" ] || fail "$2 apply not verified"
   [ "$(field "$OUT" preservation.formattingOutsideEditsVerified)" = "true" ] || fail "$2: no preservation report"
@@ -458,6 +485,17 @@ TRIM_MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","oc
 TRIM_AROUND_OPS='[{"op":"trim_blank_lines","mode":"around","anchor":{"kind":"text","text":"copy-store trim start"},"side":"after","expectedCount":3}]'
 TRIM_UNMARK_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store trim start"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store trim end"}}]'
 TRIM_RUNS_OPS='[{"op":"trim_blank_lines","mode":"runs"}]'
+RICH_MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","occurrence":1},"expectedCount":COUNT,"blocks":[{"type":"body","text":"copy-store rich"},{"type":"checklist","text":"copy-store item 1","checked":true},{"type":"checklist","text":"copy-store item 2","checked":false},{"type":"body","text":"copy-store rich end"}]}]'
+RICH_RUN_OPS='[{"op":"append_to_paragraph","anchor":{"text":"copy-store rich"},"runs":[{"text":" "},{"text":"copy-store link","link":"https://example.com/copy-store","highlight":"mint","color":"#FF0000","bold":true}]},{"op":"replace","selector":{"text":"copy-store rich end","match":"equals"},"replacement":{"runs":[{"text":"copy-store rich end","link":"mailto:copy-store@example.com","italic":true}]}}]'
+RICH_CHECKLIST_OPS='[{"op":"replace_checklist","containing":"copy-store item 1","expectedCount":2,"items":[{"text":"copy-store new 1","checked":false},{"text":"copy-store new 2","checked":true,"indent":1},{"runs":[{"text":"copy-store new 3"}],"checked":false}]}]'
+RICH_TAMPER_OPS='[{"op":"replace","selector":{"text":"copy-store new 1","match":"equals"},"replacement":{"text":"copy-store new 1b"}}]'
+RICH_UNMARK_OPS='[{"op":"delete_paragraph","selector":{"text":"copy-store rich copy-store link"}},{"op":"delete_paragraph","selector":{"text":"copy-store new 1b"}},{"op":"delete_paragraph","selector":{"text":"copy-store new 2"}},{"op":"delete_paragraph","selector":{"text":"copy-store new 3"}},{"op":"delete_paragraph","selector":{"text":"copy-store rich end"}}]'
+RICH_DONE=0
+FILE_REPLACED=0
+# A small PNG from the system to stand in for a new chart.
+REPLACEMENT_FILE="$WORK/copy-store-source.png"
+cp /System/Library/CoreServices/Dock.app/Contents/Resources/pileArrow@2x.png "$REPLACEMENT_FILE"
+REPLACEMENT_SHA="$(/usr/bin/shasum -a 256 "$REPLACEMENT_FILE" | cut -d' ' -f1)"
 TRIMMED=0
 EDITED=0
 REFUSED_NOTES=0
@@ -524,6 +562,91 @@ for EDIT_NOTE in $EDIT_NOTES; do
   fi
   TRIMMED=$((TRIMMED + 1))
 
+  # 4c2. Rich runs, an inline link at the end of a paragraph, checklist
+  # replacement, verification of a changed stored field, and deleting the
+  # last paragraph (first note only). Insert a marker paragraph, two
+  # checklist rows, and an end marker; append a formatted link to the marker
+  # and relink the end marker; replace the two rows with three new ones;
+  # prove the read-back catches a toggled todo; delete everything inserted,
+  # which must restore the note exactly. Each step is checked by the
+  # independent decoder, and the stored run attributes by the get-note-blocks
+  # reader.
+  if [ "$RICH_DONE" = "0" ]; then
+    snap "$EDIT_NOTE" original
+    edit_step "$EDIT_NOTE" "insert rich markers" "${RICH_MARK_OPS/COUNT/$COUNT}"
+    edit_step "$EDIT_NOTE" "append a formatted link and relink a paragraph" "$RICH_RUN_OPS"
+    RBLOCKS="$(blocks_on_copy "$EDIT_NOTE")"
+    LINKED="$(block_with_text "$RBLOCKS" "copy-store rich copy-store link")"
+    [ "$(field "$LINKED" runs.1.text)" = "copy-store link" ] || fail "the appended run is not its own run"
+    [ "$(field "$LINKED" runs.1.link)" = "https://example.com/copy-store" ] || fail "the appended link did not persist"
+    [ "$(field "$LINKED" runs.1.highlight)" = "mint" ] || fail "the appended highlight did not persist"
+    [ "$(field "$LINKED" runs.1.color)" = "#FF0000" ] || fail "the appended color did not persist"
+    [ "$(field "$LINKED" runs.1.bold)" = "true" ] || fail "the appended bold did not persist"
+    [ -z "$(field "$LINKED" runs.0.link)" ] || fail "the paragraph's own text became linked"
+    ENDED="$(block_with_text "$RBLOCKS" "copy-store rich end")"
+    [ "$(field "$ENDED" runs.0.link)" = "mailto:copy-store@example.com" ] || fail "the replacement link did not persist"
+    [ "$(field "$ENDED" runs.0.italic)" = "true" ] || fail "the replacement italic did not persist"
+    echo "   get-note-blocks reader sees the link, highlight, color, and bold runs"
+    edit_step "$EDIT_NOTE" "replace a checklist block" "$RICH_CHECKLIST_OPS"
+    [ "$(field "$OUT" operations.0.matchedCount)" = "2" ] || fail "replace_checklist replaced $(field "$OUT" operations.0.matchedCount) rows, not 2"
+    [ "$(field "$OUT" operations.0.removedItems.0.checked)" = "true" ] || fail "replace_checklist did not report the old done state"
+    RBLOCKS="$(blocks_on_copy "$EDIT_NOTE")"
+    for WANT in "copy-store new 1:false:0" "copy-store new 2:true:1" "copy-store new 3:false:0"; do
+      ROW="$(block_with_text "$RBLOCKS" "${WANT%%:*}")"
+      REST="${WANT#*:}"
+      [ "$(field "$ROW" style)" = "checklist" ] || fail "${WANT%%:*} is not a checklist row"
+      [ "$(field "$ROW" checklist.done)" = "${REST%%:*}" ] || fail "${WANT%%:*} has the wrong done state"
+      [ "$(field "$ROW" indent)" = "${REST#*:}" ] || fail "${WANT%%:*} has the wrong indent"
+    done
+    [ "$(block_with_text "$RBLOCKS" "copy-store item 1")" = "{}" ] || fail "an old checklist row is still there"
+    echo "   get-note-blocks reader sees the three new rows with their done states and indent"
+    # The writer's read-back must catch a stored field changed outside the
+    # edit (a toggled checklist todo, injected into the read-back on the copy).
+    snap "$EDIT_NOTE" before
+    PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$RICH_TAMPER_OPS")" || true)"
+    OUT="$(fault_run tamper_todo "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$RICH_TAMPER_OPS")" || true)"
+    [ "$(field "$OUT" code)" = "verification_failed" ] && [ "$(field "$OUT" committed)" = "true" ] ||
+      fail "a toggled todo outside the edit was not caught: $(field "$OUT" code) $(field "$OUT" message)"
+    echo "ok: the read-back catches a checklist todo toggled outside the edited ranges ($(field "$OUT" message))"
+    # ifPlanDigest: the digest of the same operations planned with
+    # requireNonSystemPaper is refused, nothing saved.
+    OTHER="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$RICH_UNMARK_OPS" ',"requireNonSystemPaper":true')" || true)"
+    [ -n "$(field "$OTHER" planDigest)" ] || fail "second plan: $(field "$OTHER" code) $(field "$OTHER" message)"
+    PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$RICH_UNMARK_OPS")" || true)"
+    OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$RICH_UNMARK_OPS" \
+      ",\"ifPlanDigest\":\"$(field "$OTHER" planDigest)\"")" || true)"
+    [ "$(field "$OUT" code)" = "plan_mismatch" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+      fail "a mismatched ifPlanDigest was not refused: $(field "$OUT" code)"
+    echo "ok: a mismatched ifPlanDigest is refused, committed=false"
+    edit_step "$EDIT_NOTE" "delete the rich markers" "$RICH_UNMARK_OPS"
+    snap "$EDIT_NOTE" final
+    node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
+      fail "the rich round trip did not restore the original text and runs"
+
+    # Deleting two equal paragraphs that end the note: one operation, one
+    # merged target, and the paragraph before them keeps its line break.
+    LASTTEXT="$(printf '%s' "$(paragraphs_on_copy "$EDIT_NOTE")" | node -e '
+      let s = "";
+      process.stdin.on("data", (c) => (s += c)).on("end", () => {
+        const list = JSON.parse(s).paragraphs || [];
+        const last = list[list.length - 1];
+        const same = list.filter((p) => p.text === (last && last.text)).length;
+        process.stdout.write(last && last.text && same === 1 && !/[\u0000-\u001f"\\\\]/.test(last.text) ? last.text : "");
+      });')"
+    if [ -n "$LASTTEXT" ]; then
+      TAIL_OPS="[{\"op\":\"insert_after\",\"anchor\":{\"text\":$(printf '%s' "$LASTTEXT" | node -e 'let s="";process.stdin.on("data",(c)=>(s+=c)).on("end",()=>process.stdout.write(JSON.stringify(s)))'),\"scope\":\"all\"},\"blocks\":[{\"type\":\"body\",\"text\":\"copy-store tail\"},{\"type\":\"body\",\"text\":\"copy-store tail\"}]}]"
+      edit_step "$EDIT_NOTE" "insert two last paragraphs" "$TAIL_OPS"
+      edit_step "$EDIT_NOTE" "delete the two last paragraphs in one operation" \
+        '[{"op":"delete_paragraph","selector":{"text":"copy-store tail"},"expectedCount":2}]'
+      [ "$(field "$OUT" operations.0.matchedCount)" = "2" ] && [ "$(field "$OUT" targetCount)" = "1" ] ||
+        fail "the two deleted paragraphs were not merged into one target"
+      echo "   two adjacent deleted paragraphs, the last one unterminated, merged into one target"
+    else
+      echo "note: the last paragraph is empty or not unique; last-paragraph deletion not exercised on this note"
+    fi
+    RICH_DONE=1
+  fi
+
   # 4d. Attachment selectors on notes whose body holds an attachment: add a
   # caption inline after the first attachment and remove it, insert and
   # delete a paragraph anchored on it (both must restore the note exactly),
@@ -546,6 +669,56 @@ for EDIT_NOTE in $EDIT_NOTES; do
   snap "$EDIT_NOTE" final
   node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
     fail "the attachment round trip did not restore the original text and runs"
+  # The read-back must catch an attachment glyph re-pointed outside the
+  # edit (injected into the read-back on the copy); the caption it commits
+  # is then removed again.
+  PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$CAPTION_OPS")" || true)"
+  OUT="$(fault_run tamper_attachment "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$CAPTION_OPS")" || true)"
+  [ "$(field "$OUT" code)" = "verification_failed" ] && [ "$(field "$OUT" committed)" = "true" ] ||
+    fail "a re-pointed attachment glyph was not caught: $(field "$OUT" code) $(field "$OUT" message)"
+  echo "ok: the read-back catches an attachment glyph re-pointed outside the edited ranges"
+  edit_step "$EDIT_NOTE" "remove the caption again" "$UNCAPTION_OPS"
+  # Replace the first attachment with a new image file in one save. A
+  # failure injected just before the save must leave the store and the
+  # media folder untouched; the real apply is then checked by the
+  # independent decoder (the new attachment and media rows are the only new
+  # rows) and by the media file's bytes.
+  # The first of the note's first five attachments that is a file (image,
+  # PDF, or other file); tables, drawings, and cards are refused.
+  PLAN=""
+  for ORDINAL in 1 2 3 4 5; do
+    FILE_OPS="$(printf '[{"op":"replace","selector":{"kind":"attachment","ordinal":%s},"replacement":{"file":"%s","filename":"copy-store-chart.png"}}]' "$ORDINAL" "$REPLACEMENT_FILE")"
+    PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$FILE_OPS")" || true)"
+    [ "$(field "$PLAN" code)" = "unsupported_attachment" ] || break
+  done
+  if [ "$(field "$PLAN" code)" = "unsupported_attachment" ] || [ "$(field "$PLAN" code)" = "match_count_mismatch" ]; then
+    echo "note: no file attachment among the first five; file replacement not exercised on this note"
+  else
+    [ "$(field "$PLAN" status)" = "planned" ] || fail "file replacement plan: $(field "$PLAN" code) $(field "$PLAN" message)"
+    [ "$(field "$PLAN" replacementFiles.0.sha256)" = "$REPLACEMENT_SHA" ] || fail "the plan hashed another file"
+    snap "$EDIT_NOTE" before
+    MEDIA_BEFORE="$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')"
+    OUT="$(fault_run fail_before_save "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$FILE_OPS")" || true)"
+    [ "$(field "$OUT" code)" = "test_fault" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+      fail "injected failure: $(field "$OUT" code) $(field "$OUT" message)"
+    snap "$EDIT_NOTE" after
+    node "$CHECK" same "$WORK/before.json" "$WORK/after.json" >/dev/null ||
+      fail "a failed file replacement left rows behind"
+    [ "$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')" = "$MEDIA_BEFORE" ] ||
+      fail "a failed file replacement left its media file"
+    echo "ok: a file replacement that fails before the save leaves no row and no media file"
+    edit_step "$EDIT_NOTE" "replace an attachment with a file" "$FILE_OPS"
+    [ -n "$(field "$OUT" replacementFiles.0.attachmentIdentifier)" ] || fail "file replacement reported no new attachment"
+    [ "$(field "$OUT" preservation.replacementFilesVerified)" = "1" ] || fail "file replacement was not verified"
+    [ "$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')" = "$((MEDIA_BEFORE + 1))" ] ||
+      fail "the file replacement did not write exactly one media file"
+    while IFS= read -r STORED; do
+      [ "$(/usr/bin/shasum -a 256 "$STORED" | cut -d' ' -f1)" = "$REPLACEMENT_SHA" ] ||
+        fail "the new attachment's media file does not hold the source bytes"
+    done < <(find "$WORK" -name copy-store-chart.png)
+    echo "   new attachment $(field "$OUT" replacementFiles.0.uti), media file beside the copy with the source bytes"
+    FILE_REPLACED=$((FILE_REPLACED + 1))
+  fi
   edit_step "$EDIT_NOTE" "remove an attachment from the body" "$REMOVE_ATTACHMENT_OPS"
   [ "$(field "$OUT" removedAttachments.0)" != "" ] || fail "attachment removal reported no removed attachment"
   [ "$(field "$OUT" preservation.removedAttachments.0.identifier)" = "$(field "$OUT" removedAttachments.0)" ] ||
@@ -558,6 +731,9 @@ echo "ok: edit_note round trip restored $EDITED note(s) exactly; $REFUSED_NOTES 
 [ "$ATTACHMENT_EDITED" -gt 0 ] || fail "the attachment selector steps ran on no note (EDIT_NOTES needs a note with an attachment in its body)"
 echo "ok: attachment selector steps passed on $ATTACHMENT_EDITED note(s)"
 echo "ok: trim_blank_lines steps passed on $TRIMMED note(s)"
+[ "$RICH_DONE" = "1" ] || fail "the rich-run and checklist steps ran on no note"
+[ "$FILE_REPLACED" -gt 0 ] || fail "file replacement ran on no note (EDIT_NOTES needs a note whose first attachment is an image, PDF, or file)"
+echo "ok: rich runs, inline link, checklist replacement, and file replacement ($FILE_REPLACED note(s)) passed"
 
 # 4e. Structured compose: plan, guarded apply with verified read-back, replay,
 #     prepend below the title, and insertion before an exact heading.
