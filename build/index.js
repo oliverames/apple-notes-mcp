@@ -60755,6 +60755,7 @@ var AnchorRegistry = class _AnchorRegistry {
     } finally {
       closeSync10(fd);
     }
+    if (text2.trim() === "") return [];
     let parsed;
     try {
       parsed = JSON.parse(text2);

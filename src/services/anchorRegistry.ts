@@ -173,6 +173,9 @@ export class AnchorRegistry {
     } finally {
       closeSync(fd);
     }
+    // An empty file (for example one made with `touch`) is an empty
+    // registry, not a corrupt one; the next write replaces it atomically.
+    if (text.trim() === "") return [];
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
