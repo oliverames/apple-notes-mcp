@@ -94,6 +94,7 @@ export const COMPOSE_LIVE_VALIDATED = false;
 export const WRITER_FEATURES = [
   { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
   { key: "composeNote", probeKey: "composeNote", liveValidated: COMPOSE_LIVE_VALIDATED },
+  { key: "composeObjects", probeKey: "composeObjects", liveValidated: COMPOSE_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 
@@ -248,6 +249,7 @@ export const writerProbeSchema = z
         readNoteState: featureSchema,
         appendPlainText: featureSchema,
         composeNote: featureSchema.optional(),
+        composeObjects: featureSchema.optional(),
       })
       .passthrough(),
   })

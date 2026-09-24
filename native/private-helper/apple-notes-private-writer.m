@@ -188,6 +188,31 @@ static const APIRequirement kComposeAPI[] = {
     {"ICTTTodo", "done", NO},
 };
 
+// Compose dividers and tables: new attachment objects plus their glyphs.
+static const APIRequirement kComposeObjectAPI[] = {
+    {"ICTTAttachment", "setAttachmentIdentifier:", NO},
+    {"ICTTAttachment", "setAttachmentUTI:", NO},
+    {"ICTTAttachment", "attachmentIdentifier", NO},
+    {"ICTTAttachment", "attachmentUTI", NO},
+    {"ICInlineAttachment", "newDividerLineAttachmentWithIdentifier:note:parentAttachment:", YES},
+    {"ICTable", "registerWithICCRCoder", YES},
+    {"ICNote", "addTableAttachment", NO},
+    {"ICAttachment", "tableModel", NO},
+    {"ICAttachment", "saveMergeableDataIfNeeded", NO},
+    {"ICAttachment", "updateChangeCountWithReason:", NO},
+    {"ICAttachmentTableModel", "table", NO},
+    {"ICAttachmentTableModel", "writeMergeableData", NO},
+    {"ICAttachmentTableModel", "regenerateTextContentInNote", NO},
+    {"ICTable", "setAttributedString:columnIndex:rowIndex:", NO},
+    {"ICTable", "stringForColumnIndex:rowIndex:", NO},
+    {"ICTable", "insertRowAtIndex:", NO},
+    {"ICTable", "insertColumnAtIndex:", NO},
+    {"ICTable", "removeRowAtIndex:", NO},
+    {"ICTable", "removeColumnAtIndex:", NO},
+    {"ICTable", "rowCount", NO},
+    {"ICTable", "columnCount", NO},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -568,6 +593,16 @@ static NSDictionary *FeatureReport(Feature feature, BOOL contextOK, NSString *co
   return @{@"available" : @YES, @"reason" : [NSNull null], @"missing" : @[]};
 }
 
+// Dividers and tables in compose: the compose feature plus the object API.
+static NSDictionary *ObjectsReport(BOOL contextOK, NSString *contextReason) {
+  NSDictionary *compose = FeatureReport(FeatureCompose, contextOK, contextReason);
+  if (![compose[@"available"] boolValue]) return compose;
+  NSArray *missing = MissingAPI(kComposeObjectAPI, COUNT(kComposeObjectAPI));
+  if (missing.count)
+    return @{@"available" : @NO, @"reason" : @"private_api_unavailable", @"missing" : missing};
+  return compose;
+}
+
 static NSDictionary *HandleProbe(NSDictionary *request) {
   (void)request;
   LoadFramework();
@@ -621,6 +656,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"readNoteState" : FeatureReport(FeatureRead, contextOK, contextReason),
       @"appendPlainText" : FeatureReport(FeatureAppend, contextOK, contextReason),
       @"composeNote" : FeatureReport(FeatureCompose, contextOK, contextReason),
+      @"composeObjects" : ObjectsReport(contextOK, contextReason),
     },
   };
 }
@@ -953,6 +989,37 @@ typedef struct {
   NSMutableArray<NSDictionary *> *styles;  // validated paragraph-style parameters
 } ComposedUnit;
 
+#define MAX_TABLE_ROWS 1000
+#define MAX_TABLE_COLUMNS 100
+#define MAX_TABLE_CELLS 10000
+
+// A divider or table paragraph: one attachment glyph on its own line.
+// Table rows must be rectangular arrays of one-line strings (empty allowed).
+static NSDictionary *ValidateObjectParagraph(NSDictionary *paragraph, NSString *kind) {
+  if ([kind isEqualToString:@"divider"]) {
+    RequireOnlyKeys(paragraph, @"kind", @"divider paragraph");
+    return @{@"kind" : kind};
+  }
+  RequireOnlyKeys(paragraph, @"kind,rows", @"table paragraph");
+  id rows = paragraph[@"rows"];
+  if (![rows isKindOfClass:[NSArray class]] || [rows count] == 0 || [rows count] > MAX_TABLE_ROWS)
+    Fail(@"invalid_request", @"Table `rows` must be an array of 1 to 1000 rows", nil);
+  NSUInteger columns = 0;
+  for (id row in rows) {
+    if (![row isKindOfClass:[NSArray class]] || [row count] == 0 || [row count] > MAX_TABLE_COLUMNS)
+      Fail(@"invalid_request", @"Each table row must be an array of 1 to 100 cells", nil);
+    if (!columns) columns = [row count];
+    if ([row count] != columns) Fail(@"invalid_request", @"Table rows must all have the same number of cells", nil);
+    for (id cell in row) {
+      if (![cell isKindOfClass:[NSString class]]) Fail(@"invalid_request", @"Table cells must be strings", nil);
+      if ([cell length]) ValidateRunText(cell);
+    }
+  }
+  if ([rows count] * columns > MAX_TABLE_CELLS)
+    Fail(@"invalid_request", @"A table may have at most 10000 cells", nil);
+  return @{@"kind" : kind, @"rows" : rows};
+}
+
 // Validates the whole request and builds the text with its inline runs. Pure
 // Foundation: nothing here needs NotesShared, so a malformed request fails the
 // same way on every macOS. ApplyParagraphStyles adds the private styles.
@@ -969,7 +1036,19 @@ static ComposedUnit BuildUnit(id paragraphsValue) {
     if (![value isKindOfClass:[NSDictionary class]])
       Fail(@"invalid_request", @"Each paragraph must be an object", nil);
     NSDictionary *paragraph = value;
-    RequireOnlyKeys(paragraph, @"style,indent,blockQuote,checked,runs", @"paragraph");
+    id kind = paragraph[@"kind"] ?: @"text";
+    if ([kind isEqual:@"divider"] || [kind isEqual:@"table"]) {
+      NSDictionary *object = ValidateObjectParagraph(paragraph, kind);
+      if (unit.text.length) [unit.text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
+      [unit.ranges addObject:[NSValue valueWithRange:NSMakeRange(unit.text.length, 1)]];
+      // A placeholder glyph; MaterializeObjects gives it a real attachment.
+      [unit.text appendAttributedString:[[NSAttributedString alloc] initWithString:@"\uFFFC"]];
+      [unit.styles addObject:object];
+      continue;
+    }
+    if (![kind isEqual:@"text"])
+      Fail(@"invalid_request", @"Paragraph `kind` must be text, divider, or table", nil);
+    RequireOnlyKeys(paragraph, @"kind,style,indent,blockQuote,checked,runs", @"paragraph");
     id styleName = paragraph[@"style"];
     const StyleSpec *spec = [styleName isKindOfClass:[NSString class]] ? StyleNamed(styleName) : NULL;
     if (!spec)
@@ -1023,12 +1102,144 @@ static ComposedUnit BuildUnit(id paragraphsValue) {
 static void ApplyParagraphStyles(ComposedUnit unit) {
   for (NSUInteger i = 0; i < unit.ranges.count; i++) {
     NSDictionary *p = unit.styles[i];
-    id style = NewParagraphStyle([p[@"spec"] pointerValue], [p[@"indent"] unsignedIntegerValue],
-                                 [p[@"blockQuote"] boolValue], p[@"checked"] == [NSNull null] ? nil : p[@"checked"]);
+    // An attachment glyph sits in a plain body paragraph, as Notes writes it.
+    id style = p[@"kind"] ? NewParagraphStyle(StyleNamed(@"body"), 0, NO, nil)
+                          : NewParagraphStyle([p[@"spec"] pointerValue], [p[@"indent"] unsignedIntegerValue],
+                                              [p[@"blockQuote"] boolValue],
+                                              p[@"checked"] == [NSNull null] ? nil : p[@"checked"]);
     NSRange range = unit.ranges[i].rangeValue;
     if (i + 1 < unit.ranges.count) range.length += 1;  // own terminator
     [unit.text addAttribute:kStyleKey value:style range:range];
   }
+}
+
+// The attachment glyph Notes uses for block objects: U+FFFC carrying an
+// ICTTAttachment that names the attachment's identifier and type.
+static void AttachGlyph(NSMutableAttributedString *text, NSRange glyph, id attachment) {
+  id tt = [[objc_getClass("ICTTAttachment") alloc] init];
+  ((void (*)(id, SEL, id))objc_msgSend)(tt, sel_registerName("setAttachmentIdentifier:"),
+                                        [attachment valueForKey:@"identifier"]);
+  ((void (*)(id, SEL, id))objc_msgSend)(tt, sel_registerName("setAttachmentUTI:"), Send(attachment, "typeUTI"));
+  [text addAttribute:@"NSAttachment" value:tt range:glyph];
+}
+
+static id NewTable(NSManagedObject *note, NSArray<NSArray<NSString *> *> *rows) {
+  // Notes.app registers the table CRDT type at launch; without it the
+  // serialized table has no root type and renders empty.
+  SendVoid(objc_getClass("ICTable"), "registerWithICCRCoder");
+  id attachment = Send(note, "addTableAttachment");
+  id table = Send(Send(attachment, "tableModel"), "table");
+  if (!table) Fail(@"materialization_failed", @"NotesShared did not create a table", @{@"committed" : @NO});
+  NSUInteger wantRows = rows.count, wantColumns = rows.firstObject.count;
+  NSUInteger (*count)(id, SEL) = (NSUInteger(*)(id, SEL))objc_msgSend;
+  while (count(table, sel_registerName("rowCount")) < wantRows)
+    ((id(*)(id, SEL, NSUInteger))objc_msgSend)(table, sel_registerName("insertRowAtIndex:"),
+                                               count(table, sel_registerName("rowCount")));
+  while (count(table, sel_registerName("rowCount")) > wantRows)
+    ((void (*)(id, SEL, NSUInteger))objc_msgSend)(table, sel_registerName("removeRowAtIndex:"),
+                                                  count(table, sel_registerName("rowCount")) - 1);
+  while (count(table, sel_registerName("columnCount")) < wantColumns)
+    ((id(*)(id, SEL, NSUInteger))objc_msgSend)(table, sel_registerName("insertColumnAtIndex:"),
+                                               count(table, sel_registerName("columnCount")));
+  while (count(table, sel_registerName("columnCount")) > wantColumns)
+    ((void (*)(id, SEL, NSUInteger))objc_msgSend)(table, sel_registerName("removeColumnAtIndex:"),
+                                                  count(table, sel_registerName("columnCount")) - 1);
+  // Every cell is written, empty ones too, so no default content survives.
+  for (NSUInteger r = 0; r < wantRows; r++)
+    for (NSUInteger c = 0; c < wantColumns; c++)
+      ((void (*)(id, SEL, id, NSUInteger, NSUInteger))objc_msgSend)(
+          table, sel_registerName("setAttributedString:columnIndex:rowIndex:"),
+          [[NSAttributedString alloc] initWithString:rows[r][c]], c, r);
+  id model = Send(attachment, "tableModel");
+  SendVoid(model, "writeMergeableData");
+  SendVoid(model, "regenerateTextContentInNote");
+  SendVoid(attachment, "saveMergeableDataIfNeeded");
+  return attachment;
+}
+
+static id NewDivider(NSManagedObject *note) {
+  return ((id(*)(id, SEL, id, id, id))objc_msgSend)(
+      objc_getClass("ICInlineAttachment"),
+      sel_registerName("newDividerLineAttachmentWithIdentifier:note:parentAttachment:"), NSUUID.UUID.UUIDString, note,
+      nil);
+}
+
+static BOOL UnitHasObjects(ComposedUnit unit) {
+  for (NSDictionary *p in unit.styles)
+    if (p[@"kind"]) return YES;
+  return NO;
+}
+
+// Creates each divider and table on the note and points its placeholder glyph
+// at it. Runs only on apply, after the revision check; nothing is saved here,
+// so a failure leaves the store untouched (the context is discarded).
+static NSArray<NSDictionary *> *MaterializeObjects(ComposedUnit unit, NSManagedObject *note) {
+  NSMutableArray *created = [NSMutableArray array];
+  for (NSUInteger i = 0; i < unit.styles.count; i++) {
+    NSDictionary *p = unit.styles[i];
+    if (!p[@"kind"]) continue;
+    NSUInteger lengthBefore = [BodyText(Send(note, "mergeableString")) length];
+    id attachment = nil;
+    @try {
+      attachment = [p[@"kind"] isEqual:@"table"] ? NewTable(note, p[@"rows"]) : NewDivider(note);
+    } @catch (HelperError *e) {
+      @throw;
+    } @catch (NSException *e) {
+      Fail(@"materialization_failed", [NSString stringWithFormat:@"Could not create a %@: %@", p[@"kind"], e.reason],
+           @{@"committed" : @NO});
+    }
+    if (!attachment || ![[attachment valueForKey:@"identifier"] isKindOfClass:[NSString class]])
+      Fail(@"materialization_failed", [NSString stringWithFormat:@"NotesShared did not create a %@", p[@"kind"]],
+           @{@"committed" : @NO});
+    // The factories must not place glyphs themselves; the unit places them.
+    if ([BodyText(Send(note, "mergeableString")) length] != lengthBefore)
+      Fail(@"materialization_failed", @"Creating the object changed the note text", @{@"committed" : @NO});
+    ((void (*)(id, SEL, id))objc_msgSend)(attachment, sel_registerName("updateChangeCountWithReason:"),
+                                          @"apple-notes-mcp compose_note");
+    AttachGlyph(unit.text, unit.ranges[i].rangeValue, attachment);
+    [created addObject:@{
+      @"kind" : p[@"kind"],
+      @"identifier" : [attachment valueForKey:@"identifier"],
+      @"uti" : OrNull(Send(attachment, "typeUTI")),
+    }];
+  }
+  return created;
+}
+
+// Fresh-context proof that each created object exists, belongs to the note,
+// and, for tables, holds exactly the requested cells.
+static NSString *VerifyObjects(NSManagedObjectContext *fresh, ComposedUnit unit, NSArray *created,
+                               NSString *noteIdentifier) {
+  NSUInteger next = 0;
+  for (NSDictionary *p in unit.styles) {
+    if (!p[@"kind"]) continue;
+    NSDictionary *object = created[next++];
+    NSString *entity = [p[@"kind"] isEqual:@"table"] ? @"ICAttachment" : @"ICInlineAttachment";
+    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:entity];
+    request.predicate = [NSPredicate predicateWithFormat:@"identifier == %@", object[@"identifier"]];
+    NSArray *rows = [fresh executeFetchRequest:request error:nil];
+    if (rows.count != 1) return [NSString stringWithFormat:@"The %@ was not persisted", p[@"kind"]];
+    id note = [rows.firstObject valueForKey:@"note"];
+    if (![[note valueForKey:@"identifier"] isEqual:noteIdentifier])
+      return [NSString stringWithFormat:@"The %@ does not belong to the note", p[@"kind"]];
+    if (![p[@"kind"] isEqual:@"table"]) continue;
+    SendVoid(objc_getClass("ICTable"), "registerWithICCRCoder");
+    id table = Send(Send(rows.firstObject, "tableModel"), "table");
+    NSArray<NSArray<NSString *> *> *want = p[@"rows"];
+    NSUInteger (*count)(id, SEL) = (NSUInteger(*)(id, SEL))objc_msgSend;
+    if (!table || count(table, sel_registerName("rowCount")) != want.count ||
+        count(table, sel_registerName("columnCount")) != want.firstObject.count)
+      return @"The persisted table does not have the requested shape";
+    for (NSUInteger r = 0; r < want.count; r++)
+      for (NSUInteger c = 0; c < want[r].count; c++) {
+        id cell = ((id(*)(id, SEL, NSUInteger, NSUInteger))objc_msgSend)(
+            table, sel_registerName("stringForColumnIndex:rowIndex:"), c, r);
+        NSString *text = [cell isKindOfClass:[NSAttributedString class]] ? [cell string] : cell;
+        if (![(text ?: @"") isEqualToString:want[r][c]])
+          return @"A persisted table cell differs from the request";
+      }
+  }
+  return nil;
 }
 
 #pragma mark Read-back signatures
@@ -1058,6 +1269,16 @@ static NSDictionary *RunSignature(NSDictionary *attrs) {
   if (emphasis >= 1 && emphasis <= COUNT(kHighlights)) sig[@"highlight"] = @(kHighlights[emphasis - 1]);
   else if (emphasis) sig[@"highlight"] = @(emphasis);
   if (attrs[kColorKey]) sig[@"color"] = ColorHex(attrs[kColorKey]);
+  id attachment = attrs[@"NSAttachment"];
+  if (attachment) {
+    BOOL known = [attachment respondsToSelector:sel_registerName("attachmentUTI")] &&
+                 [attachment respondsToSelector:sel_registerName("attachmentIdentifier")];
+    sig[@"attachment"] = known ? @{
+      @"uti" : OrNull(Send(attachment, "attachmentUTI")),
+      @"identifier" : OrNull(Send(attachment, "attachmentIdentifier")),
+    }
+                               : @{@"class" : NSStringFromClass([attachment class])};
+  }
   return sig;
 }
 
@@ -1264,6 +1485,17 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
       Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
     existing = [existing copy];
     Placement placement = ResolvePlacement(existing, mode, beforeHeading);
+    BOOL hasObjects = UnitHasObjects(unit);
+    if (hasObjects) {
+      NSArray *missing = MissingAPI(kComposeObjectAPI, COUNT(kComposeObjectAPI));
+      if (missing.count)
+        Fail(@"private_api_unavailable", @"Dividers and tables need NotesShared API missing on this macOS",
+             @{@"missing" : missing, @"committed" : @NO});
+      if ([note respondsToSelector:sel_registerName("canAddAttachment")] && !SendBool(note, "canAddAttachment"))
+        Fail(@"unsupported_note", @"Notes does not allow attachments in this note", @{@"committed" : @NO});
+    }
+    // Objects are created only on apply, after the revision check.
+    NSArray *created = (!dryRun && hasObjects) ? MaterializeObjects(unit, note) : @[];
     NSMutableAttributedString *insertion = Insertion(unit, placement);
     NSUInteger unitOffset = placement.prefix ? placement.prefix.length : 0;
     NSArray *expected = UnitSignatures(insertion, unitOffset, unit.ranges, placement.trailingTerminator);
@@ -1339,6 +1571,8 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
         persisted = UnitSignatures(body, placement.index + unitOffset, unit.ranges, placement.trailingTerminator);
         if (![persisted isEqualToArray:expected])
           verifyDetail = @"A composed paragraph's persisted style, checklist state, or runs differ from the request";
+        else if (hasObjects)
+          verifyDetail = VerifyObjects(fresh, unit, created, identifier);
         if (beforeHeading) {
           NSUInteger headingAt = placement.index + insertion.length;
           NSString *line = nil;
@@ -1376,6 +1610,7 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
       @"title" : after[@"title"],
       @"cloudSync" : after[@"cloudSync"],
       @"readBack" : ReadBackSummary(persisted),
+      @"objects" : created,
       @"pushScheduled" : @NO,
       @"syncHostRunning" : @(hostRunning),
       @"pushState" : hostRunning ? @"awaiting_notes_app" : @"queued_for_next_launch",

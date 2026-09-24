@@ -2382,8 +2382,11 @@ locked, shared, trashed, and still-downloading notes.
 
 Writes natively formatted content through the writer in one save: headings,
 subheadings, body paragraphs, block quotes, monospaced blocks, bulleted,
-dashed, and numbered lists with indent, and checklists with their checked
-state. Inline runs carry bold, italic, underline, strikethrough, links (http,
+dashed, and numbered lists with indent, checklists with their checked state,
+native dividers (`{"type":"divider"}`), native tables
+(`{"type":"table","rows":[["A","B"],["1","2"]]}`), and links to other notes
+(`{"type":"noteLink","identifier":"<uuid>","text":"See"}`, checked to exist
+first). Inline runs carry bold, italic, underline, strikethrough, links (http,
 https, mailto, tel, notes, applenotes), named highlights (purple, pink,
 orange, mint, blue), and `#RRGGBB` text color. Give `blocks` or `markdown`,
 not both.
@@ -2429,10 +2432,12 @@ title.
 The Markdown importer maps `#` and `##` to Heading and `###` and deeper to
 Subheading, and imports `-`/`*`/`+` and `1.` lists with nesting, `- [ ]` and
 `- [x]` checklists, `>` quotes, fenced code, `**bold**`, `*italic*`,
-`~~strikethrough~~`, `<u>underline</u>`, and links. In `create` mode a leading
-`# ` line equal to the title is dropped. Horizontal rules are skipped with a
-warning. Tables, dividers, attachments, and note links are not supported by
-this tool. Writes need both writer switches and, until this path passes live
+`~~strikethrough~~`, `<u>underline</u>`, and links, and turns `---` into a
+divider and pipe tables into native tables (cells as plain text). In `create`
+mode a leading `# ` line equal to the title is dropped. File attachments are
+not supported; use `add-attachment`. Dividers and tables are created only on
+apply and reported under `objects`; the writer re-reads each one and every
+table cell. Writes need both writer switches and, until this path passes live
 validation in a release, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; dry runs do not.
 
 ## Usage Patterns

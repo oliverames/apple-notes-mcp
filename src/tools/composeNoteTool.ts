@@ -31,8 +31,9 @@ import {
   blocksToParagraphs,
   composeNote,
   crossCheckWithDatabase,
+  isObject,
   markdownToBlocks,
-  type WireParagraph,
+  type WireEntry,
 } from "../services/privateCompose.js";
 import {
   coreDataId,
@@ -66,7 +67,7 @@ export const composeNoteInput = {
     .max(200_000)
     .optional()
     .describe(
-      "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
+      "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links"
     ),
   ifRevision: revisionToken
     .optional()
@@ -119,7 +120,7 @@ function invalid(message: string): PrivateWriteError {
 }
 
 /** The wire paragraphs for the request, plus any Markdown import warnings. */
-function contentFor(args: ComposeArgs): { paragraphs: WireParagraph[]; warnings: string[] } {
+function contentFor(args: ComposeArgs): { paragraphs: WireEntry[]; warnings: string[] } {
   if ((args.blocks === undefined) === (args.markdown === undefined))
     throw invalid("Give exactly one of blocks or markdown");
   if (args.blocks) return { paragraphs: blocksToParagraphs(args.blocks), warnings: [] };
@@ -154,6 +155,29 @@ function checkModeFields(args: ComposeArgs): void {
 
 const UUID_IN_LINK = /identifier=([0-9A-F-]{36})$/i;
 
+/**
+ * Every noteLink block must point at a note the writer can read, so a typo
+ * never becomes a dead link. Read-only; one lookup per distinct target.
+ */
+function assertNoteLinkTargets(args: ComposeArgs, deps: PrivateHelperDeps): void {
+  const targets = new Set(
+    (args.blocks ?? []).flatMap((b) => (b.type === "noteLink" ? [b.identifier.toUpperCase()] : []))
+  );
+  for (const target of targets) {
+    try {
+      readWriterNoteState(target, deps);
+    } catch (error) {
+      if (error instanceof PrivateWriteError && error.code === "not_found")
+        throw new PrivateWriteError(
+          "invalid_request",
+          `noteLink target ${target} is not a note in this library`,
+          false
+        );
+      throw error;
+    }
+  }
+}
+
 /** Add the independent NoteStore read-back to an applied (not planned) compose. */
 function withDatabaseCheck(result: ReturnType<typeof composeNote>): Record<string, unknown> {
   if (result.status !== "updated") return result;
@@ -172,13 +196,14 @@ function poll<T>(attempt: () => T | null, sleep: (ms: number) => void): T | null
 
 function createAndCompose(
   args: ComposeArgs,
-  paragraphs: WireParagraph[],
+  paragraphs: WireEntry[],
   runtime: ComposeRuntime
 ): Record<string, unknown> {
   const { manager, deps, sleep } = runtime;
   // Check everything that could refuse the compose BEFORE creating a note.
   assertComposeWritesAllowed(deps.env);
-  const capability = privateWriterCapabilities(deps).features.composeNote;
+  const features = privateWriterCapabilities(deps).features;
+  const capability = paragraphs.some(isObject) ? features.composeObjects : features.composeNote;
   if (!capability.available)
     throw new PrivateWriteError(
       capability.reason || "private_api_unavailable",
@@ -252,6 +277,7 @@ export function runComposeNote(
 ): Record<string, unknown> {
   checkModeFields(args);
   const { paragraphs, warnings } = contentFor(args);
+  assertNoteLinkTargets(args, runtime.deps);
   const extra = warnings.length ? { warnings } : {};
   if (args.mode === "create") {
     if (args.dryRun)
@@ -261,13 +287,20 @@ export function runComposeNote(
         committed: false,
         mode: "create",
         paragraphs: paragraphs.length,
-        plan: paragraphs.map((p) => ({
-          style: p.style,
-          indent: p.indent ?? 0,
-          blockQuote: p.blockQuote ?? false,
-          ...(p.checked !== undefined ? { checked: p.checked } : {}),
-          runs: p.runs.length,
-        })),
+        plan: paragraphs.map((p) =>
+          isObject(p)
+            ? {
+                kind: p.kind,
+                ...(p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {}),
+              }
+            : {
+                style: p.style,
+                indent: p.indent ?? 0,
+                blockQuote: p.blockQuote ?? false,
+                ...(p.checked !== undefined ? { checked: p.checked } : {}),
+                runs: p.runs.length,
+              }
+        ),
         ...extra,
       };
     return { ...createAndCompose(args, paragraphs, runtime), ...extra };
@@ -300,10 +333,10 @@ export function registerComposeNoteTool(
     server,
     depsFactory,
     "compose-note",
-    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, and monospaced blocks. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\n" +
-      "Returns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\n" +
-      "Do not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need tables, dividers, attachments, or note links (not supported here).\n" +
-      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph is verified in a fresh read. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\n" +
+      "Returns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider or table), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\n" +
+      "Do not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, or still downloading, or you need a file attachment (add-attachment).\n" +
+      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, and every table cell, is verified in a fresh read. A noteLink target must be an existing note. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create makes the note through Notes.app first; if the compose then fails, the title-only note remains and the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {

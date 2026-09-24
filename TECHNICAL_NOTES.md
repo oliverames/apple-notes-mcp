@@ -960,6 +960,43 @@ carry each inline attribute), returned as `databaseReadBack`. It only
 reports; the writer's own verification decides success. On a store copy it
 reports `checked: false`.
 
+**Dividers and tables.** A wire entry `{kind:"divider"}` or
+`{kind:"table", rows}` becomes one U+FFFC glyph in its own body paragraph. The
+dry run keeps a bare placeholder glyph and creates nothing. On apply, after
+the revision check, the writer creates each object on the note and points its
+glyph at it with an `ICTTAttachment` (`attachmentIdentifier`,
+`attachmentUTI`) under the `NSAttachment` attribute:
+
+- divider: `+[ICInlineAttachment newDividerLineAttachmentWithIdentifier:note:parentAttachment:]`
+  (UTI `com.apple.notes.inlinetextattachment.dividerline`);
+- table: `+[ICTable registerWithICCRCoder]` (Notes.app does this at launch;
+  without it the table CRDT has no root type), `-[ICNote addTableAttachment]`
+  (UTI `com.apple.notes.table`), rows and columns resized with
+  `-insertRowAtIndex:`/`-removeRowAtIndex:` and the column equivalents, every
+  cell written with `-setAttributedString:columnIndex:rowIndex:`, then
+  `-[ICAttachmentTableModel writeMergeableData]`,
+  `-regenerateTextContentInNote`, and `-[ICAttachment saveMergeableDataIfNeeded]`.
+
+Each object gets `updateChangeCountWithReason:`. The writer refuses
+(`materialization_failed`, `committed: false`) if a factory changes the note
+text by itself, and nothing is saved until the one context save, so a failure
+leaves the store untouched. Verification adds a fresh-context fetch of each
+object by identifier, checks that it belongs to the note, and for tables
+compares the row and column counts and every cell with
+`-stringForColumnIndex:rowIndex:`. The probe reports these selectors as the
+`composeObjects` feature; a request with objects on a macOS without them
+fails with `private_api_unavailable` and nothing written. `noteLink` blocks
+are body text with a `notes://showNote?identifier=` link (the URL
+`get-note-link` returns), so they read back as `inline` links, not as the
+native link chips Notes' own "Add Link" makes. The server reads the target
+through the writer's `read_note_state` first so a typo cannot become a dead
+link.
+
+Copy-store run, 2026-09-24, macOS 27.2: two dividers, a 2 x 2 table, and a
+note link were created on the copy in one save and verified; the copy's
+table and divider rows grew by 3; a replay was refused with
+`committed: false`.
+
 `create` mode does not create notes in the writer. Notes.app creates the
 note through the same AppleScript as `create-note`, the server resolves its
 UUID from the database, reads a fresh revision through the writer's

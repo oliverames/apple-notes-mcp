@@ -25,6 +25,7 @@ import {
   composeNote,
   crossCheckWithDatabase,
   markdownToBlocks,
+  noteLinkUrl,
   parseInline,
   type WireParagraph,
 } from "./privateCompose.js";
@@ -125,7 +126,7 @@ describe("blocksToParagraphs", () => {
 
   it.each([
     ["an empty list", []],
-    ["an unknown block type", [{ type: "divider" }]],
+    ["an unknown block type", [{ type: "image" }]],
     ["a title block", [{ type: "title", text: "T" }]],
     ["an unknown run key", [{ type: "body", runs: [{ text: "x", size: 3 }] }]],
     ["both text and runs", [{ type: "body", text: "x", runs: [{ text: "y" }] }]],
@@ -146,9 +147,49 @@ describe("blocksToParagraphs", () => {
     ],
     ["a short checked array", [{ type: "checklist", items: ["a", "b"], checked: [true] }]],
     ["only blank lines", [{ type: "body", text: "\n\n" }]],
+    ["a ragged table", [{ type: "table", rows: [["a", "b"], ["c"]] }]],
+    ["an empty table row", [{ type: "table", rows: [[]] }]],
+    ["a newline in a table cell", [{ type: "table", rows: [["a\nb"]] }]],
+    ["a table past 10000 cells", [{ type: "table", rows: Array(101).fill(Array(100).fill("")) }]],
+    ["a divider with fields", [{ type: "divider", text: "x" }]],
+    ["a noteLink without a UUID", [{ type: "noteLink", identifier: "x", text: "t" }]],
+    ["a noteLink without text", [{ type: "noteLink", identifier: NOTE, text: "" }]],
   ])("rejects %s before anything is sent", (_label, blocks) => {
     const e = caught(() => blocksToParagraphs(blocks));
     expect(e).toMatchObject({ code: "invalid_request", committed: false });
+  });
+
+  it("flattens dividers, tables, and note links", () => {
+    expect(
+      blocksToParagraphs([
+        { type: "divider" },
+        {
+          type: "table",
+          rows: [
+            ["a", ""],
+            ["", "d"],
+          ],
+        },
+        { type: "noteLink", identifier: NOTE.toLowerCase(), text: "See" },
+      ])
+    ).toEqual([
+      { kind: "divider" },
+      {
+        kind: "table",
+        rows: [
+          ["a", ""],
+          ["", "d"],
+        ],
+      },
+      { style: "body", runs: [{ text: "See", link: `notes://showNote?identifier=${NOTE}` }] },
+    ]);
+    expect(noteLinkUrl(NOTE.toLowerCase())).toBe(`notes://showNote?identifier=${NOTE}`);
+  });
+
+  it("does not trim a trailing object as if it were a blank line", () => {
+    expect(blocksToParagraphs([{ type: "body", text: "x\n" }, { type: "divider" }])).toHaveLength(
+      3
+    );
   });
 
   it("enforces the paragraph and length limits", () => {
@@ -292,15 +333,40 @@ describe("markdownToBlocks", () => {
     ]);
   });
 
-  it("keeps a leading H1 that is not the title, and skips rules and raw HTML", () => {
+  it("keeps a leading H1 that is not the title, maps rules to dividers, and skips raw HTML", () => {
     const { blocks, warnings } = markdownToBlocks("# Other\n\n---\n<div>\nText\n\n```\n```", "T");
     expect(blocks).toEqual([
       { type: "heading", runs: [{ text: "Other" }] },
+      { type: "divider" },
       { type: "body", runs: [{ text: "Text" }] },
     ]);
-    expect(warnings).toEqual([
-      "line 3: horizontal rule skipped (dividers are not supported yet)",
-      "line 4: raw HTML block skipped",
+    expect(warnings).toEqual(["line 4: raw HTML block skipped"]);
+  });
+
+  it("imports GFM pipe tables as plain-text native tables", () => {
+    const md = [
+      "| Name | **Qty** |",
+      "|:-----|----:|",
+      "| a \\| b | 3 |",
+      "| only |",
+      "x | y | z",
+      "",
+      "after",
+    ].join("\n");
+    expect(markdownToBlocks(md).blocks).toEqual([
+      {
+        type: "table",
+        rows: [
+          ["Name", "Qty"],
+          ["a | b", "3"],
+          ["only", ""],
+          ["x", "y"],
+        ],
+      },
+      { type: "body", runs: [{ text: "after" }] },
+    ]);
+    expect(markdownToBlocks("a | b\nnot a separator").blocks).toEqual([
+      { type: "body", runs: [{ text: "a | b not a separator" }] },
     ]);
   });
 
