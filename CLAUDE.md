@@ -382,6 +382,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### Private writer tools (opt-in, fork-only)
 - A separate **writer** (`apple-notes-mcp setup --native-writer`) backs `native-append-plain-text` and the other native write tools. It needs `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` **and** `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`, and unvalidated writes also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Call `native-writer-status` first; never suggest enabling it unprompted, and use it only on notes the user has agreed to risk.
 - Every write needs a fresh `revision` as `ifRevision` (from `native-note-state` or the feature's own read tool). `revision_conflict` means the note changed: read it again before retrying. `indeterminate: true` means the write may have been saved: read the note before any retry. `committed: false` means nothing was written.
+- To check or uncheck a checklist item, read `native-checklist-state` (or `get-native-objects`) for the item's `todoIdentifier` and the note `revision`, then call `native-set-checklist-item` with `done` and `ifRevision`. Trust `persistedDone`, not the request. `status: "unchanged"` means nothing was written. `ambiguous_target` means the identifier appears twice; do not guess.
 - The writer cannot upload to iCloud. After a write, `cloudSync.uploadPending` stays true until Notes.app saves the note. Pass `nudge: true` to have Notes.app save it by moving it into its own folder; `sync.targets[].uploadRecorded` says whether Notes recorded the upload.
 
 ### Multi-account
