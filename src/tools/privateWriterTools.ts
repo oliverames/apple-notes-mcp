@@ -82,6 +82,7 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "ambiguous_target":
       return "ambiguous";
     case "confirmation_required":
+    case "match_count_mismatch":
       return "validation_error";
     default:
       return envelopeCode(helperCode, message);

@@ -2758,6 +2758,25 @@ is `ambiguous_target` (envelope code `ambiguous`). Sync reporting and the
 optional `nudge` match `native-append-plain-text`; the nudge is skipped when
 nothing was written.
 
+#### `native-highlight-text`
+
+Applies Notes' highlight (`purple`, `pink`, `orange`, `mint`, `blue`) to, or
+removes it (`color: "none"`) from, every exact occurrence of a literal,
+case-sensitive `match` within one paragraph. It refuses with
+`match_count_mismatch` (envelope code `validation_error`, with `found`),
+writing nothing, unless the text occurs exactly `expectedCount` times
+(default 1). `dryRun: true` reports each match and its current highlight
+without writing; a write needs `ifRevision` from `native-note-state`. Only the
+highlight attribute of the matched characters changes. The writer re-reads
+the note through a new Core Data stack and requires the text to be unchanged,
+every highlight run in the note to match the request, and Notes' `hasEmphasis`
+flag to agree, then returns the stored runs per match (`ranges`). When every
+match already has the requested state it writes nothing
+(`status: "unchanged"`). Sync reporting and the optional `nudge` match
+`native-append-plain-text`. Writes also require
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated in a release; dry
+runs do not.
+
 ## Usage Patterns
 
 ### Basic Workflow

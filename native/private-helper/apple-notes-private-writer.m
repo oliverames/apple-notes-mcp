@@ -244,6 +244,12 @@ static const APIRequirement kChecklistAPI[] = {
     {"ICTTMergeableAttributedString", "setAttributes:range:", NO},
 };
 
+// Highlighting rewrites the TTEmphasis attribute of exact text ranges. It
+// needs the append editing surface above plus this.
+static const APIRequirement kHighlightAPI[] = {
+    {"ICTTMergeableAttributedString", "setAttributes:range:", NO},
+};
+
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 static BOOL gFrameworkLoaded = NO;
@@ -309,6 +315,7 @@ typedef NS_ENUM(NSInteger, Feature) {
   FeatureEdit,
   FeatureCompose,
   FeatureChecklist,
+  FeatureHighlight,
 };
 
 static NSArray<NSString *> *MissingForFeature(Feature feature) {
@@ -328,6 +335,8 @@ static NSArray<NSString *> *MissingForFeature(Feature feature) {
     [missing addObjectsFromArray:MissingAPI(kComposeAPI, COUNT(kComposeAPI))];
   if (feature == FeatureChecklist)
     [missing addObjectsFromArray:MissingAPI(kChecklistAPI, COUNT(kChecklistAPI))];
+  if (feature == FeatureHighlight)
+    [missing addObjectsFromArray:MissingAPI(kHighlightAPI, COUNT(kHighlightAPI))];
   return missing;
 }
 
@@ -592,6 +601,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request);
 static NSDictionary *HandleComposeNote(NSDictionary *request);
 static NSDictionary *HandleReadChecklist(NSDictionary *request);
 static NSDictionary *HandleSetChecklistItem(NSDictionary *request);
+static NSDictionary *HandleSetHighlight(NSDictionary *request);
 
 typedef struct {
   const char *name;
@@ -613,6 +623,7 @@ static const ActionSpec kActions[] = {
      HandleComposeNote},
     {"read_checklist", "identifier", HandleReadChecklist},
     {"set_checklist_item", "identifier,todoIdentifier,done,ifRevision", HandleSetChecklistItem},
+    {"set_highlight", "identifier,scope,match,expectedCount,color,ifRevision,dryRun", HandleSetHighlight},
 };
 
 static NSArray<NSString *> *ActionNames(void) {
@@ -709,6 +720,7 @@ static NSDictionary *HandleProbe(NSDictionary *request) {
       @"composeNote" : FeatureReport(FeatureCompose, contextOK, contextReason),
       @"composeObjects" : ObjectsReport(contextOK, contextReason),
       @"checklistToggle" : FeatureReport(FeatureChecklist, contextOK, contextReason),
+      @"highlight" : FeatureReport(FeatureHighlight, contextOK, contextReason),
     },
   };
 }
@@ -3464,6 +3476,282 @@ static NSDictionary *HandleSetChecklistItem(NSDictionary *request) {
     @"verified" : @YES,
     @"persistedDone" : persistedDone,
     @"revisionAfter" : after[@"revision"],
+  }];
+  [result addEntriesFromDictionary:SyncFields(after, store)];
+  return result;
+}
+
+#pragma mark - Highlight
+
+// Notes' highlight is the `TTEmphasis` attribute (an NSNumber) on the
+// highlighted characters, serialized as AttributeRun field 14. Values follow
+// Notes' color order: 1 purple, 2 pink, 3 orange, 4 mint, 5 blue.
+#define MAX_MATCH_UTF16 1000
+#define MAX_HIGHLIGHT_RANGES 100
+
+static NSNumber *EmphasisForColor(NSString *color) {
+  NSDictionary *codes = @{@"purple" : @1, @"pink" : @2, @"orange" : @3, @"mint" : @4, @"blue" : @5};
+  return codes[color];
+}
+
+static NSString *ColorForEmphasis(id value) {
+  if (![value isKindOfClass:[NSNumber class]]) return nil;
+  NSArray *names = @[ @"purple", @"pink", @"orange", @"mint", @"blue" ];
+  NSInteger code = [value integerValue];
+  return code >= 1 && code <= 5 ? names[code - 1]
+                                : [NSString stringWithFormat:@"unknown-%ld", (long)code];
+}
+
+static void ValidateMatchText(NSString *match) {
+  if (match.length > MAX_MATCH_UTF16)
+    Fail(@"invalid_request", @"`match` exceeds 1000 UTF-16 code units", nil);
+  if ([match rangeOfCharacterFromSet:ForbiddenTextCharacters(NO)].location != NSNotFound)
+    Fail(@"invalid_request",
+         @"`match` must be text within one paragraph (no newlines, attachment glyphs, or control "
+         @"characters)",
+         nil);
+}
+
+// Every non-overlapping, case-sensitive, literal occurrence of `match`.
+static NSArray<NSValue *> *Occurrences(NSString *text, NSString *match) {
+  NSMutableArray *found = [NSMutableArray array];
+  NSRange search = NSMakeRange(0, text.length);
+  while (search.length >= match.length) {
+    NSRange hit = [text rangeOfString:match options:NSLiteralSearch range:search];
+    if (hit.location == NSNotFound) break;
+    [found addObject:[NSValue valueWithRange:hit]];
+    NSUInteger next = NSMaxRange(hit);
+    search = NSMakeRange(next, text.length - next);
+  }
+  return found;
+}
+
+// The stored emphasis runs inside `range`: [{start, lengthUTF16, color|null}].
+static NSArray *EmphasisRuns(NSAttributedString *body, NSRange range) {
+  NSMutableArray *runs = [NSMutableArray array];
+  [body enumerateAttribute:kEmphasisKey
+                   inRange:range
+                   options:0
+                usingBlock:^(id value, NSRange run, BOOL *stop) {
+                  (void)stop;
+                  [runs addObject:@{
+                    @"start" : @(run.location),
+                    @"lengthUTF16" : @(run.length),
+                    @"color" : OrNull(ColorForEmphasis(value)),
+                  }];
+                }];
+  return runs;
+}
+
+static BOOL RangeHasEmphasis(NSAttributedString *body, NSRange range, NSNumber *code) {
+  __block BOOL all = YES;
+  [body enumerateAttribute:kEmphasisKey
+                   inRange:range
+                   options:0
+                usingBlock:^(id value, NSRange run, BOOL *stop) {
+                  (void)run;
+                  if (!(code ? [value isEqual:code] : value == nil)) {
+                    all = NO;
+                    *stop = YES;
+                  }
+                }];
+  return all;
+}
+
+// Emphasis over the whole body as comparable (start, length, value) triples.
+static NSArray *EmphasisMap(NSAttributedString *body) {
+  NSMutableArray *map = [NSMutableArray array];
+  [body enumerateAttribute:kEmphasisKey
+                   inRange:NSMakeRange(0, body.length)
+                   options:0
+                usingBlock:^(id value, NSRange run, BOOL *stop) {
+                  (void)stop;
+                  [map addObject:@[ @(run.location), @(run.length), value ?: [NSNull null] ]];
+                }];
+  return map;
+}
+
+// The note's derived "has a highlight" flag (ZHASEMPHASIS), when this macOS
+// models it. nil when the entity has no such property.
+static NSNumber *HasEmphasisFlag(NSManagedObject *note) {
+  if (!note.entity.propertiesByName[@"hasEmphasis"]) return nil;
+  return @([[note valueForKey:@"hasEmphasis"] boolValue]);
+}
+
+// A highlight request names a scope and the ranges it covers. The only scope
+// is "text": every exact occurrence of `match`, which must occur exactly
+// `expectedCount` times. Everything after target selection (plan, no-op
+// check, edit, whole-note verification) works on any list of ranges, so a
+// later scope such as the whole note only adds a branch here and in
+// HighlightTargets.
+typedef struct {
+  NSString *scope;
+  NSString *match;
+  NSUInteger expectedCount;
+} HighlightTarget;
+
+static HighlightTarget ParseHighlightTarget(NSDictionary *request) {
+  id scope = request[@"scope"] ?: @"text";
+  if (![scope isEqual:@"text"]) Fail(@"invalid_request", @"`scope` must be \"text\"", nil);
+  NSString *match = RequireString(request, @"match");
+  ValidateMatchText(match);
+  id expected = request[@"expectedCount"] ?: @1;
+  if (![expected isKindOfClass:[NSNumber class]] || IsJSONBool(expected) ||
+      [expected doubleValue] != (double)[expected integerValue] || [expected integerValue] < 1 ||
+      [expected integerValue] > MAX_HIGHLIGHT_RANGES)
+    Fail(@"invalid_request", @"`expectedCount` must be an integer from 1 to 100", nil);
+  return (HighlightTarget){scope, match, [expected unsignedIntegerValue]};
+}
+
+static NSArray<NSValue *> *HighlightTargets(HighlightTarget target, NSString *text,
+                                            NSString *revision) {
+  NSArray<NSValue *> *ranges = Occurrences(text, target.match);
+  if (ranges.count != target.expectedCount)
+    Fail(@"match_count_mismatch",
+         [NSString stringWithFormat:@"`match` occurs %lu times, not the expected %lu",
+                                    (unsigned long)ranges.count, (unsigned long)target.expectedCount],
+         @{@"committed" : @NO, @"found" : @(ranges.count), @"revision" : revision});
+  return ranges;
+}
+
+static NSDictionary *HandleSetHighlight(NSDictionary *request) {
+  gWriteRequest = YES;
+  NSString *identifier = RequireIdentifier(request);
+  HighlightTarget target = ParseHighlightTarget(request);
+  NSString *color = RequireString(request, @"color");
+  NSNumber *code = nil;
+  if (![color isEqualToString:@"none"]) {
+    code = EmphasisForColor(color);
+    if (!code) Fail(@"invalid_request", @"`color` must be purple, pink, orange, mint, blue, or none", nil);
+  }
+  id dryRunValue = request[@"dryRun"];
+  if (dryRunValue && !IsJSONBool(dryRunValue))
+    Fail(@"invalid_request", @"`dryRun` must be true or false", nil);
+  BOOL dryRun = [dryRunValue boolValue];
+  NSString *ifRevision = nil;
+  if (!dryRun || request[@"ifRevision"]) ifRevision = RequireString(request, @"ifRevision");
+  RequireFeature(dryRun ? FeatureRead : FeatureHighlight);
+
+  // A dry run opens the store read-only and can never write.
+  StoreLocation store = ResolveStore();
+  NSManagedObjectContext *context = OpenContext(store, dryRun);
+  NSManagedObject *note = FetchNote(context, identifier);
+  RequireAppendableNote(note);
+
+  NSString *revisionBefore = RevisionToken(note);
+  if (ifRevision && ![revisionBefore isEqualToString:ifRevision])
+    Fail(@"revision_conflict", @"The note changed since ifRevision was read",
+         @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+
+  id ms = nil;
+  NSAttributedString *body = LoadBody(note, &ms);
+  NSArray<NSValue *> *ranges = HighlightTargets(target, body.string, revisionBefore);
+
+  NSMutableArray *plan = [NSMutableArray array];
+  BOOL changes = NO;
+  for (NSValue *value in ranges) {
+    NSRange range = value.rangeValue;
+    BOOL satisfied = RangeHasEmphasis(body, range, code);
+    if (!satisfied) changes = YES;
+    [plan addObject:@{
+      @"start" : @(range.location),
+      @"lengthUTF16" : @(range.length),
+      @"currentRuns" : EmphasisRuns(body, range),
+      @"changes" : @((BOOL)!satisfied),
+    }];
+  }
+  NSMutableDictionary *result = [@{
+    @"identifier" : identifier,
+    @"scope" : target.scope,
+    @"color" : color,
+    @"rangeCount" : @(ranges.count),
+    @"revisionBefore" : revisionBefore,
+  } mutableCopy];
+
+  if (dryRun || !changes) {
+    [result addEntriesFromDictionary:@{
+      @"status" : dryRun ? @"planned" : @"unchanged",
+      @"committed" : @NO,
+      @"dryRun" : @(dryRun),
+      @"wouldChange" : @(changes),
+      @"plan" : plan,
+      @"revisionAfter" : revisionBefore,
+      @"hasEmphasis" : OrNull(HasEmphasisFlag(note)),
+    }];
+    if (!dryRun) result[@"verified"] = @YES;
+    [result addEntriesFromDictionary:SyncFields(NoteState(note), store)];
+    return result;
+  }
+
+  if (![ms respondsToSelector:sel_registerName("setAttributes:range:")])
+    Fail(@"private_api_unavailable", @"The note body does not support attribute edits",
+         @{@"committed" : @NO, @"missing" : @[ @"-[mergeable string setAttributes:range:]" ]});
+
+  // The expected result, computed on a detached copy, is what the fresh
+  // read-back must match everywhere, not only inside the targeted ranges.
+  NSMutableAttributedString *expected = [body mutableCopy];
+  NSRange edited = [ranges.firstObject rangeValue];
+  SendVoid(ms, "beginEditing");
+  for (NSValue *value in ranges) {
+    NSRange range = value.rangeValue;
+    MergeAttributes(ms, body, range, code ? @{kEmphasisKey : code} : nil,
+                    code ? nil : @[ kEmphasisKey ]);
+    if (code)
+      [expected addAttribute:kEmphasisKey value:code range:range];
+    else
+      [expected removeAttribute:kEmphasisKey range:range];
+    edited = NSUnionRange(edited, range);
+  }
+  SendVoid(ms, "endEditing");
+  FinishAttributeEdit(note, edited, @"apple-notes-mcp set_highlight");
+  NSArray *expectedMap = EmphasisMap(expected);
+  // saveNoteData refreshes the derived hasEmphasis flag from the body
+  // (observed on a store copy, macOS 27.2); the read-back checks it.
+  BOOL anyEmphasis = NO;
+  for (NSArray *run in expectedMap)
+    if (![run[2] isKindOfClass:[NSNull class]]) anyEmphasis = YES;
+  NSNumber *expectedFlag = HasEmphasisFlag(note) ? @(anyEmphasis) : nil;
+  SaveOrFail(context);
+
+  NSDictionary *after = nil;
+  NSMutableArray *stored = [NSMutableArray array];
+  NSNumber *persistedFlag = nil;
+  NSString *verifyDetail = nil;
+  @try {
+    NSManagedObjectContext *fresh = OpenContext(store, YES);
+    NSManagedObject *reread = FetchNote(fresh, identifier);
+    NSAttributedString *persisted = LoadBody(reread, NULL);
+    persistedFlag = HasEmphasisFlag(reread);
+    if (![persisted.string isEqualToString:body.string])
+      verifyDetail = @"The persisted note text changed";
+    else if (![EmphasisMap(persisted) isEqualToArray:expectedMap])
+      verifyDetail = @"The persisted highlight runs differ from the requested change";
+    else if (expectedFlag && ![persistedFlag isEqual:expectedFlag])
+      verifyDetail = @"The note's hasEmphasis flag does not match its stored highlights";
+    else
+      for (NSValue *value in ranges)
+        [stored addObject:@{
+          @"start" : @(value.rangeValue.location),
+          @"lengthUTF16" : @(value.rangeValue.length),
+          @"storedRuns" : EmphasisRuns(persisted, value.rangeValue),
+        }];
+    after = NoteState(reread);
+  } @catch (NSException *e) {
+    // After a successful save: a committed write that could not be verified.
+    verifyDetail = e.reason ?: e.name;
+  }
+  if (verifyDetail || !after)
+    Fail(@"verification_failed", verifyDetail ?: @"Read-back failed",
+         @{@"committed" : @YES, @"revisionBefore" : revisionBefore});
+
+  [result addEntriesFromDictionary:@{
+    @"status" : @"updated",
+    @"committed" : @YES,
+    @"verified" : @YES,
+    @"dryRun" : @NO,
+    @"ranges" : stored,
+    @"revisionAfter" : after[@"revision"],
+    @"hasEmphasis" : OrNull(persistedFlag),
   }];
   [result addEntriesFromDictionary:SyncFields(after, store)];
   return result;

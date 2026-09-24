@@ -304,6 +304,7 @@ describe("writerErrorResult", () => {
     expect(writerEnvelopeCode("writes_disabled", "")).toBe("unsupported");
     expect(writerEnvelopeCode("ambiguous", "")).toBe("ambiguous");
     expect(writerEnvelopeCode("ambiguous_target", "")).toBe("ambiguous");
+    expect(writerEnvelopeCode("match_count_mismatch", "")).toBe("validation_error");
   });
 });
 
