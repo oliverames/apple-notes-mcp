@@ -2395,6 +2395,17 @@ snapshot of the note:
 - `delete_paragraph`: a paragraph matched by its exact text, or an empty list,
   checklist, or heading row (`{kind: "blank", style}`).
 - `set_title`: the first paragraph.
+- `trim_blank_lines`: removes redundant empty paragraphs. `mode: "runs"`
+  keeps the first `keep` (default 1) of every run of blank lines, `"end"`
+  removes trailing blank lines, and `"around"` removes the blank lines
+  directly before and/or after (`side`) the one paragraph `anchor` names
+  (`keep` defaults to 0 for both). Only paragraphs holding nothing but
+  whitespace, in a title, heading, subheading, or body style, are removed,
+  each with its own newline; the title paragraph and empty list, checklist,
+  monospaced, and attachment rows are never touched. The dry run lists every
+  paragraph it would remove (`paragraphIndex`, `paragraphStyle`,
+  `blankUTF16`). Here `expectedCount` is optional and counts removed
+  paragraphs.
 
 `expectedCount` (default 1) must equal the number of matches, and
 `occurrence` picks one of them. Matching is case-sensitive, stays inside one

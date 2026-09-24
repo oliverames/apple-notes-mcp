@@ -35,6 +35,14 @@
   run outside the edits, the attachment glyph sequence, and the attachment
   rows (reported as `preservation`). Optional `nudge`. Not yet
   live-validated, so applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+- `native-edit-note` operation `trim_blank_lines`: removes redundant empty
+  paragraphs (`mode: "runs"` keeps the first `keep` of every run of blank
+  lines, `"end"` trims trailing blank lines, `"around"` trims the blank lines
+  before and/or after one anchored paragraph). Only whitespace-only title,
+  heading, subheading, and body paragraphs are removed, each with its own
+  newline; the title paragraph, list, checklist, monospaced, and attachment
+  rows are never touched. The dry run lists every paragraph it would remove.
+  The copy-store script adds a trim round trip.
 - `native-writer-status` reports `planEdit` and `editNote` beside
   `appendPlainText`; the features come from one `WRITER_FEATURES` table.
 - The copy-store script runs a plan, apply, and restore round trip on up to

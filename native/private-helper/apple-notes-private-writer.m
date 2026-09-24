@@ -843,12 +843,16 @@ static BOOL IsJSONBool(id value) {
 //   the attachment glyph sequence is the planned one, and that the note's
 //   attachment rows are the same set.
 //
+// Line-break trimming is the trim_blank_lines operation (PlanTrim): it
+// returns whole empty paragraphs, each removed with its own newline, as
+// ordinary deletion targets, so the checks above apply unchanged.
+//
 // Extension points. Selectors resolve through ResolveSelector(), keyed by
-// `kind`, so a later kind (an attachment selector, or a run of blank lines
-// for line-break trimming) is one more branch that returns ranges. A target
-// may contain an attachment glyph only when its selector kind says so
-// (TargetMayTouchAttachment); verification already compares the persisted
-// glyph sequence with the planned text rather than with the old one.
+// `kind`, so a later kind (an attachment selector) is one more branch that
+// returns ranges. A target may contain an attachment glyph only when its
+// selector kind says so (TargetMayTouchAttachment); verification already
+// compares the persisted glyph sequence with the planned text rather than
+// with the old one.
 
 #define MAX_EDIT_OPERATIONS 64
 #define MAX_EDIT_TARGETS 1000
@@ -1345,10 +1349,143 @@ static NSAttributedString *ReplacementFor(NSDictionary *replacement, NSAttribute
   return [[NSAttributedString alloc] initWithString:text attributes:inherited];
 }
 
+#pragma mark Line-break trimming
+
+#define MAX_TRIM_KEEP 10
+
+// A paragraph trim_blank_lines may remove: not the title, no attachment or
+// inline object, nothing but whitespace, and a text style (title, heading,
+// subheading, or body). Empty list and checklist rows are visible bullets
+// (delete them with a blank selector), and empty monospaced lines belong to
+// code blocks, so neither is trimmed.
+static BOOL IsTrimmableBlank(NSAttributedString *snapshot, EditParagraph *p) {
+  if (p.index == 0) return NO;
+  NSString *content = [snapshot.string substringWithRange:p.content];
+  if ([content rangeOfString:@"\uFFFC"].location != NSNotFound) return NO;
+  if ([content stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length) return NO;
+  unsigned int style = StyleValueOf(ParagraphStyleAt(snapshot, p));
+  return style == kStyleTitle || style == 1 || style == 2 || style == kStyleBody;
+}
+
+// Maximal runs of consecutive trimmable paragraphs, as arrays of paragraphs.
+static NSArray<NSArray<EditParagraph *> *> *BlankRuns(NSAttributedString *snapshot,
+                                                     NSArray<EditParagraph *> *paragraphs) {
+  NSMutableArray *runs = [NSMutableArray array];
+  NSMutableArray *current = nil;
+  for (EditParagraph *p in paragraphs) {
+    if (IsTrimmableBlank(snapshot, p)) {
+      if (!current) current = [NSMutableArray array];
+      [current addObject:p];
+    } else if (current) {
+      [runs addObject:current];
+      current = nil;
+    }
+  }
+  if (current) [runs addObject:current];
+  return runs;
+}
+
+// The run of trimmable paragraphs directly before (or after) the anchor
+// paragraph, stopping at the first paragraph that is not trimmable.
+static NSArray<EditParagraph *> *AdjacentBlankRun(NSAttributedString *snapshot,
+                                                  NSArray<EditParagraph *> *paragraphs, EditParagraph *anchor,
+                                                  BOOL before) {
+  NSMutableArray *run = [NSMutableArray array];
+  if (before) {
+    for (NSInteger i = (NSInteger)anchor.index - 1; i >= 0 && IsTrimmableBlank(snapshot, paragraphs[i]); i--)
+      [run insertObject:paragraphs[i] atIndex:0];
+  } else {
+    for (NSUInteger i = anchor.index + 1; i < paragraphs.count && IsTrimmableBlank(snapshot, paragraphs[i]); i++)
+      [run addObject:paragraphs[i]];
+  }
+  return run;
+}
+
+// trim_blank_lines removes redundant empty paragraphs, each with its own
+// terminating newline, so every non-empty paragraph keeps its characters,
+// its terminator, and its paragraph style. mode:
+//   runs    in every run of blank paragraphs, keep the first `keep`
+//           (default 1) and remove the rest;
+//   end     the run that ends the note: keep the first `keep` (default 0);
+//   around  the runs directly before and/or after (`side`, default both) the
+//           one paragraph `anchor` names: keep the first `keep` (default 0).
+// Returns the paragraphs to remove, in document order.
+static NSArray<EditParagraph *> *PlanTrim(NSDictionary *operation, NSUInteger index, NSAttributedString *snapshot,
+                                          NSArray<EditParagraph *> *paragraphs, NSMutableDictionary *summary) {
+  NSString *mode = OptionalEnum(operation, @"mode", @[ @"runs", @"end", @"around" ], nil);
+  if (!mode) Fail(@"invalid_request", @"trim_blank_lines needs `mode`", nil);
+  BOOL around = [mode isEqualToString:@"around"];
+  RejectUnknownKeys(operation,
+                    around ? @[ @"op", @"id", @"mode", @"keep", @"anchor", @"side", @"expectedCount" ]
+                           : @[ @"op", @"id", @"mode", @"keep", @"expectedCount" ],
+                    @"trim_blank_lines operation");
+  NSUInteger keep = [mode isEqualToString:@"runs"] ? 1 : 0;
+  if (operation[@"keep"]) {
+    id value = operation[@"keep"];
+    if (![value isKindOfClass:[NSNumber class]] || IsJSONBool(value) ||
+        [value doubleValue] != (double)[value longLongValue] || [value longLongValue] < 0 ||
+        [value longLongValue] > MAX_TRIM_KEEP)
+      Fail(@"invalid_request",
+           [NSString stringWithFormat:@"`keep` must be an integer from 0 to %d", MAX_TRIM_KEEP], nil);
+    keep = (NSUInteger)[value longLongValue];
+  }
+  summary[@"mode"] = mode;
+  summary[@"keep"] = @(keep);
+
+  NSMutableArray<NSArray<EditParagraph *> *> *runs = [NSMutableArray array];
+  if ([mode isEqualToString:@"runs"]) {
+    [runs addObjectsFromArray:BlankRuns(snapshot, paragraphs)];
+  } else if ([mode isEqualToString:@"end"]) {
+    NSArray *last = BlankRuns(snapshot, paragraphs).lastObject;
+    if (last && [last lastObject] == paragraphs.lastObject) [runs addObject:last];
+  } else {
+    NSDictionary *anchor = RequireObject(operation, @"anchor");
+    NSString *side = OptionalEnum(operation, @"side", @[ @"before", @"after", @"both" ], @"both");
+    NSString *kind = nil;
+    NSArray *hits = ResolveSelector(anchor, @"anchor", snapshot, paragraphs, &kind);
+    NSUInteger occurrence = OptionalCount(anchor, @"occurrence", 0, MAX_EDIT_TARGETS);
+    if (occurrence ? occurrence > hits.count : hits.count != 1)
+      Fail(@"match_count_mismatch",
+           [NSString stringWithFormat:@"Operation %lu anchor matched %lu paragraph(s); it must name exactly one "
+                                      @"(use occurrence)",
+                                      (unsigned long)index, (unsigned long)hits.count],
+           @{@"committed" : @NO, @"operationIndex" : @(index), @"matchedCount" : @(hits.count)});
+    EditParagraph *anchorParagraph = hits[occurrence ? occurrence - 1 : 0][@"paragraph"];
+    if (![side isEqualToString:@"after"])
+      [runs addObject:AdjacentBlankRun(snapshot, paragraphs, anchorParagraph, YES)];
+    if (![side isEqualToString:@"before"])
+      [runs addObject:AdjacentBlankRun(snapshot, paragraphs, anchorParagraph, NO)];
+    summary[@"anchorKind"] = kind;
+    summary[@"anchorParagraphIndex"] = @(anchorParagraph.index);
+    summary[@"side"] = side;
+  }
+
+  NSMutableArray *removed = [NSMutableArray array];
+  NSUInteger blankParagraphs = 0;
+  for (NSArray<EditParagraph *> *run in runs) {
+    blankParagraphs += run.count;
+    if (run.count > keep)
+      [removed addObjectsFromArray:[run subarrayWithRange:NSMakeRange(keep, run.count - keep)]];
+  }
+  summary[@"blankRuns"] = @(runs.count);
+  summary[@"blankParagraphs"] = @(blankParagraphs);
+  if (operation[@"expectedCount"]) {
+    NSUInteger expected = OptionalCount(operation, @"expectedCount", 1, MAX_EDIT_TARGETS);
+    if (removed.count != expected)
+      Fail(@"match_count_mismatch",
+           [NSString stringWithFormat:@"Operation %lu would remove %lu empty paragraph(s); expectedCount is %lu",
+                                      (unsigned long)index, (unsigned long)removed.count,
+                                      (unsigned long)expected],
+           @{@"committed" : @NO, @"operationIndex" : @(index), @"matchedCount" : @(removed.count)});
+  }
+  return removed;
+}
+
 static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NSAttributedString *snapshot,
                                    NSArray<EditParagraph *> *paragraphs, NSMutableArray *targets) {
   NSString *op = OptionalEnum(
-      operation, @"op", @[ @"replace", @"delete_paragraph", @"insert_after", @"insert_before", @"set_title" ],
+      operation, @"op",
+      @[ @"replace", @"delete_paragraph", @"insert_after", @"insert_before", @"set_title", @"trim_blank_lines" ],
       nil);
   if (!op) Fail(@"invalid_request", @"Every operation needs `op`", nil);
   NSMutableDictionary *summary = [@{@"index" : @(index), @"op" : op} mutableCopy];
@@ -1402,6 +1539,16 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
       [created addObject:Target(range, [NSAttributedString new], index, p)];
     }
     summary[@"selectorKind"] = kind;
+  } else if ([op isEqualToString:@"trim_blank_lines"]) {
+    for (EditParagraph *p in PlanTrim(operation, index, snapshot, paragraphs, summary)) {
+      // Each paragraph goes with its own terminator; an unterminated last
+      // paragraph (whitespace only) goes alone and leaves the previous
+      // terminator in place, so no other paragraph loses its newline.
+      RequireNoAttachmentGlyph(snapshot, p.full, index, @"trim");
+      NSMutableDictionary *target = Target(p.full, [NSAttributedString new], index, p);
+      target[@"blankUTF16"] = @(p.content.length);
+      [created addObject:target];
+    }
   } else {
     BOOL after = [op isEqualToString:@"insert_after"];
     RejectUnknownKeys(operation, @[ @"op", @"id", @"anchor", @"blocks", @"expectedCount" ], @"insert operation");
@@ -1439,13 +1586,16 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
   for (NSDictionary *t in created) {
     NSRange r = [t[@"range"] rangeValue];
     EditParagraph *p = paragraphs[[t[@"paragraph"] unsignedIntegerValue]];
-    [described addObject:@{
+    NSMutableDictionary *description = [@{
       @"paragraphIndex" : t[@"paragraph"],
       @"paragraphStyle" : StyleName(StyleValueOf(ParagraphStyleAt(snapshot, p))),
       @"location" : @(r.location),
       @"length" : @(r.length),
       @"newLength" : @([t[@"replacement"] length]),
-    }];
+    } mutableCopy];
+    // For a trimmed paragraph: how many whitespace characters it held.
+    if (t[@"blankUTF16"]) description[@"blankUTF16"] = t[@"blankUTF16"];
+    [described addObject:description];
   }
   [targets addObjectsFromArray:created];
   summary[@"matchedCount"] = @(created.count);

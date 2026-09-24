@@ -120,6 +120,24 @@ describe("private writer source contract", () => {
     );
   });
 
+  it("trims only whole empty text paragraphs, never the title or an attachment", () => {
+    const trimmable = CODE.slice(CODE.indexOf("static BOOL IsTrimmableBlank("));
+    const body = trimmable.slice(0, trimmable.indexOf("\n}\n"));
+    expect(body).toMatch(/if \(p\.index == 0\) return NO;/);
+    expect(SOURCE).toMatch(
+      /IsTrimmableBlank[\s\S]{0,400}rangeOfString:@"\\uFFFC"\]\.location != NSNotFound\) return NO;/
+    );
+    expect(body).toMatch(/whitespaceCharacterSet\]\.length\) return NO;/);
+    expect(body).toMatch(
+      /return style == kStyleTitle \|\| style == 1 \|\| style == 2 \|\| style == kStyleBody;/
+    );
+    // Each removed paragraph goes with its own terminator and nothing else,
+    // and the glyph guard still runs with a kind that may not touch one.
+    expect(CODE).toMatch(
+      /RequireNoAttachmentGlyph\(snapshot, p\.full, index, ""\);\s*NSMutableDictionary \*target = Target\(p\.full, \[NSAttributedString new\], index, p\);/
+    );
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);

@@ -927,15 +927,48 @@ never pass. The copy-store script also checks each step with
 itself (no writer, no NotesShared) and compares every UTF-16 unit outside the
 edits with its serialized attribute run, plus a digest of every other row.
 
-Room for later work: selectors resolve through `ResolveSelector()` by `kind`
-(`text`, `style`, `blank`), and the client schema is a union on the same key.
-An attachment selector would add a kind whose targets may contain U+FFFC
-(`TargetMayTouchAttachment()`). Verification already compares glyphs with
-the planned text, not the old one, so a planned attachment removal would
-verify there, but the attachment-row check would then need the planned set.
-Line-break trimming (for example collapsing runs of empty body paragraphs)
-fits the same way, as a selector kind that returns the ranges of the extra
-newlines.
+#### Line-break trimming
+
+`trim_blank_lines` is an operation rather than a selector kind, because its
+shape (a mode, how many blank lines to keep, an optional anchor) does not fit
+the one-paragraph-per-match selectors. `PlanTrim()` returns whole
+paragraphs, and each becomes an ordinary deletion target, so the plan,
+overlap check, side-effect check, and read-back are the same as for any other
+edit.
+
+A paragraph is trimmable (`IsTrimmableBlank()`) when it is not the title
+paragraph, holds no U+FFFC, holds only whitespace, and has a text style
+(title, heading, subheading, body). Empty list and checklist rows are visible
+bullets and are deleted with a `blank` selector instead; empty monospaced
+lines belong to code blocks. Each removed paragraph goes with its own
+terminating newline, and a whitespace-only unterminated last paragraph goes
+alone, so no non-empty paragraph loses a character, its terminator, or the
+paragraph style it carries. A note that ends in a newline keeps it.
+
+| `mode` | Removes | `keep` default |
+|---|---|---|
+| `runs` | all but the first `keep` of every maximal run of trimmable paragraphs | 1 |
+| `end` | the run that ends the note | 0 |
+| `around` | the runs directly `before`, `after`, or on `both` sides of the one paragraph `anchor` names (text or style; `occurrence` picks one) | 0 |
+
+`expectedCount` is optional here and, when given, must equal the number of
+paragraphs removed. The dry run lists every paragraph it would remove as a
+target (`paragraphIndex`, `paragraphStyle`, `location`, `length`, and
+`blankUTF16`, the whitespace it held) and reports `blankRuns` and
+`blankParagraphs` examined. A trim that finds nothing plans zero targets,
+and applying it returns `status: "unchanged"`. Two trims that reach the same
+paragraph (for example `runs` and `end`) are `conflicting_operations`.
+
+The copy-store script inserts three blank paragraphs between two markers,
+trims them with `around` (exactly 3), deletes the markers, and checks the note
+is restored exactly; it then applies `runs` to the note's own blank lines on
+the copy and checks the result with the independent decoder.
+
+Room for later work: an attachment selector would add a kind whose targets
+may contain U+FFFC (`TargetMayTouchAttachment()`). Verification already
+compares glyphs with the planned text, not the old one, so a planned
+attachment removal would verify there, but the attachment-row check would
+then need the planned set.
 
 ### Still open
 

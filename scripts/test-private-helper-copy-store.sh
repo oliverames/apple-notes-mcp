@@ -206,7 +206,12 @@ fi
 MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","occurrence":1},"expectedCount":COUNT,"blocks":[{"type":"heading","text":"copy-store edit marker"},{"type":"checklist","text":"copy-store checklist","checked":true},{"type":"body","runs":[{"text":"copy-store "},{"text":"bold","bold":true}]}]}]'
 RESTYLE_OPS='[{"op":"replace","selector":{"kind":"text","text":"copy-store edit marker","match":"equals"},"replacement":{"runs":[{"text":"copy-store edit marker 2","italic":true}]}}]'
 DELETE_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store edit marker 2"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store checklist"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store bold"}}]'
+TRIM_MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","occurrence":1},"expectedCount":COUNT,"blocks":[{"type":"body","text":"copy-store trim start"},{"type":"body","text":""},{"type":"body","text":" "},{"type":"body","text":""},{"type":"body","text":"copy-store trim end"}]}]'
+TRIM_AROUND_OPS='[{"op":"trim_blank_lines","mode":"around","anchor":{"kind":"text","text":"copy-store trim start"},"side":"after","expectedCount":3}]'
+TRIM_UNMARK_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store trim start"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store trim end"}}]'
+TRIM_RUNS_OPS='[{"op":"trim_blank_lines","mode":"runs"}]'
 EDITED=0
+TRIMMED=0
 REFUSED_NOTES=0
 EDIT_LIVE_BEFORE=""
 for EDIT_NOTE in $EDIT_NOTES; do
@@ -245,9 +250,35 @@ for EDIT_NOTE in $EDIT_NOTES; do
   node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
     fail "the round trip did not restore the original text and runs"
   EDITED=$((EDITED + 1))
+
+  # 4c. trim_blank_lines: insert a marker, three empty body paragraphs (one
+  # holding a space), and a second marker; trim the blank run after
+  # the first marker (exactly 3 removed); delete the markers. The note must
+  # be restored exactly. Then trim the note's own runs of blank lines on the
+  # copy (not undoable, so it runs last); the plan must list each removed
+  # paragraph, and the independent check proves nothing else changed.
+  snap "$EDIT_NOTE" original
+  edit_step "$EDIT_NOTE" "insert blank lines between markers" "${TRIM_MARK_OPS/COUNT/$COUNT}"
+  edit_step "$EDIT_NOTE" "trim the blank lines after a marker" "$TRIM_AROUND_OPS"
+  [ "$(field "$OUT" operations.0.matchedCount)" = "3" ] || fail "trim around removed $(field "$OUT" operations.0.matchedCount), not 3"
+  [ "$(field "$OUT" operations.0.targets.1.blankUTF16)" = "1" ] || fail "trim did not report the whitespace paragraph"
+  edit_step "$EDIT_NOTE" "delete the trim markers" "$TRIM_UNMARK_OPS"
+  snap "$EDIT_NOTE" final
+  node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
+    fail "the trim round trip did not restore the original text and runs"
+  PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$TRIM_RUNS_OPS")" || true)"
+  [ "$(field "$PLAN" status)" = "planned" ] || fail "trim runs plan: $(field "$PLAN" code) $(field "$PLAN" message)"
+  if [ "$(field "$PLAN" targetCount)" != "0" ]; then
+    edit_step "$EDIT_NOTE" "trim the note's own blank runs" "$TRIM_RUNS_OPS"
+    [ "$(field "$OUT" targetCount)" = "$(field "$PLAN" targetCount)" ] || fail "trim runs removed a different number than planned"
+  else
+    echo "ok: no redundant blank lines to trim in this note"
+  fi
+  TRIMMED=$((TRIMMED + 1))
 done
 [ "$EDITED" -gt 0 ] || fail "the edit_note round trip ran on no note"
 echo "ok: edit_note round trip restored $EDITED note(s) exactly; $REFUSED_NOTES refused at plan"
+echo "ok: trim_blank_lines steps passed on $TRIMMED note(s)"
 
 # 5. The live notes are untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"

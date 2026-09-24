@@ -56679,7 +56679,17 @@ var insertSchema = (op) => external_exports.object({
   blocks: external_exports.array(blockSchema).min(1).max(200),
   expectedCount: count.optional()
 }).strict();
-var editOperationSchema = external_exports.discriminatedUnion("op", [
+var MAX_TRIM_KEEP = 10;
+var trimSchema = external_exports.object({
+  op: external_exports.literal("trim_blank_lines"),
+  id: operationId,
+  mode: external_exports.enum(["runs", "end", "around"]),
+  keep: external_exports.number().int().min(0).max(MAX_TRIM_KEEP).optional(),
+  anchor: external_exports.union([textSelector, styleSelector]).optional(),
+  side: external_exports.enum(["before", "after", "both"]).optional(),
+  expectedCount: count.optional()
+}).strict();
+var editOperationUnion = external_exports.discriminatedUnion("op", [
   external_exports.object({
     op: external_exports.literal("replace"),
     id: operationId,
@@ -56702,14 +56712,33 @@ var editOperationSchema = external_exports.discriminatedUnion("op", [
       external_exports.object({ text: paragraphText(1) }).strict(),
       external_exports.object({ runs: runsSchema }).strict()
     ])
-  }).strict()
+  }).strict(),
+  trimSchema
 ]);
+var editOperationSchema = editOperationUnion.superRefine((operation, context) => {
+  if (operation.op !== "trim_blank_lines") return;
+  const around = operation.mode === "around";
+  if (around && !operation.anchor)
+    context.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      path: ["anchor"],
+      message: "mode around needs an anchor"
+    });
+  if (!around && (operation.anchor || operation.side))
+    context.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      path: [operation.anchor ? "anchor" : "side"],
+      message: "anchor and side are only valid with mode around"
+    });
+});
 var editTargetSchema = external_exports.object({
   paragraphIndex: external_exports.number().int(),
   paragraphStyle: external_exports.string(),
   location: external_exports.number().int(),
   length: external_exports.number().int(),
-  newLength: external_exports.number().int()
+  newLength: external_exports.number().int(),
+  /** For a trimmed empty paragraph: how many whitespace characters it held. */
+  blankUTF16: external_exports.number().int().optional()
 }).passthrough();
 var editPlanFields = {
   identifier: external_exports.string(),
@@ -57331,7 +57360,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
     server2,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text or by style and position (for example the 2nd subheading), delete a paragraph or list row, or retitle. Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\nReturns: per-operation matched counts and target ranges, lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and the attachment rows), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never touches attachments or inline objects.\nSafety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text or by style and position (for example the 2nd subheading), delete a paragraph or list row, retitle, or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\nReturns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and the attachment rows), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never touches attachments or inline objects.\nSafety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -57339,7 +57368,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
       ifRevision: revisionToken.optional().describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
       requireNonSystemPaper: external_exports.boolean().optional().describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
       operations: external_exports.array(editOperationSchema).min(1).max(MAX_EDIT_OPERATIONS).describe(
-        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}. expectedCount (default 1) must equal the full match count; occurrence picks one of them."
+        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. expectedCount (default 1) must equal the full match count; occurrence picks one of them. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
       ),
       nudge: external_exports.boolean().optional().describe(
         "After a verified apply, ask Notes.app to upload the note by moving it into its own folder (default false)"
