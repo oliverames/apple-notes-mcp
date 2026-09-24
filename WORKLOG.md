@@ -45,7 +45,7 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
 
 **Left off at**:
 - [ ] Whole-note highlight (step 5.4): agent building `feat/native-highlight-whole-note` off `feat/native-highlight-v2`; live-test and push it.
-- [ ] #238: awaiting sweetrb's re-review. Renumber if another PR lands first.
+- [x] #238 merged (2.9.17).
 - [ ] #250 (draft): awaiting sweetrb's view on the two open concerns (concurrent saves, CRDT replica identity).
 - [ ] The `-v2` branches are based on `3418163`; merge the foundation fix `269637a` into them when next touched. `native-sync-push-v2` also edits `privateSyncNudge.ts`, so expect a small conflict there.
 - [ ] Check whether Notes shows an AppleScript-added image twice (two body glyphs per image on 27.2; the 42 MB note's HTML also had two `<img>`). If it does, file it upstream.
@@ -53,10 +53,10 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
 - [x] README-credit email to Rob Sweet (rob@superiortech.io, from his README) sent from Oliver's Gmail on 2026-09-24 after Oliver approved the draft; no reply yet.
 - [x] Skill PR sweetrb/apple-notes-mcp#252 (formatting rules + tool-table fixes) merged as 2.9.20. Two observation-based rules verified live first.
 - [x] Whole-note highlight: `feat/native-highlight-whole-note` (`a2cf2ae`) built, live-tested, pushed.
-- [ ] Comprehensive bug review (2026-09-23/24 contributions): audit going to ~/Documents/apple-notes-mcp-bug-review-2026-09-24.md. Oliver's instruction: fix every issue found. Plan: foundation writer first (pre-save refusals report committed:false, NSException after save keeps committed:true, Cc-only control set, probe the read properties), merge into all -v2 branches, then branch fixes, then focused upstream PRs (analyze-svg OOM first). Treat the contentPath read scope as sweetrb's design call.
+- [x] Comprehensive bug review (2026-09-23/24 contributions), fixes shipped as #256 (2.9.24), #257 (2.9.25) and #258 (open, below): audit going to ~/Documents/apple-notes-mcp-bug-review-2026-09-24.md. Oliver's instruction: fix every issue found. Plan: foundation writer first (pre-save refusals report committed:false, NSException after save keeps committed:true, Cc-only control set, probe the read properties), merge into all -v2 branches, then branch fixes, then focused upstream PRs (analyze-svg OOM first). Treat the contentPath read scope as sweetrb's design call.
 - [ ] Then sweetrb's open issues.
-- [ ] Gap analysis against the reference tool in ~/Downloads (private; never name it publicly): ~/Documents/apple-notes-mcp-gap-analysis-2026-09-24.md.
-- [ ] README coverage + SEO PR: agent preparing `docs/readme-coverage-seo`; GitHub topics/description go in the PR body as suggestions for sweetrb.
+- [x] Gap analysis against the reference tool in ~/Downloads (private; never name it publicly): ~/Documents/apple-notes-mcp-gap-analysis-2026-09-24.md.
+- [x] README coverage + SEO PR #254 merged (2.9.22); GitHub topics/description go in the PR body as suggestions for sweetrb.
 - #250 resynced to 2.9.21 over main 2.9.20 (`b8d94a1`).
 - [ ] **Gap parity (Oliver, 2026-09-24): build ALL gaps from ~/Documents/apple-notes-mcp-gap-analysis-2026-09-24.md, including infra #34 editor, #35 tailnet editor, #39 permissions dashboard, #40 signed broker, #85 resolver; ship as ONE upstream DRAFT PR (Oliver chose upstream over the fork-only rule for this).** Plan/resume point:
   - A. `feat/writer-suite` from `feat/native-writes-upstream` (78d40d8, upstream wording + foundation fix 3474030): merge every -v2 branch + edit-attachment-selector, edit-trim-breaks, highlight-whole-note; keep upstream wording; gate. Apply the bug-audit fixes for writer code HERE, once.
@@ -66,6 +66,11 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
   - Agents never write live notes; only this session does, serially.
   - Progress: all four upstream-base gaps built and bundled as `gap/upstream-bundle` (4cbb9c7). `feat/writer-suite` (5c40b1a) integrates all 15 writer branches (16 write actions, committed-flag bracketing enforced by test). Writer gaps + writer-side audit fixes running as `wgap/edit`, `wgap/compose`, `wgap/guards-sync`, `wgap/objects`. #40 broker blocked by the auto-mode classifier; awaiting Oliver.
   - Oliver (2026-09-24): suggest sweetrb release this as 3.0.0. Put it in the combined draft PR body as a suggestion (he renumbers versions himself); keep a patch version on the branch so CI passes.
+  - Progress (end of 2026-09-24): `wgap/edit` e32a627, `wgap/compose` c91ecb7, `wgap/guards-sync` d4f3b53, `wgap/objects` 050ceff all pushed and gated. Final integration `feat/gap-parity` (worktree `.claude/worktrees/agent-ae5d5490ebc2da511`) had all five merges + upstream/main, the #84 heal wiring (32933d0), the harness fixes (d714f5d) and release 2.9.28 (60b4ace) committed at wrap-up; its agent was finishing the gate, handshakes and copy-store runs. Check whether `origin/feat/gap-parity` exists; if not, finish the gate in that worktree and push.
+  - RESUME (priority order, weekly credits were low): (1) confirm `feat/gap-parity` gate + copy-store results; (2) serial live tests in `apple-notes-mcp test` only; (3) open the upstream DRAFT PR (neutral wording, 3.0.0 suggestion, breaking-ish: error codes, query negation, `quicknote` bare word), then close #250 pointing at it; (4) sweetrb's open issues. Version must stay above main and #258 (2.9.27).
+- [ ] sweetrb/apple-notes-mcp#258 data-correctness fixes: open at 2.9.27 (head 34fbde0), CI green before the last main merge; Autofix watches it. Asks sweetrb about query negation on locked notes and word-count changes.
+- [x] Rob replied to the credit email; he added the credit himself in #255 (2.9.23). Thank-you reply sent 2026-09-24.
+- [ ] Trash `scratchpad/w/copy` (a NoteStore copy) once no agent uses it; the session scratchpad is under /private/tmp and is cleared on reboot.
 
 **Verification**: macOS 27.2 (26B5091g), Node 26.9.0, pnpm 11.9.0. Every branch named above passed lint, typecheck, format check, the full unit suite (no skips) and build with a matching bundle before it was pushed. Every live test used disposable notes, a smart folder and a subfolder inside `apple-notes-mcp test`, and all were deleted afterwards (they are in Recently Deleted; one test note was permanently tombstoned by the Recently Deleted to smart folder reproduction). Writer installs went to scratch directories, never to the plugin's install directory.
 
