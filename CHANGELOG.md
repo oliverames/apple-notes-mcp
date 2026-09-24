@@ -22,6 +22,12 @@
   optional `nudge`). The writer's `read_sync_state` action and the
   move-in-place nudge report Notes' own upload counters after a write and ask
   Notes.app to upload a note it would otherwise skip.
+- `native-sync-push` gets writer-saved changes uploaded after the fact.
+  `method: "status"` only reads Notes' upload counters, `"nudge"` (default)
+  moves each pending note into its own folder, and `"relaunch"` quits and
+  reopens Notes.app so its launch sweep uploads everything pending, folders
+  included; relaunch requires `confirm: true`. Per target it reports the
+  counters before and after and `uploadRecorded`. It never writes to the store.
 - `scripts/test-private-helper-copy-store.sh` runs the writer against a copy
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and

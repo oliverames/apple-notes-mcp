@@ -12,6 +12,7 @@ import {
   nudgeInPlace,
   nudgeRefusal,
   readSyncState,
+  syncPush,
   syncTargets,
   uploadRecorded,
   defaultNudgeDeps,
@@ -266,7 +267,183 @@ describe("nudgeInPlace", () => {
   it("has real defaults for AppleScript, sleep, and the clock", async () => {
     const real = defaultNudgeDeps();
     expect(typeof real.runAppleScript).toBe("function");
+    expect(typeof real.launchNotes).toBe("function");
+    expect(typeof real.notesRunning()).toBe("boolean");
     expect(real.now()).toBeGreaterThan(0);
     await expect(real.sleep(1)).resolves.toBeUndefined();
+  });
+});
+
+/** Relaunch deps: Notes.app quits after `quitAfterPolls` running checks. */
+function relaunchDeps(
+  helper: PrivateHelperDeps,
+  options: {
+    quit?: { success: boolean; output: string; error?: string };
+    quitAfterPolls?: number;
+    launch?: () => void;
+  } = {}
+) {
+  const events: string[] = [];
+  let polls = 0;
+  const deps = nudgeDeps(helper);
+  deps.runAppleScript = (script) => {
+    events.push(script.includes("to quit") ? "quit" : "script");
+    return options.quit ?? { success: true, output: "" };
+  };
+  deps.notesRunning = () => polls++ < (options.quitAfterPolls ?? 1);
+  deps.launchNotes =
+    options.launch ??
+    (() => {
+      events.push("launch");
+    });
+  return { deps, events };
+}
+
+describe("syncPush", () => {
+  it("status only reads and never runs a script", async () => {
+    const scripts: string[] = [];
+    const report = await syncPush(
+      { identifiers: [NOTE], method: "status" },
+      nudgeDeps(fakeWriter([snapshot([noteState()])]), scripts)
+    );
+    expect(scripts).toEqual([]);
+    expect(report).toMatchObject({
+      method: "status",
+      relaunched: false,
+      waitedSeconds: 0,
+      pushScheduled: false,
+      syncHostRunningBefore: true,
+      allUploadsRecorded: false,
+    });
+    expect(report.targets[0]).toMatchObject({ action: "none", uploadPendingBefore: true });
+    expect(report).not.toHaveProperty("before");
+  });
+
+  it("nudge (the default) moves pending notes in place", async () => {
+    const scripts: string[] = [];
+    const helper = fakeWriter([
+      snapshot([noteState()]),
+      snapshot([noteState({ latestVersionSyncedToCloud: 5, uploadPending: false })]),
+    ]);
+    const report = await syncPush({ identifiers: [NOTE] }, nudgeDeps(helper, scripts));
+    expect(scripts).toHaveLength(1);
+    expect(report.method).toBe("nudge");
+    expect(report.targets[0]).toMatchObject({ action: "moved_in_place", uploadRecorded: true });
+  });
+
+  it("nudge points to relaunch when Notes.app is not running", async () => {
+    const report = await syncPush(
+      { identifiers: [NOTE], waitSeconds: 0 },
+      nudgeDeps(fakeWriter([snapshot([noteState()], { syncHostRunning: false })]))
+    );
+    expect(report.warnings.join("\n")).toMatch(/method relaunch with confirm: true/);
+  });
+
+  it("validates input before reading anything", async () => {
+    await expect(
+      syncPush({ identifiers: [NOTE], waitSeconds: 181 }, nudgeDeps(fakeWriter([])))
+    ).rejects.toThrow(/waitSeconds/);
+    await expect(syncPush({ identifiers: [] }, nudgeDeps(fakeWriter([])))).rejects.toThrow(
+      /identifiers/
+    );
+    const requests: unknown[] = [];
+    await expect(
+      syncPush(
+        { identifiers: [NOTE], method: "relaunch" },
+        nudgeDeps(fakeWriter([snapshot([noteState()])], requests))
+      )
+    ).rejects.toMatchObject({ code: "confirmation_required", committed: false });
+    expect(requests).toEqual([]);
+  });
+
+  it("relaunch quits, reopens, and reports against the pre-relaunch counters", async () => {
+    const folder = { ...noteState({ identifier: FOLDER, kind: "folder" }) };
+    const helper = fakeWriter([
+      snapshot([noteState(), folder], { pendingUploadCount: 9 }),
+      snapshot([noteState({ currentLocalVersion: 6 }), folder], { pendingUploadCount: 8 }),
+      snapshot(
+        [
+          noteState({
+            currentLocalVersion: 6,
+            latestVersionSyncedToCloud: 6,
+            uploadPending: false,
+          }),
+          { ...folder, latestVersionSyncedToCloud: 5, uploadPending: false },
+        ],
+        { pendingUploadCount: 1 }
+      ),
+    ]);
+    const { deps, events } = relaunchDeps(helper, { quitAfterPolls: 2 });
+    const report = await syncPush(
+      { identifiers: [NOTE, FOLDER], method: "relaunch", confirm: true },
+      deps
+    );
+    expect(events).toEqual(["quit", "launch"]);
+    expect(report).toMatchObject({
+      method: "relaunch",
+      relaunched: true,
+      syncHostRunningBefore: true,
+      pendingUploadCountBefore: 9,
+      pendingUploadCountAfter: 1,
+      allUploadsRecorded: true,
+    });
+    expect(report.targets[0]).toMatchObject({
+      action: "relaunch",
+      before: { currentLocalVersion: 5, latestVersionSyncedToCloud: 4 },
+      after: { currentLocalVersion: 6, latestVersionSyncedToCloud: 6 },
+      uploadRecorded: true,
+    });
+    expect(report.targets[1]).toMatchObject({ kind: "folder", action: "relaunch" });
+    expect(report.warnings).toEqual([]);
+  });
+
+  it("relaunch only opens Notes.app when it is not running, and warns on a pending upload", async () => {
+    const helper = fakeWriter([snapshot([noteState()], { syncHostRunning: false })]);
+    const { deps, events } = relaunchDeps(helper);
+    const report = await syncPush(
+      { identifiers: [NOTE], method: "relaunch", confirm: true, waitSeconds: 2 },
+      deps
+    );
+    expect(events).toEqual(["launch"]);
+    expect(report.syncHostRunningBefore).toBe(false);
+    expect(report.warnings.join("\n")).toMatch(/still show a pending upload after 2 s/);
+  });
+
+  it("relaunch reports each failure without claiming a relaunch", async () => {
+    const refused = relaunchDeps(fakeWriter([snapshot([noteState()])]), {
+      quit: { success: false, output: "", error: "busy" },
+    });
+    await expect(
+      syncPush({ identifiers: [NOTE], method: "relaunch", confirm: true }, refused.deps)
+    ).rejects.toMatchObject({ code: "relaunch_failed", message: /did not accept quit: busy/ });
+    expect(refused.events).toEqual(["quit"]);
+
+    const stuck = relaunchDeps(fakeWriter([snapshot([noteState()])]), {
+      quitAfterPolls: 1_000_000,
+    });
+    await expect(
+      syncPush({ identifiers: [NOTE], method: "relaunch", confirm: true }, stuck.deps)
+    ).rejects.toThrow(/still running 20 s after quit/);
+    expect(stuck.events).toEqual(["quit"]);
+
+    const noLaunch = relaunchDeps(fakeWriter([snapshot([noteState()])]), {
+      launch: () => {
+        throw new Error("open failed");
+      },
+    });
+    await expect(
+      syncPush({ identifiers: [NOTE], method: "relaunch", confirm: true }, noLaunch.deps)
+    ).rejects.toThrow(/was quit but could not be opened: open failed/);
+    const noLaunchCold = relaunchDeps(
+      fakeWriter([snapshot([noteState()], { syncHostRunning: false })]),
+      {
+        launch: () => {
+          throw "nope";
+        },
+      }
+    );
+    await expect(
+      syncPush({ identifiers: [NOTE], method: "relaunch", confirm: true }, noLaunchCold.deps)
+    ).rejects.toThrow(/^Notes\.app could not be opened: nope/);
   });
 });

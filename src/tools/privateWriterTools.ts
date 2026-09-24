@@ -6,6 +6,8 @@
  * - `native-append-plain-text`: the foundation's demonstration write, guarded
  *   by a revision token (compare-and-swap), verified by a fresh read-back,
  *   and optionally followed by the move-in-place sync nudge.
+ * - `native-sync-push`: the nudge (or a confirmed Notes.app relaunch) on its
+ *   own, for writer-saved changes Notes.app has not uploaded yet.
  *
  * The read-only tools (`native-helper-status`, `native-note-state`) stay in
  * privateHelperTools.ts and never reach the writer. Every tool here is always
@@ -27,8 +29,10 @@ import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { PrivateHelperError } from "../services/privateHelper.js";
 import {
   MAX_NUDGE_WAIT_SECONDS,
+  MAX_SYNC_TARGETS,
   defaultNudgeDeps,
   nudgeInPlace,
+  syncPush,
   type NudgeDeps,
 } from "../services/privateSyncNudge.js";
 import {
@@ -65,6 +69,8 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
       return "unsupported";
     case "ambiguous":
       return "ambiguous";
+    case "confirmation_required":
+      return "validation_error";
     default:
       return envelopeCode(helperCode, message);
   }
@@ -219,6 +225,42 @@ export function registerPrivateWriterTools(
         sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge),
       };
     }
+  );
+
+  registerWriterTool(
+    server,
+    depsFactory,
+    "native-sync-push",
+    "Use when: a note or folder changed through the private writer earlier (native-append-plain-text and the other native write tools, without nudge or with a nudge that timed out) still shows cloudSync.uploadPending, and you want Notes.app to upload it, or just to check whether it has.\n" +
+      "Returns: per target, Notes' own version counters before and after, uploadRecorded (true only when Notes recorded the current version as synced to iCloud), the action taken, and a skip reason; the library-wide pendingUploadCount before and after; warnings. pushScheduled is always false: only Notes.app uploads.\n" +
+      "Do not use when: the change was made through AppleScript or Shortcuts tools (Notes.app uploads those itself), or right after a native write that already ran with nudge: true and reported uploadRecorded.\n" +
+      'Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer\'s revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).',
+    {
+      identifiers: z
+        .array(notesUuid)
+        .min(1)
+        .max(MAX_SYNC_TARGETS)
+        .describe("Notes UUIDs of the notes or folders to check (from native-note-state etc.)"),
+      method: z
+        .enum(["status", "nudge", "relaunch"])
+        .optional()
+        .describe(
+          "status = read only; nudge (default) = in-place Notes.app save; relaunch = quit and reopen Notes.app"
+        ),
+      confirm: z
+        .boolean()
+        .optional()
+        .describe("Must be true for relaunch, after the user agreed to Notes.app being quit"),
+      waitSeconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(MAX_NUDGE_WAIT_SECONDS)
+        .optional()
+        .describe("Seconds to watch the counters afterwards (default 30; 0 for status)"),
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    async (args, deps) => ({ ...(await syncPush(args, deps.nudge)) })
   );
 }
 

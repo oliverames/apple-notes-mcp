@@ -891,6 +891,17 @@ compares the writer's revision token before and after (`contentUnchanged`).
 Notes' own record that the server accepted the version, not a cross-device
 check.
 
+`native-sync-push` runs the same code on its own, for changes written earlier
+without a nudge or whose nudge timed out: `status` only reads `read_sync_state`,
+`nudge` moves pending notes in place, and `relaunch` (only with
+`confirm: true`) quits Notes.app through AppleScript, waits up to 20 s for the
+process to exit, and reopens it in the background (`open -g -a Notes`), so its
+launch sweep considers every object with pending changes. Relaunch is the only
+route for a writer-changed folder, because AppleScript cannot move a folder in
+place. It never writes to the store and adds no writer action. Not verified
+live: the relaunch path (it would quit Notes.app while others use it) and the
+upload of a writer-changed folder after a relaunch.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this
