@@ -26,6 +26,18 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+- `native-set-paragraph-id` (writer action `set_paragraph_id`) gives one
+  paragraph a unique paragraph identifier, so `get-paragraph-link` can link a
+  paragraph whose identifier was `shared` or `missing`. It selects the
+  paragraph by `blockIndex` and `text` from the read-only
+  `list-note-paragraphs`, uses the same uniqueness rules, returns `unchanged`
+  without writing when the identifier is already unique, and takes the
+  optional `nudge`. Gated by `PARAGRAPH_IDS_LIVE_VALIDATED`.
+- `native-writer-status` reports each writer feature from one
+  `WRITER_FEATURES` table (key, probe key, live-validation flag).
+- The copy-store script checks paragraph identifiers with upstream's
+  `list-note-paragraphs` reader against the copy, and confirms that every live
+  note a feature check uses is unchanged.
 
 ## [2.9.11] - 2026-09-23
 

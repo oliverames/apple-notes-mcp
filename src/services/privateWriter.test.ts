@@ -19,6 +19,7 @@ import {
   PrivateWriteError,
   WRITER_ACTIONS,
   WRITER_BINARY_NAME,
+  WRITER_FEATURES,
   WRITER_MANIFEST_NAME,
   WRITER_SOURCE_RELATIVE,
   appendPlainText,
@@ -420,5 +421,19 @@ describe("privateWriterCapabilities", () => {
         .reason
     ).toBe("helper_unreachable");
     expect(probePrivateWriter(deps(ON)).role).toBe("writer");
+  });
+
+  it("reports every WRITER_FEATURES row, gated one by one", () => {
+    expect(WRITER_FEATURES.map((row) => row.key)).toEqual(["appendPlainText", "setParagraphId"]);
+    expect(Object.keys(privateWriterCapabilities(deps()).features)).toEqual(
+      WRITER_FEATURES.map((row) => row.key)
+    );
+    install();
+    // The fake probe predates setParagraphId, so that row reports it missing.
+    expect(privateWriterCapabilities(deps(UNVERIFIED)).features.setParagraphId).toEqual({
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The writer probe does not report setParagraphId",
+    });
   });
 });

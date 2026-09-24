@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid3 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid3}))`);
+        const invalid4 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid4}))`);
       }
     };
     exports.default = def;
@@ -53303,7 +53303,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid3 = () => this.issue(
+      const invalid4 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -53313,7 +53313,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid3();
+          if (paint.kind === "invalid") invalid4();
           else if (name === "fill") style.fill = paint;
           else style.stroke = paint;
           break;
@@ -53321,12 +53321,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid3();
+          else invalid4();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid3();
+          if (w === null || w < 0) invalid4();
           else style.strokeWidth = w;
           break;
         }
@@ -53334,7 +53334,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid3();
+          if (o === null) invalid4();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -53342,7 +53342,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid3();
+          else invalid4();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -53362,14 +53362,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid3();
+          if (!list || list.some((v) => v < 0)) invalid4();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid3();
+          if (o === null) invalid4();
           else style.dashoffset = o;
           break;
         }
@@ -56329,9 +56329,19 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  set_paragraph_id: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var PARAGRAPH_IDS_LIVE_VALIDATED = false;
+var WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  {
+    key: "setParagraphId",
+    probeKey: "setParagraphId",
+    liveValidated: PARAGRAPH_IDS_LIVE_VALIDATED
+  }
+];
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56424,7 +56434,11 @@ var writerProbeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema2,
+    appendPlainText: featureSchema2,
+    setParagraphId: featureSchema2.optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
   available: external_exports.boolean(),
@@ -56613,9 +56627,12 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const every = (status) => Object.fromEntries(
+    WRITER_FEATURES.map((feature) => [feature.key, status])
+  );
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: every({ available: false, reason, detail })
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56645,34 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
+  const probed = probe.features;
+  const features = Object.fromEntries(
+    WRITER_FEATURES.map((row) => [row.key, featureStatus(probed[row.probeKey], row, deps.env)])
+  );
+  return { ...base, probe, features };
+}
+function featureStatus(feature, row, env) {
+  if (!feature)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: `The writer probe does not report ${row.probeKey}`
+    };
   if (!feature.available) {
     const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!row.liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57010,6 +57036,7 @@ var revisionToken = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
 function writerEnvelopeCode(helperCode, message) {
   switch (helperCode) {
     case "revision_conflict":
+    case "paragraph_changed":
       return "revision_conflict";
     case "verification_failed":
       return "verification_failed";
@@ -57136,6 +57163,110 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateWriterParagraphs.ts
+var revision4 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
+var PARAGRAPH_URL = /^applenotes:\/\/showNote\?identifier=[0-9A-F-]{36}&paragraphID=[0-9A-F-]{36}$/;
+var setBase = {
+  identifier: external_exports.string(),
+  blockIndex: external_exports.number().int(),
+  styleType: external_exports.number().int(),
+  paragraphId: external_exports.string().regex(UUID_PATTERN),
+  url: external_exports.string().regex(PARAGRAPH_URL),
+  previousParagraphId: external_exports.string().nullable(),
+  previousParagraphIdStatus: external_exports.enum(["unique", "shared", "missing"]),
+  revisionBefore: revision4,
+  revisionAfter: revision4
+};
+var setParagraphIdSchema = external_exports.union([
+  external_exports.object({
+    ...setBase,
+    status: external_exports.literal("unchanged"),
+    changed: external_exports.literal(false),
+    committed: external_exports.literal(false)
+  }).passthrough(),
+  external_exports.object({
+    ...setBase,
+    status: external_exports.literal("updated"),
+    changed: external_exports.literal(true),
+    committed: external_exports.literal(true),
+    verified: external_exports.literal(true),
+    modificationDate: external_exports.string().nullable(),
+    ...writeSyncFields
+  }).passthrough()
+]);
+function invalid3(message) {
+  throw new PrivateWriteError("invalid_request", message, false);
+}
+function setParagraphId(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  if (!Number.isInteger(request.blockIndex) || request.blockIndex < 0)
+    invalid3("blockIndex must be a non-negative integer from list-note-paragraphs");
+  if (!request.expectedText.replace(/￼/g, "").trim())
+    invalid3("expectedText must be the paragraph text from list-note-paragraphs");
+  assertRevision(request.ifRevision);
+  if (request.paragraphId !== void 0 && !UUID_PATTERN.test(request.paragraphId))
+    invalid3("paragraphId must be a UUID");
+  requireLiveValidated(PARAGRAPH_IDS_LIVE_VALIDATED, "native-set-paragraph-id", deps.env);
+  const fields = {
+    identifier: request.identifier,
+    blockIndex: request.blockIndex,
+    expectedText: request.expectedText,
+    ifRevision: request.ifRevision
+  };
+  if (request.paragraphId !== void 0) fields.paragraphId = request.paragraphId.toUpperCase();
+  return parseWriterResult(
+    setParagraphIdSchema,
+    callPrivateWriter("set_paragraph_id", fields, deps),
+    true
+  );
+}
+
+// src/tools/privateWriterParagraphTools.ts
+var nudgeInput = {
+  nudge: external_exports.boolean().optional().describe(
+    "After a verified write, ask Notes.app to upload the changed note(s) by moving each into its own folder (default false)"
+  ),
+  nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+};
+function registerPrivateWriterParagraphTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-set-paragraph-id",
+    "Use when: list-note-paragraphs shows paragraphIdStatus `shared` or `missing` (or get-paragraph-link refuses with paragraph-id-shared / paragraph-id-missing) for a paragraph you need to link to. Gives that paragraph an identifier of its own so its paragraph link opens exactly there.\nReturns: `status` (`updated`, or `unchanged` when the paragraph already had a unique identifier and nothing was written), `paragraphId`, `url` (applenotes://showNote?identifier=\u2026&paragraphID=\u2026), `previousParagraphId`, `previousParagraphIdStatus`, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the paragraph is already `unique` (use its url from list-note-paragraphs), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API. Needs the paragraph's `blockIndex` and exact `text` (as expectedText) from list-note-paragraphs, and a fresh `revision` from native-note-state as ifRevision; refuses on any change (revision_conflict or paragraph_changed, committed: false). Only the paragraph style's identifier changes: a fresh read-back verifies the text, the paragraph's other attributes, every other paragraph's identifier, and that no other paragraph carries the new one. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until live-validated.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      blockIndex: external_exports.number().int().min(0).describe("The paragraph's `blockIndex` from list-note-paragraphs"),
+      expectedText: external_exports.string().min(1).max(5e4).describe("The paragraph's `text` from list-note-paragraphs"),
+      ifRevision: revisionToken.describe(
+        "The `revision` returned by native-note-state for this note"
+      ),
+      paragraphId: notesUuid2.optional().describe("Optional UUID to assign; must not be in use in the note. Omit to mint one"),
+      ...nudgeInput
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = setParagraphId(
+        {
+          identifier,
+          blockIndex: args.blockIndex,
+          expectedText: args.expectedText,
+          ifRevision: args.ifRevision,
+          paragraphId: args.paragraphId
+        },
+        deps.writer
+      );
+      if (!args.nudge || result.status !== "updated") return { ...result };
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57304,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivateWriterParagraphTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

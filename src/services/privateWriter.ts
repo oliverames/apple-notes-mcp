@@ -73,6 +73,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   read_note_state: "read",
   append_plain_text: "write",
   read_sync_state: "read",
+  set_paragraph_id: "write",
 };
 
 /**
@@ -80,6 +81,28 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
  * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
  */
 export const APPEND_LIVE_VALIDATED = false;
+
+/** Same gate for minting paragraph identifiers (native-set-paragraph-id). */
+export const PARAGRAPH_IDS_LIVE_VALIDATED = false;
+
+/**
+ * One row per writer feature that `native-writer-status` reports: its key in
+ * `features`, the writer probe's feature key, and its live-validation flag.
+ */
+export interface WriterFeature {
+  key: string;
+  probeKey: string;
+  liveValidated: boolean;
+}
+
+export const WRITER_FEATURES: readonly WriterFeature[] = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  {
+    key: "setParagraphId",
+    probeKey: "setParagraphId",
+    liveValidated: PARAGRAPH_IDS_LIVE_VALIDATED,
+  },
+];
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -228,7 +251,11 @@ export const writerProbeSchema = z
       .passthrough(),
     syncHostRunning: z.boolean(),
     features: z
-      .object({ readNoteState: featureSchema, appendPlainText: featureSchema })
+      .object({
+        readNoteState: featureSchema,
+        appendPlainText: featureSchema,
+        setParagraphId: featureSchema.optional(),
+      })
       .passthrough(),
   })
   .passthrough();
@@ -494,7 +521,9 @@ export interface PrivateWriterCapabilities {
   writesEnabled: boolean;
   installation: WriterInstallationReport;
   probe: PrivateWriterProbe | null;
-  features: { appendPlainText: PrivateWriterFeatureStatus };
+  features: Record<string, PrivateWriterFeatureStatus> & {
+    appendPlainText: PrivateWriterFeatureStatus;
+  };
 }
 
 /** Never throws. Runs the live probe only when both switches are on and the writer is installed. */
@@ -505,12 +534,16 @@ export function privateWriterCapabilities(
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const every = (status: PrivateWriterFeatureStatus) =>
+    Object.fromEntries(
+      WRITER_FEATURES.map((feature) => [feature.key, status])
+    ) as PrivateWriterCapabilities["features"];
   const off = (
     reason: PrivateWriterUnavailableReason,
     detail: string | null
   ): PrivateWriterCapabilities => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } },
+    features: every({ available: false, reason, detail }),
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -523,26 +556,41 @@ export function privateWriterCapabilities(
   } catch (error) {
     return off("helper_unreachable", error instanceof Error ? error.message : String(error));
   }
-  const feature = probe.features.appendPlainText;
-  let append: PrivateWriterFeatureStatus;
+  const probed = probe.features as Record<string, z.infer<typeof featureSchema> | undefined>;
+  const features = Object.fromEntries(
+    WRITER_FEATURES.map((row) => [row.key, featureStatus(probed[row.probeKey], row, deps.env)])
+  ) as PrivateWriterCapabilities["features"];
+  return { ...base, probe, features };
+}
+
+/** One feature's status from its probe entry and live-validation flag. */
+function featureStatus(
+  feature: z.infer<typeof featureSchema> | undefined,
+  row: WriterFeature,
+  env: NodeJS.ProcessEnv
+): PrivateWriterFeatureStatus {
+  if (!feature)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: `The writer probe does not report ${row.probeKey}`,
+    };
   if (!feature.available) {
     const reason =
       feature.reason === "store_unavailable" || feature.reason === "disabled"
         ? (feature.reason as PrivateWriterUnavailableReason)
         : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!row.liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }
