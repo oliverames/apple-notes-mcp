@@ -11,9 +11,11 @@
 //   compare BEFORE.json AFTER.json RESPONSE.json
 //       prove that every UTF-16 unit outside the edited ranges kept its exact
 //       serialized attribute run (paragraph style, checklist state, fonts,
-//       inline formatting, attachment reference), that the attachment rows
-//       and every other note and object row are byte-identical, and that the
-//       text inside the edits is what the writer reported.
+//       inline formatting, attachment reference), that every attachment row
+//       other than one the writer reported in `removedAttachments` and every
+//       other note and object row are byte-identical, and that the text
+//       inside the edits is what the writer reported. A removed attachment's
+//       row may be unchanged, changed, or gone; its state is printed.
 //
 // Prints counts and offsets only, never note text.
 import { execFileSync } from "node:child_process";
@@ -103,13 +105,23 @@ function snapshot(store, uuid, out) {
     .trim()
     .replace(/'/g, "");
   const note = decodeNote(Buffer.from(hex, "hex"));
-  const attachments = sql(
+  // One digest per attachment row, keyed by its identifier (JSON output keeps
+  // multi-line text values on one record).
+  const attachmentJson = sql(
     store,
-    `${param}SELECT * FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE = :pk ORDER BY Z_PK;\n`
-  );
+    `.parameter set :pk ${pk}\n.mode json\nSELECT * FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE = :pk ORDER BY Z_PK;\n`
+  ).trim();
+  const attachments = {};
+  for (const row of attachmentJson ? JSON.parse(attachmentJson) : [])
+    attachments[String(row.ZIDENTIFIER ?? `pk${row.Z_PK}`).toLowerCase()] = {
+      digest: sha(JSON.stringify(row)),
+      markedForDeletion: Boolean(row.ZMARKEDFORDELETION),
+    };
+  // Everything else: the note's own row is compared through its text and
+  // runs, its attachment rows row by row above.
   const others = sql(
     store,
-    `${param}SELECT * FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK != :pk ORDER BY Z_PK;\n` +
+    `${param}SELECT * FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK != :pk AND ZNOTE IS NOT :pk ORDER BY Z_PK;\n` +
       `SELECT Z_PK, ZNOTE, hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE IS NOT :pk ORDER BY Z_PK;\n`
   );
   const state = {
@@ -117,8 +129,8 @@ function snapshot(store, uuid, out) {
     textLength: note.text.length,
     text: note.text,
     keys: note.keys,
-    attachmentRows: attachments.trim() ? attachments.trim().split("\n").length : 0,
-    attachmentDigest: sha(attachments),
+    attachmentRows: Object.keys(attachments).length,
+    attachments,
     othersDigest: sha(others),
   };
   writeFileSync(out, JSON.stringify(state));
@@ -170,8 +182,26 @@ function compare(beforePath, afterPath, responsePath) {
     failures.push(
       `writer reported lengthAfter ${response.lengthAfter}, store has ${after.textLength}`
     );
-  if (before.attachmentDigest !== after.attachmentDigest)
-    failures.push("an attachment row (including table data) changed");
+  const removed = new Set((response.removedAttachments ?? []).map((id) => id.toLowerCase()));
+  const removedState = [];
+  for (const [id, row] of Object.entries(before.attachments)) {
+    if (removed.has(id)) {
+      const now = after.attachments[id];
+      removedState.push(
+        !now
+          ? "gone"
+          : now.digest === row.digest
+            ? "row unchanged"
+            : `row changed (markedForDeletion ${now.markedForDeletion})`
+      );
+      continue;
+    }
+    if (!after.attachments[id]) failures.push("an untargeted attachment row left the note");
+    else if (after.attachments[id].digest !== row.digest)
+      failures.push("an untargeted attachment row (including table data) changed");
+  }
+  for (const id of Object.keys(after.attachments))
+    if (!before.attachments[id]) failures.push("a new attachment row appeared in the note");
   // EDIT_CHECK_NOTE_ONLY=1 skips the whole-store comparison, for reading a
   // live store where Notes and sync legitimately change other rows.
   if (process.env.EDIT_CHECK_NOTE_ONLY !== "1" && before.othersDigest !== after.othersDigest)
@@ -182,7 +212,9 @@ function compare(beforePath, afterPath, responsePath) {
   }
   console.log(
     `ok: ${unchangedUnits} unchanged UTF-16 units kept their serialized runs across ` +
-      `${targets.length} edited range(s); ${before.attachmentRows} attachment rows identical` +
+      `${targets.length} edited range(s); ${before.attachmentRows - removedState.length} ` +
+      `untargeted attachment rows identical` +
+      (removedState.length ? `; removed attachment rows: ${removedState.join(", ")}` : "") +
       (process.env.EDIT_CHECK_NOTE_ONLY === "1"
         ? " (note-only check)"
         : "; all other rows identical")

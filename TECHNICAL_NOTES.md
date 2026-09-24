@@ -909,16 +909,23 @@ characters outside them keep their CRDT identity and attributes.
   `revisionBefore` it reproduces exactly the planned targets. The writer
   does not compare the two plans itself; both return `planDigest`, so a
   caller can.
-- Before the save, only the note, its note data, and its cloud state may be
-  dirty. Anything else, such as Notes re-pointing an attachment it uses for
-  the title, rolls back as `unexpected_side_effect`.
+- Before the save, only the note, its note data, its cloud state, and the
+  row of an attachment the plan removes from the body may be dirty. Anything
+  else, such as Notes re-pointing an attachment it uses for the title, rolls
+  back as `unexpected_side_effect`. A removed attachment's row may be updated
+  but not deleted; its changed keys are reported as
+  `removedAttachmentRowChanges`.
 - After the save, a new read-only stack re-reads the note. It checks that
   the text equals the plan, that every unchanged stretch has the same
   canonical attribute runs as before (paragraph style and todo, fonts, hints,
   links, timestamps, attachment references), that the edited ranges carry the
   planned formatting (timestamps ignored), that the attachment glyph sequence
-  equals the one in the planned text, and that the note's attachment rows are
-  the same set. The result reports this as `preservation`.
+  equals the one in the planned text, and that every attachment row other
+  than a removed one is still the note's with the same stored values (a
+  digest of each non-transient, non-transformed attribute, data hashed, plus
+  the owning note), with no new row. The result reports this as
+  `preservation`, including `otherAttachmentRowsUnchanged` and, per removed
+  attachment, `rowStillInNote` and `markedForDeletion`.
 
 Canonical attribute values use each value's description with pointers
 removed, so a class whose description is unstable makes verification fail,
@@ -927,15 +934,47 @@ never pass. The copy-store script also checks each step with
 itself (no writer, no NotesShared) and compares every UTF-16 unit outside the
 edits with its serialized attribute run, plus a digest of every other row.
 
-Room for later work: selectors resolve through `ResolveSelector()` by `kind`
-(`text`, `style`, `blank`), and the client schema is a union on the same key.
-An attachment selector would add a kind whose targets may contain U+FFFC
-(`TargetMayTouchAttachment()`). Verification already compares glyphs with
-the planned text, not the old one, so a planned attachment removal would
-verify there, but the attachment-row check would then need the planned set.
-Line-break trimming (for example collapsing runs of empty body paragraphs)
-fits the same way, as a selector kind that returns the ranges of the extra
-newlines.
+#### Attachment selector
+
+Selectors resolve through `ResolveSelector()` by `kind` (`text`, `style`,
+`blank`, `attachment`), and the client schema is a union on the same key.
+`{kind: "attachment"}` names exactly one of the note's attachment rows by
+`identifier` (the row's UUID, which is also the `attachmentIdentifier` of the
+`ICTTAttachment` value on its U+FFFC glyph), `id` (the row's x-coredata URI,
+compared with the managed object's own URI, so no SQL is needed), or
+`ordinal` (1-based among body glyphs whose identifier belongs to one of the
+note's `attachments` rows). Glyphs of inline objects (`inlineAttachments`:
+hashtags, mentions, note links) are skipped by every mode, so they are never
+selectable and not counted. Per role:
+
+| Role | Target |
+|---|---|
+| `replace`, `position: "self"` | the glyph (length 1); empty text removes it |
+| `replace`, `"before"` / `"after"` | the empty range at the glyph or just after it; text is inserted inline and takes the glyph's attributes minus the attachment and timestamp |
+| `delete_paragraph` | the glyph's paragraph, refused (`unsupported_selection`) unless it holds only that glyph and whitespace |
+| `insert_after` / `insert_before` anchor | the glyph's paragraph |
+
+`TargetMayTouchAttachment()` returns YES only for this kind, and
+`RequireNoAttachmentGlyph()` then allows exactly the glyph location the
+selector resolved; any other U+FFFC in the range, such as a second
+attachment in the same paragraph, is refused. The plan reports each target's
+`attachment` (identifier, UTI, ordinal) and `removedAttachments`: identifiers
+whose glyph is in the snapshot but not in the planned text. Only those rows
+are allowed to be dirty before the save and exempt from the row digest check
+after it.
+
+Removing a glyph does not delete the attachment's row or media. Whether
+NotesShared marks the row for deletion during the save, or Notes.app does it
+later, has not been observed yet; the apply reports it rather than assuming
+it. The copy-store script adds a caption beside the first attachment and
+removes it, inserts and deletes a paragraph anchored on it (both restore the
+note exactly), and then removes the attachment on the copy.
+`check-edit-preservation.mjs` compares attachment rows one by one and skips
+only the rows named in the response's `removedAttachments`.
+
+Room for later work: line-break trimming (for example collapsing runs of
+empty body paragraphs) fits the same way, as a selector kind or operation
+that returns the ranges of the extra newlines.
 
 ### Still open
 

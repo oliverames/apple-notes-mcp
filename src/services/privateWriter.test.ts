@@ -81,6 +81,7 @@ process.stdin.on("end", () => {
       const plan = { identifier: req.identifier, revisionBefore: "r1:" + "e".repeat(64), planDigest: "p1:x", operationCount: req.operations.length, targetCount: 1, operations: [{ index: 0, op: req.operations[0].op, matchedCount: 1, targets: [{ paragraphIndex: 2, paragraphStyle: "body", location: 40, length: 5, newLength: 5 }] }], lengthBefore: 100, lengthAfter: 100, unchangedUTF16: 95, wouldChange: mode !== "edit-noop", titleChanged: false, attachmentGlyphs: 1, storeKind: "live", echo: req };
       if (req.action === "plan_edit") out({ status: "planned", dryRun: true, committed: false, ...plan });
       if (mode === "edit-noop") out({ status: "unchanged", dryRun: false, committed: false, revisionAfter: plan.revisionBefore, ...plan });
+      if (mode === "edit-attachment") { const id = req.operations[0].selector.identifier; out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 99, formattingOutsideEditsVerified: true, attachmentGlyphs: 2, attachmentGlyphSequenceVerified: true, attachmentRows: 3, attachmentRowsVerified: true, otherAttachmentRowsUnchanged: 2, removedAttachments: [{ identifier: id, rowStillInNote: true, markedForDeletion: false }] }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan, attachmentGlyphs: 3, attachmentGlyphsAfter: 2, removedAttachments: [id] }); }
       out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 95, formattingOutsideEditsVerified: true, attachmentGlyphs: 1, attachmentGlyphSequenceVerified: true, attachmentRows: 1, attachmentRowsVerified: true }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan });
     }
     default:
@@ -657,6 +658,12 @@ describe("edit operation schema", () => {
     expect(ok({ op: "delete_paragraph", selector: { kind: "blank", style: "body" } })).toBe(false);
     expect(ok({ op: "delete_paragraph", selector: { kind: "attachment", id: "x" } })).toBe(false);
     expect(
+      ok({
+        op: "delete_paragraph",
+        selector: { kind: "attachment", id: "x-coredata://ABC/ICNote/p1" },
+      })
+    ).toBe(false);
+    expect(
       ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "title", text: "t" }] })
     ).toBe(false);
     expect(ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "body" }] })).toBe(
@@ -672,6 +679,98 @@ describe("edit operation schema", () => {
     expect(ok({ op: "set_title", replacement: { text: "" } })).toBe(false);
     expect(ok({ op: "rewrite", selector: { text: "a" } })).toBe(false);
     expect(ok({ ...REPLACE[0], extra: 1 })).toBe(false);
+  });
+});
+
+describe("attachment selector schema", () => {
+  const ok = (op: unknown) => editOperationSchema.safeParse(op).success;
+  const ATTACHMENT = "3F2504E0-4F89-11D3-9A0C-0305E82C3301";
+  const CORE_DATA = "x-coredata://ABC-123/ICAttachment/p42";
+
+  it("names one attachment by identifier, x-coredata id, or ordinal in every role", () => {
+    for (const named of [{ identifier: ATTACHMENT }, { id: CORE_DATA }, { ordinal: 2 }]) {
+      const selector = { kind: "attachment", ...named };
+      expect(ok({ op: "replace", selector, replacement: { text: "" } })).toBe(true);
+      expect(ok({ op: "delete_paragraph", selector })).toBe(true);
+      expect(
+        ok({ op: "insert_after", anchor: selector, blocks: [{ type: "body", text: "x" }] })
+      ).toBe(true);
+      expect(
+        ok({ op: "insert_before", anchor: selector, blocks: [{ type: "body", text: "x" }] })
+      ).toBe(true);
+    }
+    for (const position of ["self", "before", "after"])
+      expect(
+        ok({
+          op: "replace",
+          selector: { kind: "attachment", ordinal: 1, position },
+          replacement: { runs: [{ text: "caption", italic: true }] },
+        })
+      ).toBe(true);
+  });
+
+  it("refuses a selector that names zero or several attachments, or a bad id", () => {
+    const replace = (selector: unknown) => ({
+      op: "replace",
+      selector,
+      replacement: { text: "x" },
+    });
+    expect(ok(replace({ kind: "attachment" }))).toBe(false);
+    expect(ok(replace({ kind: "attachment", identifier: ATTACHMENT, ordinal: 1 }))).toBe(false);
+    expect(ok(replace({ kind: "attachment", id: CORE_DATA, identifier: ATTACHMENT }))).toBe(false);
+    expect(ok(replace({ kind: "attachment", identifier: "not-a-uuid" }))).toBe(false);
+    expect(ok(replace({ kind: "attachment", ordinal: 0 }))).toBe(false);
+    expect(ok(replace({ kind: "attachment", ordinal: 1, position: "inside" }))).toBe(false);
+    expect(ok(replace({ kind: "attachment", ordinal: 1, match: "equals" }))).toBe(false);
+    // position is a replace-only field.
+    expect(
+      ok({
+        op: "delete_paragraph",
+        selector: { kind: "attachment", ordinal: 1, position: "after" },
+      })
+    ).toBe(false);
+    expect(
+      ok({
+        op: "insert_after",
+        anchor: { kind: "attachment", ordinal: 1, position: "after" },
+        blocks: [{ type: "body", text: "x" }],
+      })
+    ).toBe(false);
+    // Replacement text still may not carry a glyph.
+    expect(
+      ok({
+        op: "replace",
+        selector: { kind: "attachment", ordinal: 1 },
+        replacement: { text: "\uFFFC" },
+      })
+    ).toBe(false);
+  });
+
+  it("passes an attachment edit through and reports what the read-back proved", () => {
+    install();
+    const operations = [
+      {
+        op: "replace" as const,
+        selector: { kind: "attachment" as const, identifier: ATTACHMENT },
+        replacement: { text: "" },
+      },
+    ];
+    const r = editNote(
+      { identifier: NOTE, dryRun: false, ifRevision: REV, operations },
+      deps({ ...UNVERIFIED, FAKE_MODE: "edit-attachment" })
+    );
+    expect(r).toMatchObject({
+      status: "updated",
+      removedAttachments: [ATTACHMENT],
+      preservation: {
+        attachmentRowsVerified: true,
+        otherAttachmentRowsUnchanged: 2,
+        removedAttachments: [
+          { identifier: ATTACHMENT, rowStillInNote: true, markedForDeletion: false },
+        ],
+      },
+    });
+    expect((r as Record<string, unknown>).echo).toMatchObject({ action: "edit_note", operations });
   });
 });
 

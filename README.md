@@ -2398,7 +2398,29 @@ snapshot of the note:
 
 `expectedCount` (default 1) must equal the number of matches, and
 `occurrence` picks one of them. Matching is case-sensitive, stays inside one
-paragraph, and never touches an attachment glyph.
+paragraph, and never touches an attachment glyph unless an attachment
+selector names it.
+
+An attachment selector, `{kind: "attachment", identifier | id | ordinal}`,
+names one of the note's attachments by its Notes UUID or x-coredata id (both
+from `get-note-structure`; `list-attachments` gives the id) or by its
+1-based position among the note's attachments in body order. Inline objects
+(hashtags, mentions, note links) are not counted and cannot be selected.
+
+- In `replace`, `position: "self"` (the default) replaces the attachment with
+  the replacement text, and empty text removes it from the body.
+  `position: "before"` or `"after"` inserts the text inline beside it.
+- In `delete_paragraph`, it removes the attachment's own paragraph, which must
+  hold nothing but the attachment and whitespace.
+- As an `insert_after` / `insert_before` anchor, it names the paragraph that
+  holds the attachment.
+
+Only the named attachment's glyph may be inside an edited range. The plan
+lists `removedAttachments`. The apply proves that every other attachment row
+still belongs to the note with the same stored values and reports what
+happened to each removed attachment's row (`rowStillInNote`,
+`markedForDeletion`). Removing an attachment from the body does not delete its
+file; Notes decides when to clean up the row.
 
 Always call it twice. `dryRun: true` is read-only and returns the plan
 (targets, `lengthBefore`/`lengthAfter`, `unchangedUTF16`, `wouldChange`) and
@@ -2407,7 +2429,7 @@ Always call it twice. `dryRun: true` is read-only and returns the plan
 fresh Core Data stack and returns `preservation`, which says that every
 character outside the edits kept its formatting, that the attachment glyph
 sequence is the planned one, and that the note's attachment rows did not
-change. Refusals commit nothing: `revision_conflict`, `match_count_mismatch`,
+change (apart from an attachment the request removed). Refusals commit nothing: `revision_conflict`, `match_count_mismatch`,
 `mixed_formatting` (use `runs`), `conflicting_operations`, `title_invariant`,
 `unsupported_selection`, and `unexpected_side_effect` (the edit would change
 another object, for example an attachment Notes uses for the title). Takes

@@ -45,6 +45,7 @@ import {
   type PrivateHelperManifest,
   type PrivateUnavailableReason,
 } from "./privateHelper.js";
+import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
 
 export type { PrivateHelperDeps };
 
@@ -556,9 +557,9 @@ const replacementSchema = z.union([
 ]);
 
 /**
- * Selectors are keyed by `kind` so a later kind (an attachment selector, or
- * a run of blank lines for line-break trimming) is one more union member
- * here and one more branch in the writer's ResolveSelector().
+ * Selectors are keyed by `kind` so a later kind (a run of blank lines for
+ * line-break trimming) is one more union member here and one more branch in
+ * the writer's ResolveSelector().
  */
 const textSelector = z
   .object({
@@ -578,6 +579,41 @@ const blankSelector = z
     occurrence: count.optional(),
   })
   .strict();
+
+/** An attachment's x-coredata id, as list-attachments and get-note-structure return it. */
+const attachmentCoreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICAttachment\/p\d+$/i);
+
+/**
+ * One of the note's attachments (not an inline object such as a hashtag or
+ * note link), named by exactly one of `identifier` (its Notes UUID), `id`
+ * (its x-coredata id), or `ordinal` (1-based, in body order). It is the only
+ * selector whose target may contain an attachment glyph, and then only the
+ * glyph of the attachment it names. In a replace, `position` "self" (default)
+ * replaces the glyph (empty text removes the attachment from the body), and
+ * "before"/"after" insert the replacement text inline beside it. In
+ * delete_paragraph it names the attachment's own paragraph, which must hold
+ * nothing else; as an insert anchor, the paragraph holding it.
+ */
+const attachmentSelectorFields = {
+  kind: z.literal("attachment"),
+  identifier: z.string().regex(UUID_PATTERN).optional(),
+  id: attachmentCoreDataId.optional(),
+  ordinal: count.optional(),
+  occurrence: count.optional(),
+};
+const oneAttachment = <T extends { identifier?: string; id?: string; ordinal?: number }>(s: T) =>
+  [s.identifier, s.id, s.ordinal].filter((v) => v !== undefined).length === 1;
+const oneAttachmentMessage = {
+  message: "an attachment selector needs exactly one of identifier, id, or ordinal",
+};
+const attachmentSelector = z
+  .object(attachmentSelectorFields)
+  .strict()
+  .refine(oneAttachment, oneAttachmentMessage);
+const attachmentReplaceSelector = z
+  .object({ ...attachmentSelectorFields, position: z.enum(["self", "before", "after"]).optional() })
+  .strict()
+  .refine(oneAttachment, oneAttachmentMessage);
 
 const blockSchema = z
   .object({
@@ -599,7 +635,7 @@ const insertSchema = (op: "insert_after" | "insert_before") =>
     .object({
       op: z.literal(op),
       id: operationId,
-      anchor: z.union([textSelector, styleSelector]),
+      anchor: z.union([textSelector, styleSelector, attachmentSelector]),
       blocks: z.array(blockSchema).min(1).max(200),
       expectedCount: count.optional(),
     })
@@ -610,7 +646,10 @@ export const editOperationSchema = z.discriminatedUnion("op", [
     .object({
       op: z.literal("replace"),
       id: operationId,
-      selector: textSelector.extend({ match: z.enum(["substring", "equals"]).optional() }).strict(),
+      selector: z.union([
+        textSelector.extend({ match: z.enum(["substring", "equals"]).optional() }).strict(),
+        attachmentReplaceSelector,
+      ]),
       replacement: replacementSchema,
       expectedCount: count.optional(),
     })
@@ -619,7 +658,7 @@ export const editOperationSchema = z.discriminatedUnion("op", [
     .object({
       op: z.literal("delete_paragraph"),
       id: operationId,
-      selector: z.union([textSelector, blankSelector]),
+      selector: z.union([textSelector, blankSelector, attachmentSelector]),
       expectedCount: count.optional(),
     })
     .strict(),
@@ -670,6 +709,10 @@ const editPlanFields = {
   wouldChange: z.boolean(),
   titleChanged: z.boolean(),
   attachmentGlyphs: z.number().int(),
+  /** Glyphs left in the planned text. */
+  attachmentGlyphsAfter: z.number().int().optional(),
+  /** Identifiers of attachments the plan removes from the body (attachment selectors only). */
+  removedAttachments: z.array(z.string()).optional(),
   storeKind: z.enum(["live", "copy"]),
 };
 
@@ -691,6 +734,20 @@ const preservationSchema = z
     attachmentGlyphSequenceVerified: z.literal(true),
     attachmentRows: z.number().int(),
     attachmentRowsVerified: z.literal(true),
+    /** Attachment rows other than a removed one, proven present with the same stored values. */
+    otherAttachmentRowsUnchanged: z.number().int().optional(),
+    /** What became of each removed attachment's row (Notes may keep it or mark it for deletion). */
+    removedAttachments: z
+      .array(
+        z
+          .object({
+            identifier: z.string(),
+            rowStillInNote: z.boolean(),
+            markedForDeletion: z.boolean().nullable(),
+          })
+          .passthrough()
+      )
+      .optional(),
   })
   .passthrough();
 

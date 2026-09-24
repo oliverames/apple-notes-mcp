@@ -56662,6 +56662,20 @@ var blankSelector = external_exports.object({
   style: styleName.exclude(["title", "body"]),
   occurrence: count.optional()
 }).strict();
+var attachmentCoreDataId2 = external_exports.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICAttachment\/p\d+$/i);
+var attachmentSelectorFields = {
+  kind: external_exports.literal("attachment"),
+  identifier: external_exports.string().regex(UUID_PATTERN).optional(),
+  id: attachmentCoreDataId2.optional(),
+  ordinal: count.optional(),
+  occurrence: count.optional()
+};
+var oneAttachment = (s) => [s.identifier, s.id, s.ordinal].filter((v) => v !== void 0).length === 1;
+var oneAttachmentMessage = {
+  message: "an attachment selector needs exactly one of identifier, id, or ordinal"
+};
+var attachmentSelector = external_exports.object(attachmentSelectorFields).strict().refine(oneAttachment, oneAttachmentMessage);
+var attachmentReplaceSelector = external_exports.object({ ...attachmentSelectorFields, position: external_exports.enum(["self", "before", "after"]).optional() }).strict().refine(oneAttachment, oneAttachmentMessage);
 var blockSchema = external_exports.object({
   type: styleName.exclude(["title"]),
   text: paragraphText(0).optional(),
@@ -56675,7 +56689,7 @@ var blockSchema = external_exports.object({
 var insertSchema = (op) => external_exports.object({
   op: external_exports.literal(op),
   id: operationId,
-  anchor: external_exports.union([textSelector, styleSelector]),
+  anchor: external_exports.union([textSelector, styleSelector, attachmentSelector]),
   blocks: external_exports.array(blockSchema).min(1).max(200),
   expectedCount: count.optional()
 }).strict();
@@ -56683,14 +56697,17 @@ var editOperationSchema = external_exports.discriminatedUnion("op", [
   external_exports.object({
     op: external_exports.literal("replace"),
     id: operationId,
-    selector: textSelector.extend({ match: external_exports.enum(["substring", "equals"]).optional() }).strict(),
+    selector: external_exports.union([
+      textSelector.extend({ match: external_exports.enum(["substring", "equals"]).optional() }).strict(),
+      attachmentReplaceSelector
+    ]),
     replacement: replacementSchema,
     expectedCount: count.optional()
   }).strict(),
   external_exports.object({
     op: external_exports.literal("delete_paragraph"),
     id: operationId,
-    selector: external_exports.union([textSelector, blankSelector]),
+    selector: external_exports.union([textSelector, blankSelector, attachmentSelector]),
     expectedCount: count.optional()
   }).strict(),
   insertSchema("insert_after"),
@@ -56731,6 +56748,10 @@ var editPlanFields = {
   wouldChange: external_exports.boolean(),
   titleChanged: external_exports.boolean(),
   attachmentGlyphs: external_exports.number().int(),
+  /** Glyphs left in the planned text. */
+  attachmentGlyphsAfter: external_exports.number().int().optional(),
+  /** Identifiers of attachments the plan removes from the body (attachment selectors only). */
+  removedAttachments: external_exports.array(external_exports.string()).optional(),
   storeKind: external_exports.enum(["live", "copy"])
 };
 var editPlanSchema = external_exports.object({
@@ -56745,7 +56766,17 @@ var preservationSchema = external_exports.object({
   attachmentGlyphs: external_exports.number().int(),
   attachmentGlyphSequenceVerified: external_exports.literal(true),
   attachmentRows: external_exports.number().int(),
-  attachmentRowsVerified: external_exports.literal(true)
+  attachmentRowsVerified: external_exports.literal(true),
+  /** Attachment rows other than a removed one, proven present with the same stored values. */
+  otherAttachmentRowsUnchanged: external_exports.number().int().optional(),
+  /** What became of each removed attachment's row (Notes may keep it or mark it for deletion). */
+  removedAttachments: external_exports.array(
+    external_exports.object({
+      identifier: external_exports.string(),
+      rowStillInNote: external_exports.boolean(),
+      markedForDeletion: external_exports.boolean().nullable()
+    }).passthrough()
+  ).optional()
 }).passthrough();
 var editResultSchema = external_exports.union([
   external_exports.object({
@@ -57331,7 +57362,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
     server2,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text or by style and position (for example the 2nd subheading), delete a paragraph or list row, or retitle. Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\nReturns: per-operation matched counts and target ranges, lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and the attachment rows), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never touches attachments or inline objects.\nSafety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, delete a paragraph or list row, retitle, or replace, remove, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments). Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\nReturns: per-operation matched counts and target ranges, lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. removedAttachments (identifiers the plan takes out of the body). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive and never crosses a line break. Only an attachment selector touches an attachment, and only the one it names; inline objects (hashtags, mentions, note links) are never selectable.\nSafety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -57339,7 +57370,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
       ifRevision: revisionToken.optional().describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
       requireNonSystemPaper: external_exports.boolean().optional().describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
       operations: external_exports.array(editOperationSchema).min(1).max(MAX_EDIT_OPERATIONS).describe(
-        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}. expectedCount (default 1) must equal the full match count; occurrence picks one of them."
+        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}. An attachment replace with position 'self' and text '' removes that attachment from the body; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else. ordinal counts the note's attachments in body order. expectedCount (default 1) must equal the full match count; occurrence picks one of them."
       ),
       nudge: external_exports.boolean().optional().describe(
         "After a verified apply, ask Notes.app to upload the note by moving it into its own folder (default false)"

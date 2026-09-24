@@ -103,16 +103,38 @@ describe("private writer source contract", () => {
       /OpenContext\(store, NO\)[\s\S]*SaveOrFail\(context\)[\s\S]*OpenContext\(store, YES\)/
     );
     expect(apply).toMatch(/VerifyAgainstPlan\(persisted, plan\)/);
-    expect(apply).toMatch(/AttachmentIdentifiers\(reread\)/);
+    expect(apply).toMatch(/AttachmentRows\(reread\)/);
+    expect(apply).toMatch(
+      /VerifyAttachmentRows\(attachmentsBefore, AttachmentRowDigests\(rowsAfter\), plan\)/
+    );
     // Formatting outside the edits is compared run by run, including
     // timestamps, and the glyph sequence against the planned text.
     expect(CODE).toMatch(/CanonicalRuns\(plan\.snapshot, oldRange, NO\)/);
     expect(CODE).toMatch(
       /AttachmentGlyphs\(persisted\) isEqual:AttachmentGlyphs\(plan\.expected\)/
     );
-    // No target may contain an attachment glyph unless its selector kind allows it.
+    // Only an explicit attachment selector may put a glyph inside a target,
+    // and then only the one glyph it named.
     expect(CODE).toMatch(
-      /static BOOL TargetMayTouchAttachment\(NSString \*kind\) \{\s*\(void\)kind;\s*return NO;/
+      /static BOOL TargetMayTouchAttachment\(NSString \*kind\) \{\s*return \[kind isEqualToString:""\];\s*\}/
+    );
+    expect(SOURCE).toMatch(
+      /TargetMayTouchAttachment[\s\S]{0,200}return \[kind isEqualToString:@"attachment"\]/
+    );
+    expect(CODE).toMatch(
+      /if \(!TargetMayTouchAttachment\(kind\)\) allowedGlyph = NSNotFound;[\s\S]{0,400}if \(found\.location != allowedGlyph\)/
+    );
+    // Every RequireNoAttachmentGlyph call passes the glyph its selector named
+    // (or NSNotFound), never a free-form location.
+    const calls = [...CODE.matchAll(/RequireNoAttachmentGlyph\(snapshot,[^;]*\);/g)];
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const call of calls) expect(call[0]).toMatch(/, (?:NSNotFound|glyph|HitGlyph\(hit\))\);$/);
+    // A removed attachment's row may be updated before the save, never deleted.
+    expect(CODE).toMatch(
+      /for \(NSString \*key in plan\.removedAttachments\)[\s\S]{0,200}\[allowed addObject:row\]/
+    );
+    expect(CODE).toMatch(
+      /for \(NSManagedObject \*object in context\.deletedObjects\)\s*\[unexpected addObject/
     );
     // Only the note, its data, and its cloud state may be dirty before a save.
     expect(SOURCE).toMatch(
