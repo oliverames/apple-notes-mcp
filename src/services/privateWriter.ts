@@ -84,6 +84,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   set_highlight: "write",
   add_url_card: "write",
   set_paragraph_id: "write",
+  add_section_link: "write",
 };
 
 /**
@@ -101,6 +102,9 @@ export const EDIT_LIVE_VALIDATED = false;
 
 /** Same gate for structured compose (services/privateCompose.ts). */
 export const COMPOSE_LIVE_VALIDATED = false;
+
+/** Same gate for inserting native section-link chips (native-add-section-link). */
+export const SECTION_LINKS_LIVE_VALIDATED = false;
 
 /**
  * Checking or unchecking a checklist item has not passed live end-to-end
@@ -286,6 +290,7 @@ export const writerProbeSchema = z
         highlight: featureSchema.optional(),
         linkCard: featureSchema.optional(),
         setParagraphId: featureSchema.optional(),
+        addSectionLink: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -963,6 +968,11 @@ export const WRITER_FEATURES = [
     key: "setParagraphId",
     probeKey: "setParagraphId",
     liveValidated: PARAGRAPH_IDS_LIVE_VALIDATED,
+  },
+  {
+    key: "addSectionLink",
+    probeKey: "addSectionLink",
+    liveValidated: SECTION_LINKS_LIVE_VALIDATED,
   },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];

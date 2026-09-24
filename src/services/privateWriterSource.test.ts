@@ -246,6 +246,20 @@ describe("private writer source contract", () => {
     expect(SOURCE).toMatch(/sel_registerName\("setAttributes:range:"\)/);
   });
 
+  it("builds section-link chips through NotesShared and verifies both notes afresh", () => {
+    const body = handlerBody("HandleAddSectionLink");
+    expect(SOURCE).toMatch(
+      /"newParagraphLinkAttachmentWithIdentifier:toNote:paragraphName:paragraphID:"/
+    );
+    expect(body).toMatch(/ifTargetRevision/);
+    expect(body).toMatch(/RequireFeature\(FeatureSectionLinks\)/);
+    expect(body).toMatch(/SaveOrFail\(context\)/);
+    expect(body).toMatch(/OpenContext\(store, YES\)/);
+    expect(body).toMatch(/UniqueBlockWithUUID/);
+    // Only paragraph-link chips are cleared; note-link chips share the UTI.
+    expect(CODE).toMatch(/IsSectionLinkAttachment\(inlineAttachment\)\) return;/);
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);

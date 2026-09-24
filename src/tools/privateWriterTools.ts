@@ -81,6 +81,7 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
       return "unsupported";
     case "ambiguous":
     case "ambiguous_target":
+    case "ambiguous_paragraph":
       return "ambiguous";
     case "confirmation_required":
     case "match_count_mismatch":
@@ -347,12 +348,13 @@ export function registerPrivateWriterTools(
  * is reported inside `sync` instead of failing the tool.
  */
 export async function nudgeAfterWrite(
-  identifier: string,
+  identifier: string | string[],
   waitSeconds: number | undefined,
   deps: NudgeDeps
 ): Promise<Record<string, unknown>> {
+  const identifiers = Array.isArray(identifier) ? identifier : [identifier];
   try {
-    const report = await nudgeInPlace({ identifiers: [identifier], waitSeconds }, deps);
+    const report = await nudgeInPlace({ identifiers, waitSeconds }, deps);
     const { before: _before, after: _after, ...rest } = report;
     void _before;
     void _after;

@@ -1372,6 +1372,43 @@ the default body style. `scripts/test-private-helper-copy-store.sh` checks
 the result on a copy with upstream's own reader (`readNoteParagraphs`),
 which must report the paragraph as `unique` with the writer's `url`.
 
+### Section-link chips (macOS 27)
+
+A section link is the chip Notes pastes for Copy Link to Section: an
+`ICInlineAttachment` of type `com.apple.notes.inlinetextattachment.link`
+whose token is an `applenotes://showNote?identifier=<note>&paragraphID=<uuid>`
+link, shown in the body as one U+FFFC glyph. Upstream's `list-note-links` and
+`get-note-structure` read these as kind `section`; nothing upstream creates
+one. The writer's `add_section_link` action (`native-add-section-link`) does,
+in one save:
+
+1. It selects the target paragraph (`blockIndex` + `expectedText`, a unique
+   `paragraphId`, `heading`, or the first heading or subheading) and, when
+   its identifier is not unique by the rules above, mints one as
+   `set_paragraph_id` does.
+2. NotesShared builds the attachment with
+   `+[ICInlineAttachment newParagraphLinkAttachmentWithIdentifier:toNote:paragraphName:paragraphID:fromNote:parentAttachment:]`,
+   which first appears in macOS 27. The probe reports `macOS 27 or later` as
+   missing on older systems.
+3. The writer inserts an `ICTTAttachment` glyph naming that attachment
+   through the mergeable string, at the end or below the title and any
+   section chips already there. `clearExistingSectionLinks` first removes
+   glyphs whose attachment answers `isParagraphLinkAttachment` (note-link
+   chips share the type but not that answer) and marks those attachments for
+   deletion.
+
+A link into another note needs that note's `ifTargetRevision` as well, and
+the target is written only when an identifier is minted. The read-back
+checks the source text against the planned text, exactly one glyph for the
+new attachment, the persisted attachment and its token (target note and
+paragraph), that the target paragraph carries the identifier uniquely, that
+a target note's text is unchanged, that its other paragraphs kept their
+identifiers, and that cleared attachments are marked for deletion. The
+copy-store script confirms each chip with upstream's `listNoteLinks` reader.
+On the 2026-09-24 copy test no recent note had a heading, so the default and
+`heading` selectors have not yet run against a store; `blockIndex` and `paragraphId`,
+minting in the same and in another note, and clearing ran on the copy.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this
