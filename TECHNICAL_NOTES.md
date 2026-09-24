@@ -10,6 +10,7 @@ This document contains research findings on Apple Notes internals, programmatic 
 - [Protobuf Data Format](#protobuf-data-format)
 - [Alternative Approaches](#alternative-approaches)
 - [Private helper (NotesShared)](#private-helper-notesshared)
+- [Template editor server](#template-editor-server)
 - [Known Issues & Limitations](#known-issues--limitations)
 - [Related Tools & Projects](#related-tools--projects)
 - [Sources](#sources)
@@ -822,6 +823,66 @@ A future write PR needs evidence on all three first.
   (`store_unavailable`) rather than migrate.
 - Reads go through a private model; a field's meaning can change without
   notice. Treat `native-note-state` as diagnostic, not as a contract.
+
+---
+
+## Template editor server
+
+`apple-notes-mcp templates edit` (src/services/templateEditor.ts) starts a local
+HTTP server. It is a command-line tool, never
+started by the MCP server, and it runs until Ctrl-C or an idle timeout.
+
+### Design
+
+- **Reuse, not a second implementation.** Validation is `parseTemplate`, the
+  preview is `renderNotesWithTemplate`, and save is `TemplateStore.save`, the
+  same functions behind `validate-markdown-template`, `export-notes-markdown`
+  and `save-markdown-template`. The page sends the raw JSON text so JSON
+  syntax errors keep their line and column.
+- **Sample notes by default.** src/utils/templateSamples.ts builds three
+  synthetic block models (structure, inline formatting, attachments) with
+  fixed metadata, so front matter placeholders have values. With the
+  standard template each renders exactly as the fixed renderer does. A real
+  note is read only with `--note <id>`, once at startup, through
+  `readExportNote`/`readExportNoteMeta` (`sqlite3 -readonly`). No asset
+  writer is passed, so file attachments render as placeholders and nothing
+  is copied.
+- **One page, no network.** The page is a string with one `<style>` and one
+  `<script>`, each with a per-response nonce. The CSP is
+  `default-src 'none'` plus those nonces and `connect-src 'self'`. The script
+  writes only `textContent`.
+
+### Request checks, in order
+
+1. `Host` must equal the bound `address:port` (HTTP 421 otherwise). This
+   stops DNS rebinding, where a hostile name resolves to 127.0.0.1.
+2. The token (32 random bytes, hex, per run) must arrive as `?token=` or
+   `Authorization: Bearer`, compared with `timingSafeEqual` (401).
+3. `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`, and `Origin`,
+   when sent, must be the editor's own origin (403). There is no CORS
+   response, so a cross-origin script cannot read anything even if it
+   guessed the token.
+4. POST must carry the editor's `Origin` and `Content-Type: application/json`
+   (403/415), which a cross-site HTML form cannot send. Bodies are capped at
+   twice the template size limit (413).
+
+Only requests that pass these checks reset the idle timer, so a stray
+scanner cannot keep the editor alive. Unexpected failures return a generic
+500 without the error text. The token is printed once on stdout, as part of
+the URL, and never logged.
+
+### `--tailnet`
+
+The address comes from `os.networkInterfaces()`: the first non-internal IPv4
+in 100.64.0.0/10, preferring `utun*` interfaces. No `tailscale` command runs,
+and no Tailscale, Serve/Funnel or firewall setting is read or changed.
+Without such an address the command exits 1. The same token, host and origin
+checks apply. Tailscale encrypts the traffic between devices, but the
+editor speaks plain HTTP and anyone on the tailnet who can reach the port and
+has the URL can save templates. The address range is shared with other
+carrier-grade NAT users, so on a Mac with another VPN in that range the
+editor could bind to that VPN's address instead; the startup message names
+the bound address.
 
 ---
 

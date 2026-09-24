@@ -343,6 +343,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Library: `~/Library/Application Support/apple-notes-mcp/templates` or `APPLE_NOTES_MCP_TEMPLATE_DIR`; names are lowercase slugs; `standard-markdown` and `obsidian` are built in and reserved
 - Save is create-only: `[template-exists]` means ask before passing `force: true`
 - Start a new template from `show-markdown-template` output and validate before saving
+- A user who wants to edit templates visually can run `apple-notes-mcp templates edit [name]` in a terminal (a local, token-gated web editor with live validation and preview on sample notes). It is not an MCP tool: suggest it, do not start it for them. `--tailnet` exposes it to their tailnet, so mention it only when they ask to edit from another device
 
 ### export-notes-html
 - Same selection as `export-notes-markdown`; `outputPath` is required (the HTML is never returned inline) and create-only
