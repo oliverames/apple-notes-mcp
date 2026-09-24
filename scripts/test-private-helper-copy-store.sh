@@ -17,7 +17,8 @@
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
 #   EDIT_NOTES="UUID ..." notes for the plan_edit / edit_note round trip.
 #              Default: up to EDIT_SAMPLE (5) recent editable notes that own
-#              attachments, plus up to 3 without.
+#              attachments, plus up to 3 without. Notes with an attachment in
+#              the body also run the attachment selector steps (4c).
 #
 # Prints states and counts only, never note titles or bodies. Needs Full Disk
 # Access for the terminal running it. Removes the copy on exit.
@@ -37,6 +38,7 @@ fail() {
   exit 1
 }
 field() { printf '%s' "$1" | /usr/bin/plutil -extract "$2" raw -o - - 2>/dev/null || true; }
+json_field() { printf '%s' "$1" | /usr/bin/plutil -extract "$2" json -o - - 2>/dev/null || true; }
 
 [ -r "$LIVE" ] || fail "cannot read the live store (grant Full Disk Access to this terminal)"
 [ "${APPLE_NOTES_MCP_ENABLE_PRIVATE:-}" = "1" ] ||
@@ -206,7 +208,13 @@ fi
 MARK_OPS='[{"op":"insert_after","anchor":{"kind":"style","style":"body","occurrence":1},"expectedCount":COUNT,"blocks":[{"type":"heading","text":"copy-store edit marker"},{"type":"checklist","text":"copy-store checklist","checked":true},{"type":"body","runs":[{"text":"copy-store "},{"text":"bold","bold":true}]}]}]'
 RESTYLE_OPS='[{"op":"replace","selector":{"kind":"text","text":"copy-store edit marker","match":"equals"},"replacement":{"runs":[{"text":"copy-store edit marker 2","italic":true}]}}]'
 DELETE_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store edit marker 2"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store checklist"}},{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store bold"}}]'
+CAPTION_OPS='[{"op":"replace","selector":{"kind":"attachment","ordinal":1,"position":"after"},"replacement":{"text":" copy-store attachment caption"}}]'
+UNCAPTION_OPS='[{"op":"replace","selector":{"kind":"text","text":" copy-store attachment caption","scope":"all"},"replacement":{"text":""}}]'
+ATTACHMENT_ANCHOR_OPS='[{"op":"insert_after","anchor":{"kind":"attachment","ordinal":1},"blocks":[{"type":"body","text":"copy-store attachment anchor"}]}]'
+ATTACHMENT_ANCHOR_UNDO_OPS='[{"op":"delete_paragraph","selector":{"kind":"text","text":"copy-store attachment anchor"}}]'
+REMOVE_ATTACHMENT_OPS='[{"op":"replace","selector":{"kind":"attachment","ordinal":1},"replacement":{"text":""}}]'
 EDITED=0
+ATTACHMENT_EDITED=0
 REFUSED_NOTES=0
 EDIT_LIVE_BEFORE=""
 for EDIT_NOTE in $EDIT_NOTES; do
@@ -245,9 +253,40 @@ for EDIT_NOTE in $EDIT_NOTES; do
   node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
     fail "the round trip did not restore the original text and runs"
   EDITED=$((EDITED + 1))
+
+  # 4c. Attachment selectors on notes whose body holds an attachment: add a
+  # caption inline after the first attachment and remove it, insert and
+  # delete a paragraph anchored on it (both must restore the note exactly),
+  # then remove the attachment from the body. The removal cannot be undone,
+  # so it runs last, on the copy only; the independent check proves every
+  # other attachment row and every other row unchanged.
+  PROBE="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$CAPTION_OPS")" || true)"
+  if [ "$(field "$PROBE" code)" = "match_count_mismatch" ]; then
+    continue
+  elif [ "$(field "$PROBE" code)" = "unexpected_side_effect" ]; then
+    echo "ok: plan refused an attachment edit that would change another object"
+    continue
+  fi
+  [ "$(field "$PROBE" status)" = "planned" ] || fail "attachment plan: $(field "$PROBE" code) $(field "$PROBE" message)"
+  snap "$EDIT_NOTE" original
+  edit_step "$EDIT_NOTE" "caption beside an attachment" "$CAPTION_OPS"
+  edit_step "$EDIT_NOTE" "remove the caption" "$UNCAPTION_OPS"
+  edit_step "$EDIT_NOTE" "insert after an attachment's paragraph" "$ATTACHMENT_ANCHOR_OPS"
+  edit_step "$EDIT_NOTE" "delete the inserted paragraph" "$ATTACHMENT_ANCHOR_UNDO_OPS"
+  snap "$EDIT_NOTE" final
+  node "$CHECK" same "$WORK/original.json" "$WORK/final.json" >/dev/null ||
+    fail "the attachment round trip did not restore the original text and runs"
+  edit_step "$EDIT_NOTE" "remove an attachment from the body" "$REMOVE_ATTACHMENT_OPS"
+  [ "$(field "$OUT" removedAttachments.0)" != "" ] || fail "attachment removal reported no removed attachment"
+  [ "$(field "$OUT" preservation.removedAttachments.0.identifier)" = "$(field "$OUT" removedAttachments.0)" ] ||
+    fail "attachment removal did not report the removed row's state"
+  echo "   removed attachment row: stillInNote=$(field "$OUT" preservation.removedAttachments.0.rowStillInNote) markedForDeletion=$(field "$OUT" preservation.removedAttachments.0.markedForDeletion) changedBeforeSave=$(json_field "$OUT" removedAttachmentRowChanges)"
+  ATTACHMENT_EDITED=$((ATTACHMENT_EDITED + 1))
 done
 [ "$EDITED" -gt 0 ] || fail "the edit_note round trip ran on no note"
 echo "ok: edit_note round trip restored $EDITED note(s) exactly; $REFUSED_NOTES refused at plan"
+[ "$ATTACHMENT_EDITED" -gt 0 ] || fail "the attachment selector steps ran on no note (EDIT_NOTES needs a note with an attachment in its body)"
+echo "ok: attachment selector steps passed on $ATTACHMENT_EDITED note(s)"
 
 # 5. The live notes are untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"

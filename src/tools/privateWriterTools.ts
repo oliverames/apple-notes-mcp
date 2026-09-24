@@ -12,7 +12,9 @@
  *   snapshot. A dry run (the writer's read-only plan_edit) returns the plan
  *   and `revisionBefore`; the apply (edit_note) must pass it back as
  *   `ifRevision`, and its read-back proves that text, formatting, and
- *   attachments outside the edited ranges did not change.
+ *   attachments outside the edited ranges did not change. Only an explicit
+ *   attachment selector may replace, remove, or edit beside one attachment;
+ *   every other attachment is then proven unchanged.
  *
  * The read-only tools (`native-helper-status`, `native-note-state`) stay in
  * privateHelperTools.ts and never reach the writer. Every tool here is always
@@ -275,9 +277,9 @@ export function registerPrivateWriterTools(
     server,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text or by style and position (for example the 2nd subheading), delete a paragraph or list row, or retitle. Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\n" +
-      "Returns: per-operation matched counts and target ranges, lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and the attachment rows), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\n" +
-      "Do not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never touches attachments or inline objects.\n" +
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, delete a paragraph or list row, retitle, or replace, remove, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments). Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\n" +
+      "Returns: per-operation matched counts and target ranges, lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. removedAttachments (identifiers the plan takes out of the body). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\n" +
+      "Do not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive and never crosses a line break. Only an attachment selector touches an attachment, and only the one it names; inline objects (hashtags, mentions, note links) are never selectable.\n" +
       "Safety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid.optional().describe("Notes UUID"),
@@ -297,7 +299,7 @@ export function registerPrivateWriterTools(
         .min(1)
         .max(MAX_EDIT_OPERATIONS)
         .describe(
-          "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}. expectedCount (default 1) must equal the full match count; occurrence picks one of them."
+          "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}. An attachment replace with position 'self' and text '' removes that attachment from the body; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else. ordinal counts the note's attachments in body order. expectedCount (default 1) must equal the full match count; occurrence picks one of them."
         ),
       nudge: z
         .boolean()

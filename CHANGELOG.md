@@ -41,6 +41,16 @@
   run outside the edits, the attachment glyph sequence, and the attachment
   rows (reported as `preservation`). Optional `nudge`. Not yet
   live-validated, so applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+- `native-edit-note` attachment selector (`{kind: "attachment"}` with
+  `identifier`, `id`, or `ordinal`): replace an attachment with text, remove
+  it from the body (`replace` with empty text, or `delete_paragraph` on its
+  own paragraph), insert text inline beside it (`position: "before"` or
+  `"after"`), or anchor inserted paragraphs on it. It is the only selector
+  whose target may contain an attachment glyph, and only the named one. The
+  plan reports `removedAttachments`; the apply's read-back proves every other
+  attachment row still belongs to the note with the same stored values
+  (`preservation.otherAttachmentRowsUnchanged`) and reports what became of
+  each removed attachment's row. The copy-store script adds attachment steps.
 - `native-writer-status` reports `planEdit` and `editNote` beside
   `appendPlainText`; the features come from one `WRITER_FEATURES` table.
 - The copy-store script runs a plan, apply, and restore round trip on up to

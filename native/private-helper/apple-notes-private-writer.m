@@ -864,23 +864,27 @@ static BOOL IsJSONBool(id value) {
 //   exactly the planned targets.
 // - Matching is literal, case-sensitive, and confined to one paragraph. No
 //   selector, replacement, or block text may contain a line break or the
-//   attachment glyph U+FFFC, and no target range may contain an attachment
-//   glyph, so attachments and tables are never inside an edited range.
-// - Before saving, only the note, its note data, and its cloud state may be
-//   dirty; anything else rolls back (unexpected_side_effect).
+//   attachment glyph U+FFFC. A target range may contain an attachment glyph
+//   only when an explicit attachment selector named that one attachment, and
+//   then only that attachment's glyph, so every other attachment, table, and
+//   inline object is never inside an edited range.
+// - Before saving, only the note, its note data, its cloud state, and the row
+//   of an attachment the plan removes from the body may be dirty; anything
+//   else rolls back (unexpected_side_effect).
 // - After saving, a brand-new read-only Core Data stack re-reads the note and
 //   proves that the text equals the plan, that every character outside the
 //   edited ranges has the same attribute runs it had before (paragraph style,
 //   checklist state, fonts, inline formatting, attachment references), that
-//   the attachment glyph sequence is the planned one, and that the note's
-//   attachment rows are the same set.
+//   the attachment glyph sequence is the planned one, and that every
+//   attachment row other than one the plan removed is still the note's and
+//   has the same stored values.
 //
 // Extension points. Selectors resolve through ResolveSelector(), keyed by
-// `kind`, so a later kind (an attachment selector, or a run of blank lines
-// for line-break trimming) is one more branch that returns ranges. A target
-// may contain an attachment glyph only when its selector kind says so
-// (TargetMayTouchAttachment); verification already compares the persisted
-// glyph sequence with the planned text rather than with the old one.
+// `kind` (`text`, `style`, `blank`, `attachment`), so a later kind (a run of
+// blank lines for line-break trimming) is one more branch that returns
+// ranges. A target may contain an attachment glyph only when its selector
+// kind says so (TargetMayTouchAttachment), and verification compares the
+// persisted glyph sequence with the planned text rather than with the old one.
 
 #define MAX_EDIT_OPERATIONS 64
 #define MAX_EDIT_TARGETS 1000
@@ -1033,14 +1037,79 @@ static NSArray<NSString *> *AttachmentGlyphs(NSAttributedString *text) {
   return glyphs;
 }
 
-static NSArray<NSString *> *AttachmentIdentifiers(NSManagedObject *note) {
-  if (![note.entity.propertiesByName objectForKey:@"attachments"]) return @[];
-  NSMutableArray *ids = [NSMutableArray array];
-  for (id attachment in [note valueForKey:@"attachments"]) {
+// The note's attachment rows (ICAttachment, not inline objects such as
+// hashtags or note links), keyed by lowercased identifier. A row without an
+// identifier is keyed by its object URI so it still takes part in the checks.
+static NSDictionary<NSString *, NSManagedObject *> *AttachmentRows(NSManagedObject *note) {
+  if (![note.entity.propertiesByName objectForKey:@"attachments"]) return @{};
+  NSMutableDictionary *rows = [NSMutableDictionary dictionary];
+  for (NSManagedObject *attachment in [note valueForKey:@"attachments"]) {
     id identifier = [attachment valueForKey:@"identifier"];
-    [ids addObject:[identifier isKindOfClass:[NSString class]] ? identifier : @"?"];
+    NSString *key = [identifier isKindOfClass:[NSString class]]
+                        ? [identifier lowercaseString]
+                        : attachment.objectID.URIRepresentation.absoluteString;
+    rows[key] = attachment;
   }
-  return [ids sortedArrayUsingSelector:@selector(compare:)];
+  return rows;
+}
+
+// A pointer-free digest of one attachment row's stored values. Data values
+// are hashed; transient and transformed attributes (CloudKit system fields,
+// wall-clock values) are skipped because their decoded objects have no stable
+// canonical form. The note relationship is included, so a row that moved to
+// another note does not match.
+static NSString *AttachmentRowDigest(NSManagedObject *row) {
+  NSMutableArray *parts = [NSMutableArray array];
+  NSDictionary *attributes = row.entity.attributesByName;
+  for (NSString *name in [attributes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+    NSAttributeDescription *attribute = attributes[name];
+    if (attribute.isTransient || attribute.valueTransformerName ||
+        attribute.attributeType == NSTransformableAttributeType)
+      continue;
+    id value = [row valueForKey:name];
+    NSString *canonical;
+    if (!value)
+      canonical = @"nil";
+    else if ([value isKindOfClass:[NSData class]])
+      canonical = [@"d:" stringByAppendingString:SHA256Hex(value)];
+    else
+      canonical = CanonicalValue(value);
+    [parts addObject:[NSString stringWithFormat:@"%@=%@", name, canonical]];
+  }
+  id owner = row.entity.relationshipsByName[@"note"] ? [row valueForKey:@"note"] : nil;
+  id ownerIdentifier = owner ? ([owner valueForKey:@"identifier"] ?: @"?") : @"nil";
+  [parts addObject:[NSString stringWithFormat:@"note=%@", ownerIdentifier]];
+  return SHA256Hex([[parts componentsJoinedByString:@"\x1f"] dataUsingEncoding:NSUTF8StringEncoding]);
+}
+
+static NSDictionary<NSString *, NSString *> *AttachmentRowDigests(
+    NSDictionary<NSString *, NSManagedObject *> *rows) {
+  NSMutableDictionary *digests = [NSMutableDictionary dictionary];
+  for (NSString *key in rows) digests[key] = AttachmentRowDigest(rows[key]);
+  return digests;
+}
+
+// One entry per attachment glyph (U+FFFC carrying an attachment attribute)
+// in body order: its location and the attachment's identifier and type as
+// the native string records them.
+static NSArray<NSDictionary *> *AttachmentGlyphEntries(NSAttributedString *text) {
+  NSMutableArray *entries = [NSMutableArray array];
+  NSString *string = text.string;
+  SEL identifierSel = sel_registerName("attachmentIdentifier");
+  SEL utiSel = sel_registerName("attachmentUTI");
+  for (NSUInteger i = 0; i < string.length; i++) {
+    if ([string characterAtIndex:i] != 0xFFFC) continue;
+    id value = [text attribute:kAttachmentKey atIndex:i effectiveRange:NULL];
+    if (!value) continue;
+    id identifier = [value respondsToSelector:identifierSel] ? Send(value, "attachmentIdentifier") : nil;
+    id uti = [value respondsToSelector:utiSel] ? Send(value, "attachmentUTI") : nil;
+    [entries addObject:@{
+      @"location" : @(i),
+      @"identifier" : [identifier isKindOfClass:[NSString class]] ? identifier : @"",
+      @"uti" : [uti isKindOfClass:[NSString class]] ? uti : [NSNull null],
+    }];
+  }
+  return entries;
 }
 
 #pragma mark Request parsing
@@ -1272,18 +1341,128 @@ static NSArray<NSDictionary *> *ResolveStyle(NSDictionary *selector, NSAttribute
   return hits;
 }
 
+static const APIRequirement kAttachmentSelectorAPI[] = {
+    {"ICTTAttachment", "attachmentIdentifier", NO},
+    {"ICTTAttachment", "attachmentUTI", NO},
+};
+
+static EditParagraph *ParagraphAt(NSArray<EditParagraph *> *paragraphs, NSUInteger location) {
+  for (EditParagraph *p in paragraphs)
+    if (location >= p.full.location && location < NSMaxRange(p.full)) return p;
+  return nil;
+}
+
+// An attachment selector names one of the note's attachment rows by
+// `identifier` (its Notes UUID), `id` (its x-coredata ICAttachment URI, as
+// list-attachments and get-note-structure return it), or `ordinal` (1-based
+// position among the body's attachment glyphs that belong to the note's
+// attachment rows; inline objects such as hashtags and note links are not
+// counted and cannot be selected). Per role:
+//   replace  `position` self (default) targets the glyph itself, so the
+//            replacement text takes its place (empty text removes it);
+//            before/after target the empty range next to the glyph, so the
+//            replacement text is inserted inline beside it.
+//   delete   the paragraph holding the glyph, which must hold nothing else
+//            but whitespace.
+//   anchor   the paragraph holding the glyph.
+// Each hit carries `glyph` (the one glyph location its target may contain)
+// and `attachment` (what the plan reports about it).
+static NSArray<NSDictionary *> *ResolveAttachment(NSDictionary *selector, NSString *role,
+                                                  NSAttributedString *snapshot,
+                                                  NSArray<EditParagraph *> *paragraphs,
+                                                  NSDictionary<NSString *, NSManagedObject *> *rows) {
+  NSMutableArray *keys = [@[ @"kind", @"identifier", @"id", @"ordinal", @"occurrence" ] mutableCopy];
+  BOOL replace = [role isEqualToString:@"replace"];
+  if (replace) [keys addObject:@"position"];
+  RejectUnknownKeys(selector, keys, @"attachment selector");
+  NSUInteger given =
+      (selector[@"identifier"] ? 1 : 0) + (selector[@"id"] ? 1 : 0) + (selector[@"ordinal"] ? 1 : 0);
+  if (given != 1)
+    Fail(@"invalid_request",
+         @"An attachment selector needs exactly one of `identifier`, `id`, or `ordinal`", nil);
+  NSArray *missing = MissingAPI(kAttachmentSelectorAPI, COUNT(kAttachmentSelectorAPI));
+  if (missing.count)
+    Fail(@"private_api_unavailable", @"Attachment selectors need NotesShared's attachment accessors",
+         @{@"missing" : missing});
+  NSString *position = replace ? OptionalEnum(selector, @"position", @[ @"self", @"before", @"after" ], @"self")
+                               : @"self";
+
+  NSString *wanted = nil;
+  if (selector[@"identifier"]) {
+    if (!IsUUID(selector[@"identifier"]))
+      Fail(@"invalid_request", @"attachment selector `identifier` must be a Notes UUID", nil);
+    wanted = [selector[@"identifier"] lowercaseString];
+  } else if (selector[@"id"]) {
+    id uri = selector[@"id"];
+    if (![uri isKindOfClass:[NSString class]] || ![uri hasPrefix:@"x-coredata://"] ||
+        [uri rangeOfString:@"/ICAttachment/p"].location == NSNotFound)
+      Fail(@"invalid_request", @"attachment selector `id` must be an x-coredata ICAttachment id", nil);
+    wanted = @"";  // an id that names none of this note's rows matches nothing
+    for (NSString *key in rows)
+      if ([rows[key].objectID.URIRepresentation.absoluteString caseInsensitiveCompare:uri] == NSOrderedSame)
+        wanted = key;
+  }
+  NSUInteger ordinal = OptionalCount(selector, @"ordinal", 0, MAX_EDIT_TARGETS);
+
+  NSMutableArray *hits = [NSMutableArray array];
+  NSUInteger seen = 0;
+  for (NSDictionary *entry in AttachmentGlyphEntries(snapshot)) {
+    NSString *key = [entry[@"identifier"] lowercaseString];
+    if (!rows[key]) continue;  // inline objects are never selectable
+    seen++;
+    if (ordinal ? seen != ordinal : ![key isEqualToString:wanted]) continue;
+    NSUInteger glyph = [entry[@"location"] unsignedIntegerValue];
+    EditParagraph *p = ParagraphAt(paragraphs, glyph);
+    if (!p) continue;
+    NSRange range;
+    if (replace) {
+      range = [position isEqualToString:@"before"] ? NSMakeRange(glyph, 0)
+              : [position isEqualToString:@"after"] ? NSMakeRange(glyph + 1, 0)
+                                                    : NSMakeRange(glyph, 1);
+    } else {
+      range = p.content;
+    }
+    if ([role isEqualToString:@"delete"]) {
+      NSMutableString *rest = [[snapshot.string substringWithRange:p.content] mutableCopy];
+      [rest deleteCharactersInRange:NSMakeRange(glyph - p.content.location, 1)];
+      if ([rest rangeOfString:@"￼"].location != NSNotFound ||
+          [rest stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length)
+        Fail(@"unsupported_selection",
+             @"The attachment's paragraph holds other text or objects; remove just the attachment with "
+             @"replace (position self, empty text) instead",
+             @{@"committed" : @NO});
+    }
+    [hits addObject:@{
+      @"range" : [NSValue valueWithRange:range],
+      @"paragraph" : p,
+      @"glyph" : @(glyph),
+      @"position" : position,
+      @"attachment" : @{
+        @"identifier" : [rows[key] valueForKey:@"identifier"] ?: entry[@"identifier"],
+        @"uti" : entry[@"uti"],
+        @"ordinal" : @(seen),
+      },
+    }];
+  }
+  return hits;
+}
+
 // One entry point for every selector kind an operation role accepts. Roles:
-// "replace" (text, substring or equals), "delete" (text equals, or blank
-// styled rows), "anchor" (text equals, or style). A new kind is one more
+// "replace" (text, substring or equals; or one attachment), "delete" (text
+// equals, blank styled rows, or an attachment's own paragraph), "anchor"
+// (text equals, style, or an attachment's paragraph). A new kind is one more
 // branch here plus its entry in the role's allowed list.
 static NSArray<NSDictionary *> *ResolveSelector(NSDictionary *selector, NSString *role,
                                                 NSAttributedString *snapshot,
-                                                NSArray<EditParagraph *> *paragraphs, NSString **kindOut) {
-  NSArray *kinds = [role isEqualToString:@"replace"]  ? @[ @"text" ]
-                   : [role isEqualToString:@"delete"] ? @[ @"text", @"blank" ]
-                                                      : @[ @"text", @"style" ];
+                                                NSArray<EditParagraph *> *paragraphs,
+                                                NSDictionary<NSString *, NSManagedObject *> *rows,
+                                                NSString **kindOut) {
+  NSArray *kinds = [role isEqualToString:@"replace"]  ? @[ @"text", @"attachment" ]
+                   : [role isEqualToString:@"delete"] ? @[ @"text", @"blank", @"attachment" ]
+                                                      : @[ @"text", @"style", @"attachment" ];
   NSString *kind = OptionalEnum(selector, @"kind", kinds, @"text");
   if (kindOut) *kindOut = kind;
+  if ([kind isEqualToString:@"attachment"]) return ResolveAttachment(selector, role, snapshot, paragraphs, rows);
   if ([kind isEqualToString:@"text"]) {
     if ([role isEqualToString:@"replace"]) {
       RejectUnknownKeys(selector, @[ @"kind", @"text", @"scope", @"match", @"occurrence" ], @"text selector");
@@ -1308,10 +1487,10 @@ static NSArray<NSDictionary *> *ResolveSelector(NSDictionary *selector, NSString
 }
 
 // Whether a target resolved by this selector kind may contain an attachment
-// glyph. No kind may today; an attachment selector would return YES.
+// glyph. Only an explicit attachment selector may, and then only the glyph
+// of the attachment it named (RequireNoAttachmentGlyph checks the location).
 static BOOL TargetMayTouchAttachment(NSString *kind) {
-  (void)kind;
-  return NO;
+  return [kind isEqualToString:@"attachment"];
 }
 
 // Applies expectedCount (must equal the full match count) and occurrence
@@ -1343,26 +1522,46 @@ static NSMutableDictionary *Target(NSRange range, NSAttributedString *replacemen
   } mutableCopy];
 }
 
+// Refuses a target range that contains an attachment glyph, except the one
+// glyph (`allowedGlyph`) an attachment selector named. Every other glyph,
+// including a second attachment in the same paragraph, is refused.
 static void RequireNoAttachmentGlyph(NSAttributedString *snapshot, NSRange range, NSUInteger index,
-                                     NSString *kind) {
-  if (TargetMayTouchAttachment(kind)) return;
-  if ([snapshot.string rangeOfString:@"\uFFFC" options:NSLiteralSearch range:range].location != NSNotFound)
-    Fail(@"unsupported_selection",
-         [NSString stringWithFormat:@"Operation %lu would touch an attachment, table, or inline object; "
-                                    @"those are never edited",
-                                    (unsigned long)index],
-         @{@"committed" : @NO, @"operationIndex" : @(index)});
+                                     NSString *kind, NSUInteger allowedGlyph) {
+  if (!TargetMayTouchAttachment(kind)) allowedGlyph = NSNotFound;
+  NSString *text = snapshot.string;
+  NSUInteger cursor = range.location, end = NSMaxRange(range);
+  while (cursor < end) {
+    NSRange found = [text rangeOfString:@"\uFFFC"
+                                options:NSLiteralSearch
+                                  range:NSMakeRange(cursor, end - cursor)];
+    if (found.location == NSNotFound) return;
+    if (found.location != allowedGlyph)
+      Fail(@"unsupported_selection",
+           [NSString stringWithFormat:@"Operation %lu would touch an attachment, table, or inline object it "
+                                      @"did not select; those are never edited",
+                                      (unsigned long)index],
+           @{@"committed" : @NO, @"operationIndex" : @(index)});
+    cursor = NSMaxRange(found);
+  }
+}
+
+static NSUInteger HitGlyph(NSDictionary *hit) {
+  return hit[@"glyph"] ? [hit[@"glyph"] unsignedIntegerValue] : NSNotFound;
 }
 
 // Plain replacement text inherits the replaced range's attributes, which is
-// only meaningful when that range is uniformly formatted.
+// only meaningful when that range is uniformly formatted. `attributesAt`
+// overrides where those attributes are read (an attachment glyph, for text
+// inserted beside it); NSNotFound keeps the default.
 static NSAttributedString *ReplacementFor(NSDictionary *replacement, NSAttributedString *snapshot,
                                           NSRange range, EditParagraph *paragraph, NSUInteger index,
-                                          BOOL allowEmpty) {
+                                          BOOL allowEmpty, NSUInteger attributesAt) {
   RejectUnknownKeys(replacement, @[ @"text", @"runs" ], @"replacement");
   if ((replacement[@"text"] != nil) == (replacement[@"runs"] != nil))
     Fail(@"invalid_request", @"replacement needs exactly one of `text` or `runs`", nil);
-  NSUInteger at = range.length ? range.location : paragraph.full.location;
+  NSUInteger at = attributesAt != NSNotFound ? attributesAt
+                  : range.length             ? range.location
+                                             : paragraph.full.location;
   NSDictionary *attributes = at < snapshot.length ? [snapshot attributesAtIndex:at effectiveRange:NULL] : @{};
   if (replacement[@"runs"])
     return AttributedRuns(replacement[@"runs"], InlineBase(attributes), @"replacement runs");
@@ -1379,7 +1578,8 @@ static NSAttributedString *ReplacementFor(NSDictionary *replacement, NSAttribute
 }
 
 static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NSAttributedString *snapshot,
-                                   NSArray<EditParagraph *> *paragraphs, NSMutableArray *targets) {
+                                   NSArray<EditParagraph *> *paragraphs,
+                                   NSDictionary<NSString *, NSManagedObject *> *rows, NSMutableArray *targets) {
   NSString *op = OptionalEnum(
       operation, @"op", @[ @"replace", @"delete_paragraph", @"insert_after", @"insert_before", @"set_title" ],
       nil);
@@ -1398,27 +1598,37 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
     RejectUnknownKeys(operation, @[ @"op", @"id", @"replacement" ], @"set_title operation");
     EditParagraph *title = paragraphs.firstObject;
     NSDictionary *replacement = RequireObject(operation, @"replacement");
-    RequireNoAttachmentGlyph(snapshot, title.content, index, @"title");
-    NSAttributedString *text = ReplacementFor(replacement, snapshot, title.content, title, index, NO);
+    RequireNoAttachmentGlyph(snapshot, title.content, index, @"title", NSNotFound);
+    NSAttributedString *text =
+        ReplacementFor(replacement, snapshot, title.content, title, index, NO, NSNotFound);
     [created addObject:Target(title.content, text, index, title)];
   } else if ([op isEqualToString:@"replace"]) {
     RejectUnknownKeys(operation, @[ @"op", @"id", @"selector", @"replacement", @"expectedCount" ],
                       @"replace operation");
     NSDictionary *selector = RequireObject(operation, @"selector");
     NSDictionary *replacement = RequireObject(operation, @"replacement");
-    NSArray *hits = ResolveSelector(selector, @"replace", snapshot, paragraphs, &kind);
+    NSArray *hits = ResolveSelector(selector, @"replace", snapshot, paragraphs, rows, &kind);
     for (NSDictionary *hit in CountAndPick(hits, operation, selector, index)) {
       NSRange range = [hit[@"range"] rangeValue];
       EditParagraph *p = hit[@"paragraph"];
-      RequireNoAttachmentGlyph(snapshot, range, index, kind);
-      [created addObject:Target(range, ReplacementFor(replacement, snapshot, range, p, index, YES), index, p)];
+      NSUInteger glyph = HitGlyph(hit);
+      RequireNoAttachmentGlyph(snapshot, range, index, kind, glyph);
+      // Text beside an attachment must not be empty: an empty insertion is
+      // no edit at all. Replacing the glyph itself may be empty (removal).
+      BOOL allowEmpty = range.length > 0;
+      NSMutableDictionary *target =
+          Target(range, ReplacementFor(replacement, snapshot, range, p, index, allowEmpty, glyph), index, p);
+      if (hit[@"attachment"]) target[@"attachment"] = hit[@"attachment"];
+      [created addObject:target];
     }
-    summary[@"match"] = selector[@"match"] ?: @"substring";
+    summary[@"selectorKind"] = kind;
+    if ([kind isEqualToString:@"text"]) summary[@"match"] = selector[@"match"] ?: @"substring";
+    if ([kind isEqualToString:@"attachment"]) summary[@"position"] = selector[@"position"] ?: @"self";
   } else if ([op isEqualToString:@"delete_paragraph"]) {
     RejectUnknownKeys(operation, @[ @"op", @"id", @"selector", @"expectedCount" ],
                       @"delete_paragraph operation");
     NSDictionary *selector = RequireObject(operation, @"selector");
-    NSArray *hits = ResolveSelector(selector, @"delete", snapshot, paragraphs, &kind);
+    NSArray *hits = ResolveSelector(selector, @"delete", snapshot, paragraphs, rows, &kind);
     for (NSDictionary *hit in CountAndPick(hits, operation, selector, index)) {
       EditParagraph *p = hit[@"paragraph"];
       if (p.index == 0)
@@ -1431,15 +1641,17 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
         range = NSMakeRange(NSMaxRange(previous.content),
                             NSMaxRange(p.content) - NSMaxRange(previous.content));
       }
-      RequireNoAttachmentGlyph(snapshot, range, index, kind);
-      [created addObject:Target(range, [NSAttributedString new], index, p)];
+      RequireNoAttachmentGlyph(snapshot, range, index, kind, HitGlyph(hit));
+      NSMutableDictionary *target = Target(range, [NSAttributedString new], index, p);
+      if (hit[@"attachment"]) target[@"attachment"] = hit[@"attachment"];
+      [created addObject:target];
     }
     summary[@"selectorKind"] = kind;
   } else {
     BOOL after = [op isEqualToString:@"insert_after"];
     RejectUnknownKeys(operation, @[ @"op", @"id", @"anchor", @"blocks", @"expectedCount" ], @"insert operation");
     NSDictionary *anchor = RequireObject(operation, @"anchor");
-    NSArray *hits = ResolveSelector(anchor, @"anchor", snapshot, paragraphs, &kind);
+    NSArray *hits = ResolveSelector(anchor, @"anchor", snapshot, paragraphs, rows, &kind);
     for (NSDictionary *hit in CountAndPick(hits, operation, anchor, index)) {
       EditParagraph *p = hit[@"paragraph"];
       NSAttributedString *blocks;
@@ -1462,7 +1674,9 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
         if (anchorAttributes[kStyleKey]) separator[kStyleKey] = anchorAttributes[kStyleKey];
         blocks = AttributedBlocks(operation[@"blocks"], separator, @"blocks");
       }
-      [created addObject:Target(NSMakeRange(at, 0), blocks, index, p)];
+      NSMutableDictionary *target = Target(NSMakeRange(at, 0), blocks, index, p);
+      if (hit[@"attachment"]) target[@"attachment"] = hit[@"attachment"];
+      [created addObject:target];
     }
     summary[@"anchorKind"] = kind;
   }
@@ -1472,13 +1686,15 @@ static NSDictionary *PlanOperation(NSDictionary *operation, NSUInteger index, NS
   for (NSDictionary *t in created) {
     NSRange r = [t[@"range"] rangeValue];
     EditParagraph *p = paragraphs[[t[@"paragraph"] unsignedIntegerValue]];
-    [described addObject:@{
+    NSMutableDictionary *description = [@{
       @"paragraphIndex" : t[@"paragraph"],
       @"paragraphStyle" : StyleName(StyleValueOf(ParagraphStyleAt(snapshot, p))),
       @"location" : @(r.location),
       @"length" : @(r.length),
       @"newLength" : @([t[@"replacement"] length]),
-    }];
+    } mutableCopy];
+    if (t[@"attachment"]) description[@"attachment"] = t[@"attachment"];
+    [described addObject:description];
   }
   [targets addObjectsFromArray:created];
   summary[@"matchedCount"] = @(created.count);
@@ -1565,6 +1781,10 @@ static NSString *PlanDigest(NSString *identifier, NSArray *operations) {
 @property(nonatomic) BOOL wouldChange;
 @property(nonatomic, copy) NSString *revisionBefore;
 @property(nonatomic, strong) NSMutableDictionary *response;
+// The note's attachment rows by lowercased identifier, and the keys of those
+// whose glyph the plan removes from the body.
+@property(nonatomic, copy) NSDictionary<NSString *, NSManagedObject *> *attachmentRows;
+@property(nonatomic, copy) NSArray<NSString *> *removedAttachments;
 @end
 @implementation EditPlan
 @end
@@ -1608,13 +1828,14 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   NSAttributedString *snapshot = [LoadBody(note, &ms) copy];
   plan.mergeable = ms;
   plan.snapshot = snapshot;
+  plan.attachmentRows = AttachmentRows(note);
   NSArray<EditParagraph *> *paragraphs = Paragraphs(snapshot.string);
 
   NSMutableArray *targets = [NSMutableArray array];
   NSMutableArray *summaries = [NSMutableArray array];
   NSMutableSet *ids = [NSMutableSet set];
   for (NSUInteger i = 0; i < operations.count; i++) {
-    NSDictionary *summary = PlanOperation(operations[i], i, snapshot, paragraphs, targets);
+    NSDictionary *summary = PlanOperation(operations[i], i, snapshot, paragraphs, plan.attachmentRows, targets);
     if (summary[@"id"]) {
       if ([ids containsObject:summary[@"id"]]) Fail(@"invalid_request", @"Operation ids must be unique", nil);
       [ids addObject:summary[@"id"]];
@@ -1634,6 +1855,21 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
     Fail(@"title_invariant", @"The edit would leave the note without a title", @{@"committed" : @NO});
   plan.titleChanged =
       ![expectedTitle isEqualToString:[snapshot.string substringWithRange:paragraphs.firstObject.content]];
+  // Attachments whose glyph is in the snapshot but not in the planned text.
+  // Only an attachment selector can put a glyph inside a target, so these are
+  // exactly the attachments the request named for replacement or deletion.
+  NSMutableSet *kept = [NSMutableSet set];
+  for (NSDictionary *entry in AttachmentGlyphEntries(expected))
+    [kept addObject:[entry[@"identifier"] lowercaseString]];
+  NSMutableArray *removed = [NSMutableArray array];
+  NSMutableArray *removedReport = [NSMutableArray array];
+  for (NSDictionary *entry in AttachmentGlyphEntries(snapshot)) {
+    NSString *key = [entry[@"identifier"] lowercaseString];
+    if ([kept containsObject:key] || [removed containsObject:key]) continue;
+    [removed addObject:key];
+    [removedReport addObject:entry[@"identifier"]];
+  }
+  plan.removedAttachments = removed;
   plan.unchanged = [NSMutableArray array];
   plan.replaced = [NSMutableArray array];
   Segments(targets, snapshot.length, plan.unchanged, plan.replaced);
@@ -1656,6 +1892,8 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
     @"wouldChange" : @(plan.wouldChange),
     @"titleChanged" : @(plan.titleChanged),
     @"attachmentGlyphs" : @(AttachmentGlyphs(snapshot).count),
+    @"attachmentGlyphsAfter" : @(AttachmentGlyphs(expected).count),
+    @"removedAttachments" : removedReport,
     @"storeKind" : store.isCopy ? @"copy" : @"live",
   } mutableCopy];
   return plan;
@@ -1684,6 +1922,23 @@ static NSString *VerifyAgainstPlan(NSAttributedString *persisted, EditPlan *plan
   }
   if (![AttachmentGlyphs(persisted) isEqual:AttachmentGlyphs(plan.expected)])
     return @"The attachment glyph sequence changed";
+  return nil;
+}
+
+// Every attachment row the note had, other than one whose glyph the plan
+// removed, must still be the note's with the same stored values, and no row
+// may appear. A removed attachment's row may be gone or changed.
+static NSString *VerifyAttachmentRows(NSDictionary<NSString *, NSString *> *before,
+                                      NSDictionary<NSString *, NSString *> *after, EditPlan *plan) {
+  NSSet *removed = [NSSet setWithArray:plan.removedAttachments];
+  for (NSString *key in before) {
+    if ([removed containsObject:key]) continue;
+    if (!after[key]) return @"An attachment the edit did not target is no longer in the note";
+    if (![after[key] isEqualToString:before[key]])
+      return @"An attachment the edit did not target changed its stored values";
+  }
+  for (NSString *key in after)
+    if (!before[key]) return @"A new attachment row appeared in the note";
   return nil;
 }
 
@@ -1728,14 +1983,27 @@ static void ApplyInContext(NSManagedObjectContext *context, EditPlan *plan, BOOL
                                           kEditChangeReason);
   }
 
-  // Only the note, its body data, and its cloud state may change. Notes can
-  // re-derive a note's title from one of its attachments when the body is
-  // edited; that re-points an attachment row, so it is refused here too.
+  // Only the note, its body data, its cloud state, and the row of an
+  // attachment the plan removes from the body may change. Notes can re-derive
+  // a note's title from one of its attachments when the body is edited; that
+  // re-points another attachment row, so it is refused here too. A removed
+  // attachment's row may be updated (for example marked for deletion) but
+  // never deleted outright; its changed keys are reported.
   NSMutableSet *allowed = [NSMutableSet setWithObject:note];
   id noteData = Send(note, "noteData");
   id cloudState = Send(note, "cloudState");
   if (noteData) [allowed addObject:noteData];
   if (cloudState) [allowed addObject:cloudState];
+  NSMutableDictionary *removedRowChanges = [NSMutableDictionary dictionary];
+  for (NSString *key in plan.removedAttachments) {
+    NSManagedObject *row = plan.attachmentRows[key];
+    if (!row) continue;
+    [allowed addObject:row];
+    if (row.hasChanges)
+      removedRowChanges[[row valueForKey:@"identifier"] ?: key] =
+          [row.changedValues.allKeys sortedArrayUsingSelector:@selector(compare:)];
+  }
+  plan.response[@"removedAttachmentRowChanges"] = removedRowChanges;
   NSMutableArray *unexpected = [NSMutableArray array];
   for (NSManagedObject *object in context.insertedObjects)
     [unexpected addObject:[@"inserted " stringByAppendingString:object.entity.name ?: @"?"]];
@@ -1797,7 +2065,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
     return response;
   }
 
-  NSArray *attachmentsBefore = AttachmentIdentifiers(plan.note);
+  NSDictionary *attachmentsBefore = AttachmentRowDigests(plan.attachmentRows);
   ApplyInContext(context, plan, YES);
   SaveOrFail(context);
 
@@ -1805,15 +2073,24 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   NSString *verifyError = nil;
   NSDictionary *after = nil;
   NSUInteger attachmentRows = 0;
+  NSMutableArray *removedReport = [NSMutableArray array];
   @try {
     NSManagedObjectContext *fresh = OpenContext(store, YES);
     NSManagedObject *reread = FetchNote(fresh, identifier);
     NSAttributedString *persisted = LoadBody(reread, NULL);
     verifyError = VerifyAgainstPlan(persisted, plan);
-    NSArray *attachmentsAfter = AttachmentIdentifiers(reread);
-    attachmentRows = attachmentsAfter.count;
-    if (!verifyError && ![attachmentsAfter isEqual:attachmentsBefore])
-      verifyError = @"The note's attachment set changed";
+    NSDictionary<NSString *, NSManagedObject *> *rowsAfter = AttachmentRows(reread);
+    attachmentRows = rowsAfter.count;
+    if (!verifyError)
+      verifyError = VerifyAttachmentRows(attachmentsBefore, AttachmentRowDigests(rowsAfter), plan);
+    for (NSString *key in plan.removedAttachments) {
+      NSManagedObject *row = rowsAfter[key];
+      [removedReport addObject:@{
+        @"identifier" : [plan.attachmentRows[key] valueForKey:@"identifier"] ?: key,
+        @"rowStillInNote" : @((BOOL)(row != nil)),
+        @"markedForDeletion" : row ? @([[row valueForKey:@"markedForDeletion"] boolValue]) : [NSNull null],
+      }];
+    }
     after = NoteState(reread);
   } @catch (NSException *e) {
     // After a successful save: a committed write that could not be verified.
@@ -1821,6 +2098,9 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   }
   if (verifyError)
     Fail(@"verification_failed", verifyError, @{@"committed" : @YES, @"revisionBefore" : plan.revisionBefore});
+  NSUInteger otherRows = 0;
+  for (NSString *key in attachmentsBefore)
+    if (![plan.removedAttachments containsObject:key]) otherRows++;
 
   response[@"status"] = @"updated";
   response[@"committed"] = @YES;
@@ -1835,6 +2115,10 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
     @"attachmentGlyphSequenceVerified" : @YES,
     @"attachmentRows" : @(attachmentRows),
     @"attachmentRowsVerified" : @YES,
+    // Rows other than a removed attachment's, proven present with the same
+    // stored values; and what became of each removed attachment's row.
+    @"otherAttachmentRowsUnchanged" : @(otherRows),
+    @"removedAttachments" : removedReport,
   };
   [response addEntriesFromDictionary:SyncFields(after, store)];
   return response;

@@ -154,7 +154,7 @@ before retrying.
 | `native-writer-status`     | Report both switches, writer build state, and live probe (read-only)             |
 | `native-append-plain-text` | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
 | `native-sync-push`         | Check or get writer changes uploaded later (status, nudge, confirmed relaunch)   |
-| `native-edit-note`         | Edit paragraphs in place: dry run first, then apply with its `revisionBefore`    |
+| `native-edit-note`         | Edit text or one named attachment in place: dry run, then apply the plan         |
 
 ## Usage Patterns
 
