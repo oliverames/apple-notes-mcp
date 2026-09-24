@@ -70,7 +70,7 @@ Tracking the unfinished work from the 2026-09-23 upstream parity session. Upstre
   - RESUME (priority order, weekly credits were low): (1) confirm `feat/gap-parity` gate + copy-store results; (2) serial live tests in `apple-notes-mcp test` only; (3) open the upstream DRAFT PR (neutral wording, 3.0.0 suggestion, breaking-ish: error codes, query negation, `quicknote` bare word), then close #250 pointing at it; (4) sweetrb's open issues. Version must stay above main and #258 (2.9.27).
 - [ ] sweetrb/apple-notes-mcp#258 data-correctness fixes: open at 2.9.27 (head 34fbde0), CI green before the last main merge; Autofix watches it. Asks sweetrb about query negation on locked notes and word-count changes.
 - [x] Rob replied to the credit email; he added the credit himself in #255 (2.9.23). Thank-you reply sent 2026-09-24.
-- [ ] Trash `scratchpad/w/copy` (a NoteStore copy) once no agent uses it; the session scratchpad is under /private/tmp and is cleared on reboot.
+- [x] Trashed `scratchpad/w/copy` (a NoteStore copy) at wrap-up. The gap-parity agent was asked to trash its own copies.
 
 **Verification**: macOS 27.2 (26B5091g), Node 26.9.0, pnpm 11.9.0. Every branch named above passed lint, typecheck, format check, the full unit suite (no skips) and build with a matching bundle before it was pushed. Every live test used disposable notes, a smart folder and a subfolder inside `apple-notes-mcp test`, and all were deleted afterwards (they are in Recently Deleted; one test note was permanently tombstoned by the Recently Deleted to smart folder reproduction). Writer installs went to scratch directories, never to the plugin's install directory.
 
