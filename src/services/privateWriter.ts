@@ -90,6 +90,10 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   insert_table_row: "write",
   set_table_cell: "write",
   prune_orphan_table: "write",
+  read_smart_folder: "read",
+  create_smart_folder: "write",
+  update_smart_folder: "write",
+  delete_smart_folder: "write",
 };
 
 /**
@@ -140,6 +144,12 @@ export const PARAGRAPH_IDS_LIVE_VALIDATED = false;
  * edit, orphan-table prune). Dry runs and `read_tables` are not gated.
  */
 export const TABLE_WRITES_LIVE_VALIDATED = false;
+
+/**
+ * The same gate for the smart-folder writes (create, update, delete). The
+ * delete's dry run and `read_smart_folder` are not gated.
+ */
+export const SMART_FOLDERS_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -304,6 +314,7 @@ export const writerProbeSchema = z
         addSectionLink: featureSchema.optional(),
         tables: featureSchema.optional(),
         pruneOrphanTable: featureSchema.optional(),
+        smartFolders: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -999,6 +1010,12 @@ export const WRITER_FEATURES = [
     key: "pruneOrphanTable",
     probeKey: "pruneOrphanTable",
     liveValidated: TABLE_WRITES_LIVE_VALIDATED,
+  },
+  { key: "readSmartFolders", probeKey: "smartFolders", liveValidated: true },
+  {
+    key: "editSmartFolders",
+    probeKey: "smartFolders",
+    liveValidated: SMART_FOLDERS_LIVE_VALIDATED,
   },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];

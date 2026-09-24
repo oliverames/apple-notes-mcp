@@ -802,6 +802,120 @@ table_checks() {
 }
 table_checks
 
+# 4g. Smart folders on the copy: create inside an ordinary folder, idempotent
+#    retry, title conflict, a smart folder refused as a parent, an
+#    unrepresentable query refused, guarded update, then dry-run and guarded
+#    delete. The live smart-folder rows are fingerprinted read-only before and
+#    after.
+live_smart_rows() {
+  /usr/bin/sqlite3 -readonly "$LIVE" "SELECT ZIDENTIFIER, ZTITLE2, ZSMARTFOLDERQUERYJSON,
+    ZMARKEDFORDELETION FROM ZICCLOUDSYNCINGOBJECT WHERE ZFOLDERTYPE = 2 ORDER BY ZIDENTIFIER;" |
+    /usr/bin/shasum -a 256
+}
+smart_create() { # title queryJSON [extra fields]
+  printf '{"protocol":1,"action":"create_smart_folder","title":"%s","queryJSON":"%s"%s}' "$1" "$2" "${3:-}"
+}
+smart_read() { printf '{"protocol":1,"action":"read_smart_folder","identifier":"%s"}' "$1"; }
+smart_update() { # identifier queryJSON ifRevision
+  printf '{"protocol":1,"action":"update_smart_folder","identifier":"%s","queryJSON":"%s","ifRevision":"%s"}' "$1" "$2" "$3"
+}
+smart_delete() { # identifier dryRun [ifRevision]
+  if [ "$2" = "true" ]; then
+    printf '{"protocol":1,"action":"delete_smart_folder","identifier":"%s","dryRun":true}' "$1"
+  else
+    printf '{"protocol":1,"action":"delete_smart_folder","identifier":"%s","dryRun":false,"ifRevision":"%s"}' "$1" "$3"
+  fi
+}
+ZERO_FOLDER="f1:${ZERO#r1:}"
+
+smart_folder_checks() {
+  local LIVE_SMART_BEFORE PARENT TITLE Q1 Q2 QNOT OUT SMART REVF REVU
+  LIVE_SMART_BEFORE="$(live_smart_rows)"
+  PARENT="$(/usr/bin/sqlite3 "$COPY" "SELECT f.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT f
+    WHERE f.ZIDENTIFIER IS NOT NULL AND f.ZTITLE2 IS NOT NULL AND IFNULL(f.ZFOLDERTYPE,0)=0
+      AND IFNULL(f.ZMARKEDFORDELETION,0)=0 AND f.ZIDENTIFIER NOT LIKE 'TrashFolder%'
+      AND f.ZIDENTIFIER NOT LIKE 'DefaultFolder%' AND f.ZOWNER IS NOT NULL AND f.ZSERVERSHAREDATA IS NULL
+    ORDER BY f.Z_PK DESC LIMIT 1;" 2>/dev/null || true)"
+  if [ -z "$PARENT" ]; then
+    echo "skip: no ordinary folder in the copy for the smart-folder test"
+    return 0
+  fi
+  TITLE="copy-store smart folder $(date +%s)"
+  Q1='{\"entity\":\"note\",\"type\":{\"checklist\":true}}'
+  Q2='{\"entity\":\"note\",\"type\":{\"or\":[{\"pinned\":true},{\"attachment\":true}]}}'
+  QNOT='{\"entity\":\"note\",\"type\":{\"not\":{\"pinned\":true}}}'
+
+  # Without the write switch a create against the live store is refused
+  # before any read-write open.
+  OUT="$(run "$(smart_create "$TITLE" "$Q1" ",\"parentIdentifier\":\"$PARENT\"")" || true)"
+  [ "$(field "$OUT" code)" = "writes_disabled" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "live smart-folder create not gated: $(field "$OUT" code)"
+  echo "ok: live smart-folder create refused without APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES"
+
+  OUT="$(copy_run "$(smart_create "$TITLE" "$Q1" ",\"parentIdentifier\":\"$PARENT\"")" || true)"
+  [ "$(field "$OUT" status)" = "created" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "smart folder create: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$OUT" folderType)" = "2" ] || fail "created folder is not a smart folder"
+  [ "$(field "$OUT" parentDurability)" = "stamped" ] || fail "parent timestamp not stamped"
+  [ "$(field "$OUT" titleDurability)" = "stamped" ] || fail "title timestamp not stamped"
+  [ "$(field "$OUT" storeKind)" = "copy" ] || fail "create did not report the copy store"
+  [ "$(field "$OUT" pushScheduled)" = "false" ] || fail "create claimed a push"
+  SMART="$(field "$OUT" identifier)"
+  echo "ok: smart folder created and verified on the copy (filters $(field "$OUT" filterCount), uploadPending $(field "$OUT" cloudSync.uploadPending))"
+  OUT="$(copy_run "$(smart_create "$TITLE" "$Q1" ",\"parentIdentifier\":\"$PARENT\"")" || true)"
+  [ "$(field "$OUT" status)" = "ok" ] && [ "$(field "$OUT" changed)" = "false" ] &&
+    [ "$(field "$OUT" committed)" = "false" ] || fail "idempotent retry changed something"
+  echo "ok: identical retry is a no-op"
+  OUT="$(copy_run "$(smart_create "$TITLE" "$Q2" ",\"parentIdentifier\":\"$PARENT\"")" || true)"
+  [ "$(field "$OUT" code)" = "folder_exists" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "different query under the same title not refused: $(field "$OUT" code)"
+  echo "ok: a different query under the same title is refused, committed=false"
+  OUT="$(copy_run "$(smart_create "$TITLE x" "$Q1" ",\"parentIdentifier\":\"$SMART\"")" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_folder" ] && [ "$(field "$OUT" reason)" = "smart_folder_destination" ] &&
+    [ "$(field "$OUT" committed)" = "false" ] || fail "smart folder accepted as a parent: $(field "$OUT" code)"
+  echo "ok: a smart folder is refused as a parent (smart_folder_destination), committed=false"
+  OUT="$(copy_run "$(smart_create "$TITLE y" "$QNOT" ",\"parentIdentifier\":\"$PARENT\"")" || true)"
+  [ "$(field "$OUT" code)" = "query_not_representable" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "unrepresentable query not refused: $(field "$OUT" code)"
+  echo "ok: a query Notes would change is refused, committed=false"
+
+  REVF="$(field "$(copy_run "$(smart_read "$SMART")")" revision)"
+  [ -n "$REVF" ] || fail "read_smart_folder returned no revision"
+  OUT="$(copy_run "$(smart_update "$SMART" "$Q2" "$ZERO_FOLDER")" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "stale update revision not refused: $(field "$OUT" code)"
+  OUT="$(copy_run "$(smart_update "$SMART" "$Q2" "$REVF")" || true)"
+  [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "guarded update failed: $(field "$OUT" code) $(field "$OUT" message)"
+  REVU="$(field "$OUT" revisionAfter)"
+  [ "$REVU" != "$REVF" ] || fail "update did not change the folder revision"
+  OUT="$(copy_run "$(smart_update "$SMART" "$Q2" "$REVF")" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed update not refused: $(field "$OUT" code)"
+  echo "ok: stale update refused; guarded update verified; replay refused"
+
+  OUT="$(copy_run "$(smart_delete "$SMART" true)" || true)"
+  [ "$(field "$OUT" status)" = "planned" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "delete dry run: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$OUT" revision)" = "$REVU" ] || fail "dry-run revision differs from the update's revisionAfter"
+  OUT="$(copy_run "$(smart_delete "$SMART" false "$ZERO_FOLDER")" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "stale delete revision not refused: $(field "$OUT" code)"
+  OUT="$(copy_run "$(smart_delete "$SMART" false "$REVU")" || true)"
+  [ "$(field "$OUT" status)" = "deleted" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "delete apply: $(field "$OUT" code) $(field "$OUT" message)"
+  OUT="$(copy_run "$(smart_delete "$SMART" false "$REVU")" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_folder" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "replayed delete not refused: $(field "$OUT" code)"
+  echo "ok: delete planned, stale revision refused, tombstone verified, replay refused"
+  OUT="$(copy_run "$(smart_delete "$PARENT" true)" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_folder" ] || fail "ordinary folder accepted for smart-folder delete"
+  echo "ok: ordinary folder refused by the smart-folder delete"
+
+  [ "$LIVE_SMART_BEFORE" = "$(live_smart_rows)" ] || fail "live smart folders changed during the copy test"
+  echo "ok: live smart-folder rows unchanged"
+}
+smart_folder_checks
+
 # 5. The live notes are untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"
 [ "$LIVE_BEFORE" = "$LIVE_AFTER" ] || fail "live note revision changed during the copy test (a concurrent edit in Notes also causes this; rerun)"

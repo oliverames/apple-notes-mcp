@@ -187,6 +187,20 @@
   `pruneOrphanTable` next to `appendPlainText`.
 - The copy-store script exercises the four table writes, their stale-token
   refusals, and the live-store gate.
+- Smart-folder writes through the writer (#181): `native-read-smart-folder`,
+  `native-create-smart-folder`, `native-update-smart-folder`, and
+  `native-delete-smart-folder`. Queries go through Notes' own parser and are
+  stored in the form Notes regenerates; one whose meaning Notes would change
+  is refused. The update and delete compare an `f1:` folder revision; the
+  delete is two-phase and only takes empty smart folders. A smart folder is
+  refused as a parent with `reason: "smart_folder_destination"`, matching the
+  destination guard. Writes are gated by `SMART_FOLDERS_LIVE_VALIDATED`.
+- `native-writer-status` reports `readSmartFolders` and `editSmartFolders`
+  next to `appendPlainText`. A writer action that fails before its first save
+  reports `committed: false`.
+- The copy-store script exercises the smart-folder create, update, and delete
+  paths, their refusals, and the live-store gate, and fingerprints the live
+  smart-folder rows before and after.
 
 ### Fixed
 

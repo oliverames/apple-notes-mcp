@@ -72,7 +72,7 @@ process.stdin.on("end", () => {
     case "hello":
       out({ status: "ok", protocolVersion: 1, sourceSha256: "dev", role: "writer", readOnly: false, actions: ["hello"] });
     case "probe":
-      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: mode === "old-writer" || mode === "old-probe" ? { readNoteState: feature(), appendPlainText: feature() } : { readNoteState: feature(), appendPlainText: feature(), planEdit: feature(), editNote: feature(), tables: feature(), pruneOrphanTable: feature() } });
+      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: mode === "old-writer" || mode === "old-probe" ? { readNoteState: feature(), appendPlainText: feature() } : { readNoteState: feature(), appendPlainText: feature(), planEdit: feature(), editNote: feature(), tables: feature(), pruneOrphanTable: feature(), smartFolders: feature() } });
     case "append_plain_text":
       out({ status: "updated", committed: true, verified: true, identifier: req.identifier, appendedUTF16: req.text.length, separatorInserted: false, revisionBefore: req.ifRevision, revisionAfter: "r1:" + "d".repeat(64), modificationDate: "2026-09-23T00:00:00.000Z", title: "t", cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, storeKind: "live", echo: req });
     case "read_note_state":
@@ -86,6 +86,7 @@ process.stdin.on("end", () => {
       out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 95, formattingOutsideEditsVerified: true, attachmentGlyphs: 1, attachmentGlyphSequenceVerified: true, attachmentRows: 1, attachmentRowsVerified: true }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan });
     }
     case "delete_table_row":
+    case "delete_smart_folder":
       out({ status: "planned", echo: req });
     default:
       out({ status: "error", code: "unknown_action", message: "no" }, 1);
@@ -444,6 +445,24 @@ describe("privateWriterCapabilities", () => {
     expect(Object.values(off).every((f) => f.reason === "disabled")).toBe(true);
     const old = privateWriterCapabilities(deps({ ...UNVERIFIED, FAKE_MODE: "old-probe" }));
     expect(old.features.readTables).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(old.features.appendPlainText.available).toBe(true);
+  });
+
+  it("reports the smart-folder features, gating only the writes", () => {
+    install();
+    const gated = privateWriterCapabilities(deps(ON)).features;
+    expect(gated.readSmartFolders).toEqual({ available: true, reason: null, detail: null });
+    expect(gated.editSmartFolders.reason).toBe("not_live_validated");
+    expect(privateWriterCapabilities(deps(UNVERIFIED)).features.editSmartFolders.available).toBe(
+      true
+    );
+    const off = privateWriterCapabilities(deps()).features;
+    expect(Object.values(off).every((f) => f.reason === "disabled")).toBe(true);
+    const old = privateWriterCapabilities(deps({ ...UNVERIFIED, FAKE_MODE: "old-probe" }));
+    expect(old.features.readSmartFolders).toMatchObject({
       available: false,
       reason: "private_api_unavailable",
     });

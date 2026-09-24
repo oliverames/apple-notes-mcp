@@ -21,9 +21,13 @@ const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, "")
 
 /**
  * Write actions that legitimately take no ifRevision. Each entry needs a
- * reason; none exist in the foundation.
+ * reason.
  */
-const NO_REVISION_WRITES: Record<string, string> = {};
+const NO_REVISION_WRITES: Record<string, string> = {
+  create_smart_folder:
+    "creates a new folder, so there is no persisted revision; the guard is that no active " +
+    "folder with that title exists in the destination, checked in the write context",
+};
 
 function actionRows(): Array<{ name: string; keys: string[]; handler: string }> {
   const table = SOURCE.slice(SOURCE.indexOf("kActions[] = {"));
@@ -105,9 +109,9 @@ describe("private writer source contract", () => {
     // itself calls SaveOrFail; that helper then must not catch HelperError.
     const savingHelpers = [
       ...CODE.matchAll(/^static [^\n(]*?\*?(\w+)\([^;{]*\)\s*\{\n([\s\S]*?)\n\}\n/gm),
-    ].filter((m) => !m[1].startsWith("Handle") && /\bSaveOrFail\(/.test(m[2]));
+    ].filter((m) => !m[1].startsWith("Handle") && /\bSaveOrFail(?:For)?\(/.test(m[2]));
     const saves = new RegExp(
-      `SaveOrFail\\(|gSaveAttempted = YES;|\\b(?:${savingHelpers.map((m) => m[1]).join("|")})\\(`
+      `SaveOrFail(?:For)?\\(|gSaveAttempted = YES;|\\b(?:${savingHelpers.map((m) => m[1]).join("|")})\\(`
     );
     for (const helper of savingHelpers)
       expect(helper[2], helper[1]).not.toMatch(/@catch \(HelperError \*e\)/);
@@ -288,10 +292,12 @@ describe("private writer source contract", () => {
   });
 
   it("tombstones an attachment only in the orphan prune", () => {
-    // Every -markForDeletion call: the orphan prune (an ICAttachment table)
-    // and add_section_link replacing its own earlier inline chips.
+    // Every -markForDeletion call: the orphan prune (an ICAttachment table),
+    // add_section_link replacing its own earlier inline chips, and the
+    // smart-folder delete (an empty smart folder).
     const calls = [...SOURCE.matchAll(/SendVoid\(([^,]+), "markForDeletion"\)/g)].map((m) => m[1]);
-    expect(calls).toEqual(['entry[@"attachment"]', "target.attachment"]);
+    expect(calls).toEqual(['entry[@"attachment"]', "target.attachment", "folder"]);
+    expect(handlerBody("HandleDeleteSmartFolder")).toMatch(/SendVoid\(folder, ""\)/);
     expect(handlerBody("HandleAddSectionLink")).toMatch(
       /for \(NSDictionary \*entry in cleared\) SendVoid\(entry\[""\], ""\)/
     );
@@ -303,6 +309,22 @@ describe("private writer source contract", () => {
     expect(
       SOURCE.slice(SOURCE.indexOf("*HandlePruneOrphanTable(NSDictionary *request) {"))
     ).toContain(inUse);
+  });
+
+  it("opens the smart-folder delete read-write only for the apply", () => {
+    expect(handlerBody("HandleDeleteSmartFolder")).toMatch(/OpenContext\(store, dryRun\)/);
+    expect(handlerBody("HandleCreateSmartFolder")).toMatch(
+      /NSManagedObjectContext \*validation = OpenContext\(store, YES\)/
+    );
+  });
+
+  it("never lets a smart folder be a parent", () => {
+    const body = CODE.slice(
+      CODE.indexOf("static void RequireSmartFolderParent("),
+      CODE.indexOf("static void ResolveDestination(")
+    );
+    expect(body).toMatch(/if \(FolderKind\(parent\) == 2\)/);
+    expect(SOURCE).toMatch(/@"reason" : @"smart_folder_destination"/);
   });
 
   it("identifies itself as the writer in hello and probe", () => {
