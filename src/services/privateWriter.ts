@@ -85,6 +85,11 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   add_url_card: "write",
   set_paragraph_id: "write",
   add_section_link: "write",
+  read_tables: "read",
+  delete_table_row: "write",
+  insert_table_row: "write",
+  set_table_cell: "write",
+  prune_orphan_table: "write",
 };
 
 /**
@@ -129,6 +134,12 @@ export const LINK_CARD_LIVE_VALIDATED = false;
 
 /** Same gate for minting paragraph identifiers (native-set-paragraph-id). */
 export const PARAGRAPH_IDS_LIVE_VALIDATED = false;
+
+/**
+ * The same gate for the native table writes (row delete and insert, cell
+ * edit, orphan-table prune). Dry runs and `read_tables` are not gated.
+ */
+export const TABLE_WRITES_LIVE_VALIDATED = false;
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -291,6 +302,8 @@ export const writerProbeSchema = z
         linkCard: featureSchema.optional(),
         setParagraphId: featureSchema.optional(),
         addSectionLink: featureSchema.optional(),
+        tables: featureSchema.optional(),
+        pruneOrphanTable: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -336,6 +349,12 @@ export interface WriterCallOptions {
   allowDisabled?: boolean;
   /** Run a specific binary without the installation check (setup verification only). */
   binaryPath?: string;
+  /**
+   * Treat a write action as a read for this call. A dry run of a two-phase
+   * write opens the store read-only, so its timeout is not indeterminate. It
+   * can only lower the classification, never raise a read to a write.
+   */
+  dryRun?: boolean;
 }
 
 /**
@@ -355,7 +374,7 @@ export function callPrivateWriter(
       `"${action}" is not a private writer action.`,
       undefined
     );
-  const isWrite = kind === "write";
+  const isWrite = kind === "write" && !options.dryRun;
   const notCommitted = isWrite ? false : undefined;
   if (!options.allowDisabled) {
     if (!privateHelperEnabled(deps.env))
@@ -973,6 +992,13 @@ export const WRITER_FEATURES = [
     key: "addSectionLink",
     probeKey: "addSectionLink",
     liveValidated: SECTION_LINKS_LIVE_VALIDATED,
+  },
+  { key: "readTables", probeKey: "tables", liveValidated: true },
+  { key: "editTables", probeKey: "tables", liveValidated: TABLE_WRITES_LIVE_VALIDATED },
+  {
+    key: "pruneOrphanTable",
+    probeKey: "pruneOrphanTable",
+    liveValidated: TABLE_WRITES_LIVE_VALIDATED,
   },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];

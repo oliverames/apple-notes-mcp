@@ -271,6 +271,11 @@ describe("id inputs accept Notes UUIDs and numeric keys", () => {
       "native-add-url-card.id",
       "native-set-paragraph-id.id",
       "native-add-section-link.id",
+      "native-read-tables.id",
+      "native-delete-table-row.id",
+      "native-insert-table-row.id",
+      "native-set-table-cell.id",
+      "native-prune-orphan-table.id",
     ]);
     const idFields: string[] = [];
     for (const [tool, { config }] of registered) {

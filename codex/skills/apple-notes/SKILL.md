@@ -159,6 +159,11 @@ before retrying.
 | `native-set-checklist-item` | Check or uncheck one item by `todoIdentifier` with `ifRevision`; `persistedDone` read-back; same state writes nothing                                                                                          |
 | `native-highlight-text`     | Highlight (purple/pink/orange/mint/blue) or remove (`none`) exact text (`expectedCount` guard) or, with `scope: "note"`, the whole body after the title, skipping attachments; `dryRun`, stored runs read back |
 | `native-add-url-card`       | Add a rich URL link card at the end or after one exact paragraph; `dryRun`, read-back of glyph and attachment; not idempotent                                                                                  |
+| `native-read-tables`        | List a note's tables with native row/column ids and `digest` tokens (read-only)                                                                                                                                |
+| `native-delete-table-row`   | Delete one table row by id; dry run first, then apply with both tokens                                                                                                                                         |
+| `native-insert-table-row`   | Insert a row after a row id (or at the end) with plain-text cells                                                                                                                                              |
+| `native-set-table-cell`     | Replace one cell's text by row and column id                                                                                                                                                                   |
+| `native-prune-orphan-table` | Tombstone a table no body glyph shows; dry run first, then apply                                                                                                                                               |
 
 ## Usage Patterns
 

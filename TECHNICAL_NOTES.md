@@ -1409,6 +1409,44 @@ On the 2026-09-24 copy test no recent note had a heading, so the default and
 `heading` selectors have not yet run against a store; `blockIndex` and `paragraphId`,
 minting in the same and in another note, and clearing ran on the copy.
 
+### Native tables
+
+A Notes table is an attachment (UTI `com.apple.notes.table`) whose content
+is a CRDT document in `ICAttachment.mergeableData`. The body holds one U+FFFC
+glyph per visible table, carrying an attachment object that names the
+attachment. `ICTable` gives every row and column a stable identity, so the
+writer's table actions address rows and columns by that UUID. A headless
+process has to call `+[ICTable registerWithICCRCoder]` before it opens a
+table document.
+
+- `read_tables` (read) lists every active top-level table with its glyph
+  count, row and column identifiers, cell text, and a `t1:` digest (SHA-256
+  over the attachment identifier, its deletion flag, and the serialized
+  document). A table larger than 1000 rows or columns or 10000 cells, or one
+  without unique identities, is reported `readable: false`.
+- `delete_table_row`, `insert_table_row`, `set_table_cell` (writes) edit the
+  `ICTable`, serialize it with `-[ICAttachmentTableModel writeMergeableData]`,
+  bump the attachment's and the note's change counts, and save once. The
+  read-back checks that the body string is unchanged, that the glyph is still
+  present exactly once, and that the re-read table equals the planned
+  snapshot.
+- `prune_orphan_table` (write) handles an active table attachment with no
+  body glyph (an orphan: invisible, but still synced and counted). It calls
+  `updateMarkedForDeletionStateAttachmentIsInUse:NO` and `markForDeletion`,
+  which is Notes' own deletion path, and bumps the note's change count so a
+  concurrent Notes save conflicts. The note body and modification date do not
+  change, so the note `revision` stays the same; the read-back checks that
+  the active table count dropped by exactly one.
+
+Every table write takes `ifTableDigest` as a second compare-and-swap token
+(`attachment_conflict`, `committed: false`). Row deletion and the prune are
+two-phase: the dry run opens the store read-only (a timeout there is a failed
+read, not an indeterminate write), and the apply must present the dry run's
+tokens. `TABLE_WRITES_LIVE_VALIDATED` is false. The copy-store script covers
+all four writes; for the prune it builds an orphan on the copy by
+reassigning another note's table row with SQL, since no ordinary edit leaves
+one behind.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this

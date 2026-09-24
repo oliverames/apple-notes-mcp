@@ -72,7 +72,7 @@ process.stdin.on("end", () => {
     case "hello":
       out({ status: "ok", protocolVersion: 1, sourceSha256: "dev", role: "writer", readOnly: false, actions: ["hello"] });
     case "probe":
-      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: mode === "old-writer" ? { readNoteState: feature(), appendPlainText: feature() } : { readNoteState: feature(), appendPlainText: feature(), planEdit: feature(), editNote: feature() } });
+      out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: process.env.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES === "1", os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: mode === "old-writer" || mode === "old-probe" ? { readNoteState: feature(), appendPlainText: feature() } : { readNoteState: feature(), appendPlainText: feature(), planEdit: feature(), editNote: feature(), tables: feature(), pruneOrphanTable: feature() } });
     case "append_plain_text":
       out({ status: "updated", committed: true, verified: true, identifier: req.identifier, appendedUTF16: req.text.length, separatorInserted: false, revisionBefore: req.ifRevision, revisionAfter: "r1:" + "d".repeat(64), modificationDate: "2026-09-23T00:00:00.000Z", title: "t", cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, storeKind: "live", echo: req });
     case "read_note_state":
@@ -85,6 +85,8 @@ process.stdin.on("end", () => {
       if (mode === "edit-attachment") { const id = req.operations[0].selector.identifier; out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 99, formattingOutsideEditsVerified: true, attachmentGlyphs: 2, attachmentGlyphSequenceVerified: true, attachmentRows: 3, attachmentRowsVerified: true, otherAttachmentRowsUnchanged: 2, removedAttachments: [{ identifier: id, rowStillInNote: true, markedForDeletion: false }] }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan, attachmentGlyphs: 3, attachmentGlyphsAfter: 2, removedAttachments: [id] }); }
       out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 95, formattingOutsideEditsVerified: true, attachmentGlyphs: 1, attachmentGlyphSequenceVerified: true, attachmentRows: 1, attachmentRowsVerified: true }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan });
     }
+    case "delete_table_row":
+      out({ status: "planned", echo: req });
     default:
       out({ status: "error", code: "unknown_action", message: "no" }, 1);
   }
@@ -256,6 +258,22 @@ describe("callPrivateWriter", () => {
     expect(read).toMatchObject({ code: "timeout", committed: undefined });
   }, 20_000);
 
+  it("treats a dry run of a write action as a read", () => {
+    const env = { ...ON, FAKE_MODE: "hang", APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS: "300" };
+    const dry = thrown(() =>
+      callPrivateWriter("delete_table_row", {}, deps(env), { dryRun: true })
+    );
+    expect(dry).toMatchObject({ code: "timeout", committed: undefined });
+    const apply = thrown(() => callPrivateWriter("delete_table_row", {}, deps(env)));
+    expect(apply).toMatchObject({ code: "timeout", committed: "unknown" });
+    const off = thrown(() =>
+      callPrivateWriter("delete_table_row", {}, deps({ APPLE_NOTES_MCP_ENABLE_PRIVATE: "1" }), {
+        dryRun: true,
+      })
+    );
+    expect(off).toMatchObject({ code: "writes_disabled", committed: undefined });
+  }, 20_000);
+
   it("reports an unrunnable binary as not committed", () => {
     const error = thrown(() =>
       callPrivateWriter("append_plain_text", {}, deps(ON), {
@@ -411,6 +429,25 @@ describe("privateWriterCapabilities", () => {
       reason: null,
       detail: null,
     });
+  });
+
+  it("reports the table features, gating only the writes", () => {
+    install();
+    const gated = privateWriterCapabilities(deps(ON)).features;
+    expect(gated.readTables).toEqual({ available: true, reason: null, detail: null });
+    expect(gated.editTables.reason).toBe("not_live_validated");
+    expect(gated.pruneOrphanTable.reason).toBe("not_live_validated");
+    const open = privateWriterCapabilities(deps(UNVERIFIED)).features;
+    expect(open.editTables.available).toBe(true);
+    expect(open.pruneOrphanTable.available).toBe(true);
+    const off = privateWriterCapabilities(deps()).features;
+    expect(Object.values(off).every((f) => f.reason === "disabled")).toBe(true);
+    const old = privateWriterCapabilities(deps({ ...UNVERIFIED, FAKE_MODE: "old-probe" }));
+    expect(old.features.readTables).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(old.features.appendPlainText.available).toBe(true);
   });
 
   it("maps probe feature failures and unreachable writers", () => {

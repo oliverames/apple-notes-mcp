@@ -101,11 +101,21 @@ describe("private writer source contract", () => {
     expect(append).not.toMatch(/@catch \(HelperError \*e\)/);
     // Every other write action marks itself first, saves only through a
     // bracketed save, and catches every exception in its read-back.
+    // A handler may save through a helper (for example CommitTableEdit) that
+    // itself calls SaveOrFail; that helper then must not catch HelperError.
+    const savingHelpers = [
+      ...CODE.matchAll(/^static [^\n(]*?\*?(\w+)\([^;{]*\)\s*\{\n([\s\S]*?)\n\}\n/gm),
+    ].filter((m) => !m[1].startsWith("Handle") && /\bSaveOrFail\(/.test(m[2]));
+    const saves = new RegExp(
+      `SaveOrFail\\(|gSaveAttempted = YES;|\\b(?:${savingHelpers.map((m) => m[1]).join("|")})\\(`
+    );
+    for (const helper of savingHelpers)
+      expect(helper[2], helper[1]).not.toMatch(/@catch \(HelperError \*e\)/);
     for (const row of actionRows()) {
       if (WRITER_ACTIONS[row.name] !== "write") continue;
       const body = handlerBody(row.handler);
       expect(body, row.name).toMatch(/^\*\w+\(NSDictionary \*request\) \{\s*gWriteRequest = YES;/);
-      expect(body, row.name).toMatch(/SaveOrFail\(|gSaveAttempted = YES;/);
+      expect(body, row.name).toMatch(saves);
       expect(body, row.name).not.toMatch(/@catch \(HelperError \*e\)/);
     }
     // Each -save: in the file is bracketed.
@@ -258,6 +268,41 @@ describe("private writer source contract", () => {
     expect(body).toMatch(/UniqueBlockWithUUID/);
     // Only paragraph-link chips are cleared; note-link chips share the UTI.
     expect(CODE).toMatch(/IsSectionLinkAttachment\(inlineAttachment\)\) return;/);
+  });
+
+  it("opens a two-phase table write read-write only for the apply", () => {
+    for (const name of ["HandleDeleteTableRow", "HandlePruneOrphanTable"]) {
+      const body = handlerBody(name);
+      expect(body, name).toMatch(
+        /BOOL apply = RequireGuards\(request, dryRun, &ifRevision, &ifTableDigest\)/
+      );
+      expect(body, name).toMatch(/ResolveTableTarget\(request, !apply,/);
+      expect(body, name).toMatch(
+        /if \(apply\) CompareTableGuards\(target, ifRevision, ifTableDigest\)/
+      );
+    }
+    for (const name of ["HandleInsertTableRow", "HandleSetTableCell"])
+      expect(handlerBody(name), name).toMatch(
+        /CompareTableGuards\(target, ifRevision, ifTableDigest\)/
+      );
+  });
+
+  it("tombstones an attachment only in the orphan prune", () => {
+    // Every -markForDeletion call: the orphan prune (an ICAttachment table)
+    // and add_section_link replacing its own earlier inline chips.
+    const calls = [...SOURCE.matchAll(/SendVoid\(([^,]+), "markForDeletion"\)/g)].map((m) => m[1]);
+    expect(calls).toEqual(['entry[@"attachment"]', "target.attachment"]);
+    expect(handlerBody("HandleAddSectionLink")).toMatch(
+      /for \(NSDictionary \*entry in cleared\) SendVoid\(entry\[""\], ""\)/
+    );
+    expect(handlerBody("HandlePruneOrphanTable")).toMatch(/SendVoid\(target\.attachment, ""\)/);
+    // The in-use flag is cleared only in the prune: once in the probe's
+    // requirement table, once in the prune handler.
+    const inUse = '"updateMarkedForDeletionStateAttachmentIsInUse:"';
+    expect(SOURCE.split(inUse).length - 1).toBe(2);
+    expect(
+      SOURCE.slice(SOURCE.indexOf("*HandlePruneOrphanTable(NSDictionary *request) {"))
+    ).toContain(inUse);
   });
 
   it("identifies itself as the writer in hello and probe", () => {

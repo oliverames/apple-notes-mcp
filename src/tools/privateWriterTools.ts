@@ -73,7 +73,10 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
   switch (helperCode) {
     case "revision_conflict":
     case "paragraph_changed": // the selected paragraph moved or changed since it was listed
+    case "attachment_conflict":
       return "revision_conflict";
+    case "unsupported_attachment":
+      return "unsupported";
     case "verification_failed":
       return "verification_failed";
     case "writes_disabled":
