@@ -136,6 +136,167 @@ echo "ok: replayed append refused"
 
 # Feature write checks go here, each against the copy only.
 
+# 6. Native tables: row delete (two-phase), row insert, cell edit, and orphan
+#    prune, all on the copy. Candidate: the first editable note with a table
+#    that is visible exactly once and has at least two rows.
+tables_request() { printf '{"protocol":1,"action":"read_tables","identifier":"%s"}' "$1"; }
+delete_request() { # dryRun [ifRevision ifTableDigest]
+  if [ "$1" = "true" ]; then
+    printf '{"protocol":1,"action":"delete_table_row","identifier":"%s","tableIdentifier":"%s","rowIdentifier":"%s","dryRun":true}' \
+      "$TNOTE" "$TID" "$ROW1"
+  else
+    printf '{"protocol":1,"action":"delete_table_row","identifier":"%s","tableIdentifier":"%s","rowIdentifier":"%s","dryRun":false,"ifRevision":"%s","ifTableDigest":"%s"}' \
+      "$TNOTE" "$TID" "$ROW1" "$2" "$3"
+  fi
+}
+prune_request() { # tableIdentifier dryRun [ifRevision ifTableDigest]
+  if [ "$2" = "true" ]; then
+    printf '{"protocol":1,"action":"prune_orphan_table","identifier":"%s","tableIdentifier":"%s","dryRun":true}' "$TNOTE" "$1"
+  else
+    printf '{"protocol":1,"action":"prune_orphan_table","identifier":"%s","tableIdentifier":"%s","dryRun":false,"ifRevision":"%s","ifTableDigest":"%s"}' \
+      "$TNOTE" "$1" "$3" "$4"
+  fi
+}
+ZERO_DIGEST="t1:${ZERO#r1:}"
+
+table_checks() {
+  local CANDIDATE STATE COUNT I TREAD TLIVE_BEFORE ROWS_BEFORE ROW0 COL0 PLAN PREV PDIG OUT
+  local REV_AFTER DIG_AFTER INSERT NEWROW SETCELL ORPHAN
+  TNOTE=""
+  TABLE=""
+  TSTATE=""
+  for CANDIDATE in $(/usr/bin/sqlite3 "$COPY" "SELECT n.ZIDENTIFIER FROM ZICCLOUDSYNCINGOBJECT a
+    JOIN ZICCLOUDSYNCINGOBJECT n ON a.ZNOTE = n.Z_PK
+    WHERE a.ZTYPEUTI = 'com.apple.notes.table' AND IFNULL(a.ZMARKEDFORDELETION,0)=0
+      AND n.ZFOLDER IS NOT NULL AND IFNULL(n.ZISPASSWORDPROTECTED,0)=0
+      AND IFNULL(n.ZMARKEDFORDELETION,0)=0
+    GROUP BY n.Z_PK ORDER BY MAX(n.ZMODIFICATIONDATE1) DESC LIMIT 40;"); do
+    STATE="$(copy_run "$(read_request "$CANDIDATE")" || true)"
+    if [ "$(field "$STATE" editable)" != "true" ] || [ "$(field "$STATE" sharedViaICloud)" != "false" ] ||
+      [ "$(field "$STATE" deletedOrInTrash)" != "false" ]; then
+      continue
+    fi
+    TSTATE="$(copy_run "$(tables_request "$CANDIDATE")" || true)"
+    COUNT="$(field "$TSTATE" tableCount)"
+    I=0
+    while [ "$I" -lt "${COUNT:-0}" ]; do
+      if [ "$(field "$TSTATE" "tables.$I.glyphCount")" = "1" ] &&
+        [ "$(field "$TSTATE" "tables.$I.readable")" = "true" ] &&
+        [ "$(field "$TSTATE" "tables.$I.rowCount")" -ge 2 ]; then
+        TNOTE="$CANDIDATE"
+        TABLE="$I"
+        break 2
+      fi
+      I=$((I + 1))
+    done
+  done
+  if [ -z "$TNOTE" ]; then
+    echo "skip: no editable note with a visible multi-row table in the copy"
+    return 0
+  fi
+  TREAD="$(tables_request "$TNOTE")"
+  TLIVE_BEFORE="$(field "$(run "$TREAD")" "tables.$TABLE.digest")"
+  [ -n "$TLIVE_BEFORE" ] || fail "could not read the live table state"
+  TID="$(field "$TSTATE" "tables.$TABLE.identifier")"
+  ROWS_BEFORE="$(field "$TSTATE" "tables.$TABLE.rowCount")"
+  ROW0="$(field "$TSTATE" "tables.$TABLE.rows.0.identifier")"
+  ROW1="$(field "$TSTATE" "tables.$TABLE.rows.1.identifier")"
+  COL0="$(field "$TSTATE" "tables.$TABLE.columnIdentifiers.0")"
+
+  # Without the write switch an apply against the live store is refused
+  # before any read-write open (and carries zero tokens besides).
+  OUT="$(run "$(delete_request false "$ZERO" "$ZERO_DIGEST")" || true)"
+  [ "$(field "$OUT" code)" = "writes_disabled" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "live table apply not gated: $(field "$OUT" code)"
+  echo "ok: live table apply refused without APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES"
+
+  PLAN="$(copy_run "$(delete_request true)" || true)"
+  [ "$(field "$PLAN" status)" = "planned" ] || fail "delete dry run: $(field "$PLAN" code) $(field "$PLAN" message)"
+  [ "$(field "$PLAN" committed)" = "false" ] || fail "dry run reported committed"
+  PREV="$(field "$PLAN" revision)"
+  PDIG="$(field "$PLAN" tableDigest)"
+  echo "ok: delete-row dry run planned row $(field "$PLAN" rowIndex) of $ROWS_BEFORE"
+  OUT="$(copy_run "$(delete_request false "$PREV" "$ZERO_DIGEST")" || true)"
+  [ "$(field "$OUT" code)" = "attachment_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "stale table digest not refused: $(field "$OUT" code)"
+  echo "ok: stale ifTableDigest refused, committed=false"
+  OUT="$(copy_run "$(delete_request false "$ZERO" "$PDIG")" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "stale ifRevision not refused: $(field "$OUT" code)"
+  echo "ok: stale ifRevision refused, committed=false"
+  OUT="$(copy_run "$(delete_request false "$PREV" "$PDIG")" || true)"
+  [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "delete apply: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$OUT" rowCount)" = "$((ROWS_BEFORE - 1))" ] || fail "row count did not drop by one"
+  [ "$(field "$OUT" storeKind)" = "copy" ] || fail "delete did not report the copy store"
+  [ "$(field "$OUT" pushScheduled)" = "false" ] || fail "delete claimed a push"
+  REV_AFTER="$(field "$OUT" revisionAfter)"
+  DIG_AFTER="$(field "$OUT" tableDigestAfter)"
+  echo "ok: row deleted and verified ($ROWS_BEFORE -> $(field "$OUT" rowCount) rows, uploadPending $(field "$OUT" cloudSync.uploadPending))"
+  OUT="$(copy_run "$(delete_request false "$PREV" "$PDIG")" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed delete not refused: $(field "$OUT" code)"
+  echo "ok: replayed delete refused"
+
+  INSERT="$(printf '{"protocol":1,"action":"insert_table_row","identifier":"%s","tableIdentifier":"%s","afterRowIdentifier":"%s","cells":["copy-store row"],"ifRevision":"%s","ifTableDigest":"%s"}' \
+    "$TNOTE" "$TID" "$ROW0" "$REV_AFTER" "$DIG_AFTER")"
+  OUT="$(copy_run "$INSERT" || true)"
+  [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "insert: $(field "$OUT" code) $(field "$OUT" message)"
+  NEWROW="$(field "$OUT" rowIdentifier)"
+  echo "ok: row inserted at index $(field "$OUT" rowIndex) and verified"
+  SETCELL="$(printf '{"protocol":1,"action":"set_table_cell","identifier":"%s","tableIdentifier":"%s","rowIdentifier":"%s","columnIdentifier":"%s","text":"copy-store edit","ifRevision":"%s","ifTableDigest":"%s"}' \
+    "$TNOTE" "$TID" "$NEWROW" "$COL0" "$(field "$OUT" revisionAfter)" "$(field "$OUT" tableDigestAfter)")"
+  OUT="$(copy_run "$SETCELL" || true)"
+  [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+    fail "set cell: $(field "$OUT" code) $(field "$OUT" message)"
+  [ "$(field "$OUT" previousText)" = "copy-store row" ] || fail "set cell saw the wrong previous text"
+  echo "ok: cell edited and verified"
+  OUT="$(copy_run "$SETCELL" || true)"
+  [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "replayed cell edit not refused: $(field "$OUT" code)"
+  echo "ok: replayed cell edit refused"
+
+  # 7. Orphan prune. COPY-ONLY fixture: reassign another note's table
+  #    attachment to this note with SQL on the copy, so the note owns an
+  #    active table that no body glyph shows. The writer itself never runs SQL.
+  /usr/bin/sqlite3 "$COPY" "UPDATE ZICCLOUDSYNCINGOBJECT
+    SET ZNOTE = (SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE ZIDENTIFIER = '$TNOTE')
+    WHERE Z_PK = (SELECT a.Z_PK FROM ZICCLOUDSYNCINGOBJECT a
+      WHERE a.ZTYPEUTI = 'com.apple.notes.table' AND IFNULL(a.ZMARKEDFORDELETION,0)=0
+        AND a.ZNOTE != (SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE ZIDENTIFIER = '$TNOTE')
+      ORDER BY a.Z_PK LIMIT 1);"
+  TSTATE="$(copy_run "$TREAD" || true)"
+  ORPHAN=""
+  I=0
+  while [ "$I" -lt "$(field "$TSTATE" tableCount)" ]; do
+    if [ "$(field "$TSTATE" "tables.$I.orphan")" = "true" ]; then
+      ORPHAN="$(field "$TSTATE" "tables.$I.identifier")"
+    fi
+    I=$((I + 1))
+  done
+  if [ -z "$ORPHAN" ]; then
+    echo "skip: the copy has no second table to turn into an orphan"
+  else
+    OUT="$(copy_run "$(prune_request "$TID" true)" || true)"
+    [ "$(field "$OUT" code)" = "unsupported_attachment" ] || fail "visible table accepted as an orphan"
+    echo "ok: visible table refused by prune"
+    PLAN="$(copy_run "$(prune_request "$ORPHAN" true)" || true)"
+    [ "$(field "$PLAN" status)" = "planned" ] || fail "prune dry run: $(field "$PLAN" code) $(field "$PLAN" message)"
+    OUT="$(copy_run "$(prune_request "$ORPHAN" false "$(field "$PLAN" revision)" "$(field "$PLAN" tableDigest)")" || true)"
+    [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+      fail "prune apply: $(field "$OUT" code) $(field "$OUT" message)"
+    echo "ok: orphan pruned and verified (active tables $(field "$OUT" activeTableCountBefore) -> $(field "$OUT" activeTableCountAfter))"
+    OUT="$(copy_run "$(prune_request "$ORPHAN" true)" || true)"
+    [ "$(field "$OUT" code)" = "unsupported_attachment" ] || fail "pruned table still prunable"
+    echo "ok: pruned table no longer offered"
+  fi
+
+  [ "$TLIVE_BEFORE" = "$(field "$(run "$TREAD")" "tables.$TABLE.digest")" ] ||
+    fail "live table changed during the copy test"
+  echo "ok: live table digest unchanged"
+}
+table_checks
+
+
 # 5. The live note is untouched.
 LIVE_AFTER="$(field "$(run "$READ")" revision)"
 [ "$LIVE_BEFORE" = "$LIVE_AFTER" ] || fail "live note revision changed during the copy test"

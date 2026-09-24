@@ -57,7 +57,10 @@ export { resolveIdentifier };
 export function writerEnvelopeCode(helperCode: string, message: string): ErrorCode {
   switch (helperCode) {
     case "revision_conflict":
+    case "attachment_conflict":
       return "revision_conflict";
+    case "unsupported_attachment":
+      return "unsupported";
     case "verification_failed":
       return "verification_failed";
     case "writes_disabled":

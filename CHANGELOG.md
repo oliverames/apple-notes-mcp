@@ -26,6 +26,17 @@
   of the store and checks that the live store is refused as a copy, that a
   read-write open of the live store is refused without the write switch, and
   that the live note is unchanged.
+- Native table edits through the writer: `native-read-tables`,
+  `native-delete-table-row`, `native-insert-table-row`,
+  `native-set-table-cell`, and `native-prune-orphan-table`. Rows, columns,
+  and tables are addressed by native identifier. Writes need the note
+  `revision` and the table `digest`; row deletion and the orphan prune are
+  two-phase (a read-only dry run, then an apply with both tokens). Applies
+  accept `nudge` and are gated by `TABLE_WRITES_LIVE_VALIDATED`.
+- `native-writer-status` reports `readTables`, `editTables`, and
+  `pruneOrphanTable` next to `appendPlainText`.
+- The copy-store script exercises the four table writes, their stale-token
+  refusals, and the live-store gate.
 
 ## [2.9.11] - 2026-09-23
 

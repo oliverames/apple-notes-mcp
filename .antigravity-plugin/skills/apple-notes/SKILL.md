@@ -126,10 +126,15 @@ Call `native-writer-status` first. Every write needs a fresh `revision` as
 `ifRevision`; on `revision_conflict` or `indeterminate: true`, read the note
 before retrying.
 
-| Tool                       | Purpose                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `native-writer-status`     | Report both switches, writer build state, and live probe (read-only)             |
-| `native-append-plain-text` | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
+| Tool                        | Purpose                                                                          |
+| --------------------------- | -------------------------------------------------------------------------------- |
+| `native-writer-status`      | Report both switches, writer build state, and live probe (read-only)             |
+| `native-append-plain-text`  | Append plain paragraphs with a revision guard and read-back; optional sync nudge |
+| `native-read-tables`        | List a note's tables with native row/column ids and `digest` tokens (read-only)  |
+| `native-delete-table-row`   | Delete one table row by id; dry run first, then apply with both tokens           |
+| `native-insert-table-row`   | Insert a row after a row id (or at the end) with plain-text cells                |
+| `native-set-table-cell`     | Replace one cell's text by row and column id                                     |
+| `native-prune-orphan-table` | Tombstone a table no body glyph shows; dry run first, then apply                 |
 
 ## Usage Patterns
 

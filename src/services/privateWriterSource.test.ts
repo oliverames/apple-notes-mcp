@@ -93,6 +93,38 @@ describe("private writer source contract", () => {
     expect(CODE).not.toMatch(/NSBatch(?:Update|Delete|Insert)Request/);
   });
 
+  it("opens a two-phase table write read-write only for the apply", () => {
+    for (const name of ["HandleDeleteTableRow", "HandlePruneOrphanTable"]) {
+      const body = handlerBody(name);
+      expect(body, name).toMatch(
+        /BOOL apply = RequireGuards\(request, dryRun, &ifRevision, &ifTableDigest\)/
+      );
+      expect(body, name).toMatch(/ResolveTableTarget\(request, !apply,/);
+      expect(body, name).toMatch(
+        /if \(apply\) CompareTableGuards\(target, ifRevision, ifTableDigest\)/
+      );
+    }
+    for (const name of ["HandleInsertTableRow", "HandleSetTableCell"])
+      expect(handlerBody(name), name).toMatch(
+        /CompareTableGuards\(target, ifRevision, ifTableDigest\)/
+      );
+  });
+
+  it("tombstones an attachment only in the orphan prune", () => {
+    const prune = SOURCE.slice(
+      SOURCE.indexOf("*HandlePruneOrphanTable(NSDictionary *request) {"),
+      SOURCE.indexOf("#pragma mark - Main")
+    );
+    for (const selector of [
+      '"markForDeletion"',
+      '"updateMarkedForDeletionStateAttachmentIsInUse:"',
+    ]) {
+      // Once in the probe's requirement table, once in the prune handler.
+      expect(SOURCE.split(selector).length - 1, selector).toBe(2);
+      expect(prune, selector).toContain(selector);
+    }
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);

@@ -5049,8 +5049,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid3 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid3}))`);
+        const invalid4 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid4}))`);
       }
     };
     exports.default = def;
@@ -40007,8 +40007,8 @@ function parseAudioRecording(data) {
     (f) => f.value instanceof Uint8Array ? Buffer.from(f.value).toString("hex") : ""
   );
   const uuidSlot = /* @__PURE__ */ new Map();
-  uuids.forEach((uuid2, i) => {
-    if (uuid2 && !uuidSlot.has(uuid2)) uuidSlot.set(uuid2, i);
+  uuids.forEach((uuid3, i) => {
+    if (uuid3 && !uuidSlot.has(uuid3)) uuidSlot.set(uuid3, i);
   });
   const entry = (index) => {
     const value = entries2[index];
@@ -40082,9 +40082,9 @@ function parseAudioRecording(data) {
           index: need(varintValue(getField(pair, 1)), "segment index"),
           uuid: getField(pair, 2)?.value
         })).sort((a, b) => a.index - b.index);
-        for (const { uuid: uuid2 } of ordering) {
-          if (!(uuid2 instanceof Uint8Array)) throw new Error("Invalid segment UUID");
-          const slot = uuidSlot.get(Buffer.from(uuid2).toString("hex"));
+        for (const { uuid: uuid3 } of ordering) {
+          if (!(uuid3 instanceof Uint8Array)) throw new Error("Invalid segment UUID");
+          const slot = uuidSlot.get(Buffer.from(uuid3).toString("hex"));
           const segmentIndex = slot === void 0 ? void 0 : bySlot.get(slot);
           if (segmentIndex === void 0) throw new Error("Unresolved transcript segment");
           const segment = customMap(entry(segmentIndex));
@@ -40924,9 +40924,9 @@ function readTrashFolderIds(dbPath2 = NOTES_DB_PATH4) {
       predicates.push("COALESCE(ZIDENTIFIER, '') LIKE 'TrashFolder%'");
     if (!predicates.length) return [];
     const sql = `SELECT (SELECT Z_UUID FROM Z_METADATA LIMIT 1); SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICFolder') AND (${predicates.join(" OR ")}) ORDER BY Z_PK;`;
-    const [uuid2, ...pks] = query(dbPath2, sql).split("\n").map((line) => line.trim()).filter(Boolean);
-    if (!uuid2 || !/^[0-9A-F-]+$/i.test(uuid2)) return [];
-    const ids = pks.filter((pk) => /^\d+$/.test(pk)).map((pk) => `x-coredata://${uuid2}/ICFolder/p${pk}`);
+    const [uuid3, ...pks] = query(dbPath2, sql).split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!uuid3 || !/^[0-9A-F-]+$/i.test(uuid3)) return [];
+    const ids = pks.filter((pk) => /^\d+$/.test(pk)).map((pk) => `x-coredata://${uuid3}/ICFolder/p${pk}`);
     cache = { dbPath: dbPath2, at: Date.now(), ids };
     return ids;
   } catch {
@@ -45606,10 +45606,10 @@ function listSpecialNotes(options) {
     ...scope2 ? { account: scope2.name } : {}
   };
 }
-function toSpecialRow(row, uuid2, paths, accountNames, kind) {
+function toSpecialRow(row, uuid3, paths, accountNames, kind) {
   const locked = Boolean(row.locked);
   const note = {
-    id: noteIdFor(uuid2, row.pk),
+    id: noteIdFor(uuid3, row.pk),
     identifier: row.identifier ?? null,
     title: row.title ?? null,
     folder: row.folder !== null ? paths.get(row.folder) ?? null : null,
@@ -45831,8 +45831,8 @@ function decodeParagraph(fields, tally) {
   const checklistId = checklist && bytesOf(checklist, 1);
   if (attrs.styleType === 103 && checklistId)
     attrs.checklist = { id: hex2(checklistId), done: varintOf(checklist, 2) === 1 };
-  const uuid2 = bytesOf(fields, 9);
-  if (uuid2?.length === 16) attrs.paragraphUuid = uuidString(uuid2);
+  const uuid3 = bytesOf(fields, 9);
+  if (uuid3?.length === 16) attrs.paragraphUuid = uuidString(uuid3);
   return attrs;
 }
 function decodeInline(fields) {
@@ -46463,10 +46463,10 @@ function buildResolveSql(entity3, keys, uuids) {
   }
   if (uuids.length > 0) {
     const variants = /* @__PURE__ */ new Set();
-    for (const uuid2 of uuids) {
-      variants.add(uuid2);
-      variants.add(uuid2.toUpperCase());
-      variants.add(uuid2.toLowerCase());
+    for (const uuid3 of uuids) {
+      variants.add(uuid3);
+      variants.add(uuid3.toUpperCase());
+      variants.add(uuid3.toLowerCase());
     }
     matches.push(`o.ZIDENTIFIER IN (${[...variants].map((v) => `'${v}'`).join(", ")})`);
   }
@@ -46544,10 +46544,10 @@ function resolveIdentifiers(values, entity3, dbPath2 = NOTES_DB_PATH9) {
     if (row) resolved.set(key, coreDataId(store, entity3, row.pk));
     else missing.push(`numeric key ${key}`);
   }
-  for (const uuid2 of uuids) {
-    const row = byUuid.get(uuid2.toUpperCase());
-    if (row) resolved.set(uuid2, coreDataId(store, entity3, row.pk));
-    else missing.push(`identifier ${uuid2}`);
+  for (const uuid3 of uuids) {
+    const row = byUuid.get(uuid3.toUpperCase());
+    if (row) resolved.set(uuid3, coreDataId(store, entity3, row.pk));
+    else missing.push(`identifier ${uuid3}`);
   }
   if (missing.length > 0) {
     throw new IdentifierResolutionError(
@@ -47413,7 +47413,7 @@ function runNoteQuery(ast, options = {}) {
     console.error(`query-notes: database read failed: ${message}`);
     throw new NoteQueryStoreError("Failed to read the Notes database.", "query_error");
   }
-  let uuid2;
+  let uuid3;
   let eligible = 0;
   const folderRows = [];
   const accounts = /* @__PURE__ */ new Map();
@@ -47421,14 +47421,14 @@ function runNoteQuery(ast, options = {}) {
   for (const line of output.split("\n")) {
     if (!line.trim()) continue;
     const row = JSON.parse(line);
-    if (row.k === "meta") uuid2 = typeof row.uuid === "string" ? row.uuid : void 0;
+    if (row.k === "meta") uuid3 = typeof row.uuid === "string" ? row.uuid : void 0;
     else if (row.k === "total") eligible = Number(row.n) || 0;
     else if (row.k === "folder") folderRows.push(row);
     else if (row.k === "account" && typeof row.name === "string")
       accounts.set(Number(row.pk), row.name);
     else if (row.k === "note") notes.push(row);
   }
-  if (!uuid2 || !/^[0-9A-Fa-f-]+$/.test(uuid2)) {
+  if (!uuid3 || !/^[0-9A-Fa-f-]+$/.test(uuid3)) {
     throw new NoteQueryStoreError(
       "The Notes database has no store identifier, so note IDs cannot be formed.",
       "schema"
@@ -47503,7 +47503,7 @@ function runNoteQuery(ast, options = {}) {
     if (hits.length >= limit) continue;
     const body = locked ? null : decode2();
     hits.push({
-      id: `x-coredata://${uuid2}/ICNote/p${row.pk}`,
+      id: `x-coredata://${uuid3}/ICNote/p${row.pk}`,
       title: row.title ?? "",
       ...folder ? { folder: folder.path } : {},
       ...account !== void 0 ? { account } : {},
@@ -53303,7 +53303,7 @@ var Analyzer = class {
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
       if (value === "inherit") continue;
-      const invalid3 = () => this.issue(
+      const invalid4 = () => this.issue(
         "invalid_value",
         null,
         ctx.location,
@@ -53313,7 +53313,7 @@ var Analyzer = class {
         case "fill":
         case "stroke": {
           const paint = parsePaint(value);
-          if (paint.kind === "invalid") invalid3();
+          if (paint.kind === "invalid") invalid4();
           else if (name === "fill") style.fill = paint;
           else style.stroke = paint;
           break;
@@ -53321,12 +53321,12 @@ var Analyzer = class {
         case "color": {
           const c = parseColor(value);
           if (c) style.color = c;
-          else invalid3();
+          else invalid4();
           break;
         }
         case "stroke-width": {
           const w = parseLength(value, diag);
-          if (w === null || w < 0) invalid3();
+          if (w === null || w < 0) invalid4();
           else style.strokeWidth = w;
           break;
         }
@@ -53334,7 +53334,7 @@ var Analyzer = class {
         case "fill-opacity":
         case "stroke-opacity": {
           const o = parseOpacity(value);
-          if (o === null) invalid3();
+          if (o === null) invalid4();
           else if (name === "opacity") opacity = o;
           else if (name === "fill-opacity") style.fillOpacity = o;
           else style.strokeOpacity = o;
@@ -53342,7 +53342,7 @@ var Analyzer = class {
         }
         case "fill-rule":
           if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
-          else invalid3();
+          else invalid4();
           break;
         case "visibility":
           style.visible = value === "visible";
@@ -53362,14 +53362,14 @@ var Analyzer = class {
             break;
           }
           const list = parseNumberList(value);
-          if (!list || list.some((v) => v < 0)) invalid3();
+          if (!list || list.some((v) => v < 0)) invalid4();
           else
             style.dasharray = list.reduce((s, v) => s + v, 0) > 0 ? list.length % 2 ? [...list, ...list] : list : null;
           break;
         }
         case "stroke-dashoffset": {
           const o = parseLength(value, diag);
-          if (o === null) invalid3();
+          if (o === null) invalid4();
           else style.dashoffset = o;
           break;
         }
@@ -56329,9 +56329,15 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  read_tables: "read",
+  delete_table_row: "write",
+  insert_table_row: "write",
+  set_table_cell: "write",
+  prune_orphan_table: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var TABLE_WRITES_LIVE_VALIDATED = false;
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56424,7 +56430,12 @@ var writerProbeSchema = external_exports.object({
     noteRows: external_exports.number().int().nullable()
   }).passthrough(),
   syncHostRunning: external_exports.boolean(),
-  features: external_exports.object({ readNoteState: featureSchema2, appendPlainText: featureSchema2 }).passthrough()
+  features: external_exports.object({
+    readNoteState: featureSchema2,
+    appendPlainText: featureSchema2,
+    tables: featureSchema2.optional(),
+    pruneOrphanTable: featureSchema2.optional()
+  }).passthrough()
 }).passthrough();
 var cloudSyncSchema2 = external_exports.object({
   available: external_exports.boolean(),
@@ -56459,7 +56470,7 @@ function callPrivateWriter(action, fields = {}, deps = defaultWriterDeps(), opti
       `"${action}" is not a private writer action.`,
       void 0
     );
-  const isWrite = kind === "write";
+  const isWrite = kind === "write" && !options.dryRun;
   const notCommitted = isWrite ? false : void 0;
   if (!options.allowDisabled) {
     if (!privateHelperEnabled(deps.env))
@@ -56574,8 +56585,8 @@ function assertNoteIdentifier2(identifier) {
     );
   }
 }
-function assertRevision(ifRevision, source = "native-note-state") {
-  if (!/^r1:[a-f0-9]{64}$/.test(ifRevision))
+function assertRevision(ifRevision2, source = "native-note-state") {
+  if (!/^r1:[a-f0-9]{64}$/.test(ifRevision2))
     throw new PrivateWriteError(
       "invalid_request",
       `ifRevision must be a revision token from ${source}`,
@@ -56608,14 +56619,46 @@ function appendPlainText(request, deps = defaultWriterDeps()) {
     true
   );
 }
+var WRITER_FEATURES = {
+  appendPlainText: { probe: "appendPlainText", validated: APPEND_LIVE_VALIDATED },
+  readTables: { probe: "tables", validated: null },
+  editTables: { probe: "tables", validated: TABLE_WRITES_LIVE_VALIDATED },
+  pruneOrphanTable: { probe: "pruneOrphanTable", validated: TABLE_WRITES_LIVE_VALIDATED }
+};
+function featureStatus(probed, validated, env) {
+  if (!probed)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: "The writer probe did not report this feature"
+    };
+  if (!probed.available) {
+    const reason = probed.reason === "store_unavailable" || probed.reason === "disabled" ? probed.reason : "private_api_unavailable";
+    return {
+      available: false,
+      reason,
+      detail: probed.missing.length ? `missing: ${probed.missing.join(", ")}` : probed.reason
+    };
+  }
+  if (validated === false && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
+      available: false,
+      reason: "not_live_validated",
+      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
+    };
+  return { available: true, reason: null, detail: null };
+}
 function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const enabled = privateHelperEnabled(deps.env);
   const writesEnabled = privateWritesEnabled(deps.env);
   const installation = inspectWriterInstallation(deps);
   const base = { enabled, writesEnabled, installation, probe: null };
+  const names = Object.keys(WRITER_FEATURES);
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: Object.fromEntries(
+      names.map((name) => [name, { available: false, reason, detail }])
+    )
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56671,14 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
-  if (!feature.available) {
-    const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
-      available: false,
-      reason,
-      detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
-    };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
-      available: false,
-      reason: "not_live_validated",
-      detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
-    };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  const probed = probe.features;
+  const features = Object.fromEntries(
+    names.map((name) => {
+      const { probe: key, validated } = WRITER_FEATURES[name];
+      return [name, featureStatus(probed[key], validated, deps.env)];
+    })
+  );
+  return { ...base, probe, features };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57010,7 +57042,10 @@ var revisionToken = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
 function writerEnvelopeCode(helperCode, message) {
   switch (helperCode) {
     case "revision_conflict":
+    case "attachment_conflict":
       return "revision_conflict";
+    case "unsupported_attachment":
+      return "unsupported";
     case "verification_failed":
       return "verification_failed";
     case "writes_disabled":
@@ -57136,6 +57171,370 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateWriterTables.ts
+var REVISION_TOKEN = /^r1:[a-f0-9]{64}$/;
+var TABLE_DIGEST = /^t1:[a-f0-9]{64}$/;
+var MAX_CELL_TEXT = 1e4;
+var revision4 = external_exports.string().regex(REVISION_TOKEN);
+var tableDigest = external_exports.string().regex(TABLE_DIGEST);
+var tableSchema = external_exports.object({
+  identifier: external_exports.string(),
+  glyphCount: external_exports.number().int(),
+  orphan: external_exports.boolean(),
+  digest: tableDigest,
+  readable: external_exports.boolean(),
+  unreadableReason: external_exports.string().optional(),
+  rowCount: external_exports.number().int().optional(),
+  columnCount: external_exports.number().int().optional(),
+  columnIdentifiers: external_exports.array(external_exports.string()).optional(),
+  rows: external_exports.array(external_exports.object({ identifier: external_exports.string(), cells: external_exports.array(external_exports.string()) })).optional()
+}).passthrough();
+var readTablesSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  identifier: external_exports.string(),
+  revision: revision4,
+  deletedOrInTrash: external_exports.boolean(),
+  sharedViaICloud: external_exports.boolean(),
+  tableCount: external_exports.number().int(),
+  tables: external_exports.array(tableSchema)
+}).passthrough();
+var planBase = {
+  status: external_exports.literal("planned"),
+  dryRun: external_exports.literal(true),
+  committed: external_exports.literal(false),
+  identifier: external_exports.string(),
+  tableIdentifier: external_exports.string(),
+  revision: revision4,
+  tableDigest
+};
+var tableWriteResultSchema = external_exports.object({
+  status: external_exports.literal("updated"),
+  dryRun: external_exports.literal(false),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  tableIdentifier: external_exports.string(),
+  revisionBefore: revision4,
+  revisionAfter: revision4,
+  tableDigestBefore: tableDigest,
+  tableDigestAfter: tableDigest,
+  rowCount: external_exports.number().int(),
+  columnCount: external_exports.number().int(),
+  ...writeSyncFields
+}).passthrough();
+var deleteRowPlanSchema = external_exports.object({
+  ...planBase,
+  rowIdentifier: external_exports.string(),
+  rowIndex: external_exports.number().int(),
+  rowCells: external_exports.array(external_exports.string()),
+  rowCountBefore: external_exports.number().int(),
+  columnCount: external_exports.number().int()
+}).passthrough();
+var prunePlanSchema = external_exports.object({
+  ...planBase,
+  glyphCount: external_exports.literal(0),
+  activeTableCountBefore: external_exports.number().int(),
+  readable: external_exports.boolean()
+}).passthrough();
+var pruneResultSchema = external_exports.object({
+  status: external_exports.literal("updated"),
+  dryRun: external_exports.literal(false),
+  committed: external_exports.literal(true),
+  verified: external_exports.literal(true),
+  identifier: external_exports.string(),
+  tableIdentifier: external_exports.string(),
+  removedTableIdentifier: external_exports.string(),
+  activeTableCountBefore: external_exports.number().int(),
+  activeTableCountAfter: external_exports.number().int(),
+  revisionBefore: revision4,
+  revisionAfter: revision4,
+  ...writeSyncFields
+}).passthrough();
+var FORBIDDEN_CELL_TEXT = /[\x00-\x08\x0B-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+function invalid3(message) {
+  return new PrivateWriteError("invalid_request", message, false);
+}
+function assertCellText(text2) {
+  if (text2.length > MAX_CELL_TEXT)
+    throw invalid3(`cell text exceeds ${MAX_CELL_TEXT} UTF-16 code units`);
+  if (FORBIDDEN_CELL_TEXT.test(text2))
+    throw invalid3("cell text may contain only printable characters, tabs and \\n newlines");
+}
+function assertUuid(value, field) {
+  if (!UUID_PATTERN.test(value)) throw invalid3(`${field} must be a UUID`);
+}
+function assertGuards(guards) {
+  if (!guards.ifRevision || !REVISION_TOKEN.test(guards.ifRevision))
+    throw invalid3("ifRevision must be the `revision` from native-read-tables or a dry run");
+  if (!guards.ifTableDigest || !TABLE_DIGEST.test(guards.ifTableDigest))
+    throw invalid3(
+      "ifTableDigest must be the table `digest` from native-read-tables or `tableDigest` from a dry run"
+    );
+}
+function modeFields(dryRun, guards) {
+  if (dryRun) {
+    if (guards.ifRevision !== void 0 || guards.ifTableDigest !== void 0)
+      throw invalid3("ifRevision and ifTableDigest are only accepted with dryRun: false");
+    return { dryRun: true };
+  }
+  assertGuards(guards);
+  return { dryRun: false, ifRevision: guards.ifRevision, ifTableDigest: guards.ifTableDigest };
+}
+function readTables(identifier, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(identifier);
+  return parseWriterResult(
+    readTablesSchema,
+    callPrivateWriter("read_tables", { identifier }, deps),
+    false
+  );
+}
+function deleteTableRow(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertUuid(request.tableIdentifier, "tableIdentifier");
+  assertUuid(request.rowIdentifier, "rowIdentifier");
+  const mode = modeFields(request.dryRun, request);
+  if (!request.dryRun)
+    requireLiveValidated(TABLE_WRITES_LIVE_VALIDATED, "native-delete-table-row", deps.env);
+  const fields = {
+    identifier: request.identifier,
+    tableIdentifier: request.tableIdentifier,
+    rowIdentifier: request.rowIdentifier,
+    ...mode
+  };
+  const response = callPrivateWriter("delete_table_row", fields, deps, {
+    dryRun: request.dryRun
+  });
+  return request.dryRun ? parseWriterResult(deleteRowPlanSchema, response, false) : parseWriterResult(tableWriteResultSchema, response, true);
+}
+function insertTableRow(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertUuid(request.tableIdentifier, "tableIdentifier");
+  if (request.afterRowIdentifier !== void 0)
+    assertUuid(request.afterRowIdentifier, "afterRowIdentifier");
+  (request.cells ?? []).forEach(assertCellText);
+  assertGuards(request);
+  requireLiveValidated(TABLE_WRITES_LIVE_VALIDATED, "native-insert-table-row", deps.env);
+  const fields = {
+    identifier: request.identifier,
+    tableIdentifier: request.tableIdentifier,
+    ifRevision: request.ifRevision,
+    ifTableDigest: request.ifTableDigest
+  };
+  if (request.afterRowIdentifier !== void 0)
+    fields.afterRowIdentifier = request.afterRowIdentifier;
+  if (request.cells !== void 0) fields.cells = request.cells;
+  return parseWriterResult(
+    tableWriteResultSchema,
+    callPrivateWriter("insert_table_row", fields, deps),
+    true
+  );
+}
+function setTableCell(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertUuid(request.tableIdentifier, "tableIdentifier");
+  assertUuid(request.rowIdentifier, "rowIdentifier");
+  assertUuid(request.columnIdentifier, "columnIdentifier");
+  assertCellText(request.text);
+  assertGuards(request);
+  requireLiveValidated(TABLE_WRITES_LIVE_VALIDATED, "native-set-table-cell", deps.env);
+  return parseWriterResult(
+    tableWriteResultSchema,
+    callPrivateWriter(
+      "set_table_cell",
+      {
+        identifier: request.identifier,
+        tableIdentifier: request.tableIdentifier,
+        rowIdentifier: request.rowIdentifier,
+        columnIdentifier: request.columnIdentifier,
+        text: request.text,
+        ifRevision: request.ifRevision,
+        ifTableDigest: request.ifTableDigest
+      },
+      deps
+    ),
+    true
+  );
+}
+function pruneOrphanTable(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  assertUuid(request.tableIdentifier, "tableIdentifier");
+  const mode = modeFields(request.dryRun, request);
+  if (!request.dryRun)
+    requireLiveValidated(TABLE_WRITES_LIVE_VALIDATED, "native-prune-orphan-table", deps.env);
+  const response = callPrivateWriter(
+    "prune_orphan_table",
+    { identifier: request.identifier, tableIdentifier: request.tableIdentifier, ...mode },
+    deps,
+    { dryRun: request.dryRun }
+  );
+  return request.dryRun ? parseWriterResult(prunePlanSchema, response, false) : parseWriterResult(pruneResultSchema, response, true);
+}
+
+// src/tools/privateWriterTableTools.ts
+var uuid2 = (what) => notesUuid2.describe(what);
+var noteRef = {
+  identifier: notesUuid2.optional().describe("Notes UUID of the note that holds the table"),
+  id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database")
+};
+var ifRevision = revisionToken.describe(
+  "The note `revision` from native-read-tables or the dry run"
+);
+var ifTableDigest = external_exports.string().regex(TABLE_DIGEST).describe("The table `digest` from native-read-tables, or `tableDigest` from the dry run");
+var cellText = external_exports.string().max(MAX_CELL_TEXT);
+var nudgeFields = {
+  nudge: external_exports.boolean().optional().describe(
+    "After a verified apply, ask Notes.app to upload the note by moving it into its own folder (default false; ignored on a dry run)"
+  ),
+  nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+};
+var WRITE = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false
+};
+var DESTRUCTIVE = { ...WRITE, destructiveHint: true };
+var GATE = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer); applying (not a dry run) also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until this path is live-validated. nudge: true runs the move-in-place sync nudge after a verified apply; its uploadRecorded covers the note record, not the table attachment.";
+async function withNudge(result, identifier, args, deps) {
+  if (!args.nudge || result.committed !== true) return { ...result };
+  return { ...result, sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge) };
+}
+function registerPrivateWriterTableTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-read-tables",
+    "Use when: you need a note's native tables with stable row and column identifiers, before native-delete-table-row, native-insert-table-row, native-set-table-cell, or native-prune-orphan-table; or to find orphaned tables (table attachments no body glyph shows).\nReturns: the note `revision`, and per active table its `identifier`, `glyphCount`, `orphan` flag, `digest` (pass as ifTableDigest), `rowCount`, `columnCount`, `columnIdentifiers`, and `rows` ({identifier, cells}). A table too large or without unique identities reports `readable: false`.\nDo not use when: you only want table text as Markdown or a grid (get-note-tables). Row identifiers here are native CRDT identities and are the only ones the native table tools accept.\nSafety: read-only; the writer opens the store with Core Data's read-only option. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer.",
+    noteRef,
+    { readOnlyHint: true, openWorldHint: false },
+    (args, deps) => ({ ...readTables(resolveIdentifier(manager, args), deps.writer) })
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-delete-table-row",
+    "Use when: removing one exact row from a native Notes table, selected by its native row identifier from native-read-tables. Two phases: call with dryRun: true, show the returned row cells to the user, then apply with dryRun: false plus the plan's `revision` as ifRevision and `tableDigest` as ifTableDigest.\nReturns: dry run: the row's index, cells, and the two tokens (nothing written). Apply: committed/verified, revisionBefore/After, tableDigestBefore/After, the new row count, and sync state (pushScheduled is always false).\nDo not use when: the table is not visible in the body (use native-prune-orphan-table for orphans), or it is the table's only row.\nSafety: deletes table content through unsupported private API, attended. Refuses locked, shared, trashed, and still-downloading notes. Refuses on any change to the note or table since the dry run (revision_conflict / attachment_conflict, committed: false). Saves once with optimistic locking and verifies through a fresh Core Data stack that the body is untouched and the table equals the plan. A timeout on apply is indeterminate (indeterminate: true): read the tables again before any retry. " + GATE,
+    {
+      ...noteRef,
+      tableIdentifier: uuid2("Table attachment identifier from native-read-tables"),
+      rowIdentifier: uuid2("Native row identifier from native-read-tables"),
+      dryRun: external_exports.boolean().describe("true = plan only; false = apply the planned deletion"),
+      ifRevision: ifRevision.optional(),
+      ifTableDigest: ifTableDigest.optional(),
+      ...nudgeFields
+    },
+    DESTRUCTIVE,
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = deleteTableRow(
+        {
+          identifier,
+          tableIdentifier: args.tableIdentifier,
+          rowIdentifier: args.rowIdentifier,
+          dryRun: args.dryRun,
+          ifRevision: args.ifRevision,
+          ifTableDigest: args.ifTableDigest
+        },
+        deps.writer
+      );
+      return withNudge(result, identifier, args, deps);
+    }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-insert-table-row",
+    "Use when: adding one row to a native Notes table, after a given row or at the end, with optional plain-text cells.\nReturns: committed/verified, the new `rowIdentifier` and `rowIndex`, revisionBefore/After, tableDigestBefore/After (chain tableDigestAfter and revisionAfter into the next table write), and sync state.\nDo not use when: creating a new table (create-table) or the table is an orphan.\nSafety: writes through unsupported private API. Needs ifRevision and ifTableDigest from a fresh native-read-tables and refuses on any change since. Cells are plain text (tabs and \\n allowed). Verified by a fresh read-back. A timeout is indeterminate. " + GATE,
+    {
+      ...noteRef,
+      tableIdentifier: uuid2("Table attachment identifier from native-read-tables"),
+      afterRowIdentifier: uuid2("Insert after this row; omit to append at the end").optional(),
+      cells: external_exports.array(cellText).max(1e3).optional().describe("Cell text by column order; missing trailing cells stay empty"),
+      ifRevision,
+      ifTableDigest,
+      ...nudgeFields
+    },
+    WRITE,
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = insertTableRow(
+        {
+          identifier,
+          tableIdentifier: args.tableIdentifier,
+          afterRowIdentifier: args.afterRowIdentifier,
+          cells: args.cells,
+          ifRevision: args.ifRevision,
+          ifTableDigest: args.ifTableDigest
+        },
+        deps.writer
+      );
+      return withNudge(result, identifier, args, deps);
+    }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-set-table-cell",
+    "Use when: replacing the text of one cell in a native Notes table, addressed by native row and column identifiers.\nReturns: committed/verified, `previousText`, revisionBefore/After, tableDigestBefore/After, and sync state.\nDo not use when: the cell holds formatting you want to keep (the new text is plain), or the table is an orphan.\nSafety: writes through unsupported private API. Needs ifRevision and ifTableDigest from a fresh native-read-tables and refuses on any change since. Verified by a fresh read-back. A timeout is indeterminate. " + GATE,
+    {
+      ...noteRef,
+      tableIdentifier: uuid2("Table attachment identifier from native-read-tables"),
+      rowIdentifier: uuid2("Native row identifier"),
+      columnIdentifier: uuid2("Native column identifier"),
+      text: cellText.describe("New plain text for the cell; may be empty"),
+      ifRevision,
+      ifTableDigest,
+      ...nudgeFields
+    },
+    WRITE,
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = setTableCell(
+        {
+          identifier,
+          tableIdentifier: args.tableIdentifier,
+          rowIdentifier: args.rowIdentifier,
+          columnIdentifier: args.columnIdentifier,
+          text: args.text,
+          ifRevision: args.ifRevision,
+          ifTableDigest: args.ifTableDigest
+        },
+        deps.writer
+      );
+      return withNudge(result, identifier, args, deps);
+    }
+  );
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-prune-orphan-table",
+    "Use when: removing one orphaned table from a note: an active table attachment that native-read-tables reports with `orphan: true` (no glyph in the body, so Notes does not show it, but it still syncs). Two phases: dryRun: true, show the plan (row/column counts and first row) to the user, then apply with dryRun: false plus the plan's `revision` and `tableDigest`.\nReturns: dry run: the plan and tokens (nothing written). Apply: committed/verified, `removedTableIdentifier`, active table counts before and after, revisionBefore/After, and sync state.\nDo not use when: the table is visible in the body (the writer refuses), or you want to delete a visible table.\nSafety: tombstones the attachment the way Notes deletes one (it goes away on other devices once Notes uploads); the body is never edited. Attended and guarded like native-delete-table-row; verified by a fresh read-back. The note `revision` does not change, because the body and modification date do not. " + GATE,
+    {
+      ...noteRef,
+      tableIdentifier: uuid2("Orphaned table attachment identifier from native-read-tables"),
+      dryRun: external_exports.boolean().describe("true = plan only; false = apply the planned prune"),
+      ifRevision: ifRevision.optional(),
+      ifTableDigest: ifTableDigest.optional(),
+      ...nudgeFields
+    },
+    DESTRUCTIVE,
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = pruneOrphanTable(
+        {
+          identifier,
+          tableIdentifier: args.tableIdentifier,
+          dryRun: args.dryRun,
+          ifRevision: args.ifRevision,
+          ifTableDigest: args.ifTableDigest
+        },
+        deps.writer
+      );
+      return withNudge(result, identifier, args, deps);
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57572,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivateWriterTableTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;
