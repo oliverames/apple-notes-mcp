@@ -56961,7 +56961,8 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
     }
   }
   const pending = () => [...results.values()].filter((r) => r.reason === null && !r.uploadRecorded);
-  const end = deps.now() + waitSeconds * 1e3;
+  const start = deps.now();
+  const end = start + waitSeconds * 1e3;
   let after = before;
   for (let first2 = true; ; first2 = false) {
     if (!first2 || act) after = readSyncState(identifiers, deps.helper);
@@ -56978,6 +56979,7 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
     if (!pending().length || deps.now() >= end) break;
     await deps.sleep(2e3);
   }
+  const waitedSeconds = Math.round((deps.now() - start) / 1e3);
   const targets = [...results.values()];
   const stillPending = targets.filter((r) => r.reason === null && !r.uploadRecorded);
   for (const r of targets)
@@ -56987,11 +56989,11 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
       );
   if (stillPending.length && act)
     warnings.push(
-      `${stillPending.length} target(s) still show a pending upload after ${waitSeconds} s. Notes.app uploads on its own schedule; check again later.`
+      `${stillPending.length} target(s) still show a pending upload after ${waitedSeconds} s. Notes.app uploads on its own schedule; check again later.`
     );
   return {
     syncHostRunning: after.syncHostRunning,
-    waitedSeconds: waitSeconds,
+    waitedSeconds,
     pendingUploadCountBefore: before.pendingUploadCount,
     pendingUploadCountAfter: after.pendingUploadCount,
     allUploadsRecorded: stillPending.length === 0,

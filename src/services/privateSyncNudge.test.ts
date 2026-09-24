@@ -195,7 +195,7 @@ describe("nudgeInPlace", () => {
       pushScheduled: false,
       pendingUploadCountBefore: 3,
       pendingUploadCountAfter: 2,
-      waitedSeconds: 30,
+      waitedSeconds: 2,
     });
     expect(report.warnings).toEqual([]);
   });
@@ -210,6 +210,7 @@ describe("nudgeInPlace", () => {
     expect(report.allUploadsRecorded).toBe(false);
     expect(report.warnings.join("\n")).toMatch(/revision changed/);
     expect(report.warnings.join("\n")).toMatch(/still show a pending upload after 4 s/);
+    expect(report.waitedSeconds).toBe(4);
   });
 
   it("skips targets it cannot nudge and reports failed moves", async () => {
