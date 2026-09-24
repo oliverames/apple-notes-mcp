@@ -56329,9 +56329,15 @@ var WRITER_ACTIONS = {
   probe: "read",
   read_note_state: "read",
   append_plain_text: "write",
-  read_sync_state: "read"
+  read_sync_state: "read",
+  set_highlight: "write"
 };
 var APPEND_LIVE_VALIDATED = false;
+var HIGHLIGHT_LIVE_VALIDATED = false;
+var WRITER_FEATURES = [
+  { key: "appendPlainText", probeKey: "appendPlainText", liveValidated: APPEND_LIVE_VALIDATED },
+  { key: "highlight", probeKey: "highlight", liveValidated: HIGHLIGHT_LIVE_VALIDATED }
+];
 function defaultWriterDeps(overrides = {}) {
   return defaultDeps2({ sourcePath: join28(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
 }
@@ -56615,7 +56621,9 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   const base = { enabled, writesEnabled, installation, probe: null };
   const off = (reason, detail) => ({
     ...base,
-    features: { appendPlainText: { available: false, reason, detail } }
+    features: Object.fromEntries(
+      WRITER_FEATURES.map((f) => [f.key, { available: false, reason, detail }])
+    )
   });
   if (installation.reason === "unsupported_platform") return off("unsupported_platform", null);
   if (!enabled) return off("disabled", `Set ${ENABLE_ENV}=1 and ${WRITES_ENV}=1 to opt in.`);
@@ -56628,25 +56636,35 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
   } catch (error2) {
     return off("helper_unreachable", error2 instanceof Error ? error2.message : String(error2));
   }
-  const feature = probe.features.appendPlainText;
-  let append;
+  const features = {};
+  for (const { key, probeKey, liveValidated } of WRITER_FEATURES)
+    features[key] = featureStatus(probe, probeKey, liveValidated, deps.env);
+  return { ...base, probe, features };
+}
+function featureStatus(probe, probeKey, liveValidated, env) {
+  const parsed = featureSchema2.safeParse(probe.features[probeKey]);
+  if (!parsed.success)
+    return {
+      available: false,
+      reason: "private_api_unavailable",
+      detail: `The writer probe does not report ${probeKey}`
+    };
+  const feature = parsed.data;
   if (!feature.available) {
     const reason = feature.reason === "store_unavailable" || feature.reason === "disabled" ? feature.reason : "private_api_unavailable";
-    append = {
+    return {
       available: false,
       reason,
       detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
     };
-  } else if (!APPEND_LIVE_VALIDATED && deps.env[ALLOW_UNVERIFIED_ENV] !== "1") {
-    append = {
+  }
+  if (!liveValidated && env[ALLOW_UNVERIFIED_ENV] !== "1")
+    return {
       available: false,
       reason: "not_live_validated",
       detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
     };
-  } else {
-    append = { available: true, reason: null, detail: null };
-  }
-  return { ...base, probe, features: { appendPlainText: append } };
+  return { available: true, reason: null, detail: null };
 }
 
 // src/services/privateWriterBuild.ts
@@ -57018,6 +57036,8 @@ function writerEnvelopeCode(helperCode, message) {
       return "unsupported";
     case "ambiguous":
       return "ambiguous";
+    case "match_count_mismatch":
+      return "validation_error";
     default:
       return envelopeCode(helperCode, message);
   }
@@ -57136,6 +57156,156 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
   }
 }
 
+// src/services/privateWriterHighlight.ts
+var HIGHLIGHT_COLORS = ["purple", "pink", "orange", "mint", "blue"];
+var MAX_MATCH_UTF16 = 1e3;
+var MAX_HIGHLIGHT_RANGES = 100;
+var revision4 = external_exports.string().regex(/^r1:[a-f0-9]{64}$/);
+var runSchema = external_exports.object({
+  start: external_exports.number().int().nonnegative(),
+  lengthUTF16: external_exports.number().int().positive(),
+  color: external_exports.string().nullable()
+});
+var highlightResultSchema = external_exports.object({
+  status: external_exports.enum(["planned", "unchanged", "updated"]),
+  committed: external_exports.boolean(),
+  dryRun: external_exports.boolean(),
+  identifier: external_exports.string(),
+  scope: external_exports.literal("text"),
+  color: external_exports.string(),
+  rangeCount: external_exports.number().int().positive(),
+  revisionBefore: revision4,
+  revisionAfter: revision4,
+  plan: external_exports.array(
+    external_exports.object({
+      start: external_exports.number().int().nonnegative(),
+      lengthUTF16: external_exports.number().int().positive(),
+      currentRuns: external_exports.array(runSchema),
+      changes: external_exports.boolean()
+    })
+  ).optional(),
+  ranges: external_exports.array(
+    external_exports.object({
+      start: external_exports.number().int().nonnegative(),
+      lengthUTF16: external_exports.number().int().positive(),
+      storedRuns: external_exports.array(runSchema)
+    })
+  ).optional(),
+  /** Notes' derived "note has a highlight" flag after the call; null when not modeled. */
+  hasEmphasis: external_exports.boolean().nullable(),
+  modificationDate: external_exports.string().nullable(),
+  ...writeSyncFields
+}).passthrough();
+var FORBIDDEN_MATCH = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+function assertHighlightMatch(match) {
+  if (!match.length) throw new PrivateWriteError("invalid_request", "match is required", false);
+  if (match.length > MAX_MATCH_UTF16)
+    throw new PrivateWriteError(
+      "invalid_request",
+      `match exceeds ${MAX_MATCH_UTF16} UTF-16 code units`,
+      false
+    );
+  if (FORBIDDEN_MATCH.test(match))
+    throw new PrivateWriteError(
+      "invalid_request",
+      "match must be text within one paragraph (no newlines, attachment glyphs, or control characters)",
+      false
+    );
+}
+function targetFields(target) {
+  if (target.scope !== "text")
+    throw new PrivateWriteError("invalid_request", 'scope must be "text"', false);
+  assertHighlightMatch(target.match);
+  const expectedCount = target.expectedCount ?? 1;
+  if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount > MAX_HIGHLIGHT_RANGES)
+    throw new PrivateWriteError(
+      "invalid_request",
+      `expectedCount must be an integer from 1 to ${MAX_HIGHLIGHT_RANGES}`,
+      false
+    );
+  return { scope: "text", match: target.match, expectedCount };
+}
+function setHighlight(request, deps = defaultWriterDeps()) {
+  assertNoteIdentifier2(request.identifier);
+  const fields = {
+    identifier: request.identifier,
+    ...targetFields(request.target)
+  };
+  if (request.color !== "none" && !HIGHLIGHT_COLORS.includes(request.color))
+    throw new PrivateWriteError(
+      "invalid_request",
+      "color must be purple, pink, orange, mint, blue, or none",
+      false
+    );
+  fields.color = request.color;
+  const dryRun = request.dryRun === true;
+  if (request.ifRevision !== void 0) {
+    assertRevision(request.ifRevision);
+    fields.ifRevision = request.ifRevision;
+  } else if (!dryRun) {
+    throw new PrivateWriteError(
+      "invalid_request",
+      "ifRevision is required unless dryRun is true",
+      false
+    );
+  }
+  if (dryRun) fields.dryRun = true;
+  else requireLiveValidated(HIGHLIGHT_LIVE_VALIDATED, "native-highlight-text", deps.env);
+  try {
+    return parseWriterResult(
+      highlightResultSchema,
+      callPrivateWriter("set_highlight", fields, deps),
+      true
+    );
+  } catch (error2) {
+    if (dryRun && error2 instanceof PrivateWriteError && error2.committed === "unknown")
+      throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
+    throw error2;
+  }
+}
+
+// src/tools/privateWriterHighlightTools.ts
+function registerPrivateWriterHighlightTools(server2, manager, depsFactory = defaultWriterToolDeps) {
+  registerWriterTool(
+    server2,
+    depsFactory,
+    "native-highlight-text",
+    "Use when: applying or removing Notes' highlight (the purple, pink, orange, mint, and blue highlight colors) on exact text in one note. AppleScript and Shortcuts cannot set it.\nReturns: status (planned for a dry run, unchanged when every match already has that state, updated), rangeCount, a per-match plan with current runs (dry run or no-op) or the stored runs re-read after the write (`ranges`), hasEmphasis (Notes' derived flag), revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the text spans paragraphs, or you need bold, italic, or text color.\nSafety: writes to the Notes database through unsupported private API, changing only the highlight attribute of the matched characters. `match` is literal and case-sensitive; the call refuses (match_count_mismatch, nothing written) unless it occurs exactly `expectedCount` times. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Verifies every highlight run in the note by re-reading it in a new Core Data stack. A timeout is indeterminate (indeterminate: true). Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.",
+    {
+      identifier: notesUuid2.optional().describe("Notes UUID"),
+      id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
+      match: external_exports.string().min(1).max(MAX_MATCH_UTF16).describe("Exact, case-sensitive text to highlight, within one paragraph"),
+      color: external_exports.enum([...HIGHLIGHT_COLORS, "none"]).describe("Highlight color, or none to remove the highlight"),
+      expectedCount: external_exports.number().int().min(1).max(MAX_HIGHLIGHT_RANGES).optional().describe("How many times `match` must occur (default 1); every occurrence is changed"),
+      ifRevision: revisionToken.optional().describe("The `revision` from native-note-state; required unless dryRun is true"),
+      dryRun: external_exports.boolean().optional().describe("Report the matches and their current highlight without writing"),
+      nudge: external_exports.boolean().optional().describe(
+        "After a verified change, ask Notes.app to upload the note by moving it into its own folder (default false; skipped when nothing was written)"
+      ),
+      nudgeWaitSeconds: external_exports.number().int().min(0).max(MAX_NUDGE_WAIT_SECONDS).optional().describe("With nudge: how long to watch Notes' upload counters (default 30)")
+    },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    async (args, deps) => {
+      const identifier = resolveIdentifier(manager, args);
+      const result = setHighlight(
+        {
+          identifier,
+          target: { scope: "text", match: args.match, expectedCount: args.expectedCount },
+          color: args.color,
+          ifRevision: args.ifRevision,
+          dryRun: args.dryRun
+        },
+        deps.writer
+      );
+      if (!args.nudge || !result.committed) return { ...result };
+      return {
+        ...result,
+        sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge)
+      };
+    }
+  );
+}
+
 // src/index.ts
 loadFileConfig();
 var require2 = createRequire(import.meta.url);
@@ -57173,6 +57343,7 @@ registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
 registerPrivateWriterTools(server, notesManager);
+registerPrivateWriterHighlightTools(server, notesManager);
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

@@ -65,6 +65,8 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
       return "unsupported";
     case "ambiguous":
       return "ambiguous";
+    case "match_count_mismatch":
+      return "validation_error";
     default:
       return envelopeCode(helperCode, message);
   }

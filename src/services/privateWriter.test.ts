@@ -19,6 +19,7 @@ import {
   PrivateWriteError,
   WRITER_ACTIONS,
   WRITER_BINARY_NAME,
+  WRITER_FEATURES,
   WRITER_MANIFEST_NAME,
   WRITER_SOURCE_RELATIVE,
   appendPlainText,
@@ -26,6 +27,7 @@ import {
   assertRevision,
   callPrivateWriter,
   defaultWriterDeps,
+  featureStatus,
   inspectWriterInstallation,
   parseWriterResult,
   privateWriterCapabilities,
@@ -420,5 +422,18 @@ describe("privateWriterCapabilities", () => {
         .reason
     ).toBe("helper_unreachable");
     expect(probePrivateWriter(deps(ON)).role).toBe("writer");
+  });
+
+  it("reports every feature in WRITER_FEATURES, each with its own gate", () => {
+    const off = privateWriterCapabilities(deps());
+    expect(Object.keys(off.features)).toEqual(WRITER_FEATURES.map((f) => f.key));
+    for (const f of WRITER_FEATURES) expect(off.features[f.key].reason).toBe("disabled");
+    const probe = { features: { present: { available: true, reason: null, missing: [] } } };
+    expect(featureStatus(probe as never, "absent", true, {})).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(featureStatus(probe as never, "present", true, {}).available).toBe(true);
+    expect(featureStatus(probe as never, "present", false, {}).reason).toBe("not_live_validated");
   });
 });
