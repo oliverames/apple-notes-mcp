@@ -499,7 +499,7 @@ can match titles and bodies together.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Query expression (syntax below), at most 2000 characters |
 | `limit` | number | No | Maximum notes to return. Defaults to 50, maximum 500. The response reports the total match count. |
-| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 5000. The response says when older notes were left unscanned. |
+| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 10000. The response says when older notes were left unscanned. A large scan decodes more bodies, so it takes longer. |
 | `includeDeleted` | boolean | No | Also scan notes in Recently Deleted, notes pending deletion, and folderless notes. Defaults to `false`. |
 | `includeWordCount` | boolean | No | Add `wordCount` to each returned note, the same count `words:` filters on (`null` when locked or unreadable). Free when the query already reads bodies; a metadata-only query (for example `pinned`) reads just the returned notes' bodies in one extra read-only query. Defaults to `false`. |
 
@@ -512,9 +512,9 @@ can match titles and bodies together.
 | `folder:Work`, `folder:"Work/Clients"` | The note's own folder, by name or full path, case-insensitive (notes in subfolders are not included); a literal `/` in a name can be written `\/` as in `list-folders` |
 | `account:iCloud` | Account name, case-insensitive |
 | `tag:finance` | Native Notes tag (with or without `#`); textual hashtags are ordinary words |
-| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:tag` | The note body contains that kind of object |
+| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:url`, `has:map`, `has:tag` | The note body contains that kind of object. `has:url` is a link preview card (it also counts as `has:link`, as inline links do); `has:map` is a map attachment |
 | `checklist:open`, `checklist:done` | At least one unchecked item; or items present and all checked |
-| `pinned`, `locked`, `shared` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder |
+| `pinned`, `locked`, `shared`, `quicknote` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder, and `quicknote` is a note created as a Quick Note |
 | `words:>250` | Word count, with `=`, `>`, `>=`, `<`, `<=` |
 | `created:>=2026-07-01`, `modified:<2026-09-01` | Dates as `YYYY-MM-DD` in local time, with the same operators; `=` means that whole day |
 | `a b`, `a AND b`, `a OR b`, `NOT a`, `-a`, `( … )` | AND is implicit and binds tighter than OR |
@@ -1788,7 +1788,7 @@ disabled checkboxes, block quotes and monospaced paragraphs become
 `blockquote` and `pre`, and inline runs keep bold, italic, underline,
 strikethrough, highlight, superscript, subscript, text color and safe links.
 Tables are semantic `<table>` elements with a header row. Images, drawings
-(Notes' fallback image, or its preview), scans (PDF with preview), audio,
+(see below), scans (PDF with preview), audio,
 video, files and link cards (title, domain and preview thumbnail) appear in
 body order. Attachments with no body marker are appended in creation order.
 An attachment with no usable source renders a visible
@@ -1797,6 +1797,19 @@ An attachment with no usable source renders a visible
 
 A folder export is one presentation document with notes separated by
 `<hr class="note-separator">`. It is not a backup or restore format.
+
+Classic PencilKit drawings (`com.apple.drawing.2` and `com.apple.drawing`)
+are rendered as SVG, decoded through the public native helper exactly as
+[`get-note-drawings`](#get-note-drawings) does. The SVG is embedded as a data
+URL, or written to the sidecar directory with `embedAssets: false`, and it is
+subject to the same size limits as any other asset. It stays sharp at any
+zoom, while Notes' own fallback image is a fixed-size PNG. Paper drawings
+(`com.apple.paper`) have no public decoder and keep Notes' fallback image or
+preview. If the helper is not built (`apple-notes-mcp setup --public-helper`),
+a drawing does not decode, the helper stopped at its stroke limit, or the SVG
+is too large, that drawing falls back to the PNG; the export never fails for
+it. The SVG traces each stroke's points with its color and mean width, so
+pencil grain and marker blending are approximated.
 
 **Requires:** Full Disk Access. Password-protected notes are skipped in a
 folder export and refused for a single note.
@@ -1810,6 +1823,7 @@ folder export and refused for a single note.
 | `outputPath` | string | Yes | Absolute HTML file to create. Create-only: an existing file is refused with `[output_exists]` |
 | `embedAssets` | boolean | No | Embed assets as data URLs (default `true`). Each asset is capped at 10 MiB and a document at 256 MiB of embedded assets; a larger one renders as unavailable with a hint to use `embedAssets: false` |
 | `assetsDir` | string | No | With `embedAssets: false`, the sidecar directory (default `<output stem>.assets` beside the file). Existing files are never replaced; a taken name gets `-2`, `-3`, ... |
+| `vectorDrawings` | boolean | No | Render classic drawings as SVG through the public native helper (default `true`). `false` keeps Notes' PNG for every drawing and never runs the helper |
 
 The HTML is always written to a file, because an embedded document is too
 large for an MCP message. Paths follow the `save-attachment` rules and may not
@@ -1817,8 +1831,14 @@ point inside the Notes library container. Sidecar URLs are relative to the
 HTML file, so the file and its `.assets` directory can be moved together.
 
 **Returns:** `format`, `count`, `bytes`, `output`, either `embedded` (assets
-embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. Nothing
-already written is deleted if a later step fails.
+embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. When the notes
+contain classic drawings and `vectorDrawings` is on, `vectorDrawings` reports
+`rendered` (drawings placed as SVG), `fallback` (drawings left as PNG), and
+`fallbackReasons`, a count per code such as `helper_not_installed`,
+`undecodable`, `truncated`, `timeout`, or `too-large`. After one helper
+timeout, or when the helper is not usable, the remaining drawings in the
+export are not decoded. Nothing already written is deleted if a later step
+fails.
 
 ---
 

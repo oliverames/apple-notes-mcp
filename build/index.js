@@ -46956,9 +46956,11 @@ var FACETS = [
   "pdf",
   "table",
   "scan",
+  "url",
+  "map",
   "tag"
 ];
-var FLAGS = ["pinned", "locked", "shared"];
+var FLAGS = ["pinned", "locked", "shared", "quicknote"];
 var NoteQueryError = class extends Error {
   constructor(message, position) {
     super(position === void 0 ? message : `${message} (at position ${position + 1})`);
@@ -47417,7 +47419,7 @@ var NOTES_DB_PATH10 = path8.join(
   os8.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
-var QUERY_SCAN = { DEFAULT: 500, MAX: 5e3 };
+var QUERY_SCAN = { DEFAULT: 500, MAX: 1e4 };
 var QUERY_RESULTS = { DEFAULT: 50, MAX: 500 };
 var CORE_DATA_EPOCH_MS2 = Date.UTC(2001, 0, 1);
 var SNIPPET_BEFORE = 60;
@@ -47438,7 +47440,8 @@ function facetsForAttachmentType(uti) {
   if (type.startsWith("com.apple.notes.inlinetextattachment.")) return [];
   if (type === "com.apple.notes.table") return ["table"];
   const facets = ["attachment"];
-  if (type === "public.url") facets.push("link");
+  if (type === "public.url") facets.push("link", "url");
+  else if (type === "com.apple.mapkit.map") facets.push("map");
   else if (type === "com.apple.paper.doc.scan" || type === "com.apple.notes.gallery")
     facets.push("scan");
   else if (type === "com.adobe.pdf" || type === "com.apple.paper.doc.pdf") facets.push("pdf");
@@ -47546,7 +47549,7 @@ function buildScanSql(available, options) {
   const folderRow = `SELECT json_object('k', 'folder', 'pk', f.Z_PK, 'name', ${col2(available, "f", "ZTITLE2")}, 'parent', ${col2(available, "f", "ZPARENT")}, 'type', ${col2(available, "f", "ZFOLDERTYPE")}, 'owner', ${col2(available, "f", "ZOWNER")}, 'shared', ${notNull("f", "ZSERVERSHAREDATA")}) FROM ZICCLOUDSYNCINGOBJECT f WHERE f.Z_ENT = ${entity2("ICFolder")};`;
   const accountRow = `SELECT json_object('k', 'account', 'pk', a.Z_PK, 'name', ${col2(available, "a", "ZNAME")}) FROM ZICCLOUDSYNCINGOBJECT a WHERE a.Z_ENT = ${entity2("ICAccount")};`;
   const dataExpr = options.withBodies ? "(SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK ORDER BY d.Z_PK DESC LIMIT 1)" : "NULL";
-  const noteRow = `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'title', n.ZTITLE1, 'folder', n.ZFOLDER, 'created', ${createdExpr}, 'modified', n.ZMODIFICATIONDATE1, 'pinned', ${bool("ZISPINNED")}, 'locked', ${bool("ZISPASSWORDPROTECTED")}, 'shared', ${notNull("n", "ZSERVERSHAREDATA")}, 'snippet', ${col2(available, "n", "ZSNIPPET")}, 'data', ${dataExpr}, 'tags', ${tagsExpr}) FROM ZICCLOUDSYNCINGOBJECT n WHERE ${whereSql} ORDER BY n.ZMODIFICATIONDATE1 DESC, n.Z_PK DESC LIMIT ${scan};`;
+  const noteRow = `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'title', n.ZTITLE1, 'folder', n.ZFOLDER, 'created', ${createdExpr}, 'modified', n.ZMODIFICATIONDATE1, 'pinned', ${bool("ZISPINNED")}, 'locked', ${bool("ZISPASSWORDPROTECTED")}, 'shared', ${notNull("n", "ZSERVERSHAREDATA")}, 'quicknote', ${bool("ZISSYSTEMPAPER")}, 'snippet', ${col2(available, "n", "ZSNIPPET")}, 'data', ${dataExpr}, 'tags', ${tagsExpr}) FROM ZICCLOUDSYNCINGOBJECT n WHERE ${whereSql} ORDER BY n.ZMODIFICATIONDATE1 DESC, n.Z_PK DESC LIMIT ${scan};`;
   return [
     "BEGIN;",
     "SELECT json_object('k', 'meta', 'uuid', (SELECT Z_UUID FROM Z_METADATA LIMIT 1));",
@@ -47747,6 +47750,7 @@ function runNoteQuery(ast, options = {}) {
       pinned: Boolean(row.pinned),
       locked,
       shared: Boolean(row.shared) || Boolean(folder?.shared),
+      quicknote: Boolean(row.quicknote),
       created: coreDataMs(row.created),
       modified: coreDataMs(row.modified),
       content: () => {
@@ -47814,6 +47818,7 @@ function runNoteQuery(ast, options = {}) {
 }
 
 // src/utils/searchContentDb.ts
+var SEARCH_CONTENT_SCAN_LIMIT = 5e3;
 function buildSearchContentQuery(options) {
   const children = [{ type: "text", field: "any", value: options.query }];
   const folder = options.folder?.trim();
@@ -47838,7 +47843,7 @@ function buildSearchContentQuery(options) {
 function searchContentViaDatabase(options) {
   const result = runNoteQuery(buildSearchContentQuery(options), {
     limit: options.limit,
-    scanLimit: QUERY_SCAN.MAX,
+    scanLimit: SEARCH_CONTENT_SCAN_LIMIT,
     includeWordCount: options.includeWordCount,
     dbPath: options.dbPath
   });
@@ -50286,8 +50291,8 @@ function insertLink(request, deps) {
 }
 
 // src/services/notesExport.ts
-import { mkdirSync as mkdirSync6 } from "node:fs";
-import { basename as basename4, dirname as dirname6, extname as extname5, join as join22 } from "node:path";
+import { mkdirSync as mkdirSync7 } from "node:fs";
+import { basename as basename4, dirname as dirname7, extname as extname5, join as join23 } from "node:path";
 
 // src/utils/exportAssets.ts
 import {
@@ -50623,26 +50628,7 @@ var SidecarWriter = class {
     }
     try {
       const mime = sniffMime(readHead(source.fd), asset.name);
-      if (!this.created) {
-        assertExportPath(this.dir);
-        mkdirSync4(this.dir, { recursive: true });
-        this.created = true;
-      }
-      const name = safeAssetName(asset.name, mime);
-      const ext = extname3(name);
-      const stem = name.slice(0, name.length - ext.length);
-      let target;
-      let out;
-      for (let n = 1; n <= 1e3 && out === void 0; n++) {
-        target = join19(this.dir, n === 1 ? name : `${stem}-${n}${ext}`);
-        try {
-          out = openSync4(target, CREATE_FLAGS, 420);
-        } catch (error2) {
-          if (error2.code !== "EEXIST") throw error2;
-        }
-      }
-      if (out === void 0 || !target) return { error: "no-free-name" };
-      try {
+      return this.write(asset.path, asset.name, mime, (out) => {
         const chunk = Buffer.alloc(1024 * 1024);
         for (let position = 0; ; ) {
           const n = readSync3(source.fd, chunk, 0, chunk.length, position);
@@ -50651,18 +50637,53 @@ var SidecarWriter = class {
           while (written < n) written += writeSync3(out, chunk, written, n - written);
           position += n;
         }
+      });
+    } finally {
+      closeSync4(source.fd);
+    }
+  }
+  placeBytes(data, name, mime, key) {
+    const done = this.placed.get(`generated:${key}`);
+    if (done) return done;
+    return this.write(`generated:${key}`, name, mime, (out) => {
+      let written = 0;
+      while (written < data.length) written += writeSync3(out, data, written, data.length - written);
+    });
+  }
+  /** Creates a free name in the directory and fills it; remembers the result under `key`. */
+  write(key, name, mime, fill) {
+    try {
+      if (!this.created) {
+        assertExportPath(this.dir);
+        mkdirSync4(this.dir, { recursive: true });
+        this.created = true;
+      }
+      const safe = safeAssetName(name, mime);
+      const ext = extname3(safe);
+      const stem = safe.slice(0, safe.length - ext.length);
+      let target;
+      let out;
+      for (let n = 1; n <= 1e3 && out === void 0; n++) {
+        target = join19(this.dir, n === 1 ? safe : `${stem}-${n}${ext}`);
+        try {
+          out = openSync4(target, CREATE_FLAGS, 420);
+        } catch (error2) {
+          if (error2.code !== "EEXIST") throw error2;
+        }
+      }
+      if (out === void 0 || !target) return { error: "no-free-name" };
+      try {
+        fill(out);
       } finally {
         closeSync4(out);
       }
       this.count++;
       const url = this.linkBase ? encodePathUrl(relative3(this.linkBase, target).split(sep3).join("/")) : target;
       const result = { url, mime };
-      this.placed.set(asset.path, result);
+      this.placed.set(key, result);
       return result;
     } catch (error2) {
       return { error: error2 instanceof Error ? error2.message : String(error2) };
-    } finally {
-      closeSync4(source.fd);
     }
   }
 };
@@ -50686,8 +50707,7 @@ var DataUrlWriter = class {
       return { error: "unreadable" };
     }
     try {
-      if (source.size > this.maxBytes || this.embeddedBytes + source.size > this.totalBytes)
-        return { error: "too-large" };
+      if (!this.fits(source.size)) return { error: "too-large" };
       const data = Buffer.alloc(source.size);
       let read = 0;
       while (read < source.size) {
@@ -50696,17 +50716,26 @@ var DataUrlWriter = class {
         read += n;
       }
       const mime = sniffMime(data.subarray(0, 16), asset.name);
-      const result = {
-        url: `data:${mime};base64,${data.subarray(0, read).toString("base64")}`,
-        mime
-      };
-      this.count++;
-      this.embeddedBytes += read;
-      this.placed.set(asset.path, result);
-      return result;
+      return this.embed(asset.path, data.subarray(0, read), mime);
     } finally {
       closeSync4(source.fd);
     }
+  }
+  placeBytes(data, _name, mime, key) {
+    const done = this.placed.get(`generated:${key}`);
+    if (done) return done;
+    if (!this.fits(data.length)) return { error: "too-large" };
+    return this.embed(`generated:${key}`, data, mime);
+  }
+  fits(size) {
+    return size <= this.maxBytes && this.embeddedBytes + size <= this.totalBytes;
+  }
+  embed(key, data, mime) {
+    const result = { url: `data:${mime};base64,${data.toString("base64")}`, mime };
+    this.count++;
+    this.embeddedBytes += data.length;
+    this.placed.set(key, result);
+    return result;
   }
 };
 
@@ -50832,6 +50861,18 @@ function planAttachment(attachment, ctx) {
       if (!ctx.writer) {
         ctx.stats.placeholders++;
         return { type: "placeholder", label, ...name ? { name } : {} };
+      }
+      const vector = attachment.kind === "drawing" ? ctx.vectorDrawing?.(attachment) : void 0;
+      if (vector) {
+        ctx.stats.placed++;
+        return {
+          type: "asset",
+          label,
+          ...name ? { name } : {},
+          display: "image",
+          url: vector.url,
+          mime: vector.mime
+        };
       }
       const files = ctx.locator?.locate(attachment) ?? {};
       const primary = place(ctx, files.primary);
@@ -50960,8 +51001,10 @@ function blockPlanHtml(plan) {
       const name = escapeHtml(plan.name ?? plan.label);
       const src = escapeHtml(plan.url);
       const caption = plan.name ? `<figcaption>${name}</figcaption>` : "";
-      if (plan.display === "image")
-        return `<figure class="attachment attachment-image"><img src="${src}" alt="${name}" loading="lazy"></figure>`;
+      if (plan.display === "image") {
+        const vector = plan.mime === "image/svg+xml" ? " attachment-vector" : "";
+        return `<figure class="attachment attachment-image${vector}"><img src="${src}" alt="${name}" loading="lazy"></figure>`;
+      }
       if (plan.display === "audio" || plan.display === "video")
         return `<figure class="attachment attachment-${plan.display}"><${plan.display} controls preload="metadata" src="${src}"></${plan.display}>${caption}</figure>`;
       return `<figure class="attachment attachment-document"><a href="${src}"><img src="${escapeHtml(plan.previewUrl)}" alt="${name}" loading="lazy"></a><figcaption><a href="${src}">${name}</a></figcaption></figure>`;
@@ -51121,6 +51164,7 @@ th { background: var(--card); }
 figure { margin: 1rem 0; }
 figure img, figure video { max-width: 100%; height: auto; border-radius: 6px; }
 figcaption { color: var(--muted); font-size: .875rem; }
+.attachment-vector img { background: #fff; }
 .attachment-gallery { display: flex; flex-wrap: wrap; gap: .5rem; }
 .attachment-gallery figure { margin: 0; flex: 1 1 12rem; }
 .link-card { display: flex; gap: .75rem; align-items: center; margin: 1rem 0; padding: .5rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: inherit; text-decoration: none; }
@@ -51156,6 +51200,749 @@ ${CSS}
     "</html>",
     ""
   ].join("\n");
+}
+
+// src/utils/noteStoreQuery.ts
+function parseNoteObjectId(noteId3) {
+  const match = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/ICNote\/p(\d{1,15})$/.exec(noteId3);
+  if (!match)
+    throw new NoteStoreError(
+      `Invalid note ID format: "${noteId3}". Expected format: x-coredata://UUID/ICNote/pNNN`,
+      "invalid_input"
+    );
+  return { store: match[1], pk: Number(match[2]) };
+}
+function queryNoteScoped(sql, pk, dbPath2 = NOTES_DB_PATH7) {
+  return runReadOnlySql(dbPath2, sql, { pk: { int: pk } }).split("\n");
+}
+var NOTE_STATE_SQL = `SELECT json_object('found', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk AND n.Z_ENT = ${entity("ICNote")}), 'locked', (SELECT COALESCE(n.ZISPASSWORDPROTECTED, 0) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk));`;
+function assertNoteReadable(stateLine, noteId3) {
+  let state;
+  try {
+    state = JSON.parse(stateLine || "{}");
+  } catch {
+    throw new NoteStoreError("Unexpected response from the Notes database.", "query_error");
+  }
+  if (!state.found)
+    throw new CodedError(`No note found in the database for ID "${noteId3}".`, {
+      code: "not_found"
+    });
+  if (state.locked)
+    throw new CodedError(
+      "This note is password-protected; its attachments are encrypted and cannot be read.",
+      { code: "unsupported" }
+    );
+}
+
+// src/utils/noteDrawings.ts
+function drawingRowsSql(columns, dataColumn) {
+  return [
+    NOTE_STATE_SQL,
+    `SELECT json_group_array(json_object('pk', a.Z_PK, 'identifier', a.ZIDENTIFIER, 'uti', a.ZTYPEUTI, 'data', hex(a.${dataColumn}))) FROM (SELECT * FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = @pk AND a.ZTYPEUTI IN ('com.apple.drawing.2', 'com.apple.drawing') AND ${notTombstonedSql(columns, "a")} ORDER BY a.Z_PK) a;`
+  ].join("\n");
+}
+function readDrawingRows2(noteId3, dbPath2 = NOTES_DB_PATH7) {
+  const { store, pk } = parseNoteObjectId(noteId3);
+  const columns = readColumns(dbPath2);
+  const dataColumn = columns.has("ZMERGEABLEDATA1") ? "ZMERGEABLEDATA1" : columns.has("ZMERGEABLEDATA") ? "ZMERGEABLEDATA" : null;
+  if (!dataColumn)
+    throw new NoteStoreError(
+      "This macOS version's Notes database has no drawing data column.",
+      "schema"
+    );
+  const [stateLine, rowsLine] = queryNoteScoped(drawingRowsSql(columns, dataColumn), pk, dbPath2);
+  assertNoteReadable(stateLine, noteId3);
+  const rows = JSON.parse(rowsLine || "[]");
+  return rows.map((row) => ({
+    pk: row.pk,
+    attachmentId: `x-coredata://${store}/ICAttachment/p${row.pk}`,
+    identifier: row.identifier ?? "",
+    typeUti: row.uti,
+    data: row.data ? Buffer.from(row.data, "hex") : null
+  }));
+}
+function svgNumber(value) {
+  if (!Number.isFinite(value)) return "0";
+  const rounded = Math.round(value * 100) / 100;
+  return Object.is(rounded, -0) ? "0" : String(rounded);
+}
+function escapeAttribute2(value) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+var clampChannel = (value) => Math.min(255, Math.max(0, Math.round(value || 0)));
+var clampUnit = (value) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 1));
+function drawingViewBox(strokes, fallback) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const stroke of strokes) {
+    const pad = stroke.width / 2;
+    const extend2 = (x, y, r) => {
+      minX = Math.min(minX, x - r);
+      minY = Math.min(minY, y - r);
+      maxX = Math.max(maxX, x + r);
+      maxY = Math.max(maxY, y + r);
+    };
+    if (stroke.points?.length) for (const p of stroke.points) extend2(p.x, p.y, pad);
+    else {
+      extend2(stroke.bounds.x, stroke.bounds.y, 0);
+      extend2(stroke.bounds.x + stroke.bounds.width, stroke.bounds.y + stroke.bounds.height, 0);
+    }
+  }
+  if (minX === Infinity) return fallback ?? { x: 0, y: 0, width: 1, height: 1 };
+  return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+}
+function drawingToSvg(strokes, fallback) {
+  const box = drawingViewBox(strokes, fallback);
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${svgNumber(box.x)} ${svgNumber(box.y)} ${svgNumber(box.width)} ${svgNumber(box.height)}" width="${svgNumber(box.width)}" height="${svgNumber(box.height)}">`
+  ];
+  for (const stroke of strokes) {
+    const points = stroke.points ?? [];
+    if (points.length === 0) continue;
+    const c = stroke.color;
+    const color = `rgb(${clampChannel(c.red)},${clampChannel(c.green)},${clampChannel(c.blue)})`;
+    const shared = `stroke="${color}" stroke-opacity="${svgNumber(clampUnit(c.alpha))}" data-ink="${escapeAttribute2(stroke.inkType)}"`;
+    if (points.length === 1) {
+      parts.push(
+        `<circle cx="${svgNumber(points[0].x)}" cy="${svgNumber(points[0].y)}" r="${svgNumber(stroke.width / 2)}" fill="${color}" fill-opacity="${svgNumber(clampUnit(c.alpha))}" data-ink="${escapeAttribute2(stroke.inkType)}"/>`
+      );
+      continue;
+    }
+    const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${svgNumber(p.x)} ${svgNumber(p.y)}`).join(" ");
+    parts.push(
+      `<path d="${d}" fill="none" ${shared} stroke-width="${svgNumber(stroke.width)}" stroke-linecap="round" stroke-linejoin="round"/>`
+    );
+  }
+  parts.push("</svg>");
+  return parts.join("\n");
+}
+
+// src/services/publicHelper.ts
+import { spawn, spawnSync as spawnSync2 } from "node:child_process";
+import { createHash as createHash2 } from "node:crypto";
+import {
+  chmodSync,
+  existsSync as existsSync13,
+  mkdirSync as mkdirSync5,
+  mkdtempSync as mkdtempSync5,
+  readFileSync as readFileSync3,
+  renameSync,
+  rmSync as rmSync5,
+  writeFileSync as writeFileSync4
+} from "node:fs";
+import { homedir as homedir17, release as release2 } from "node:os";
+import { dirname as dirname6, join as join20, resolve as resolve4 } from "node:path";
+import { fileURLToPath } from "node:url";
+var PUBLIC_HELPER_PROTOCOL = 1;
+var PUBLIC_HELPER_DIR_ENV = "APPLE_NOTES_MCP_PUBLIC_HELPER_DIR";
+var PUBLIC_HELPER_TIMEOUT_ENV = "APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS";
+var PUBLIC_HELPER_BINARY = "apple-notes-public-helper";
+var PUBLIC_HELPER_SOURCE = "native/public-helper/apple-notes-public-helper.swift";
+var PUBLIC_HELPER_MANIFEST = "manifest.json";
+var PUBLIC_HELPER_SETUP_COMMAND = "apple-notes-mcp setup --public-helper";
+var PUBLIC_HELPER_ACTIONS = /* @__PURE__ */ new Set([
+  "hello",
+  "decode_drawing",
+  "transcribe"
+]);
+var DEFAULT_TIMEOUT_MS2 = 3e4;
+var MAX_OUTPUT_BYTES2 = 256 * 1024 * 1024;
+var publicManifestSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  binarySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  builtAt: external_exports.string(),
+  osVersion: external_exports.string(),
+  compiler: external_exports.string()
+});
+function packageRoot(fromDir = dirname6(fileURLToPath(import.meta.url))) {
+  let dir = fromDir;
+  for (; ; ) {
+    const candidate = join20(dir, "package.json");
+    if (existsSync13(candidate)) {
+      try {
+        if (JSON.parse(readFileSync3(candidate, "utf8")).name === "apple-notes-mcp")
+          return dir;
+      } catch {
+      }
+    }
+    const parent = dirname6(dir);
+    if (parent === dir) return resolve4(fromDir, "..");
+    dir = parent;
+  }
+}
+function defaultPublicHelperDeps(overrides = {}) {
+  return {
+    env: process.env,
+    platform: process.platform,
+    sourcePath: join20(packageRoot(), PUBLIC_HELPER_SOURCE),
+    exists: existsSync13,
+    readFile: (path10) => readFileSync3(path10),
+    spawn: spawnSync2,
+    spawnAsync: spawn,
+    ...overrides
+  };
+}
+function publicHelperInstallDir(env = process.env) {
+  const override = env[PUBLIC_HELPER_DIR_ENV]?.trim();
+  if (override) return override;
+  return join20(homedir17(), "Library", "Application Support", "apple-notes-mcp", "public-helper");
+}
+function sha256Hex(data) {
+  return createHash2("sha256").update(data).digest("hex");
+}
+function inspectPublicHelper(deps = defaultPublicHelperDeps()) {
+  const installDir = publicHelperInstallDir(deps.env);
+  const binaryPath = join20(installDir, PUBLIC_HELPER_BINARY);
+  const base = { installDir, binaryPath, sourcePath: deps.sourcePath, manifest: null };
+  const fail = (reason, detail) => ({
+    ...base,
+    ready: false,
+    reason,
+    detail
+  });
+  if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
+  if (!deps.exists(deps.sourcePath))
+    return fail("helper_not_installed", `Packaged helper source is missing: ${deps.sourcePath}`);
+  const manifestPath = join20(installDir, PUBLIC_HELPER_MANIFEST);
+  if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
+    return fail(
+      "helper_not_installed",
+      `The public native helper is not built. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\`.`
+    );
+  let manifest;
+  try {
+    manifest = publicManifestSchema.parse(JSON.parse(deps.readFile(manifestPath).toString("utf8")));
+  } catch {
+    return fail(
+      "helper_manifest_invalid",
+      `The helper manifest is unreadable. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\`.`
+    );
+  }
+  if (manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) || manifest.protocolVersion !== PUBLIC_HELPER_PROTOCOL)
+    return {
+      ...fail(
+        "helper_stale",
+        `The installed helper was built from a different source than this apple-notes-mcp version ships. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\` again.`
+      ),
+      manifest
+    };
+  if (sha256Hex(deps.readFile(binaryPath)) !== manifest.binarySha256)
+    return {
+      ...fail(
+        "helper_modified",
+        `The helper binary no longer matches the checksum recorded when it was built. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\` to rebuild it.`
+      ),
+      manifest
+    };
+  return { ...base, manifest, ready: true, reason: null, detail: null };
+}
+var UNAVAILABLE_CODES = /* @__PURE__ */ new Set([
+  "unsupported_platform",
+  "helper_not_installed",
+  "helper_stale",
+  "helper_modified",
+  "helper_manifest_invalid"
+]);
+var ENVELOPE_CODES = {
+  invalid_request: "validation_error",
+  attachment_not_found: "not_found"
+};
+var PublicHelperError = class extends CodedError {
+  constructor(code, message) {
+    super(message, {
+      code: UNAVAILABLE_CODES.has(code) ? "unsupported" : ENVELOPE_CODES[code] ?? "operation_failed",
+      helperCode: code
+    });
+    this.code = code;
+    this.name = "PublicHelperError";
+  }
+  code;
+};
+var errorSchema = external_exports.object({ status: external_exports.literal("error"), code: external_exports.string(), message: external_exports.string() });
+var publicHelloSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  protocolVersion: external_exports.number().int(),
+  sourceSha256: external_exports.string(),
+  actions: external_exports.array(external_exports.string())
+}).passthrough();
+function callPublicHelper(action, fields = {}, deps = defaultPublicHelperDeps(), options = {}) {
+  const { binaryPath, timeout, input } = prepareCall(action, fields, deps, options);
+  const result = deps.spawn(binaryPath, [], {
+    input,
+    encoding: "utf8",
+    timeout,
+    killSignal: "SIGKILL",
+    maxBuffer: MAX_OUTPUT_BYTES2
+  });
+  const errno = result.error?.code;
+  if (errno === "ETIMEDOUT" || result.signal && result.status === null)
+    throw new PublicHelperError("timeout", `The helper did not answer within ${timeout} ms.`);
+  if (result.error)
+    throw new PublicHelperError(
+      "helper_unreachable",
+      `Could not run the helper: ${result.error.message}`
+    );
+  return parseHelperOutput(result.status, String(result.stdout ?? ""));
+}
+async function callPublicHelperAsync(action, fields = {}, deps = defaultPublicHelperDeps(), options = {}) {
+  const { binaryPath, timeout, input } = prepareCall(action, fields, deps, options);
+  const { signal } = options;
+  const aborted2 = () => new PublicHelperError("aborted", "The request was cancelled; the helper was stopped.");
+  if (signal?.aborted) throw aborted2();
+  return new Promise((resolvePromise, reject) => {
+    const child2 = (deps.spawnAsync ?? spawn)(binaryPath, [], {
+      stdio: ["pipe", "pipe", "ignore"]
+    });
+    const chunks = [];
+    let size = 0;
+    let failure2 = null;
+    const stop = (error2) => {
+      failure2 ??= error2;
+      child2.kill("SIGKILL");
+    };
+    const timer = setTimeout(
+      () => stop(new PublicHelperError("timeout", `The helper did not answer within ${timeout} ms.`)),
+      timeout
+    );
+    const onAbort = () => stop(aborted2());
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const settle = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    child2.stdout?.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_OUTPUT_BYTES2)
+        stop(new PublicHelperError("invalid_response", "The helper response is too large."));
+      else chunks.push(chunk);
+    });
+    child2.on("error", (error2) => {
+      settle();
+      reject(
+        failure2 ?? new PublicHelperError("helper_unreachable", `Could not run the helper: ${error2.message}`)
+      );
+    });
+    child2.on("close", (status, exitSignal) => {
+      settle();
+      if (failure2) return reject(failure2);
+      if (status === null && exitSignal)
+        return reject(
+          new PublicHelperError("helper_crashed", `The helper stopped on signal ${exitSignal}.`)
+        );
+      try {
+        resolvePromise(parseHelperOutput(status, Buffer.concat(chunks).toString("utf8")));
+      } catch (error2) {
+        reject(error2);
+      }
+    });
+    child2.stdin?.on("error", () => {
+    });
+    child2.stdin?.end(input);
+  });
+}
+function prepareCall(action, fields, deps, options) {
+  if (!PUBLIC_HELPER_ACTIONS.has(action))
+    throw new PublicHelperError(
+      "unknown_action",
+      `"${action}" is not an action the server sends to the public helper.`
+    );
+  let binaryPath = options.binaryPath;
+  if (!binaryPath) {
+    const install = inspectPublicHelper(deps);
+    if (!install.ready)
+      throw new PublicHelperError(install.reason ?? "helper_not_installed", install.detail ?? "");
+    binaryPath = install.binaryPath;
+  }
+  const timeout = options.timeoutMs || Number.parseInt(deps.env[PUBLIC_HELPER_TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS2;
+  const input = JSON.stringify({ protocol: PUBLIC_HELPER_PROTOCOL, action, ...fields });
+  return { binaryPath, timeout, input };
+}
+function parseHelperOutput(status, stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout.trim());
+  } catch {
+    throw new PublicHelperError(
+      "invalid_response",
+      `The helper exited with status ${status} and no JSON response.`
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new PublicHelperError("invalid_response", "The helper response is not a JSON object.");
+  const object3 = parsed;
+  if (status !== 0 || object3.status !== "ok") {
+    const error2 = errorSchema.safeParse(object3);
+    if (!error2.success)
+      throw new PublicHelperError(
+        "invalid_response",
+        `The helper failed with an unrecognized response (exit ${status}).`
+      );
+    throw new PublicHelperError(error2.data.code, error2.data.message);
+  }
+  return object3;
+}
+function defaultPublicHelperBuildDeps() {
+  return {
+    ...defaultPublicHelperDeps(),
+    osVersion: () => {
+      const r = spawnSync2("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" });
+      return r.status === 0 ? r.stdout.trim() : `Darwin ${release2()}`;
+    },
+    now: () => /* @__PURE__ */ new Date()
+  };
+}
+function sourceDigestSwift(sourceSha) {
+  return `let helperSourceSHA256 = "${sourceSha}"
+`;
+}
+var PUBLIC_HELPER_BUNDLE_ID = "apple-notes-mcp.public-helper";
+function publicHelperInfoPlist() {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>CFBundleIdentifier</key>",
+    `  <string>${PUBLIC_HELPER_BUNDLE_ID}</string>`,
+    "  <key>CFBundleName</key>",
+    "  <string>apple-notes-mcp public helper</string>",
+    "  <key>CFBundleInfoDictionaryVersion</key>",
+    "  <string>6.0</string>",
+    "</dict>",
+    "</plist>",
+    ""
+  ].join("\n");
+}
+function publicHelperCompileArguments(sourcePath, digestPath, plistPath, outputPath) {
+  return [
+    "swiftc",
+    "-O",
+    "-parse-as-library",
+    "-framework",
+    "AppKit",
+    "-framework",
+    "PencilKit",
+    "-framework",
+    "AVFoundation",
+    "-framework",
+    "Speech",
+    "-Xlinker",
+    "-sectcreate",
+    "-Xlinker",
+    "__TEXT",
+    "-Xlinker",
+    "__info_plist",
+    "-Xlinker",
+    plistPath,
+    sourcePath,
+    digestPath,
+    "-o",
+    outputPath
+  ];
+}
+function buildPublicHelper(checkOnly, deps = defaultPublicHelperBuildDeps()) {
+  const steps = [];
+  const done = (ok2) => ({
+    ok: ok2,
+    checkOnly,
+    steps,
+    installation: inspectPublicHelper(deps)
+  });
+  if (checkOnly) {
+    const installation2 = inspectPublicHelper(deps);
+    steps.push({
+      step: "inspect installed helper",
+      ok: installation2.ready,
+      detail: installation2.ready ? installation2.binaryPath : installation2.detail ?? void 0
+    });
+    return { ok: installation2.ready, checkOnly, steps, installation: installation2 };
+  }
+  if (deps.platform !== "darwin") {
+    steps.push({ step: "platform", ok: false, detail: "macOS only" });
+    return done(false);
+  }
+  if (!deps.exists(deps.sourcePath)) {
+    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
+    return done(false);
+  }
+  const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
+  steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
+  const version3 = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
+  if (version3.status !== 0) {
+    steps.push({
+      step: "find compiler",
+      ok: false,
+      detail: "No Swift compiler found. Install the Command Line Tools with `xcode-select --install`."
+    });
+    return done(false);
+  }
+  const compiler = String(version3.stdout || version3.stderr || "").split("\n").find((line) => line.includes("Swift version"))?.trim() || "swiftc";
+  steps.push({ step: "find compiler", ok: true, detail: compiler });
+  const installDir = publicHelperInstallDir(deps.env);
+  mkdirSync5(installDir, { recursive: true, mode: 448 });
+  const staging = mkdtempSync5(join20(installDir, ".staging-"));
+  try {
+    const stagedBinary = join20(staging, PUBLIC_HELPER_BINARY);
+    const digestPath = join20(staging, "source-digest.swift");
+    const plistPath = join20(staging, "Info.plist");
+    writeFileSync4(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
+    writeFileSync4(plistPath, publicHelperInfoPlist(), { mode: 384 });
+    const compile = deps.spawn(
+      "/usr/bin/xcrun",
+      publicHelperCompileArguments(deps.sourcePath, digestPath, plistPath, stagedBinary),
+      { encoding: "utf8", timeout: 3e5 }
+    );
+    if (compile.status !== 0) {
+      steps.push({
+        step: "compile",
+        ok: false,
+        detail: String(compile.stderr || compile.error?.message || "swiftc failed").slice(0, 4e3)
+      });
+      return done(false);
+    }
+    steps.push({ step: "compile", ok: true });
+    const sign = deps.spawn(
+      "/usr/bin/codesign",
+      ["--force", "--sign", "-", "--identifier", PUBLIC_HELPER_BUNDLE_ID, stagedBinary],
+      { encoding: "utf8" }
+    );
+    if (sign.status !== 0) {
+      steps.push({
+        step: "ad-hoc sign",
+        ok: false,
+        detail: String(sign.stderr || "codesign failed")
+      });
+      return done(false);
+    }
+    steps.push({ step: "ad-hoc sign", ok: true });
+    let hello;
+    try {
+      hello = publicHelloSchema.parse(
+        callPublicHelper("hello", {}, deps, { binaryPath: stagedBinary })
+      );
+    } catch (error2) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: error2 instanceof Error ? error2.message : String(error2)
+      });
+      return done(false);
+    }
+    if (hello.protocolVersion !== PUBLIC_HELPER_PROTOCOL || hello.sourceSha256 !== sourceSha) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: `helper reported protocol ${hello.protocolVersion}, source ${hello.sourceSha256}`
+      });
+      return done(false);
+    }
+    steps.push({ step: "handshake", ok: true, detail: `actions: ${hello.actions.join(", ")}` });
+    const manifest = {
+      schemaVersion: 1,
+      protocolVersion: hello.protocolVersion,
+      sourceSha256: sourceSha,
+      binarySha256: sha256Hex(deps.readFile(stagedBinary)),
+      builtAt: deps.now().toISOString(),
+      osVersion: deps.osVersion(),
+      compiler
+    };
+    chmodSync(stagedBinary, 448);
+    renameSync(stagedBinary, join20(installDir, PUBLIC_HELPER_BINARY));
+    writeFileSync4(
+      join20(installDir, PUBLIC_HELPER_MANIFEST),
+      JSON.stringify(manifest, null, 2) + "\n",
+      { mode: 384 }
+    );
+    steps.push({ step: "install", ok: true, detail: installDir });
+  } finally {
+    rmSync5(staging, { recursive: true, force: true });
+  }
+  const installation = inspectPublicHelper(deps);
+  steps.push({
+    step: "verify installation",
+    ok: installation.ready,
+    detail: installation.ready ? void 0 : installation.detail ?? void 0
+  });
+  return { ok: installation.ready, checkOnly, steps, installation };
+}
+function formatPublicHelperBuild(report) {
+  const lines = ["Apple Notes MCP public native helper", ""];
+  for (const step of report.steps)
+    lines.push(`${step.ok ? "\u2713" : "\u2717"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
+  lines.push("");
+  if (report.ok) lines.push(`Installed at ${report.installation.binaryPath}.`);
+  else if (report.checkOnly) lines.push(`Run \`${PUBLIC_HELPER_SETUP_COMMAND}\` to build it.`);
+  else lines.push("The helper was not installed. Fix the failed step above and run setup again.");
+  return lines.join("\n");
+}
+
+// src/services/noteDrawings.ts
+var bounds = external_exports.object({ x: external_exports.number(), y: external_exports.number(), width: external_exports.number(), height: external_exports.number() });
+var strokeSchema = external_exports.object({
+  inkType: external_exports.string(),
+  color: external_exports.object({
+    red: external_exports.number(),
+    green: external_exports.number(),
+    blue: external_exports.number(),
+    alpha: external_exports.number()
+  }),
+  width: external_exports.number(),
+  pointCount: external_exports.number().int(),
+  bounds,
+  points: external_exports.array(
+    external_exports.object({
+      x: external_exports.number(),
+      y: external_exports.number(),
+      width: external_exports.number(),
+      opacity: external_exports.number(),
+      force: external_exports.number()
+    })
+  ).optional(),
+  transformApplied: external_exports.boolean().optional()
+}).strip();
+var decodedDrawingSchema = external_exports.object({
+  status: external_exports.literal("ok"),
+  strokeCount: external_exports.number().int(),
+  strokes: external_exports.array(strokeSchema),
+  truncated: external_exports.boolean(),
+  bounds
+});
+function decodeRow(row, format, includePoints, deps) {
+  const base = {
+    attachmentId: row.attachmentId,
+    identifier: row.identifier,
+    typeUti: row.typeUti,
+    status: "error"
+  };
+  if (!row.data || row.data.length === 0)
+    return { ...base, code: "no_data", message: "This drawing has no stored PencilKit data." };
+  let decoded;
+  try {
+    const needPoints = includePoints || format !== "json";
+    const raw = callPublicHelper(
+      "decode_drawing",
+      { dataBase64: row.data.toString("base64"), includePoints: needPoints },
+      deps
+    );
+    const parsed = decodedDrawingSchema.safeParse(raw);
+    if (!parsed.success)
+      return { ...base, code: "invalid_response", message: "Unexpected helper response." };
+    decoded = parsed.data;
+  } catch (error2) {
+    const code = error2 instanceof PublicHelperError ? error2.code : "internal_error";
+    return { ...base, code, message: error2 instanceof Error ? error2.message : String(error2) };
+  }
+  const strokes = decoded.strokes;
+  const result = {
+    ...base,
+    status: "ok",
+    strokeCount: decoded.strokeCount,
+    bounds: decoded.bounds,
+    truncated: decoded.truncated
+  };
+  if (format !== "json") result.svg = drawingToSvg(strokes, decoded.bounds);
+  if (format !== "svg")
+    result.strokes = includePoints ? strokes : strokes.map(({ points: _points, ...rest }) => rest);
+  return result;
+}
+function getNoteDrawings(noteId3, options = {}) {
+  const format = options.format ?? "json";
+  const includePoints = options.includePoints ?? true;
+  const deps = options.deps ?? defaultPublicHelperDeps();
+  const rows = (options.readRows ?? readDrawingRows2)(noteId3, options.dbPath);
+  if (rows.length === 0) return { id: noteId3, drawingCount: 0, status: "none", drawings: [] };
+  const install = inspectPublicHelper(deps);
+  if (!install.ready)
+    throw new PublicHelperError(install.reason ?? "helper_not_installed", install.detail ?? "");
+  const drawings = rows.map((row) => decodeRow(row, format, includePoints, deps));
+  const ok2 = drawings.filter((d) => d.status === "ok").length;
+  return {
+    id: noteId3,
+    drawingCount: drawings.length,
+    status: ok2 === drawings.length ? "ok" : ok2 ? "partial" : "error",
+    drawings
+  };
+}
+function formatNoteDrawings(result) {
+  if (result.drawingCount === 0) return `No classic PencilKit drawings in note ${result.id}.`;
+  const lines = [
+    `${result.drawingCount} classic drawing${result.drawingCount === 1 ? "" : "s"} in note ${result.id} (${result.status}):`
+  ];
+  for (const d of result.drawings)
+    lines.push(
+      d.status === "ok" ? `- ${d.attachmentId}: ${d.strokeCount} stroke${d.strokeCount === 1 ? "" : "s"}${d.truncated ? " (truncated)" : ""}` : `- ${d.attachmentId}: error ${d.code}: ${d.message}`
+    );
+  return lines.join("\n");
+}
+
+// src/services/exportVectorDrawings.ts
+var defaultReadNoteDrawings = (noteId3) => getNoteDrawings(noteId3, { format: "svg" });
+var STOP_CODES = /* @__PURE__ */ new Set(["timeout"]);
+function errorCode(error2) {
+  if (error2 instanceof PublicHelperError) return error2.code;
+  const code = error2?.code;
+  if (typeof code === "string") return code;
+  const kind = error2?.kind;
+  return typeof kind === "string" ? kind : "internal_error";
+}
+function prepareVectorDrawings(notes, writer, readDrawings = defaultReadNoteDrawings) {
+  const outcomes = /* @__PURE__ */ new Map();
+  let stopped;
+  for (const note of notes) {
+    const pending = [...note.attachments.values()].filter((a) => a.kind === "drawing");
+    if (pending.length === 0) continue;
+    if (stopped) {
+      for (const attachment of pending) outcomes.set(attachment.id, { reason: stopped });
+      continue;
+    }
+    let result;
+    try {
+      result = readDrawings(note.id);
+    } catch (error2) {
+      const reason = errorCode(error2);
+      if (error2 instanceof PublicHelperError) stopped = reason;
+      for (const attachment of pending) outcomes.set(attachment.id, { reason });
+      continue;
+    }
+    for (const drawing of result.drawings) {
+      if (drawing.status !== "ok" || !drawing.svg) {
+        const reason = drawing.code ?? "undecodable";
+        outcomes.set(drawing.identifier, { reason });
+        if (STOP_CODES.has(reason)) stopped = reason;
+      } else if (drawing.truncated) {
+        outcomes.set(drawing.identifier, { reason: "truncated" });
+      } else {
+        outcomes.set(drawing.identifier, { svg: drawing.svg });
+      }
+    }
+  }
+  const stats = { rendered: 0, fallback: 0 };
+  const fallback = (reason) => {
+    stats.fallback++;
+    stats.fallbackReasons = stats.fallbackReasons ?? {};
+    stats.fallbackReasons[reason] = (stats.fallbackReasons[reason] ?? 0) + 1;
+    return void 0;
+  };
+  const vectorDrawing = (attachment) => {
+    if (attachment.kind !== "drawing") return void 0;
+    const outcome = outcomes.get(attachment.id) ?? { reason: "not_decoded" };
+    if ("reason" in outcome) return fallback(outcome.reason);
+    if (!writer.placeBytes) return fallback("unsupported");
+    const placed = writer.placeBytes(
+      Buffer.from(outcome.svg, "utf8"),
+      `${attachment.title?.trim() || "Drawing"}.svg`,
+      "image/svg+xml",
+      `drawing:${attachment.id}`
+    );
+    if ("error" in placed) return fallback(placed.error);
+    stats.rendered++;
+    return placed;
+  };
+  return { vectorDrawing, stats };
 }
 
 // src/utils/markdownExport.ts
@@ -51392,10 +52179,10 @@ function renderNotesMarkdown(notes, ctx, { wrap: wrap3 = 0 } = {}) {
 
 // src/utils/noteExportData.ts
 import { execFileSync as execFileSync18 } from "node:child_process";
-import { homedir as homedir17 } from "node:os";
-import { join as join20 } from "node:path";
-var NOTES_DB_PATH11 = join20(
-  homedir17(),
+import { homedir as homedir18 } from "node:os";
+import { join as join21 } from "node:path";
+var NOTES_DB_PATH11 = join21(
+  homedir18(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var IMAGE_UTIS2 = /* @__PURE__ */ new Set([
@@ -52590,18 +53377,18 @@ function renderNotesWithTemplate(notes, ctx, options) {
 }
 
 // src/utils/templateAssets.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import {
   closeSync as closeSync5,
   constants as constants5,
   fstatSync as fstatSync5,
   lstatSync as lstatSync4,
-  mkdirSync as mkdirSync5,
+  mkdirSync as mkdirSync6,
   openSync as openSync5,
   readSync as readSync4,
   writeSync as writeSync4
 } from "node:fs";
-import { extname as extname4, isAbsolute as isAbsolute3, join as join21, relative as relative4, resolve as resolve4, sep as sep4 } from "node:path";
+import { extname as extname4, isAbsolute as isAbsolute3, join as join22, relative as relative4, resolve as resolve5, sep as sep4 } from "node:path";
 var CHUNK = 1024 * 1024;
 function openRegular(path10) {
   const fd = openSync5(path10, constants5.O_RDONLY | constants5.O_NOFOLLOW);
@@ -52612,7 +53399,7 @@ function openRegular(path10) {
   return fd;
 }
 function digest(fd) {
-  const hash = createHash2("sha256");
+  const hash = createHash3("sha256");
   const chunk = Buffer.alloc(CHUNK);
   let head = Buffer.alloc(0);
   for (let position = 0; ; ) {
@@ -52642,7 +53429,7 @@ var HashedSidecarWriter = class {
   prepare() {
     if (this.ready) return;
     assertExportPath(this.dir);
-    mkdirSync5(this.dir, { recursive: true });
+    mkdirSync6(this.dir, { recursive: true });
     if (!lstatSync4(this.dir).isDirectory()) throw new Error("assets directory is not a directory");
     this.ready = true;
   }
@@ -52661,7 +53448,7 @@ var HashedSidecarWriter = class {
       this.prepare();
       const name = safeAssetName(asset.name, mime);
       const ext = extname4(name);
-      const target = join21(
+      const target = join22(
         this.dir,
         `${name.slice(0, name.length - ext.length)}-${hash.slice(0, 8)}${ext}`
       );
@@ -52750,8 +53537,8 @@ function templateAssetsDir(directory, outputDir, values) {
     if (raw !== void 0) safe[key] = pathComponent(raw);
   }
   const filled = fillPlaceholders(directory, safe);
-  const base = resolve4(outputDir);
-  const dir = resolve4(base, filled);
+  const base = resolve5(outputDir);
+  const dir = resolve5(base, filled);
   if (isAbsolute3(filled) || filled.split("/").includes("..") || !dir.startsWith(base + sep4))
     throw new Error(`assets.directory "${directory}" resolves outside the output directory`);
   return dir;
@@ -52884,7 +53671,7 @@ function loadNotes(ids, single, read) {
   return { notes, skipped };
 }
 function openOutput(output) {
-  mkdirSync6(dirname6(output), { recursive: true });
+  mkdirSync7(dirname7(output), { recursive: true });
   try {
     return openCreateOnly(output);
   } catch (error2) {
@@ -52917,7 +53704,7 @@ function exportNotesMarkdown(request, deps) {
   if (chosen)
     return exportWithTemplate(request, deps, chosen, notes, skipped, { output, assetsDir });
   const fd = output ? openOutput(output) : void 0;
-  const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname6(output) : void 0) : void 0;
+  const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname7(output) : void 0) : void 0;
   const ctx = {
     stats: emptyStats(),
     ...writer ? { writer, locator: deps.locator ?? new AssetLocator() } : {}
@@ -52947,7 +53734,7 @@ function exportNotesMarkdown(request, deps) {
   return { ...receipt, markdown };
 }
 function defaultSidecarDir(output) {
-  return join22(dirname6(output), `${basename4(output, extname5(output))}.assets`);
+  return join23(dirname7(output), `${basename4(output, extname5(output))}.assets`);
 }
 function exportNotesHtml(request, deps) {
   if (!request.outputPath)
@@ -52968,11 +53755,13 @@ function exportNotesHtml(request, deps) {
   const ids = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
   const fd = openOutput(output);
-  const writer = assetsDir ? new SidecarWriter(assetsDir, dirname6(output)) : new DataUrlWriter();
+  const writer = assetsDir ? new SidecarWriter(assetsDir, dirname7(output)) : new DataUrlWriter();
+  const vector = request.vectorDrawings === false ? void 0 : prepareVectorDrawings(notes, writer, deps.readDrawings);
   const ctx = {
     stats: emptyStats(),
     writer,
-    locator: deps.locator ?? new AssetLocator()
+    locator: deps.locator ?? new AssetLocator(),
+    ...vector ? { vectorDrawing: vector.vectorDrawing } : {}
   };
   const title = request.id ? notes[0]?.title || "Note" : request.folder;
   const html = renderInto(fd, () => renderNotesHtml(notes, ctx, { title }));
@@ -52984,7 +53773,8 @@ function exportNotesHtml(request, deps) {
     output,
     stats: ctx.stats,
     skipped,
-    ...assetsDir ? { assets: { dir: assetsDir, files: writer.count } } : { embedded: writer.count }
+    ...assetsDir ? { assets: { dir: assetsDir, files: writer.count } } : { embedded: writer.count },
+    ...vector && vector.stats.rendered + vector.stats.fallback > 0 ? { vectorDrawings: vector.stats } : {}
   };
 }
 function readMetaSafely(read, id2) {
@@ -53000,7 +53790,7 @@ function pathValues(note, meta, exportStem) {
   return values;
 }
 function assetBindings(template, notes, meta, { output, assetsDir, exportStem }) {
-  const linkBase = template.assets.pathStyle === "relative" && output ? dirname6(output) : void 0;
+  const linkBase = template.assets.pathStyle === "relative" && output ? dirname7(output) : void 0;
   const writers = /* @__PURE__ */ new Map();
   const writerFor = (dir) => {
     let writer = writers.get(dir);
@@ -53019,7 +53809,7 @@ function assetBindings(template, notes, meta, { output, assetsDir, exportStem })
         try {
           dir = templateAssetsDir(
             template.assets.directory,
-            dirname6(output),
+            dirname7(output),
             pathValues(note, meta.get(note) ?? {}, exportStem)
           );
         } catch (error2) {
@@ -53076,7 +53866,7 @@ function exportWithTemplate(request, deps, chosen, notes, skipped, { output, ass
     ...warnings.length > MAX_EXPORT_WARNINGS ? { warningsOmitted: warnings.length - MAX_EXPORT_WARNINGS } : {},
     ...used.length ? {
       assets: {
-        dir: used.length === 1 ? used[0].dir : dirname6(output),
+        dir: used.length === 1 ? used[0].dir : dirname7(output),
         files: files.length
       },
       assetFiles: files.slice(0, MAX_LISTED_ASSETS)
@@ -53095,20 +53885,20 @@ function exportWithTemplate(request, deps, chosen, notes, skipped, { output, ass
 }
 
 // src/tools/directOperations.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import {
   closeSync as closeSync7,
   constants as constants7,
   fstatSync as fstatSync7,
-  mkdtempSync as mkdtempSync6,
+  mkdtempSync as mkdtempSync7,
   openSync as openSync7,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   readSync as readSync5,
-  rmSync as rmSync6,
-  writeFileSync as writeFileSync5
+  rmSync as rmSync7,
+  writeFileSync as writeFileSync6
 } from "node:fs";
 import { tmpdir as tmpdir6 } from "node:os";
-import { basename as basename6, extname as extname7, isAbsolute as isAbsolute4, join as join24 } from "node:path";
+import { basename as basename6, extname as extname7, isAbsolute as isAbsolute4, join as join25 } from "node:path";
 
 // src/utils/pasteboardFreeze.ts
 import { execFileSync as execFileSync19 } from "node:child_process";
@@ -53116,15 +53906,15 @@ import {
   closeSync as closeSync6,
   constants as constants6,
   fstatSync as fstatSync6,
-  mkdtempSync as mkdtempSync5,
+  mkdtempSync as mkdtempSync6,
   openSync as openSync6,
-  readFileSync as readFileSync3,
-  rmSync as rmSync5,
+  readFileSync as readFileSync4,
+  rmSync as rmSync6,
   statSync as statSync4,
-  writeFileSync as writeFileSync4
+  writeFileSync as writeFileSync5
 } from "node:fs";
 import { tmpdir as tmpdir5 } from "node:os";
-import { basename as basename5, extname as extname6, join as join23 } from "node:path";
+import { basename as basename5, extname as extname6, join as join24 } from "node:path";
 var PASTEBOARD_NAME_ENV = "APPLE_NOTES_MCP_PASTEBOARD_NAME";
 var MAX_PASTEBOARD_BYTES = 64 * 1024 * 1024;
 var PASTEBOARD_DATA_TYPES = [
@@ -53191,7 +53981,7 @@ function run(argv) {
   return JSON.stringify(result || { status: "error", code: "unsupported_content", types: types.slice(0, 20) });
 }
 `;
-var ENVELOPE_CODES = {
+var ENVELOPE_CODES2 = {
   pasteboard_access_denied: "permission_denied",
   pasteboard_unavailable: "operation_failed",
   pasteboard_timeout: "operation_failed",
@@ -53207,7 +53997,7 @@ var PasteboardError = class extends CodedError {
   constructor(code, message, details = {}) {
     super(message, {
       ...details,
-      code: ENVELOPE_CODES[code],
+      code: ENVELOPE_CODES2[code],
       pasteboardCode: code,
       committed: false
     });
@@ -53284,14 +54074,14 @@ function readRegularFile(path10) {
     const stat = fstatSync6(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_PASTEBOARD_BYTES)
       throw new PasteboardError("file_unreadable", MESSAGES.file_unreadable);
-    return readFileSync3(descriptor);
+    return readFileSync4(descriptor);
   } finally {
     closeSync6(descriptor);
   }
 }
 function freezePasteboard(options = {}) {
-  const directory = mkdtempSync5(join23(tmpdir5(), "notes-pasteboard-"));
-  const cleanup = () => rmSync5(directory, { recursive: true, force: true });
+  const directory = mkdtempSync6(join24(tmpdir5(), "notes-pasteboard-"));
+  const cleanup = () => rmSync6(directory, { recursive: true, force: true });
   try {
     const prefs = JSON.stringify(PASTEBOARD_DATA_TYPES.map((t) => [t.type, t.ext]));
     let raw;
@@ -53319,17 +54109,17 @@ function freezePasteboard(options = {}) {
     if (reply.kind === "file") {
       const bytes = readRegularFile(reply.path);
       const filename2 = basename5(reply.path);
-      const path11 = join23(directory, filename2);
-      writeFileSync4(path11, bytes, { mode: 384 });
+      const path11 = join24(directory, filename2);
+      writeFileSync5(path11, bytes, { mode: 384 });
       return { kind: "file", type: reply.type, path: path11, filename: filename2, bytes: bytes.length, cleanup };
     }
-    if (join23(directory, basename5(reply.path)) !== reply.path)
+    if (join24(directory, basename5(reply.path)) !== reply.path)
       throw new PasteboardError("write_failed", MESSAGES.write_failed);
     const label = PASTEBOARD_DATA_TYPES.find((t) => t.type === reply.type)?.label ?? "item";
     const filename = `Pasted ${label}${extname6(reply.path)}`;
-    const path10 = join23(directory, filename);
-    writeFileSync4(path10, readFileSync3(reply.path), { mode: 384 });
-    rmSync5(reply.path, { force: true });
+    const path10 = join24(directory, filename);
+    writeFileSync5(path10, readFileSync4(reply.path), { mode: 384 });
+    rmSync6(reply.path, { force: true });
     return { kind: "data", type: reply.type, path: path10, filename, bytes: statSync4(path10).size, cleanup };
   } catch (error2) {
     cleanup();
@@ -53387,7 +54177,7 @@ function localAttachment(path10) {
     const stat = fstatSync7(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ADD_ATTACHMENT_BYTES)
       throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
-    const bytes = readFileSync4(descriptor);
+    const bytes = readFileSync5(descriptor);
     if (bytes.length !== stat.size)
       throw new Error("Attachment changed while it was being read; try again");
     return bytes;
@@ -53402,7 +54192,7 @@ function fileMatches(path10, size, expected) {
     descriptor = openSync7(path10, constants7.O_RDONLY | constants7.O_NOFOLLOW);
     const stat = fstatSync7(descriptor);
     if (!stat.isFile() || stat.size !== size) return false;
-    const hash = createHash3("sha256");
+    const hash = createHash4("sha256");
     const chunk = Buffer.allocUnsafe(1024 * 1024);
     let total = 0;
     for (; ; ) {
@@ -53595,7 +54385,7 @@ function attachmentName(path10, filename) {
 }
 var UNCERTAIN = "Attachment insertion outcome uncertain; read the exact note before retrying";
 var pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-var sha256 = (data) => createHash3("sha256").update(data).digest("hex");
+var sha256 = (data) => createHash4("sha256").update(data).digest("hex");
 function storedAttachmentIds(manager, id2) {
   try {
     return new Set(
@@ -53640,10 +54430,10 @@ function attachFile(manager, args, checked) {
   const bytes = localAttachment(path10);
   const beforeAttachments = manager.listAttachmentsById(id2);
   const beforeStored = storedAttachmentIds(manager, id2);
-  const directory = mkdtempSync6(join24(tmpdir6(), "notes-attachment-add-"));
-  const temporaryFile = join24(directory, name);
+  const directory = mkdtempSync7(join25(tmpdir6(), "notes-attachment-add-"));
+  const temporaryFile = join25(directory, name);
   try {
-    writeFileSync5(temporaryFile, bytes, { mode: 384 });
+    writeFileSync6(temporaryFile, bytes, { mode: 384 });
     if (readSnapshot(manager, id2).hash !== before.hash) throw new Error("Note revision changed");
     let returnedId;
     let transportUncertain = false;
@@ -53669,7 +54459,7 @@ function attachFile(manager, args, checked) {
     if (inserted.length === 1 && !(persistentReturnedId && returnedId !== inserted[0].id)) {
       attachmentId = inserted[0].id;
       reportedName = inserted[0].name;
-      const verifyPath = join24(directory, "verify", "attachment.bin");
+      const verifyPath = join25(directory, "verify", "attachment.bin");
       const saved = manager.saveAttachmentById(id2, attachmentId, verifyPath);
       if (!saved.success || !fileMatches(saved.savedPath ?? verifyPath, bytes.length, sha256(bytes)))
         throw new Error("Attachment bytes were not verified; read the exact note before retrying");
@@ -53703,12 +54493,12 @@ function attachFile(manager, args, checked) {
       } : {}
     };
   } finally {
-    rmSync6(directory, { recursive: true, force: true });
+    rmSync7(directory, { recursive: true, force: true });
   }
 }
 
 // src/tools/folderDelete.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 
 // src/utils/folderStore.ts
 import { execFileSync as execFileSync20 } from "child_process";
@@ -53895,7 +54685,7 @@ function folderDeleteRevision(app, store) {
     store.childFolderCount,
     store.noteCount
   ];
-  return `sha256:${createHash4("sha256").update(JSON.stringify(state)).digest("hex")}`;
+  return `sha256:${createHash5("sha256").update(JSON.stringify(state)).digest("hex")}`;
 }
 function checkFolder(manager, args, deps) {
   const app = manager.readFolderForDelete(args.id);
@@ -54038,16 +54828,16 @@ import {
   fstatSync as fstatSync8,
   linkSync,
   lstatSync as lstatSync5,
-  mkdirSync as mkdirSync7,
+  mkdirSync as mkdirSync8,
   openSync as openSync8,
   readdirSync as readdirSync4,
   readSync as readSync6,
-  renameSync,
+  renameSync as renameSync2,
   unlinkSync as unlinkSync3,
   writeSync as writeSync5
 } from "node:fs";
-import { homedir as homedir19 } from "node:os";
-import { isAbsolute as isAbsolute5, join as join26, resolve as resolve5 } from "node:path";
+import { homedir as homedir20 } from "node:os";
+import { isAbsolute as isAbsolute5, join as join27, resolve as resolve6 } from "node:path";
 var TEMPLATE_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 var TemplateStoreError = class extends Error {
   constructor(code, message) {
@@ -54065,9 +54855,9 @@ function templateDir(env = process.env) {
         "unsafe-path",
         "APPLE_NOTES_MCP_TEMPLATE_DIR must be an absolute path."
       );
-    return resolve5(override);
+    return resolve6(override);
   }
-  return join26(homedir19(), "Library/Application Support/apple-notes-mcp/templates");
+  return join27(homedir20(), "Library/Application Support/apple-notes-mcp/templates");
 }
 function checkName(name, action) {
   if (isBuiltinTemplate(name) && action !== "read")
@@ -54093,7 +54883,7 @@ var TemplateStore = class {
       stat = lstatSync5(this.dir);
     } catch {
       if (!create) return void 0;
-      mkdirSync7(this.dir, { recursive: true, mode: 448 });
+      mkdirSync8(this.dir, { recursive: true, mode: 448 });
       stat = lstatSync5(this.dir);
     }
     if (!stat.isDirectory())
@@ -54104,7 +54894,7 @@ var TemplateStore = class {
     return this.dir;
   }
   file(name) {
-    return join26(this.dir, `${name}.json`);
+    return join27(this.dir, `${name}.json`);
   }
   /** Read a saved template's text, refusing symlinks and non-regular files. */
   readText(path10) {
@@ -54218,7 +55008,7 @@ var TemplateStore = class {
         "template-exists",
         `A template named "${name}" already exists. Pass force: true to replace it.`
       );
-    const temp = join26(this.dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
+    const temp = join27(this.dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
     const fd = openSync8(
       temp,
       constants8.O_WRONLY | constants8.O_CREAT | constants8.O_EXCL | constants8.O_NOFOLLOW,
@@ -54232,7 +55022,7 @@ var TemplateStore = class {
       closeSync8(fd);
     }
     try {
-      if (force) renameSync(temp, path10);
+      if (force) renameSync2(temp, path10);
       else {
         try {
           linkSync(temp, path10);
@@ -54448,7 +55238,7 @@ function registerMarkdownTemplates(server2, store = () => new TemplateStore()) {
 }
 
 // src/utils/svgAnalyzer.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { closeSync as closeSync9, constants as constants9, fstatSync as fstatSync9, openSync as openSync9, readSync as readSync7 } from "node:fs";
 
 // src/utils/svgColor.ts
@@ -55531,7 +56321,7 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 function sha2562(text2) {
-  return createHash5("sha256").update(text2).digest("hex");
+  return createHash6("sha256").update(text2).digest("hex");
 }
 var round = (v, digits) => {
   const r = Number(v.toFixed(digits));
@@ -57017,11 +57807,11 @@ function registerNativeOperations(server2, manager) {
 }
 
 // src/setupShortcuts.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync13 } from "node:fs";
-import { release as release2 } from "node:os";
-import { dirname as dirname7, resolve as resolve6 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { existsSync as existsSync14 } from "node:fs";
+import { release as release3 } from "node:os";
+import { dirname as dirname8, resolve as resolve7 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 var OPTIONAL_BRIDGE_NOTE = "(optional \u2014 needed only for create-note format: markdown, macOS 26+)";
 var MARKDOWN_MIN_DARWIN_MAJOR = 25;
 var shortcutFiles = [
@@ -57038,16 +57828,16 @@ var shortcutFiles = [
 ];
 function setupShortcuts(checkOnly, dependencies = {}) {
   const status = dependencies.status || nativeTagsStatus;
-  const exists = dependencies.exists || existsSync13;
+  const exists = dependencies.exists || existsSync14;
   const open = dependencies.open || ((path10) => {
-    const result = spawnSync2("/usr/bin/open", [path10], { encoding: "utf8" });
+    const result = spawnSync3("/usr/bin/open", [path10], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
-  const baseDirectory = dependencies.baseDirectory || resolve6(dirname7(fileURLToPath(import.meta.url)), "../shortcuts");
-  const osRelease = (dependencies.osRelease || release2)();
+  const baseDirectory = dependencies.baseDirectory || resolve7(dirname8(fileURLToPath2(import.meta.url)), "../shortcuts");
+  const osRelease = (dependencies.osRelease || release3)();
   const darwinMajor = Number.parseInt(osRelease.split(".")[0], 10);
   const items = shortcutFiles.map(({ name, file, optional: optional2 }) => {
-    const path10 = resolve6(baseDirectory, file);
+    const path10 = resolve7(baseDirectory, file);
     let installed = false;
     let identifier;
     let error2;
@@ -57102,683 +57892,6 @@ function formatShortcutSetup(report) {
   lines.push(
     "After install or upgrade, run each bridge once in the foreground in Shortcuts.app and choose Always Allow; a background run cannot display a first-run consent prompt and stalls until it times out."
   );
-  return lines.join("\n");
-}
-
-// src/services/publicHelper.ts
-import { spawn, spawnSync as spawnSync3 } from "node:child_process";
-import { createHash as createHash6 } from "node:crypto";
-import {
-  chmodSync,
-  existsSync as existsSync14,
-  mkdirSync as mkdirSync8,
-  mkdtempSync as mkdtempSync7,
-  readFileSync as readFileSync5,
-  renameSync as renameSync2,
-  rmSync as rmSync7,
-  writeFileSync as writeFileSync6
-} from "node:fs";
-import { homedir as homedir20, release as release3 } from "node:os";
-import { dirname as dirname8, join as join27, resolve as resolve7 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-var PUBLIC_HELPER_PROTOCOL = 1;
-var PUBLIC_HELPER_DIR_ENV = "APPLE_NOTES_MCP_PUBLIC_HELPER_DIR";
-var PUBLIC_HELPER_TIMEOUT_ENV = "APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS";
-var PUBLIC_HELPER_BINARY = "apple-notes-public-helper";
-var PUBLIC_HELPER_SOURCE = "native/public-helper/apple-notes-public-helper.swift";
-var PUBLIC_HELPER_MANIFEST = "manifest.json";
-var PUBLIC_HELPER_SETUP_COMMAND = "apple-notes-mcp setup --public-helper";
-var PUBLIC_HELPER_ACTIONS = /* @__PURE__ */ new Set([
-  "hello",
-  "decode_drawing",
-  "transcribe"
-]);
-var DEFAULT_TIMEOUT_MS2 = 3e4;
-var MAX_OUTPUT_BYTES2 = 256 * 1024 * 1024;
-var publicManifestSchema = external_exports.object({
-  schemaVersion: external_exports.literal(1),
-  protocolVersion: external_exports.number().int(),
-  sourceSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
-  binarySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
-  builtAt: external_exports.string(),
-  osVersion: external_exports.string(),
-  compiler: external_exports.string()
-});
-function packageRoot(fromDir = dirname8(fileURLToPath2(import.meta.url))) {
-  let dir = fromDir;
-  for (; ; ) {
-    const candidate = join27(dir, "package.json");
-    if (existsSync14(candidate)) {
-      try {
-        if (JSON.parse(readFileSync5(candidate, "utf8")).name === "apple-notes-mcp")
-          return dir;
-      } catch {
-      }
-    }
-    const parent = dirname8(dir);
-    if (parent === dir) return resolve7(fromDir, "..");
-    dir = parent;
-  }
-}
-function defaultPublicHelperDeps(overrides = {}) {
-  return {
-    env: process.env,
-    platform: process.platform,
-    sourcePath: join27(packageRoot(), PUBLIC_HELPER_SOURCE),
-    exists: existsSync14,
-    readFile: (path10) => readFileSync5(path10),
-    spawn: spawnSync3,
-    spawnAsync: spawn,
-    ...overrides
-  };
-}
-function publicHelperInstallDir(env = process.env) {
-  const override = env[PUBLIC_HELPER_DIR_ENV]?.trim();
-  if (override) return override;
-  return join27(homedir20(), "Library", "Application Support", "apple-notes-mcp", "public-helper");
-}
-function sha256Hex(data) {
-  return createHash6("sha256").update(data).digest("hex");
-}
-function inspectPublicHelper(deps = defaultPublicHelperDeps()) {
-  const installDir = publicHelperInstallDir(deps.env);
-  const binaryPath = join27(installDir, PUBLIC_HELPER_BINARY);
-  const base = { installDir, binaryPath, sourcePath: deps.sourcePath, manifest: null };
-  const fail = (reason, detail) => ({
-    ...base,
-    ready: false,
-    reason,
-    detail
-  });
-  if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
-  if (!deps.exists(deps.sourcePath))
-    return fail("helper_not_installed", `Packaged helper source is missing: ${deps.sourcePath}`);
-  const manifestPath = join27(installDir, PUBLIC_HELPER_MANIFEST);
-  if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
-    return fail(
-      "helper_not_installed",
-      `The public native helper is not built. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\`.`
-    );
-  let manifest;
-  try {
-    manifest = publicManifestSchema.parse(JSON.parse(deps.readFile(manifestPath).toString("utf8")));
-  } catch {
-    return fail(
-      "helper_manifest_invalid",
-      `The helper manifest is unreadable. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\`.`
-    );
-  }
-  if (manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) || manifest.protocolVersion !== PUBLIC_HELPER_PROTOCOL)
-    return {
-      ...fail(
-        "helper_stale",
-        `The installed helper was built from a different source than this apple-notes-mcp version ships. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\` again.`
-      ),
-      manifest
-    };
-  if (sha256Hex(deps.readFile(binaryPath)) !== manifest.binarySha256)
-    return {
-      ...fail(
-        "helper_modified",
-        `The helper binary no longer matches the checksum recorded when it was built. Run \`${PUBLIC_HELPER_SETUP_COMMAND}\` to rebuild it.`
-      ),
-      manifest
-    };
-  return { ...base, manifest, ready: true, reason: null, detail: null };
-}
-var UNAVAILABLE_CODES = /* @__PURE__ */ new Set([
-  "unsupported_platform",
-  "helper_not_installed",
-  "helper_stale",
-  "helper_modified",
-  "helper_manifest_invalid"
-]);
-var ENVELOPE_CODES2 = {
-  invalid_request: "validation_error",
-  attachment_not_found: "not_found"
-};
-var PublicHelperError = class extends CodedError {
-  constructor(code, message) {
-    super(message, {
-      code: UNAVAILABLE_CODES.has(code) ? "unsupported" : ENVELOPE_CODES2[code] ?? "operation_failed",
-      helperCode: code
-    });
-    this.code = code;
-    this.name = "PublicHelperError";
-  }
-  code;
-};
-var errorSchema = external_exports.object({ status: external_exports.literal("error"), code: external_exports.string(), message: external_exports.string() });
-var publicHelloSchema = external_exports.object({
-  status: external_exports.literal("ok"),
-  protocolVersion: external_exports.number().int(),
-  sourceSha256: external_exports.string(),
-  actions: external_exports.array(external_exports.string())
-}).passthrough();
-function callPublicHelper(action, fields = {}, deps = defaultPublicHelperDeps(), options = {}) {
-  const { binaryPath, timeout, input } = prepareCall(action, fields, deps, options);
-  const result = deps.spawn(binaryPath, [], {
-    input,
-    encoding: "utf8",
-    timeout,
-    killSignal: "SIGKILL",
-    maxBuffer: MAX_OUTPUT_BYTES2
-  });
-  const errno = result.error?.code;
-  if (errno === "ETIMEDOUT" || result.signal && result.status === null)
-    throw new PublicHelperError("timeout", `The helper did not answer within ${timeout} ms.`);
-  if (result.error)
-    throw new PublicHelperError(
-      "helper_unreachable",
-      `Could not run the helper: ${result.error.message}`
-    );
-  return parseHelperOutput(result.status, String(result.stdout ?? ""));
-}
-async function callPublicHelperAsync(action, fields = {}, deps = defaultPublicHelperDeps(), options = {}) {
-  const { binaryPath, timeout, input } = prepareCall(action, fields, deps, options);
-  const { signal } = options;
-  const aborted2 = () => new PublicHelperError("aborted", "The request was cancelled; the helper was stopped.");
-  if (signal?.aborted) throw aborted2();
-  return new Promise((resolvePromise, reject) => {
-    const child2 = (deps.spawnAsync ?? spawn)(binaryPath, [], {
-      stdio: ["pipe", "pipe", "ignore"]
-    });
-    const chunks = [];
-    let size = 0;
-    let failure2 = null;
-    const stop = (error2) => {
-      failure2 ??= error2;
-      child2.kill("SIGKILL");
-    };
-    const timer = setTimeout(
-      () => stop(new PublicHelperError("timeout", `The helper did not answer within ${timeout} ms.`)),
-      timeout
-    );
-    const onAbort = () => stop(aborted2());
-    signal?.addEventListener("abort", onAbort, { once: true });
-    const settle = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-    };
-    child2.stdout?.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > MAX_OUTPUT_BYTES2)
-        stop(new PublicHelperError("invalid_response", "The helper response is too large."));
-      else chunks.push(chunk);
-    });
-    child2.on("error", (error2) => {
-      settle();
-      reject(
-        failure2 ?? new PublicHelperError("helper_unreachable", `Could not run the helper: ${error2.message}`)
-      );
-    });
-    child2.on("close", (status, exitSignal) => {
-      settle();
-      if (failure2) return reject(failure2);
-      if (status === null && exitSignal)
-        return reject(
-          new PublicHelperError("helper_crashed", `The helper stopped on signal ${exitSignal}.`)
-        );
-      try {
-        resolvePromise(parseHelperOutput(status, Buffer.concat(chunks).toString("utf8")));
-      } catch (error2) {
-        reject(error2);
-      }
-    });
-    child2.stdin?.on("error", () => {
-    });
-    child2.stdin?.end(input);
-  });
-}
-function prepareCall(action, fields, deps, options) {
-  if (!PUBLIC_HELPER_ACTIONS.has(action))
-    throw new PublicHelperError(
-      "unknown_action",
-      `"${action}" is not an action the server sends to the public helper.`
-    );
-  let binaryPath = options.binaryPath;
-  if (!binaryPath) {
-    const install = inspectPublicHelper(deps);
-    if (!install.ready)
-      throw new PublicHelperError(install.reason ?? "helper_not_installed", install.detail ?? "");
-    binaryPath = install.binaryPath;
-  }
-  const timeout = options.timeoutMs || Number.parseInt(deps.env[PUBLIC_HELPER_TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS2;
-  const input = JSON.stringify({ protocol: PUBLIC_HELPER_PROTOCOL, action, ...fields });
-  return { binaryPath, timeout, input };
-}
-function parseHelperOutput(status, stdout) {
-  let parsed;
-  try {
-    parsed = JSON.parse(stdout.trim());
-  } catch {
-    throw new PublicHelperError(
-      "invalid_response",
-      `The helper exited with status ${status} and no JSON response.`
-    );
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-    throw new PublicHelperError("invalid_response", "The helper response is not a JSON object.");
-  const object3 = parsed;
-  if (status !== 0 || object3.status !== "ok") {
-    const error2 = errorSchema.safeParse(object3);
-    if (!error2.success)
-      throw new PublicHelperError(
-        "invalid_response",
-        `The helper failed with an unrecognized response (exit ${status}).`
-      );
-    throw new PublicHelperError(error2.data.code, error2.data.message);
-  }
-  return object3;
-}
-function defaultPublicHelperBuildDeps() {
-  return {
-    ...defaultPublicHelperDeps(),
-    osVersion: () => {
-      const r = spawnSync3("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" });
-      return r.status === 0 ? r.stdout.trim() : `Darwin ${release3()}`;
-    },
-    now: () => /* @__PURE__ */ new Date()
-  };
-}
-function sourceDigestSwift(sourceSha) {
-  return `let helperSourceSHA256 = "${sourceSha}"
-`;
-}
-var PUBLIC_HELPER_BUNDLE_ID = "apple-notes-mcp.public-helper";
-function publicHelperInfoPlist() {
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-    '<plist version="1.0">',
-    "<dict>",
-    "  <key>CFBundleIdentifier</key>",
-    `  <string>${PUBLIC_HELPER_BUNDLE_ID}</string>`,
-    "  <key>CFBundleName</key>",
-    "  <string>apple-notes-mcp public helper</string>",
-    "  <key>CFBundleInfoDictionaryVersion</key>",
-    "  <string>6.0</string>",
-    "</dict>",
-    "</plist>",
-    ""
-  ].join("\n");
-}
-function publicHelperCompileArguments(sourcePath, digestPath, plistPath, outputPath) {
-  return [
-    "swiftc",
-    "-O",
-    "-parse-as-library",
-    "-framework",
-    "AppKit",
-    "-framework",
-    "PencilKit",
-    "-framework",
-    "AVFoundation",
-    "-framework",
-    "Speech",
-    "-Xlinker",
-    "-sectcreate",
-    "-Xlinker",
-    "__TEXT",
-    "-Xlinker",
-    "__info_plist",
-    "-Xlinker",
-    plistPath,
-    sourcePath,
-    digestPath,
-    "-o",
-    outputPath
-  ];
-}
-function buildPublicHelper(checkOnly, deps = defaultPublicHelperBuildDeps()) {
-  const steps = [];
-  const done = (ok2) => ({
-    ok: ok2,
-    checkOnly,
-    steps,
-    installation: inspectPublicHelper(deps)
-  });
-  if (checkOnly) {
-    const installation2 = inspectPublicHelper(deps);
-    steps.push({
-      step: "inspect installed helper",
-      ok: installation2.ready,
-      detail: installation2.ready ? installation2.binaryPath : installation2.detail ?? void 0
-    });
-    return { ok: installation2.ready, checkOnly, steps, installation: installation2 };
-  }
-  if (deps.platform !== "darwin") {
-    steps.push({ step: "platform", ok: false, detail: "macOS only" });
-    return done(false);
-  }
-  if (!deps.exists(deps.sourcePath)) {
-    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
-    return done(false);
-  }
-  const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
-  steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
-  const version3 = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
-  if (version3.status !== 0) {
-    steps.push({
-      step: "find compiler",
-      ok: false,
-      detail: "No Swift compiler found. Install the Command Line Tools with `xcode-select --install`."
-    });
-    return done(false);
-  }
-  const compiler = String(version3.stdout || version3.stderr || "").split("\n").find((line) => line.includes("Swift version"))?.trim() || "swiftc";
-  steps.push({ step: "find compiler", ok: true, detail: compiler });
-  const installDir = publicHelperInstallDir(deps.env);
-  mkdirSync8(installDir, { recursive: true, mode: 448 });
-  const staging = mkdtempSync7(join27(installDir, ".staging-"));
-  try {
-    const stagedBinary = join27(staging, PUBLIC_HELPER_BINARY);
-    const digestPath = join27(staging, "source-digest.swift");
-    const plistPath = join27(staging, "Info.plist");
-    writeFileSync6(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
-    writeFileSync6(plistPath, publicHelperInfoPlist(), { mode: 384 });
-    const compile = deps.spawn(
-      "/usr/bin/xcrun",
-      publicHelperCompileArguments(deps.sourcePath, digestPath, plistPath, stagedBinary),
-      { encoding: "utf8", timeout: 3e5 }
-    );
-    if (compile.status !== 0) {
-      steps.push({
-        step: "compile",
-        ok: false,
-        detail: String(compile.stderr || compile.error?.message || "swiftc failed").slice(0, 4e3)
-      });
-      return done(false);
-    }
-    steps.push({ step: "compile", ok: true });
-    const sign = deps.spawn(
-      "/usr/bin/codesign",
-      ["--force", "--sign", "-", "--identifier", PUBLIC_HELPER_BUNDLE_ID, stagedBinary],
-      { encoding: "utf8" }
-    );
-    if (sign.status !== 0) {
-      steps.push({
-        step: "ad-hoc sign",
-        ok: false,
-        detail: String(sign.stderr || "codesign failed")
-      });
-      return done(false);
-    }
-    steps.push({ step: "ad-hoc sign", ok: true });
-    let hello;
-    try {
-      hello = publicHelloSchema.parse(
-        callPublicHelper("hello", {}, deps, { binaryPath: stagedBinary })
-      );
-    } catch (error2) {
-      steps.push({
-        step: "handshake",
-        ok: false,
-        detail: error2 instanceof Error ? error2.message : String(error2)
-      });
-      return done(false);
-    }
-    if (hello.protocolVersion !== PUBLIC_HELPER_PROTOCOL || hello.sourceSha256 !== sourceSha) {
-      steps.push({
-        step: "handshake",
-        ok: false,
-        detail: `helper reported protocol ${hello.protocolVersion}, source ${hello.sourceSha256}`
-      });
-      return done(false);
-    }
-    steps.push({ step: "handshake", ok: true, detail: `actions: ${hello.actions.join(", ")}` });
-    const manifest = {
-      schemaVersion: 1,
-      protocolVersion: hello.protocolVersion,
-      sourceSha256: sourceSha,
-      binarySha256: sha256Hex(deps.readFile(stagedBinary)),
-      builtAt: deps.now().toISOString(),
-      osVersion: deps.osVersion(),
-      compiler
-    };
-    chmodSync(stagedBinary, 448);
-    renameSync2(stagedBinary, join27(installDir, PUBLIC_HELPER_BINARY));
-    writeFileSync6(
-      join27(installDir, PUBLIC_HELPER_MANIFEST),
-      JSON.stringify(manifest, null, 2) + "\n",
-      { mode: 384 }
-    );
-    steps.push({ step: "install", ok: true, detail: installDir });
-  } finally {
-    rmSync7(staging, { recursive: true, force: true });
-  }
-  const installation = inspectPublicHelper(deps);
-  steps.push({
-    step: "verify installation",
-    ok: installation.ready,
-    detail: installation.ready ? void 0 : installation.detail ?? void 0
-  });
-  return { ok: installation.ready, checkOnly, steps, installation };
-}
-function formatPublicHelperBuild(report) {
-  const lines = ["Apple Notes MCP public native helper", ""];
-  for (const step of report.steps)
-    lines.push(`${step.ok ? "\u2713" : "\u2717"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
-  lines.push("");
-  if (report.ok) lines.push(`Installed at ${report.installation.binaryPath}.`);
-  else if (report.checkOnly) lines.push(`Run \`${PUBLIC_HELPER_SETUP_COMMAND}\` to build it.`);
-  else lines.push("The helper was not installed. Fix the failed step above and run setup again.");
-  return lines.join("\n");
-}
-
-// src/utils/noteStoreQuery.ts
-function parseNoteObjectId(noteId3) {
-  const match = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/ICNote\/p(\d{1,15})$/.exec(noteId3);
-  if (!match)
-    throw new NoteStoreError(
-      `Invalid note ID format: "${noteId3}". Expected format: x-coredata://UUID/ICNote/pNNN`,
-      "invalid_input"
-    );
-  return { store: match[1], pk: Number(match[2]) };
-}
-function queryNoteScoped(sql, pk, dbPath2 = NOTES_DB_PATH7) {
-  return runReadOnlySql(dbPath2, sql, { pk: { int: pk } }).split("\n");
-}
-var NOTE_STATE_SQL = `SELECT json_object('found', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk AND n.Z_ENT = ${entity("ICNote")}), 'locked', (SELECT COALESCE(n.ZISPASSWORDPROTECTED, 0) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk));`;
-function assertNoteReadable(stateLine, noteId3) {
-  let state;
-  try {
-    state = JSON.parse(stateLine || "{}");
-  } catch {
-    throw new NoteStoreError("Unexpected response from the Notes database.", "query_error");
-  }
-  if (!state.found)
-    throw new CodedError(`No note found in the database for ID "${noteId3}".`, {
-      code: "not_found"
-    });
-  if (state.locked)
-    throw new CodedError(
-      "This note is password-protected; its attachments are encrypted and cannot be read.",
-      { code: "unsupported" }
-    );
-}
-
-// src/utils/noteDrawings.ts
-function drawingRowsSql(columns, dataColumn) {
-  return [
-    NOTE_STATE_SQL,
-    `SELECT json_group_array(json_object('pk', a.Z_PK, 'identifier', a.ZIDENTIFIER, 'uti', a.ZTYPEUTI, 'data', hex(a.${dataColumn}))) FROM (SELECT * FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = @pk AND a.ZTYPEUTI IN ('com.apple.drawing.2', 'com.apple.drawing') AND ${notTombstonedSql(columns, "a")} ORDER BY a.Z_PK) a;`
-  ].join("\n");
-}
-function readDrawingRows2(noteId3, dbPath2 = NOTES_DB_PATH7) {
-  const { store, pk } = parseNoteObjectId(noteId3);
-  const columns = readColumns(dbPath2);
-  const dataColumn = columns.has("ZMERGEABLEDATA1") ? "ZMERGEABLEDATA1" : columns.has("ZMERGEABLEDATA") ? "ZMERGEABLEDATA" : null;
-  if (!dataColumn)
-    throw new NoteStoreError(
-      "This macOS version's Notes database has no drawing data column.",
-      "schema"
-    );
-  const [stateLine, rowsLine] = queryNoteScoped(drawingRowsSql(columns, dataColumn), pk, dbPath2);
-  assertNoteReadable(stateLine, noteId3);
-  const rows = JSON.parse(rowsLine || "[]");
-  return rows.map((row) => ({
-    pk: row.pk,
-    attachmentId: `x-coredata://${store}/ICAttachment/p${row.pk}`,
-    identifier: row.identifier ?? "",
-    typeUti: row.uti,
-    data: row.data ? Buffer.from(row.data, "hex") : null
-  }));
-}
-function svgNumber(value) {
-  if (!Number.isFinite(value)) return "0";
-  const rounded = Math.round(value * 100) / 100;
-  return Object.is(rounded, -0) ? "0" : String(rounded);
-}
-function escapeAttribute2(value) {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-var clampChannel = (value) => Math.min(255, Math.max(0, Math.round(value || 0)));
-var clampUnit = (value) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 1));
-function drawingViewBox(strokes, fallback) {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const stroke of strokes) {
-    const pad = stroke.width / 2;
-    const extend2 = (x, y, r) => {
-      minX = Math.min(minX, x - r);
-      minY = Math.min(minY, y - r);
-      maxX = Math.max(maxX, x + r);
-      maxY = Math.max(maxY, y + r);
-    };
-    if (stroke.points?.length) for (const p of stroke.points) extend2(p.x, p.y, pad);
-    else {
-      extend2(stroke.bounds.x, stroke.bounds.y, 0);
-      extend2(stroke.bounds.x + stroke.bounds.width, stroke.bounds.y + stroke.bounds.height, 0);
-    }
-  }
-  if (minX === Infinity) return fallback ?? { x: 0, y: 0, width: 1, height: 1 };
-  return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
-}
-function drawingToSvg(strokes, fallback) {
-  const box = drawingViewBox(strokes, fallback);
-  const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${svgNumber(box.x)} ${svgNumber(box.y)} ${svgNumber(box.width)} ${svgNumber(box.height)}" width="${svgNumber(box.width)}" height="${svgNumber(box.height)}">`
-  ];
-  for (const stroke of strokes) {
-    const points = stroke.points ?? [];
-    if (points.length === 0) continue;
-    const c = stroke.color;
-    const color = `rgb(${clampChannel(c.red)},${clampChannel(c.green)},${clampChannel(c.blue)})`;
-    const shared = `stroke="${color}" stroke-opacity="${svgNumber(clampUnit(c.alpha))}" data-ink="${escapeAttribute2(stroke.inkType)}"`;
-    if (points.length === 1) {
-      parts.push(
-        `<circle cx="${svgNumber(points[0].x)}" cy="${svgNumber(points[0].y)}" r="${svgNumber(stroke.width / 2)}" fill="${color}" fill-opacity="${svgNumber(clampUnit(c.alpha))}" data-ink="${escapeAttribute2(stroke.inkType)}"/>`
-      );
-      continue;
-    }
-    const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${svgNumber(p.x)} ${svgNumber(p.y)}`).join(" ");
-    parts.push(
-      `<path d="${d}" fill="none" ${shared} stroke-width="${svgNumber(stroke.width)}" stroke-linecap="round" stroke-linejoin="round"/>`
-    );
-  }
-  parts.push("</svg>");
-  return parts.join("\n");
-}
-
-// src/services/noteDrawings.ts
-var bounds = external_exports.object({ x: external_exports.number(), y: external_exports.number(), width: external_exports.number(), height: external_exports.number() });
-var strokeSchema = external_exports.object({
-  inkType: external_exports.string(),
-  color: external_exports.object({
-    red: external_exports.number(),
-    green: external_exports.number(),
-    blue: external_exports.number(),
-    alpha: external_exports.number()
-  }),
-  width: external_exports.number(),
-  pointCount: external_exports.number().int(),
-  bounds,
-  points: external_exports.array(
-    external_exports.object({
-      x: external_exports.number(),
-      y: external_exports.number(),
-      width: external_exports.number(),
-      opacity: external_exports.number(),
-      force: external_exports.number()
-    })
-  ).optional(),
-  transformApplied: external_exports.boolean().optional()
-}).strip();
-var decodedDrawingSchema = external_exports.object({
-  status: external_exports.literal("ok"),
-  strokeCount: external_exports.number().int(),
-  strokes: external_exports.array(strokeSchema),
-  truncated: external_exports.boolean(),
-  bounds
-});
-function decodeRow(row, format, includePoints, deps) {
-  const base = {
-    attachmentId: row.attachmentId,
-    identifier: row.identifier,
-    typeUti: row.typeUti,
-    status: "error"
-  };
-  if (!row.data || row.data.length === 0)
-    return { ...base, code: "no_data", message: "This drawing has no stored PencilKit data." };
-  let decoded;
-  try {
-    const needPoints = includePoints || format !== "json";
-    const raw = callPublicHelper(
-      "decode_drawing",
-      { dataBase64: row.data.toString("base64"), includePoints: needPoints },
-      deps
-    );
-    const parsed = decodedDrawingSchema.safeParse(raw);
-    if (!parsed.success)
-      return { ...base, code: "invalid_response", message: "Unexpected helper response." };
-    decoded = parsed.data;
-  } catch (error2) {
-    const code = error2 instanceof PublicHelperError ? error2.code : "internal_error";
-    return { ...base, code, message: error2 instanceof Error ? error2.message : String(error2) };
-  }
-  const strokes = decoded.strokes;
-  const result = {
-    ...base,
-    status: "ok",
-    strokeCount: decoded.strokeCount,
-    bounds: decoded.bounds,
-    truncated: decoded.truncated
-  };
-  if (format !== "json") result.svg = drawingToSvg(strokes, decoded.bounds);
-  if (format !== "svg")
-    result.strokes = includePoints ? strokes : strokes.map(({ points: _points, ...rest }) => rest);
-  return result;
-}
-function getNoteDrawings(noteId3, options = {}) {
-  const format = options.format ?? "json";
-  const includePoints = options.includePoints ?? true;
-  const deps = options.deps ?? defaultPublicHelperDeps();
-  const rows = (options.readRows ?? readDrawingRows2)(noteId3, options.dbPath);
-  if (rows.length === 0) return { id: noteId3, drawingCount: 0, status: "none", drawings: [] };
-  const install = inspectPublicHelper(deps);
-  if (!install.ready)
-    throw new PublicHelperError(install.reason ?? "helper_not_installed", install.detail ?? "");
-  const drawings = rows.map((row) => decodeRow(row, format, includePoints, deps));
-  const ok2 = drawings.filter((d) => d.status === "ok").length;
-  return {
-    id: noteId3,
-    drawingCount: drawings.length,
-    status: ok2 === drawings.length ? "ok" : ok2 ? "partial" : "error",
-    drawings
-  };
-}
-function formatNoteDrawings(result) {
-  if (result.drawingCount === 0) return `No classic PencilKit drawings in note ${result.id}.`;
-  const lines = [
-    `${result.drawingCount} classic drawing${result.drawingCount === 1 ? "" : "s"} in note ${result.id} (${result.status}):`
-  ];
-  for (const d of result.drawings)
-    lines.push(
-      d.status === "ok" ? `- ${d.attachmentId}: ${d.strokeCount} stroke${d.strokeCount === 1 ? "" : "s"}${d.truncated ? " (truncated)" : ""}` : `- ${d.attachmentId}: error ${d.code}: ${d.message}`
-    );
   return lines.join("\n");
 }
 
@@ -59251,7 +59364,7 @@ ${noteList}${truncationNote}${scanNote}${wordCountNote}${syncNote}`,
 registerTool(
   "query-notes",
   {
-    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates never match them.',
+    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag (has:url = a link preview card, has:map = a map); checklist:open|done; flags pinned, locked, shared, quicknote (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500, max 10000); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates never match them.',
     inputSchema: {
       query: external_exports.string().min(1, "A query expression is required").max(MAX.QUERY).describe(
         'Boolean query expression, e.g. `folder:"Work Projects" has:checklist -checklist:done`'
@@ -61628,7 +61741,7 @@ registerTool(
 registerTool(
   "export-notes-html",
   {
-    description: "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.",
+    description: "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.\nDrawings: classic PencilKit drawings are rendered as SVG through the public native helper (setup --public-helper) instead of Notes' PNG; Paper drawings keep the PNG. A drawing that cannot be decoded falls back to the PNG and is counted in vectorDrawings.fallbackReasons; it never fails the export. vectorDrawings false keeps every PNG.",
     inputSchema: {
       id: noteIdInput.optional(),
       folder: external_exports.string().min(1).max(MAX.FOLDER).optional().describe("Folder path to export instead of one note (nested paths use '/')"),
@@ -61642,6 +61755,9 @@ registerTool(
       embedAssets: external_exports.boolean().optional().describe("Embed assets as data URLs (default true). False writes a sidecar directory"),
       assetsDir: exportPathInput(
         "Sidecar directory when embedAssets is false (default <stem>.assets)"
+      ),
+      vectorDrawings: external_exports.boolean().optional().describe(
+        "Render classic PencilKit drawings as SVG via the public native helper (default true). False keeps Notes' PNG rendering"
       )
     },
     outputSchema: {
@@ -61651,6 +61767,11 @@ registerTool(
       output: external_exports.string().optional(),
       assets: external_exports.object({ dir: external_exports.string(), files: external_exports.number() }).optional(),
       embedded: external_exports.number().optional(),
+      vectorDrawings: external_exports.object({
+        rendered: external_exports.number(),
+        fallback: external_exports.number(),
+        fallbackReasons: external_exports.record(external_exports.string(), external_exports.number()).optional()
+      }).optional(),
       stats: exportStatsSchema.optional(),
       skipped: external_exports.array(external_exports.object({ id: external_exports.string(), code: external_exports.string() })).optional()
     },
@@ -61670,8 +61791,10 @@ registerTool(
     }
     const assets = receipt.assets ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}` : `; embedded ${receipt.embedded ?? 0} asset(s)`;
     const skipped = receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "";
+    const vector = receipt.vectorDrawings;
+    const drawings = vector ? `; ${vector.rendered} drawing(s) as SVG` + (vector.fallback ? `, ${vector.fallback} as PNG (${Object.entries(vector.fallbackReasons ?? {}).map(([code, n]) => `${code}: ${n}`).join(", ")})` : "") : "";
     return successResponse(
-      `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
+      `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${drawings}${skipped}.`,
       { ...receipt }
     );
   }, "Error exporting HTML")
