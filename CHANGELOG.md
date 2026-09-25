@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+## [2.9.30] - 2026-09-25
+
+2.9.29 was never published: a timing flake failed CI on main after it merged,
+so the publish step did not run. 2.9.30 is the first release that includes
+2.9.29's fix (#261), described below.
+
+### Fixed
+
+- The `execution options` tests for `executeAppleScript` asserted an exact
+  process timeout, but each attempt's timeout is computed as
+  `deadline - Date.now()`, so a millisecond ticking between the two calls read
+  29999 instead of 30000 and failed CI. They now freeze `Date.now`, so they
+  check the configured value deterministically. Test-only change.
+
+## [2.9.29] - 2026-09-25
+
+### Fixed
+
+- The Background Operations tools (`create-table`, `append-native`,
+  `create-checklist-item(s)`, `set-note-pinned`, `add-native-tags` and the
+  others that take `scopeText`) now refuse a `scopeText` found only in the
+  note's title line, before running the Shortcut. The bridge's Find Notes step
+  matches `scopeText` against the note's body, which leaves out the title, so
+  such a request was always refused by the Shortcut. On macOS 27.2 a title
+  phrase was refused on every try while a phrase from below the title worked
+  seconds later on the same note (#248). The error says to pass a phrase from
+  below the title, and nothing is written; the error result carries
+  `code: "validation_error"`, `committed: false`, `indeterminate: false`.
+
 ## [2.9.28] - 2026-09-24
 
 ### Security
