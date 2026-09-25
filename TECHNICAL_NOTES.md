@@ -917,9 +917,13 @@ characters outside them keep their CRDT identity and attributes.
   runs the side-effect check, and rolls back. It returns the plan,
   `planDigest`, and `revisionBefore`.
 - `edit_note` requires `ifRevision`. With the same operations and the plan's
-  `revisionBefore` it reproduces exactly the planned targets. The writer
-  does not compare the two plans itself; both return `planDigest`, so a
-  caller can.
+  `revisionBefore` it reproduces exactly the planned targets. `planDigest`
+  (`p2:`) is a SHA-256 over the note identifier, the operations,
+  `requireNonSystemPaper`, and the SHA-256 of each replacement file in plan
+  order. `edit_note` takes an optional `ifPlanDigest` and refuses a mismatch
+  (`plan_mismatch`, committed false) before anything is written, so a changed
+  request or a file edited after the dry run cannot be applied under the dry
+  run's approval.
 - Before the save, only the note, its note data, its cloud state, and the
   row of an attachment the plan removes from the body may be dirty. Anything
   else, such as Notes re-pointing an attachment it uses for the title, rolls
@@ -938,12 +942,39 @@ characters outside them keep their CRDT identity and attributes.
   `preservation`, including `otherAttachmentRowsUnchanged` and, per removed
   attachment, `rowStillInNote` and `markedForDeletion`.
 
-Canonical attribute values use each value's description with pointers
-removed, so a class whose description is unstable makes verification fail,
-never pass. The copy-store script also checks each step with
+Canonical attribute values (`CanonicalValue()`) are built field by field for
+each class a note body stores: numbers, strings, URLs, UUIDs, dates,
+`ICTTParagraphStyle` (style, alignment, writing direction, indent, block
+quote level, list start number, hints, paragraph UUID, and the todo's UUID
+and done state), `ICTTTodo`, `ICTTAttachment` (UTI and identifier),
+`ICTTFont` (name, size, hints), and colors (sRGB hex, as compose verifies
+them). A survey of 600 recent notes on macOS 27.2 found only these classes.
+Before this, values fell back to their `description`. That happened to
+include the attachment identifier and the todo state, but not a paragraph
+style's list start number or hints, and nothing kept it that way. Any other
+class now has no canonical value: `PlanEdit()` refuses a note that holds one
+(`unsupported_note`, listing the attribute and class) and the read-back
+fails on one, so verification can never pass by comparing two equal
+descriptions. The copy-store script also checks each step with
 `scripts/check-edit-preservation.mjs`, which decodes the stored protobuf
 itself (no writer, no NotesShared) and compares every UTF-16 unit outside the
 edits with its serialized attribute run, plus a digest of every other row.
+
+To prove the read-back is not blind, the writer honours
+`APPLE_NOTES_MCP_PRIVATE_TEST_FAULT` on a copy store only (it is ignored when
+`APPLE_NOTES_MCP_PRIVATE_STORE` is unset): `tamper_todo` and
+`tamper_attachment` verify a read-back in which one checklist todo outside the
+edit is toggled, or one attachment glyph outside it is re-pointed, and must
+end in `verification_failed`; `fail_before_save` fails after the edit and any
+new attachment, just before the save, and must leave no row and no file.
+
+Literal matching compares UTF-16 units, so a selector could match half of a
+surrogate pair or a letter without its combining mark. A hit whose ends are
+not on composed-character boundaries
+(`rangeOfComposedCharacterSequencesForRange:`) is refused as
+`unsupported_selection` rather than skipped, so the match count the caller
+sees never silently changes, and text with an unpaired surrogate is refused
+as `invalid_request` (the client refuses both before spawning the writer).
 
 #### Attachment selector
 
@@ -953,20 +984,28 @@ Selectors resolve through `ResolveSelector()` by `kind` (`text`, `style`,
 `identifier` (the row's UUID, which is also the `attachmentIdentifier` of the
 `ICTTAttachment` value on its U+FFFC glyph), `id` (the row's x-coredata URI,
 compared with the managed object's own URI, so no SQL is needed), or
-`ordinal` (1-based among body glyphs whose identifier belongs to one of the
-note's `attachments` rows). Glyphs of inline objects (`inlineAttachments`:
-hashtags, mentions, note links) are skipped by every mode, so they are never
-selectable and not counted. Per role:
+`ordinal` (1-based among the body's attachments whose identifier belongs to
+one of the note's `attachments` rows). Glyphs of inline objects
+(`inlineAttachments`: hashtags, mentions, note links) are skipped by every
+mode, so they are never selectable and not counted.
+
+Notes stores some attachments as two or more adjacent glyphs that name the
+same attachment; on macOS 27.2, 61 of 439 attachment glyph groups in 600
+recent notes were pairs (images added through AppleScript, PDFs, and
+plain-text files). `AttachmentSpans()` groups adjacent glyphs with the same
+identifier into one span, and the selector works on spans: an ordinal counts
+attachments, `expectedCount` counts attachments, and each target covers the
+whole span. Per role:
 
 | Role | Target |
 |---|---|
-| `replace`, `position: "self"` | the glyph (length 1); empty text removes it |
-| `replace`, `"before"` / `"after"` | the empty range at the glyph or just after it; text is inserted inline and takes the glyph's attributes minus the attachment and timestamp |
-| `delete_paragraph` | the glyph's paragraph, refused (`unsupported_selection`) unless it holds only that glyph and whitespace |
-| `insert_after` / `insert_before` anchor | the glyph's paragraph |
+| `replace`, `position: "self"` | the span; empty text removes it, a file replaces it with one new glyph |
+| `replace`, `"before"` / `"after"` | the empty range at the span's first glyph or just after its last; text is inserted inline and takes the glyph's attributes minus the attachment and timestamp |
+| `delete_paragraph` | the span's paragraph, refused (`unsupported_selection`) unless it holds only that span and whitespace |
+| `insert_after` / `insert_before` / `append_to_paragraph` anchor | the span's paragraph |
 
 `TargetMayTouchAttachment()` returns YES only for this kind, and
-`RequireNoAttachmentGlyph()` then allows exactly the glyph location the
+`RequireNoAttachmentGlyph()` then allows exactly the glyph range the
 selector resolved; any other U+FFFC in the range, such as a second
 attachment in the same paragraph, is refused. The plan reports each target's
 `attachment` (identifier, UTI, ordinal) and `removedAttachments`: identifiers
@@ -982,6 +1021,70 @@ removes it, inserts and deletes a paragraph anchored on it (both restore the
 note exactly), and then removes the attachment on the copy.
 `check-edit-preservation.mjs` compares attachment rows one by one and skips
 only the rows named in the response's `removedAttachments`.
+
+#### Replacing an attachment with a file
+
+`replacement: {file, filename?}` with an attachment selector at position
+`self` replaces the attachment's span with one new glyph for a new
+attachment, in the same save. The writer reads the file itself through a
+descriptor opened with `O_NOFOLLOW` (a non-empty regular file of at most
+64 MiB, the add-attachment limit), derives its UTI from the name's extension
+with `UTType`, and accepts only images (`+[ICAttachment typeUTIIsImage:]`)
+and `com.adobe.pdf`. The attachment it replaces must have `media` (an image,
+PDF, or other file); tables, drawings, Paper, and link cards are refused as
+`unsupported_attachment`. The client also checks the path against the
+add-attachment roots (home, temp, `/Volumes`) before spawning the writer.
+
+The dry run reads and hashes the file and plans a placeholder glyph, but
+creates nothing. The apply, after the revision and plan-digest checks,
+calls `-[ICNote addAttachmentWithUTI:data:filename:]` with the bytes it
+hashed. NotesShared writes the media file at once, under the account's
+`mediaDirectoryURL` (`<media>/<media id>/<generation>/<name>`); on a copy
+store `InstallAccountSandbox()` redirects every account directory beside the
+copy first, as for Paper. The writer checks that the attachment has the
+planned UTI and media, that NotesShared did not place a glyph itself, and
+that the media file holds the planned bytes, then points the placeholder at
+the new identifier and bumps both cloud states. The side-effect check allows
+exactly the new attachment, its media, and their cloud states as inserted
+objects, and the account's `attachments` and `media` relationships as its only
+change. Any failure before the save rolls the context back and removes the
+media container, but only when it sits exactly at
+`<mediaDirectoryURL>/<media identifier>`; a failed save does the same. The
+read-back then proves the new row belongs to the note with the planned UTI,
+its media has the planned name, and the media file's SHA-256 matches. The old
+attachment is handled like any removed attachment (its row is reported, not
+deleted).
+
+#### Inline runs, appends, and checklist replacement
+
+Replacement, block, item, and appended runs are built by compose's
+`RunAttributes()`, so they take the same `link`, `highlight`, and `color`
+fields and the same validation. `InlineBase()` strips every inline attribute a
+run can state (hints, underline, strikethrough, link, emphasis, color) from
+the inherited attributes, so a run's formatting is exactly what it says. The
+read-back compares the new runs' canonical values, so a link, highlight, or
+color that did not persist fails verification.
+
+`append_to_paragraph` is an insertion at the end of the anchor paragraph's
+content (before its terminator). Its runs sit on the attributes of the
+paragraph's last character (or its terminator when it is empty) minus the
+inline formatting, so they share the paragraph's style and font.
+
+`replace_checklist` (`PlanChecklistReplace()`) finds maximal runs of
+consecutive style-103 paragraphs. Each chosen run is one target covering its
+rows with their terminators; the first gets the new rows, each a fresh
+`ICTTParagraphStyle` with a new todo in the requested state and its own
+terminator (none for the last row when the run ended the note), and later
+runs are removed. A run holding the title or any U+FFFC is refused. The plan
+reports every replaced row's text and done state.
+
+`delete_paragraph` removes a terminated paragraph with its terminator and an
+unterminated last paragraph's text only, like `trim_blank_lines`. Earlier it
+removed the previous paragraph's terminator with the last paragraph, which
+also took an empty paragraph before it and reported two last-paragraph
+deletions from one operation as conflicting. Overlapping or touching deletion
+ranges from one operation are now merged into one target
+(`mergedParagraphs`).
 
 #### Line-break trimming
 

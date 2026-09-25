@@ -13,9 +13,11 @@
  *   and `revisionBefore`; the apply (edit_note) must pass it back as
  *   `ifRevision`, and its read-back proves that text, formatting, and
  *   attachments outside the edited ranges did not change. Only an explicit
- *   attachment selector may replace, remove, or edit beside one attachment;
- *   every other attachment is then proven unchanged. It also trims
- *   redundant empty paragraphs (trim_blank_lines).
+ *   attachment selector may replace (with text or a new file), remove, or
+ *   edit beside one attachment; every other attachment is then proven
+ *   unchanged. It also trims redundant empty paragraphs (trim_blank_lines),
+ *   appends inline runs to one paragraph (append_to_paragraph), and replaces
+ *   a checklist (replace_checklist).
  *
  * The read-only tools (`native-helper-status`, `native-note-state`) stay in
  * privateHelperTools.ts and never reach the writer. Every tool here is always
@@ -44,13 +46,13 @@ import {
   type NudgeDeps,
 } from "../services/privateSyncNudge.js";
 import {
-  MAX_EDIT_OPERATIONS,
   PrivateWriteError,
   WRITER_SETUP_COMMAND,
   appendPlainText,
   defaultWriterDeps,
   editNote,
-  editOperationSchema,
+  editOperationsSchema,
+  planDigestToken,
   privateWriterCapabilities,
   type PrivateHelperDeps,
 } from "../services/privateWriter.js";
@@ -74,6 +76,7 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "revision_conflict":
     case "paragraph_changed": // the selected paragraph moved or changed since it was listed
     case "attachment_conflict":
+    case "plan_mismatch": // the request or a replacement file differs from the dry run (ifPlanDigest)
       return "revision_conflict";
     case "unsupported_attachment":
       return "unsupported";
@@ -304,10 +307,10 @@ export function registerPrivateWriterTools(
     server,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence), insert paragraphs before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, delete a paragraph or list row, retitle, replace, remove, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan and revisionBefore, then the IDENTICAL request with dryRun: false and ifRevision set to that revisionBefore.\n" +
-      "Returns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, and revisionBefore. removedAttachments (identifiers the plan takes out of the body). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\n" +
-      "Do not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive and never crosses a line break. Only an attachment selector touches an attachment, and only the one it names; inline objects (hashtags, mentions, note links) are never selectable.\n" +
-      "Safety: a dry run is read-only. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unexpected_side_effect. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence) with plain text or formatted runs (bold, italic, underline, strikethrough, link, highlight, color), insert paragraphs (checklist rows checked or not) before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, add inline runs such as a link at the end of one exact paragraph (append_to_paragraph), replace a note's checklist with new items (replace_checklist), delete a paragraph or list row, retitle, replace, remove, or add text beside one named attachment, or swap it for a new image or PDF file (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan, revisionBefore, and planDigest, then the IDENTICAL request with dryRun: false, ifRevision set to that revisionBefore, and ifPlanDigest set to that planDigest.\n" +
+      "Returns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16; replace_checklist lists removedItems with their text and checked state), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, attachmentSpans, revisionBefore, and planDigest. removedAttachments (identifiers the plan takes out of the body) and replacementFiles (name, type, size, SHA-256 of each file that replaces an attachment). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, each replacement file's bytes, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\n" +
+      "Do not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never splits a character. Only an attachment selector touches an attachment, and only the one it names (all of its glyphs); inline objects (hashtags, mentions, note links) are never selectable.\n" +
+      "Safety: a dry run is read-only and never writes a file. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run, or plan_mismatch: the request or a replacement file differs from the dry run's planDigest), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unsupported_attachment, unexpected_side_effect. A failed apply removes any attachment it created. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid.optional().describe("Notes UUID"),
       id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -317,17 +320,18 @@ export function registerPrivateWriterTools(
       ifRevision: revisionToken
         .optional()
         .describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
+      ifPlanDigest: planDigestToken
+        .optional()
+        .describe(
+          "The planDigest of the identical dry run (recommended on apply; refuses with plan_mismatch if the request or a replacement file changed)"
+        ),
       requireNonSystemPaper: z
         .boolean()
         .optional()
         .describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
-      operations: z
-        .array(editOperationSchema)
-        .min(1)
-        .max(MAX_EDIT_OPERATIONS)
-        .describe(
-          "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. An attachment replace with position 'self' and text '' removes that attachment from the body; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else. ordinal counts the note's attachments in body order. expectedCount (default 1) must equal the full match count; occurrence picks one of them. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
-        ),
+      operations: editOperationsSchema.describe(
+        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}|{file, filename?}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, append_to_paragraph {anchor (as for inserts), runs}, replace_checklist {select?:'block'|'all', containing?, occurrence?, items:[{text|runs, checked, indent?}], expectedCount?}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. A run is {text, bold?, italic?, underline?, strikethrough?, link? (http, https, mailto, tel, notes, applenotes), highlight? (purple, pink, orange, mint, blue), color? (#RRGGBB)}; its formatting replaces the replaced text's inline formatting. An attachment replace with position 'self' and text '' removes that attachment from the body, and with {file, filename?} (an absolute path to an image or PDF of at most 64 MiB in home, temp, or /Volumes) puts a new attachment in its place in the same save; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else; deleting the last paragraph leaves the previous paragraph's line break. ordinal counts the note's attachments in body order. append_to_paragraph adds the runs at the end of the anchor paragraph, on the same line (put a leading space in the first run). replace_checklist replaces one contiguous run of checklist rows (the one holding a row whose text equals containing, the occurrence-th, or the only one) or, with select 'all', every checklist row; all other text and attachments stay. expectedCount (default 1) must equal the full match count; occurrence picks one of them and may not exceed it. For replace_checklist, expectedCount is optional and counts replaced rows. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
+      ),
       nudge: z
         .boolean()
         .optional()
@@ -350,6 +354,7 @@ export function registerPrivateWriterTools(
           identifier,
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
+          ifPlanDigest: args.ifPlanDigest,
           requireNonSystemPaper: args.requireNonSystemPaper,
           operations: args.operations,
         },

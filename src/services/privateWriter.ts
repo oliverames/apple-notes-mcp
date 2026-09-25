@@ -28,7 +28,7 @@
  *
  * @module services/privateWriter
  */
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { z } from "zod";
 import {
   ENABLE_ENV,
@@ -48,6 +48,7 @@ import {
   type PrivateUnavailableReason,
 } from "./privateHelper.js";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
+import { assertAllowedFile } from "../utils/attachmentFs.js";
 
 export type { PrivateHelperDeps };
 
@@ -324,6 +325,7 @@ export const writerProbeSchema = z
         smartFolders: featureSchema.optional(),
         addPaper: featureSchema.extend({ formats: z.array(z.string()) }).optional(),
         composeAttachments: featureSchema.optional(),
+        editReplaceFile: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -607,11 +609,12 @@ const MAX_EDIT_TEXT = 10_000;
 
 /**
  * Text that must stay inside one paragraph: no control characters other
- * than tab, no attachment glyph (U+FFFC), and no line or paragraph
- * separators. Mirrors the writer's rule so a bad request never spawns it.
+ * than tab, no attachment glyph (U+FFFC), no line or paragraph separators,
+ * and no unpaired UTF-16 surrogate (in a `u` regex a surrogate class matches
+ * only a lone one). Mirrors the writer's rule so a bad request never spawns it.
  */
 // eslint-disable-next-line no-control-regex
-const FORBIDDEN_EDIT_TEXT = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029]/u;
+const FORBIDDEN_EDIT_TEXT = /[\x00-\x08\x0A-\x1F\x7F-\x9F\uFFFC\u2028\u2029\uD800-\uDFFF]/u;
 const paragraphText = (min: number) =>
   z
     .string()
@@ -619,7 +622,8 @@ const paragraphText = (min: number) =>
     .max(MAX_EDIT_TEXT)
     .refine((text) => !FORBIDDEN_EDIT_TEXT.test(text), {
       message:
-        "must stay inside one paragraph: no line breaks, attachment glyphs, or control characters",
+        "must stay inside one paragraph: no line breaks, attachment glyphs, control characters, " +
+        "or unpaired surrogates",
     });
 
 export const EDIT_STYLES = [
@@ -637,6 +641,28 @@ const styleName = z.enum(EDIT_STYLES);
 const count = z.number().int().min(1).max(1000);
 const operationId = z.string().min(1).max(128).optional();
 
+export const EDIT_HIGHLIGHTS = ["purple", "pink", "orange", "mint", "blue"] as const;
+const EDIT_LINK_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:", "notes:", "applenotes:"]);
+const editLink = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (link) => {
+      try {
+        return EDIT_LINK_SCHEMES.has(new URL(link).protocol);
+      } catch {
+        return false;
+      }
+    },
+    { message: "must be an absolute http, https, mailto, tel, notes, or applenotes URL" }
+  );
+
+/**
+ * One inline run: text plus the formatting it states, the same fields as a
+ * compose run. A run's formatting replaces the replaced text's inline
+ * formatting: a run without `link` is not linked, even over linked text.
+ */
 const runSchema = z
   .object({
     text: paragraphText(1),
@@ -644,14 +670,44 @@ const runSchema = z
     italic: z.boolean().optional(),
     underline: z.boolean().optional(),
     strikethrough: z.boolean().optional(),
+    link: editLink.optional(),
+    highlight: z.enum(EDIT_HIGHLIGHTS).optional(),
+    color: z
+      .string()
+      .regex(/^#[0-9A-Fa-f]{6}$/)
+      .optional(),
   })
   .strict();
-const runsSchema = z.array(runSchema).min(1).max(200);
+/** At most 200 runs and, together, the writer's 10,000 UTF-16 units. */
+const runsSchema = z
+  .array(runSchema)
+  .min(1)
+  .max(200)
+  .refine((runs) => runs.reduce((sum, run) => sum + run.text.length, 0) <= MAX_EDIT_TEXT, {
+    message: `runs must hold at most ${MAX_EDIT_TEXT} UTF-16 code units together`,
+  });
+
+/** Largest replacement file, the same limit as add-attachment. */
+export const MAX_REPLACEMENT_FILE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * A local file that replaces an attachment (attachment selector, position
+ * self, only): an absolute path in home, temp, or /Volumes to a non-empty
+ * regular image or PDF file of at most 64 MiB, and optionally the name it
+ * shows in Notes, which must keep the file's extension.
+ */
+const fileReplacementSchema = z
+  .object({
+    file: z.string().min(1).max(4096),
+    filename: z.string().min(1).max(255).optional(),
+  })
+  .strict();
 
 /** Plain `text` inherits the replaced range's formatting; `runs` states it. */
 const replacementSchema = z.union([
   z.object({ text: paragraphText(0) }).strict(),
   z.object({ runs: runsSchema }).strict(),
+  fileReplacementSchema,
 ]);
 
 /**
@@ -725,6 +781,9 @@ const blockSchema = z
   })
   .refine((b) => b.checked === undefined || b.type === "checklist", {
     message: "checked is only valid on checklist blocks",
+  })
+  .refine((b) => b.text !== "" || b.type === "body", {
+    message: "only a body block may have empty text",
   });
 
 const insertSchema = (op: "insert_after" | "insert_before") =>
@@ -764,6 +823,58 @@ const trimSchema = z
   })
   .strict();
 
+/**
+ * Inline runs added at the end of one existing paragraph, on its own line
+ * (for example a source link after a bullet's text). `anchor` names the
+ * paragraph like an insert anchor; the runs take the paragraph's style and
+ * font and state their own inline formatting.
+ */
+const appendToParagraphSchema = z
+  .object({
+    op: z.literal("append_to_paragraph"),
+    id: operationId,
+    anchor: z.union([textSelector, styleSelector, attachmentSelector]),
+    runs: runsSchema,
+    expectedCount: count.optional(),
+  })
+  .strict();
+
+export const MAX_CHECKLIST_ITEMS = 200;
+
+const checklistItemSchema = z
+  .object({
+    text: paragraphText(1).optional(),
+    runs: runsSchema.optional(),
+    checked: z.boolean(),
+    indent: z.number().int().min(0).max(8).optional(),
+  })
+  .strict()
+  .refine((item) => (item.text === undefined) !== (item.runs === undefined), {
+    message: "each item needs exactly one of text or runs",
+  });
+
+/**
+ * Replaces a note's checklist with new items, each with its own checked
+ * state. select "block" (default) replaces one contiguous run of checklist
+ * rows: the one holding a row whose whole text is `containing`, the
+ * `occurrence`-th, or the only one. select "all" replaces every checklist
+ * row: the first run becomes the new items and every other run is removed.
+ * Everything that is not a checklist row stays as it is; a run holding the
+ * title or an attachment is refused. `expectedCount`, when given, must equal
+ * the number of rows replaced.
+ */
+const replaceChecklistSchema = z
+  .object({
+    op: z.literal("replace_checklist"),
+    id: operationId,
+    select: z.enum(["block", "all"]).optional(),
+    containing: paragraphText(1).optional(),
+    occurrence: count.optional(),
+    items: z.array(checklistItemSchema).min(1).max(MAX_CHECKLIST_ITEMS),
+    expectedCount: count.optional(),
+  })
+  .strict();
+
 const editOperationUnion = z.discriminatedUnion("op", [
   z
     .object({
@@ -798,26 +909,88 @@ const editOperationUnion = z.discriminatedUnion("op", [
     })
     .strict(),
   trimSchema,
+  appendToParagraphSchema,
+  replaceChecklistSchema,
 ]);
 
-/** The operation union plus the one cross-field rule a union member cannot carry. */
+/**
+ * The operation union plus the cross-field rules a union member cannot
+ * carry. Each mirrors a refusal in the writer, so such a request never
+ * reaches it.
+ */
 export const editOperationSchema = editOperationUnion.superRefine((operation, context) => {
+  const issue = (path: (string | number)[], message: string) =>
+    context.addIssue({ code: z.ZodIssueCode.custom, path, message });
+  // expectedCount (default 1) is the full match count; occurrence picks one of them.
+  if (
+    operation.op === "replace" ||
+    operation.op === "delete_paragraph" ||
+    operation.op === "insert_after" ||
+    operation.op === "insert_before" ||
+    operation.op === "append_to_paragraph"
+  ) {
+    const expected = operation.expectedCount ?? 1;
+    const picker =
+      "selector" in operation
+        ? { key: "selector", value: operation.selector }
+        : "anchor" in operation && operation.anchor
+          ? { key: "anchor", value: operation.anchor }
+          : null;
+    const occurrence = picker?.value.occurrence;
+    if (occurrence !== undefined && occurrence > expected)
+      issue(
+        [picker!.key, "occurrence"],
+        `occurrence ${occurrence} exceeds expectedCount ${expected}; the writer would refuse it`
+      );
+  }
+  if (operation.op === "replace") {
+    const selector = operation.selector as { kind?: string; position?: string };
+    const replacement = operation.replacement as { text?: string; file?: string };
+    const attachment = selector.kind === "attachment";
+    const beside = attachment && selector.position !== undefined && selector.position !== "self";
+    if (replacement.file !== undefined && (!attachment || beside))
+      issue(
+        ["replacement", "file"],
+        "a file replacement needs an attachment selector with position self"
+      );
+    if (beside && replacement.text === "")
+      issue(["replacement", "text"], "text inserted beside an attachment must not be empty");
+  }
+  if (operation.op === "replace_checklist" && operation.select === "all") {
+    if (operation.containing !== undefined)
+      issue(["containing"], "containing is only valid with select block");
+    if (operation.occurrence !== undefined)
+      issue(["occurrence"], "occurrence is only valid with select block");
+  }
   if (operation.op !== "trim_blank_lines") return;
   const around = operation.mode === "around";
-  if (around && !operation.anchor)
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["anchor"],
-      message: "mode around needs an anchor",
-    });
+  if (around && !operation.anchor) issue(["anchor"], "mode around needs an anchor");
   if (!around && (operation.anchor || operation.side))
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [operation.anchor ? "anchor" : "side"],
-      message: "anchor and side are only valid with mode around",
-    });
+    issue(
+      [operation.anchor ? "anchor" : "side"],
+      "anchor and side are only valid with mode around"
+    );
 });
 export type EditOperation = z.infer<typeof editOperationSchema>;
+
+/** One request's operations: 1 to 64, with unique ids. */
+export const editOperationsSchema = z
+  .array(editOperationSchema)
+  .min(1)
+  .max(MAX_EDIT_OPERATIONS)
+  .superRefine((operations, context) => {
+    const seen = new Set<string>();
+    operations.forEach((operation, index) => {
+      if (operation.id === undefined) return;
+      if (seen.has(operation.id))
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "id"],
+          message: "operation ids must be unique",
+        });
+      seen.add(operation.id);
+    });
+  });
 
 const editTargetSchema = z
   .object({
@@ -857,6 +1030,25 @@ const editPlanFields = {
   attachmentGlyphsAfter: z.number().int().optional(),
   /** Identifiers of attachments the plan removes from the body (attachment selectors only). */
   removedAttachments: z.array(z.string()).optional(),
+  /** Attachments and inline objects in the body, adjacent glyphs of one attachment counted once. */
+  attachmentSpans: z.number().int().optional(),
+  /** Each file that replaces an attachment: name, type, size, and SHA-256 (never its bytes). */
+  replacementFiles: z
+    .array(
+      z
+        .object({
+          operationIndex: z.number().int(),
+          replaces: z.string(),
+          filename: z.string(),
+          uti: z.string(),
+          sizeBytes: z.number().int(),
+          sha256: z.string(),
+          attachmentIdentifier: z.string().optional(),
+        })
+        .passthrough()
+    )
+    .optional(),
+  requireNonSystemPaper: z.boolean().optional(),
   storeKind: z.enum(["live", "copy"]),
 };
 
@@ -929,13 +1121,49 @@ export interface EditNoteRequest {
   dryRun: boolean;
   /** Required to apply: the plan's revisionBefore. */
   ifRevision?: string;
+  /** Optional on apply: the plan's planDigest; the writer refuses a request or file that differs. */
+  ifPlanDigest?: string;
   requireNonSystemPaper?: boolean;
+}
+
+/** A dry run's planDigest (identifier, operations, requireNonSystemPaper, replacement file bytes). */
+export const planDigestToken = z.string().regex(/^p2:[a-f0-9]{64}$/);
+
+/**
+ * Checks each replacement file before the writer runs, under add-attachment's
+ * policy (see assertAllowedFile: a non-empty regular file of at most 64 MiB in
+ * home, temp or /Volumes, not a symbolic link or a FIFO, and not a hidden
+ * path or ~/Library outside iCloud Drive and CloudStorage unless
+ * APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1), and a display name that is
+ * one path component keeping the file's extension. The writer repeats the
+ * file checks itself when it opens the file.
+ */
+function assertReplacementFiles(operations: EditOperation[]): void {
+  for (const operation of operations) {
+    if (operation.op !== "replace" || !("file" in operation.replacement)) continue;
+    const { file, filename } = operation.replacement;
+    assertAllowedFile(file, MAX_REPLACEMENT_FILE_BYTES, { label: "Replacement file" });
+    if (filename === undefined) continue;
+    if (
+      filename !== filename.trim() ||
+      filename.startsWith(".") ||
+      Buffer.byteLength(filename, "utf8") > 255 ||
+      /[/:\\\p{Cc}]/u.test(filename)
+    )
+      throw new Error(
+        "Replacement filename must be one path component with no slash, colon, backslash, " +
+          "control character, leading dot, or surrounding spaces"
+      );
+    if (!extname(filename) || extname(filename).toLowerCase() !== extname(file).toLowerCase())
+      throw new Error(`Replacement filename must keep the file's extension (${extname(file)})`);
+  }
 }
 
 /**
  * Plan (dryRun: true, the writer's read-only plan_edit) or apply
- * (dryRun: false, edit_note, with the plan's revisionBefore as ifRevision)
- * literal in-place edits to one note.
+ * (dryRun: false, edit_note, with the plan's revisionBefore as ifRevision
+ * and, optionally, its planDigest as ifPlanDigest) literal in-place edits to
+ * one note.
  */
 export function editNote(
   request: EditNoteRequest,
@@ -951,11 +1179,16 @@ export function editNote(
   }
   if (!request.operations.length || request.operations.length > MAX_EDIT_OPERATIONS)
     throw refuse(`operations must hold 1 to ${MAX_EDIT_OPERATIONS} entries`);
-  const operations = z.array(editOperationSchema).safeParse(request.operations);
+  const operations = editOperationsSchema.safeParse(request.operations);
   if (!operations.success)
     throw refuse(
       `Invalid operations: ${operations.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`
     );
+  try {
+    assertReplacementFiles(operations.data);
+  } catch (error) {
+    throw refuse(error instanceof Error ? error.message : String(error));
+  }
   const fields: Record<string, unknown> = {
     identifier: request.identifier,
     operations: operations.data,
@@ -963,6 +1196,8 @@ export function editNote(
   if (request.requireNonSystemPaper !== undefined)
     fields.requireNonSystemPaper = request.requireNonSystemPaper;
   if (request.dryRun) {
+    if (request.ifPlanDigest !== undefined)
+      throw refuse("ifPlanDigest belongs on the apply (dryRun: false), not on the dry run");
     return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
   }
   if (!request.ifRevision)
@@ -971,6 +1206,11 @@ export function editNote(
         "and pass its revisionBefore."
     );
   assertRevision(request.ifRevision, "a dry run's revisionBefore");
+  if (request.ifPlanDigest !== undefined) {
+    if (!planDigestToken.safeParse(request.ifPlanDigest).success)
+      throw refuse("ifPlanDigest must be a dry run's planDigest (p2: followed by 64 hex digits)");
+    fields.ifPlanDigest = request.ifPlanDigest;
+  }
   requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
   return parseWriterResult(
     editResultSchema,
@@ -1032,6 +1272,8 @@ export const WRITER_FEATURES = [
     probeKey: "composeAttachments",
     liveValidated: COMPOSE_LIVE_VALIDATED,
   },
+  // native-edit-note replacing an attachment with a file (replacement.file).
+  { key: "editReplaceFile", probeKey: "editReplaceFile", liveValidated: EDIT_LIVE_VALIDATED },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

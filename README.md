@@ -1255,8 +1255,9 @@ the write happened so it is not repeated.
   detection. The result reports `linkStored: false`.
 - Notes with native objects (a table, a checklist, native tags) take the native
   end-append path, so only `position: "end"` with `blankLine: true` works there.
-- The link always gets its own paragraph. Placing it at the end of one existing
-  paragraph, or inside the text, is not available.
+- The link always gets its own paragraph. To place it at the end of one
+  existing paragraph, or to link text in place, use the opt-in writer's
+  `native-edit-note` (`append_to_paragraph`, or `replace` with a linked run).
 - Rich URL preview cards (the link tile Notes makes when you paste a URL) are
   not produced. No public automation route creates one: the Shortcuts Notes
   actions write text, and AppleScript's `body` has no card markup. The opt-in
@@ -2709,14 +2710,36 @@ styles, and inline formatting. Operations, applied together against one
 snapshot of the note:
 
 - `replace`: literal text (`match: "substring"` or `"equals"`), with plain
-  `text` that inherits the replaced range's formatting, or `runs` with
-  explicit bold, italic, underline, and strikethrough.
+  `text` that inherits the replaced range's formatting, or `runs`. A run is
+  `{text, bold?, italic?, underline?, strikethrough?, link?, highlight?,
+  color?}`, the same fields as a `compose-note` run: `link` is an http,
+  https, mailto, tel, notes, or applenotes URL, `highlight` is `purple`,
+  `pink`, `orange`, `mint`, or `blue`, and `color` is `#RRGGBB`. A run's
+  formatting is exactly what it states, so a run without `link` is not
+  linked even when it replaces linked text.
 - `insert_after` / `insert_before`: new paragraphs (`heading`, `subheading`,
   `body`, `monospaced`, `bulleted`, `dashed`, `numbered`, `checklist` with
-  `checked`) next to a paragraph matched by its exact text or by style and
-  position (`{kind: "style", style: "subheading", occurrence: 2}`).
+  `checked: true` or `false`) next to a paragraph matched by its exact text or
+  by style and position (`{kind: "style", style: "subheading", occurrence: 2}`).
+  Only a `body` block may be empty.
+- `append_to_paragraph`: adds `runs` at the end of one existing paragraph, on
+  its own line, for example a source link after a bullet's text. `anchor`
+  names the paragraph like an insert anchor. The runs take the paragraph's
+  style and font; start the first run with a space.
+- `replace_checklist`: replaces a checklist with new `items`, each
+  `{text | runs, checked, indent?}`. With `select: "block"` (the default) it
+  replaces one contiguous run of checklist rows: the one holding a row whose
+  whole text is `containing`, the `occurrence`-th, or the only one. With
+  `select: "all"` it replaces every checklist row: the first run becomes the
+  new items and the other runs are removed. Every other paragraph and
+  attachment stays as it is; a run that holds the title or an attachment is
+  refused. The dry run lists `removedItems` (text and checked state), and the
+  optional `expectedCount` counts replaced rows.
 - `delete_paragraph`: a paragraph matched by its exact text, or an empty list,
-  checklist, or heading row (`{kind: "blank", style}`).
+  checklist, or heading row (`{kind: "blank", style}`). Each paragraph goes
+  with its own line break; deleting the last paragraph removes only its text
+  and leaves the previous paragraph's line break, as `trim_blank_lines` does.
+  Adjacent paragraphs matched by one operation are removed as one range.
 - `set_title`: the first paragraph.
 - `trim_blank_lines`: removes redundant empty paragraphs. `mode: "runs"`
   keeps the first `keep` (default 1) of every run of blank lines, `"end"`
@@ -2731,25 +2754,40 @@ snapshot of the note:
   paragraphs.
 
 `expectedCount` (default 1) must equal the number of matches, and
-`occurrence` picks one of them. Matching is case-sensitive, stays inside one
-paragraph, and never touches an attachment glyph unless an attachment
-selector names it.
+`occurrence` picks one of them, so it may not exceed `expectedCount`.
+Matching is case-sensitive, stays inside one paragraph, never splits a
+character (a match inside an emoji or before a combining accent is refused
+with `unsupported_selection`), and never touches an attachment glyph unless an
+attachment selector names it.
 
 An attachment selector, `{kind: "attachment", identifier | id | ordinal}`,
 names one of the note's attachments by its Notes UUID or x-coredata id (both
 from `get-note-structure`; `list-attachments` gives the id) or by its
 1-based position among the note's attachments in body order. Inline objects
 (hashtags, mentions, note links) are not counted and cannot be selected.
+Notes stores some attachments, such as an image added through AppleScript, as
+two adjacent glyphs; the selector treats them as one attachment, counts it
+once, and edits all of its glyphs together.
 
 - In `replace`, `position: "self"` (the default) replaces the attachment with
   the replacement text, and empty text removes it from the body.
   `position: "before"` or `"after"` inserts the text inline beside it.
+- In `replace` with `position: "self"`, `replacement: {file, filename?}` puts
+  a new attachment in its place in the same save: `file` is an absolute path
+  in your home folder, a temporary folder, or `/Volumes` to a non-empty image
+  or PDF of at most 64 MiB (the final path component may not be a link), and
+  `filename` is the name Notes shows, which must keep the file's extension.
+  The attachment it replaces must be a file (image, PDF, or other file), not a
+  table, drawing, or link card. The dry run reads the file and reports its
+  size and SHA-256 in `replacementFiles` without writing anything; the apply
+  creates the attachment, verifies its type, name, and bytes in a fresh read,
+  and removes it again if anything fails before the save.
 - In `delete_paragraph`, it removes the attachment's own paragraph, which must
   hold nothing but the attachment and whitespace.
-- As an `insert_after` / `insert_before` anchor, it names the paragraph that
-  holds the attachment.
+- As an `insert_after` / `insert_before` / `append_to_paragraph` anchor, it
+  names the paragraph that holds the attachment.
 
-Only the named attachment's glyph may be inside an edited range. The plan
+Only the named attachment's glyphs may be inside an edited range. The plan
 lists `removedAttachments`. The apply proves that every other attachment row
 still belongs to the note with the same stored values and reports what
 happened to each removed attachment's row (`rowStillInNote`,
@@ -2757,15 +2795,25 @@ happened to each removed attachment's row (`rowStillInNote`,
 file; Notes decides when to clean up the row.
 
 Always call it twice. `dryRun: true` is read-only and returns the plan
-(targets, `lengthBefore`/`lengthAfter`, `unchangedUTF16`, `wouldChange`) and
-`revisionBefore`. Then send the identical request with `dryRun: false` and
-`ifRevision` set to that `revisionBefore`. The apply re-reads the note in a
+(targets, `lengthBefore`/`lengthAfter`, `unchangedUTF16`, `wouldChange`),
+`revisionBefore`, and `planDigest`. Then send the identical request with
+`dryRun: false`, `ifRevision` set to that `revisionBefore`, and `ifPlanDigest`
+set to that `planDigest`. The digest covers the operations,
+`requireNonSystemPaper`, and each replacement file's bytes, so the apply
+refuses (`plan_mismatch`, reported as `revision_conflict`) when anything
+differs from the dry run. The apply re-reads the note in a
 fresh Core Data stack and returns `preservation`, which says that every
 character outside the edits kept its formatting, that the attachment glyph
 sequence is the planned one, and that the note's attachment rows did not
-change (apart from an attachment the request removed). Refusals commit nothing: `revision_conflict`, `match_count_mismatch`,
+change (apart from an attachment the request removed or a replacement file
+added). The comparison reads every stored field of each paragraph style
+(including checklist state and list numbering), font, color, link, and
+attachment reference; a note holding formatting of any other kind is refused
+at the dry run (`unsupported_note`) rather than edited without that proof.
+Refusals commit nothing: `revision_conflict`, `match_count_mismatch`,
 `mixed_formatting` (use `runs`), `conflicting_operations`, `title_invariant`,
-`unsupported_selection`, and `unexpected_side_effect` (the edit would change
+`unsupported_selection`, `unsupported_attachment`, and
+`unexpected_side_effect` (the edit would change
 another object, for example an attachment Notes uses for the title). Takes
 `nudge` like `native-append-plain-text`. Planning needs the two writer
 switches; applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until the

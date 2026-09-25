@@ -4,7 +4,8 @@
  * gating, and committed/indeterminate paths without NotesShared or the store.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -31,6 +32,7 @@ import {
   defaultWriterDeps,
   editNote,
   editOperationSchema,
+  editOperationsSchema,
   inspectWriterInstallation,
   parseWriterResult,
   privateWriterCapabilities,
@@ -900,6 +902,259 @@ describe("trim_blank_lines schema", () => {
     expect((plan as Record<string, unknown>).echo).toMatchObject({
       action: "plan_edit",
       operations,
+    });
+  });
+});
+
+describe("rich runs, inline appends, checklist replacement, and file replacement", () => {
+  const ok = (op: unknown) => editOperationSchema.safeParse(op).success;
+  const ATTACHMENT = "3F2504E0-4F89-11D3-9A0C-0305E82C3301";
+
+  it("accepts link, highlight, and color on replacement and block runs", () => {
+    const runs = [
+      { text: "see " },
+      { text: "source", link: "https://example.com/a", highlight: "mint", color: "#FF0000" },
+      { text: "mail", link: "mailto:a@example.com", bold: true },
+    ];
+    expect(ok({ op: "replace", selector: { text: "x" }, replacement: { runs } })).toBe(true);
+    expect(
+      ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "bulleted", runs }] })
+    ).toBe(true);
+    expect(ok({ op: "set_title", replacement: { runs } })).toBe(true);
+  });
+
+  it("rejects run formatting the writer would refuse", () => {
+    const run = (extra: Record<string, unknown>) => ({
+      op: "replace",
+      selector: { text: "x" },
+      replacement: { runs: [{ text: "y", ...extra }] },
+    });
+    expect(ok(run({ link: "javascript:alert(1)" }))).toBe(false);
+    expect(ok(run({ link: "not a url" }))).toBe(false);
+    expect(ok(run({ link: "https://" + "a".repeat(4100) }))).toBe(false);
+    expect(ok(run({ highlight: "green" }))).toBe(false);
+    expect(ok(run({ color: "red" }))).toBe(false);
+    expect(ok(run({ color: "#FF00001" }))).toBe(false);
+    // The runs together stay within the writer's 10,000 UTF-16 units.
+    const long = { text: "a".repeat(6000) };
+    expect(
+      ok({ op: "replace", selector: { text: "x" }, replacement: { runs: [long, long] } })
+    ).toBe(false);
+  });
+
+  it("appends runs to the end of one paragraph", () => {
+    const runs = [{ text: " " }, { text: "source", link: "https://example.com/" }];
+    expect(ok({ op: "append_to_paragraph", anchor: { text: "Buy milk" }, runs })).toBe(true);
+    expect(
+      ok({
+        op: "append_to_paragraph",
+        anchor: { kind: "style", style: "bulleted", occurrence: 2 },
+        runs,
+        expectedCount: 3,
+      })
+    ).toBe(true);
+    expect(ok({ op: "append_to_paragraph", anchor: { text: "a" }, runs: [] })).toBe(false);
+    expect(ok({ op: "append_to_paragraph", anchor: { text: "a" }, text: "x" })).toBe(false);
+  });
+
+  it("replaces a checklist by block or all with explicit done states", () => {
+    const items = [
+      { text: "Passport", checked: true },
+      { runs: [{ text: "Charger", bold: true }], checked: false, indent: 1 },
+    ];
+    expect(ok({ op: "replace_checklist", items })).toBe(true);
+    expect(
+      ok({ op: "replace_checklist", containing: "Socks", occurrence: 1, items, expectedCount: 4 })
+    ).toBe(true);
+    expect(ok({ op: "replace_checklist", select: "all", items })).toBe(true);
+    expect(ok({ op: "replace_checklist", select: "all", containing: "Socks", items })).toBe(false);
+    expect(ok({ op: "replace_checklist", select: "all", occurrence: 2, items })).toBe(false);
+    expect(ok({ op: "replace_checklist", items: [] })).toBe(false);
+    expect(ok({ op: "replace_checklist", items: [{ text: "no state" }] })).toBe(false);
+    expect(ok({ op: "replace_checklist", items: [{ text: "", checked: false }] })).toBe(false);
+    expect(ok({ op: "replace_checklist", items: [{ text: "a", checked: true, indent: 9 }] })).toBe(
+      false
+    );
+    // Checked rows can also be inserted as blocks.
+    expect(
+      ok({
+        op: "insert_after",
+        anchor: { text: "a" },
+        blocks: [{ type: "checklist", text: "done", checked: true }],
+      })
+    ).toBe(true);
+  });
+
+  it("takes a file only in an attachment replace at position self", () => {
+    const file = { file: "/tmp/chart.png", filename: "Q3.png" };
+    expect(
+      ok({
+        op: "replace",
+        selector: { kind: "attachment", identifier: ATTACHMENT },
+        replacement: file,
+      })
+    ).toBe(true);
+    expect(
+      ok({
+        op: "replace",
+        selector: { kind: "attachment", ordinal: 1, position: "self" },
+        replacement: { file: "/tmp/a.pdf" },
+      })
+    ).toBe(true);
+    expect(
+      ok({
+        op: "replace",
+        selector: { kind: "attachment", ordinal: 1, position: "after" },
+        replacement: file,
+      })
+    ).toBe(false);
+    expect(ok({ op: "replace", selector: { text: "x" }, replacement: file })).toBe(false);
+    expect(
+      ok({
+        op: "replace",
+        selector: { kind: "attachment", ordinal: 1 },
+        replacement: { ...file, text: "x" },
+      })
+    ).toBe(false);
+  });
+
+  it("rejects the other inputs the writer refuses", () => {
+    // occurrence picks one of expectedCount matches, so it cannot exceed it.
+    expect(
+      ok({ op: "replace", selector: { text: "a", occurrence: 2 }, replacement: { text: "b" } })
+    ).toBe(false);
+    expect(
+      ok({
+        op: "replace",
+        selector: { text: "a", occurrence: 2 },
+        replacement: { text: "b" },
+        expectedCount: 2,
+      })
+    ).toBe(true);
+    expect(
+      ok({
+        op: "insert_after",
+        anchor: { kind: "style", style: "heading", occurrence: 3 },
+        blocks: [{ type: "body", text: "x" }],
+        expectedCount: 2,
+      })
+    ).toBe(false);
+    // Only a body block may be empty.
+    expect(
+      ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "heading", text: "" }] })
+    ).toBe(false);
+    expect(
+      ok({ op: "insert_after", anchor: { text: "a" }, blocks: [{ type: "body", text: "" }] })
+    ).toBe(true);
+    // Text beside an attachment must not be empty.
+    expect(
+      ok({
+        op: "replace",
+        selector: { kind: "attachment", ordinal: 1, position: "before" },
+        replacement: { text: "" },
+      })
+    ).toBe(false);
+    // An unpaired surrogate never reaches the writer; a paired one is fine.
+    expect(ok({ op: "replace", selector: { text: "a\uD83D" }, replacement: { text: "b" } })).toBe(
+      false
+    );
+    expect(ok({ op: "replace", selector: { text: "a" }, replacement: { text: "\uDE00" } })).toBe(
+      false
+    );
+    expect(ok({ op: "replace", selector: { text: "a" }, replacement: { text: "😀" } })).toBe(true);
+    // Operation ids are unique within a request.
+    const twice = [
+      { op: "set_title", id: "t", replacement: { text: "A" } },
+      { op: "delete_paragraph", id: "t", selector: { text: "x" } },
+    ];
+    expect(editOperationsSchema.safeParse(twice).success).toBe(false);
+  });
+
+  it("checks a replacement file before spawning the writer", () => {
+    install();
+    const image = join(root, "chart.png");
+    writeFileSync(image, "png bytes");
+    const replace = (replacement: Record<string, unknown>) => [
+      {
+        op: "replace" as const,
+        selector: { kind: "attachment" as const, ordinal: 1 },
+        replacement: replacement as { file: string },
+      },
+    ];
+    const plan = editNote(
+      { identifier: NOTE, dryRun: true, operations: replace({ file: image, filename: "Q3.PNG" }) },
+      deps(ON)
+    );
+    expect((plan as Record<string, unknown>).echo).toMatchObject({ action: "plan_edit" });
+    const refused = (replacement: Record<string, unknown>) =>
+      thrown(() =>
+        editNote({ identifier: NOTE, dryRun: true, operations: replace(replacement) }, deps(ON))
+      );
+    expect(refused({ file: "relative.png" }).message).toMatch(/absolute/);
+    expect(refused({ file: "/etc/hosts" }).message).toMatch(/outside allowed locations/);
+    expect(refused({ file: join(root, "missing.png") }).message).toMatch(/does not exist/);
+    writeFileSync(join(root, "empty.png"), "");
+    expect(refused({ file: join(root, "empty.png") }).message).toMatch(/is empty/);
+    symlinkSync(image, join(root, "link.png"));
+    expect(refused({ file: join(root, "link.png") }).message).toMatch(/symbolic link|resolves/);
+    // add-attachment's policy: no hidden paths and no FIFOs.
+    mkdirSync(join(root, ".ssh"));
+    writeFileSync(join(root, ".ssh", "id.png"), "secret");
+    expect(refused({ file: join(root, ".ssh", "id.png") }).message).toMatch(
+      /hidden file or directory/
+    );
+    execFileSync("mkfifo", [join(root, "pipe.png")]);
+    expect(refused({ file: join(root, "pipe.png") }).message).toMatch(/not a regular file/);
+    expect(refused({ file: image, filename: "chart.pdf" }).message).toMatch(/extension/);
+    expect(refused({ file: image, filename: "a/b.png" }).message).toMatch(/one path component/);
+  });
+
+  it("passes ifPlanDigest on apply only", () => {
+    install();
+    const digest = `p2:${"b".repeat(64)}`;
+    const r = editNote(
+      {
+        identifier: NOTE,
+        dryRun: false,
+        ifRevision: REV,
+        ifPlanDigest: digest,
+        operations: REPLACE,
+      },
+      deps(UNVERIFIED)
+    );
+    expect((r as Record<string, unknown>).echo).toMatchObject({
+      action: "edit_note",
+      ifPlanDigest: digest,
+    });
+    expect(
+      thrown(() =>
+        editNote(
+          { identifier: NOTE, dryRun: true, ifPlanDigest: digest, operations: REPLACE },
+          deps(ON)
+        )
+      ).code
+    ).toBe("invalid_request");
+    expect(
+      thrown(() =>
+        editNote(
+          {
+            identifier: NOTE,
+            dryRun: false,
+            ifRevision: REV,
+            ifPlanDigest: "p1:x",
+            operations: REPLACE,
+          },
+          deps(UNVERIFIED)
+        )
+      )
+    ).toMatchObject({ code: "invalid_request", committed: false });
+  });
+
+  it("lists file replacement as its own gated feature", () => {
+    expect(WRITER_FEATURES.at(-1)).toMatchObject({
+      key: "editReplaceFile",
+      probeKey: "editReplaceFile",
+      liveValidated: false,
     });
   });
 });
