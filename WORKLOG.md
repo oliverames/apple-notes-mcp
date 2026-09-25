@@ -1,5 +1,59 @@
 # Worklog
 
+## 2026-09-25 - Integration pushed; Mac handoff (cloud session) - START HERE
+
+**What changed**:
+- `origin/feat/gap-parity` (`da9dff0`, 2.9.29) was rebuilt in the cloud from pushed branches. It contains `upstream/main` `7bcb131` (2.9.28), `feat/writer-suite`, every `wgap/*` branch (through `wgap/file-read-policy` and `wgap/edit-file-policy`), `gap/upstream-bundle` (all four `gap/*` branches) and #250's `feat/native-writes-upstream`.
+- Conflicts were resolved by keeping both sides. In three places upstream #258 was folded into refactored code: `exportAssets.ts` `write()` keeps the directory-failure handling, the HTML export receipt keeps both truncation and vector drawings, and the query-notes text keeps both.
+- The CHANGELOG has one consolidated 2.9.29 section. Everything from 2.9.28 down is byte-identical to upstream's file. There are no NotesCTL or reference-tool mentions.
+- macOS CI passed on `feat/gap-parity` (fork run 36078775859), fork PR #4 and fork PR #5. Fork PR #3 is green.
+- Fork PRs: #3, #4 and #5 are out of draft. #2 was closed as superseded by #3.
+- Upstream post drafts (combined PR body, #250 close, #248, #220, #181) are in a comment on fork PR #3.
+
+**Not in the cloud build**: the Mac-only commits in the old `feat/gap-parity` worktree (`.claude/worktrees/agent-ae5d5490ebc2da511`): #84 heal wiring `32933d0`, harness fixes `d714f5d`, and release `60b4ace` (2.9.28, which now collides with upstream). The #40 permission broker was never built.
+
+**Left off at** (all on the Mac):
+- [ ] Reconcile the local worktree with `origin/feat/gap-parity`. Take the origin branch as the base, cherry-pick `32933d0` and `d714f5d` (resolve against the new code), and drop `60b4ace`. Do not force-push over origin.
+- [ ] Run the serial live tests in `apple-notes-mcp test` for the features never run live (listed in the draft PR body). Update the PR's Testing section to match.
+- [ ] Open the combined upstream PR, not as a draft. Close #250 pointing at it, post on #248 (after the rerun), #220 and #181, and check every upstream thread.
+- [ ] #248 rerun: see the 2026-09-25 entry below.
+- [ ] Sync fork `main` with upstream (Oliver, 2026-09-25): merge `upstream/main`, keep the fork-only publish guard, merge PR #3 first. Note that `main` currently tracks `origin/main` (2026-07-24 entry).
+- [ ] Close fork PRs #4 and #5 unmerged, noting that `feat/gap-parity` carries them. Then sync the Mac's local clone: fast-forward local `main` to `origin/main` (tracking `origin`), remove superseded worktrees, and ask Oliver before deleting remote branches. The full prompt is in the session's final handoff.
+
+## 2026-09-24 (evening) - Upstream review from a cloud session
+
+**What changed**: Nothing in code. Read-only review of upstream state from a Linux cloud session, which cannot run live Notes tests.
+
+- Upstream merged #256 (2.9.24), #257 (2.9.25) and #258 (2.9.27). sweetrb commented on each and agreed with every judgement call; he added a Mobile Documents/CloudStorage carve-out to #256 and a `committed:true` fix to #257 (bbc7811).
+- sweetrb then shipped #259 (2.9.26) and #260 (2.9.28): a shared `readAllowedFile()` in `src/utils/attachmentFs.ts` now scopes add-attachment, create-note-with-attachment, analyze-svg and templateFile reads (roots, hidden/`~/Library` rule, realpath re-check, O_NONBLOCK, dev/ino match).
+- Upstream main is `7bcb131` (2.9.28). Open upstream items: draft #250 (no maintainer comment yet), issues #181 (our roadmap), #220 (FDA under Claude Desktop), #248 (ours).
+- #248: #251 fixed the reporting half (refusal now `committed:false`, message suggests search lag). The root cause (Find Notes returning nothing on 27.2) is still unconfirmed and needs a Mac.
+- #220: #227 changed the advice to grant the Node binary, but the reporter had already tried that with `npx -y`. Untested hypothesis: the `npx` wrapper or a shell in the launch chain becomes the responsible process. A cheap test is `command` = absolute node path, `args` = absolute `build/index.js`, then grant that node.
+
+**Findings that block the gap-parity PR**:
+- `origin/feat/gap-parity` does not exist. It lives only in the Mac worktree named in the 2026-09-24 entry, so resume step (1) must run on the Mac.
+- Its release number 2.9.28 now collides with upstream #260. Merge upstream main and renumber to 2.9.29 or higher.
+- `wgap/compose` `composeFileSize()` (`src/services/privateCompose.ts`) accepts any absolute path with only O_NOFOLLOW, and the writer then reads that file into the note. That is the #195 class sweetrb just closed in #259; it also lacks O_NONBLOCK, so a FIFO can block. Route compose attachments and paper `svgPath` (`assertReadableInRoots` in `privatePaperWriterTools.ts`) through `readAllowedFile()` or its policy check after the merge.
+- Fork PR oliverames/apple-notes-mcp#2 is obsolete once fork main syncs with upstream (its CI fix is a port of upstream #152). Fork `main` is still at 2.7.1.
+
+## 2026-09-25 - File-read policy fixes for the writer branches (cloud session)
+
+**What changed**:
+- `wgap/file-read-policy` = `wgap/compose` + upstream main `7bcb131`, as 2.9.29. The merge commit `9386722` adapts the paper writer to #260: `analyzeSvgFile` is gone, and `svgPath` now reads through `readAllowedFile`. It also keeps writer timeouts as `timeout_indeterminate`, because #257 made the read-only helper map a timeout to `operation_failed` and the writer fell through to that mapping. Fix `307102a` routes `compose-note` file blocks through a new `assertAllowedFile()` in `attachmentFs.ts`, which shares `readAllowedFile()`'s checks without reading the file.
+- `wgap/edit-file-policy` = `wgap/edit` + the same upstream merge (`10c06ca`) with byte-identical shared files. Fix `dbeaa63` routes `native-edit-note` replacement files (#78) through `assertAllowedFile()` as well.
+- Not changed: the #84 anchor registry and #39 permissions window in `gap/upstream-bundle` read server-owned paths, not caller paths. The paper `svgPath` copies on `wgap/objects` and `wgap/guards-sync` are the same shared code that the two merges fix.
+
+**Decisions made**:
+- One fix branch per writer branch, with no compose/edit merge here. Their conflicts (`apple-notes-private-writer.m`, `privateWriter.ts`) were already resolved in the Mac-only `feat/gap-parity`, and a second, different resolution would only conflict again.
+- The per-file-block check stays a check. The writer still opens the path itself, so a local process that swaps the file between the check and the writer's open is not covered. That threat is outside the prompt-injection case #259 closed.
+
+**Left off at**:
+- [ ] On the Mac, in the `feat/gap-parity` worktree, merge `wgap/file-read-policy` and `wgap/edit-file-policy`. The top of CHANGELOG will conflict. Renumber the release to 2.9.29 or higher (upstream has 2.9.28), then run the gate and push `feat/gap-parity`.
+- [ ] #248 test on the Mac: the bridge Shortcut filters Find Notes by `Name contains title AND Body contains scopeText` (`scripts/build-native-operations-shortcut.py`, `select()`). The 2026-09-24 repro used the title as `scopeText` on a note whose body was "x". If the Shortcuts "Body" property leaves out the title line, the filter can never match, which fits three identical refusals better than search lag. Repeat the repro with a `scopeText` of 12 or more characters taken from below the title. If that works, the server pre-check (`mutateBackground`, `before.rich.text.includes(scopeText)`) should refuse a `scopeText` found only in the title line, and the #251 refusal message should say so. Report the result on #248.
+- [ ] #220 suggestion for the reporter (untested): launch without `npx`, using `command` = absolute Node path and `args` = the absolute `build/index.js`, then grant that Node binary. That tells us whether the `npx` launch chain is what defeats the Node grant. This session's GitHub access cannot comment on sweetrb/apple-notes-mcp.
+
+**Verification**: Linux cloud session, so no live Notes tests. On both branches: `tsc --noEmit`, eslint and the prettier check pass, the rebuilt bundle matches the committed one, and the full vitest run has no failures beyond the 44 that fail on unmodified upstream main in this Linux container (osascript, `/private/tmp`, case-insensitive paths). The new refusal tests (hidden directory, FIFO) run and pass here.
+
 ## 2026-09-23 - Upstream parity push; paused for machine downtime
 
 **What changed**: About 30 of our PRs merged upstream today (#182-#233 range, plus #204 as read-only). This session also opened #241, then closed it because sweetrb fixed #236 himself in #240. It synced #234, #235 and #238 with main and pushed them (2211, 2222 and 2165 tests passing), and replied to and resolved the CodeQL thread on #235.
