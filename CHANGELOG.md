@@ -671,6 +671,73 @@ Data-correctness fixes across reads, counts, guards and exports, contributed by
 
 - The README's Author section now has a Contributors list crediting
   Oliver Ames (@oliverames) for his many merged pull requests and bug reports.
+### Added
+
+- `query-notes` has three more predicates: `has:url` (a link preview card,
+  which still counts as `has:link`), `has:map` (a map attachment), and the
+  flag `quicknote` (or `is:quicknote`), read from the same Quick Note flag as
+  `list-special-notes kind=quick-notes`. A bare `quicknote` is now that flag;
+  quote it to search the word. `scanLimit` now goes up to 10000 (default
+  still 500). `search-notes`' database body search keeps its 5000-note window.
+- `export-notes-html` renders classic PencilKit drawings as SVG, decoded
+  through the public native helper as `get-note-drawings` does, instead of
+  Notes' fixed-size PNG. The SVG is embedded or written to the sidecar
+  directory under the same size limits as other assets. Paper drawings keep
+  the PNG. A drawing that cannot be decoded (helper not built, decode error,
+  stroke limit, too large) falls back to the PNG without failing the export,
+  and the new receipt field `vectorDrawings` counts SVG and PNG drawings with
+  the fallback reasons. `vectorDrawings: false` turns it off.
+- `apple-notes-mcp setup --permissions` checks Full Disk Access, Automation of
+  Notes.app, the Shortcut bridges, and Speech Recognition for the app that
+  launched it, with the same read-only probes as `doctor` and
+  `get-capabilities`. For each missing grant it names the System Settings pane
+  and its `x-apple.systempreferences:` URL, opens the pane only with `--open`,
+  and checks again each time the user presses Enter (`--once` and `--json` for
+  scripts). It never changes a setting or a grant.
+- An optional checklist window with Open Settings and Re-check buttons:
+  `apple-notes-mcp setup --permissions-window` compiles it from the packaged
+  Swift source, signs it ad hoc and installs it in Application Support like the
+  public helper; `setup --permissions --window` opens it. The window probes
+  nothing itself, and the server never uses it.
+- The public native helper gains a `speech_status` action that reads the Speech
+  Recognition status without prompting. Changing the helper source means an
+  installed helper reports stale until `apple-notes-mcp setup --public-helper`
+  runs again.
+- `apple-notes-mcp templates edit [name]` starts a local web editor for
+  Markdown export templates. It validates the template JSON as you type with
+  the same validator as `validate-markdown-template`, previews it with the
+  export renderer against built-in sample notes, and saves through the
+  template library (create-only unless "replace" is ticked). A real note is
+  read only with `--note <id>`, once and read-only. The server listens on
+  `127.0.0.1` on a free port, requires a per-run token on every request,
+  refuses foreign `Host` headers and cross-origin requests, serves one page
+  with no external resources, and stops on Ctrl-C or after 30 idle minutes
+  (`--idle-minutes`).
+- `templates edit --tailnet` listens on this Mac's Tailscale IPv4 address
+  instead, with the same token and origin checks, so the editor can be used
+  from another device on the tailnet. It is off unless the flag is given,
+  refuses to start without a Tailscale address, and never changes Tailscale,
+  Serve/Funnel or firewall settings.
+- Paragraph anchors, so a paragraph can be found again after it is edited,
+  moved, or given a new ID by Notes. `create-paragraph-anchor`, or
+  `get-paragraph-link` with `recordAnchor` and `list-note-paragraphs` with
+  `recordAnchors`, record the note's UUID, the paragraph ID, the normalized
+  text and its fingerprint, the neighbouring paragraphs' fingerprints and the
+  block index in a local registry file (0600, replaced atomically under a
+  lock). `resolve-paragraph-anchor` finds the paragraph by its ID, then its
+  exact text, then similar text between its neighbours, with a confidence
+  score. It returns the current `applenotes://` link only when the match is
+  certain and the ID is unique, reports `ambiguous` rather than guessing, and
+  reports `needs-reminting` with the matched block when the paragraph's ID is
+  shared or missing. `list-paragraph-anchors`, `get-paragraph-anchor` and
+  `prune-paragraph-anchors` (a dry run by default) manage the registry. None
+  of these tools changes Notes.
+- `apple-notes-mcp anchors serve`, an opt-in resolver that answers
+  `GET /a/<anchor-id>` with a redirect to the paragraph's current link. It
+  binds 127.0.0.1 unless `--tailnet` is given, needs a token on every
+  request, checks the Host header, and never changes Tailscale or firewall
+  settings. `APPLE_NOTES_MCP_ANCHOR_FILE` and `APPLE_NOTES_MCP_ANCHORS_TOKEN`
+  configure the registry path and a stable token.
 
 ## [2.9.22] - 2026-09-24
 

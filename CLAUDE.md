@@ -201,8 +201,8 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 
 ### query-notes
 - Boolean search read straight from the NoteStore database (read-only, needs Full Disk Access). Prefer it over `search-notes` when Full Disk Access is available: one call matches title **or** body, and it returns in well under a second instead of ~200ms per result
-- Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`; `checklist:open|done`; `pinned`, `locked`, `shared`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
-- Scans the 500 most recently modified notes by default (`scanLimit` up to 5000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
+- Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag` (`has:url` = link preview card, which is also `has:link`; `has:map` = map); `checklist:open|done`; `pinned`, `locked`, `shared`, `quicknote`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
+- Scans the 500 most recently modified notes by default (`scanLimit` up to 10000; a larger scan is slower). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
 - Excludes Recently Deleted and folderless notes unless `includeDeleted: true`
 - Locked notes match on title and metadata only; body predicates never match them, negated or not (`-body:x` does not match a locked or undecodable note)
 - Each hit has `matchedIn` (where the positive text terms occur: `title`, `body`, or both) when the query has a text term and the body is readable; a `title:` term only counts toward the title and a `body:` term only toward the body. An empty list means the note matched through a non-text branch (`pinned OR x`)
@@ -308,6 +308,16 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Neither tool creates or changes a paragraph ID. A later edit in Notes can replace the ID and break a link
 - Requires Full Disk Access; password-protected notes are refused
 
+### Paragraph anchors (create / resolve / list / get / prune-paragraph-anchor(s))
+- When a paragraph link must keep working after edits, record an anchor: `get-paragraph-link` with `recordAnchor: true`, `list-note-paragraphs` with `recordAnchors: true`, or `create-paragraph-anchor` (which also accepts a paragraph whose ID is shared or missing). Store the `anchorId`, not only the url
+- Later, call `resolve-paragraph-anchor` and use its `url` only when `status` is `resolved`. Never build a link from `match` yourself
+- `ambiguous` and `low-confidence` are deliberate refusals, not errors to work around: report them and let the user pick the paragraph (for example with `list-note-paragraphs`), then record a new anchor
+- `needs-reminting` means the paragraph was found but has no safe ID. Report `match.blockIndex` and `match.text`; there is no public way to give it a new ID. `remint: true` only works when a paragraph-ID writer is installed and otherwise reports `writer-unavailable`
+- `refresh: true` updates the stored anchor after a confident match (0.8 or more) so later edits are tracked from the current state; it never touches Notes
+- `prune-paragraph-anchors` is a dry run unless `dryRun: false`. Show the user the `stale` list before removing. `note-deleted` (the note is in Recently Deleted) is not pruned by default
+- The registry (`APPLE_NOTES_MCP_ANCHOR_FILE`, default under `~/Library/Application Support/apple-notes-mcp/`) holds the anchored paragraphs' text; treat it as private
+- The HTTP resolver (`apple-notes-mcp anchors serve`) is a command the user runs; never suggest `--tailnet` unless they ask to open links from other devices
+
 ### get-note-structure
 - One read-only call for a note's overview by exact id: text, block summary, links with `kind` (`inline`, `card`, `note`, `section`), tags, attachments, and metadata (`deepLink`, `isShared`, `isLocked`, `inRecentlyDeleted`, `lastViewed`, word/char counts, `attachmentCount`, checklist counts, `hasDrawing`, `firstImage`)
 - Attachments use the same `kind`, body order, `previewPath` and `firstImage` as `list-attachments`, so the two tools agree about the same attachment
@@ -347,11 +357,13 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Library: `~/Library/Application Support/apple-notes-mcp/templates` or `APPLE_NOTES_MCP_TEMPLATE_DIR`; names are lowercase slugs; `standard-markdown` and `obsidian` are built in and reserved
 - Save is create-only: `[template-exists]` means ask before passing `force: true`
 - Start a new template from `show-markdown-template` output and validate before saving
+- A user who wants to edit templates visually can run `apple-notes-mcp templates edit [name]` in a terminal (a local, token-gated web editor with live validation and preview on sample notes). It is not an MCP tool: suggest it, do not start it for them. `--tailnet` exposes it to their tailnet, so mention it only when they ask to edit from another device
 
 ### export-notes-html
 - Same selection as `export-notes-markdown`; `outputPath` is required (the HTML is never returned inline) and create-only
 - Assets are embedded as data URLs by default. Use `embedAssets: false` (optionally with `assetsDir`) for large media: embedded assets over 10 MiB render as an unavailable marker
 - A sidecar directory defaults to `<output stem>.assets`; keep it next to the HTML when moving the file
+- Classic PencilKit drawings are rendered as SVG through the public native helper; Paper drawings keep Notes' PNG. A drawing that cannot be decoded falls back to the PNG and is counted in `vectorDrawings.fallbackReasons`; report `helper_not_installed` as "run `apple-notes-mcp setup --public-helper` for vector drawings", not as a failed export. `vectorDrawings: false` keeps every PNG
 - Presentation format only: not a backup and not something to import back
 
 ### Batch operations
@@ -466,6 +478,10 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 | "No checklist items found" | Note has no checklists, or Full Disk Access not granted |
 
 Every error result (`isError: true`) also carries `structuredContent.code`: `not_found`, `ambiguous`, `permission_denied`, `full_disk_access_missing`, `shortcut_not_installed`, `timeout_indeterminate`, `verification_failed`, `revision_conflict`, `validation_error`, `unsupported`, `notes_unavailable`, or `operation_failed`. Prefer it over matching message text. When `indeterminate` is `true`, the write may or may not have happened: read the note by exact id before any retry. `committed: false` means nothing was written, so re-reading and retrying is safe. Input-schema rejections carry `validation_error` with `committed: false`; a Notes UUID or numeric key that could not be resolved carries `not_found` or `full_disk_access_missing` instead.
+
+## Guided permissions check (CLI, for the user)
+
+When a user is setting up the server or reports permission errors, you can suggest they run `apple-notes-mcp setup --permissions` in their terminal. It reports Full Disk Access, Automation of Notes.app, the Shortcut bridges, and Speech Recognition for the app that launched it, names the System Settings pane for each missing grant, opens panes only with `--open`, and re-checks when they press Enter. `setup --permissions --window` shows the same checklist in a small window, once built with `setup --permissions-window`. It is a user-run command, not an MCP tool: the grants it sees belong to the app it runs in, which may differ from your MCP host. Inside the host, use `doctor`. Never tell the user a grant was changed; only they can change it in System Settings.
 
 ## Recurring macOS permission prompts → offer the official-Node fix
 

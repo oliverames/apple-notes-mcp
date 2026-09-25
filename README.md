@@ -501,7 +501,7 @@ can match titles and bodies together.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Query expression (syntax below), at most 2000 characters |
 | `limit` | number | No | Maximum notes to return. Defaults to 50, maximum 500. The response reports the total match count. |
-| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 5000. The response says when older notes were left unscanned. |
+| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 10000. The response says when older notes were left unscanned. A large scan decodes more bodies, so it takes longer. |
 | `includeDeleted` | boolean | No | Also scan notes in Recently Deleted, notes pending deletion, and folderless notes. Defaults to `false`. |
 | `includeWordCount` | boolean | No | Add `wordCount` to each returned note, the same count `words:` filters on (`null` when locked or unreadable). Free when the query already reads bodies; a metadata-only query (for example `pinned`) reads just the returned notes' bodies in one extra read-only query. Defaults to `false`. |
 
@@ -514,9 +514,9 @@ can match titles and bodies together.
 | `folder:Work`, `folder:"Work/Clients"` | The note's own folder, by name or full path, case-insensitive (notes in subfolders are not included); a literal `/` in a name can be written `\/` as in `list-folders` |
 | `account:iCloud` | Account name, case-insensitive |
 | `tag:finance` | Native Notes tag (with or without `#`); textual hashtags are ordinary words |
-| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:tag` | The note body contains that kind of object |
+| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:url`, `has:map`, `has:tag` | The note body contains that kind of object. `has:url` is a link preview card (it also counts as `has:link`, as inline links do); `has:map` is a map attachment |
 | `checklist:open`, `checklist:done` | At least one unchecked item; or items present and all checked |
-| `pinned`, `locked`, `shared` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder |
+| `pinned`, `locked`, `shared`, `quicknote` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder, and `quicknote` is a note created as a Quick Note |
 | `words:>250` | Word count, with `=`, `>`, `>=`, `<`, `<=` |
 | `created:>=2026-07-01`, `modified:<2026-09-01` | Dates as `YYYY-MM-DD` in local time, with the same operators; `=` means that whole day |
 | `a b`, `a AND b`, `a OR b`, `NOT a`, `-a`, `( … )` | AND is implicit and binds tighter than OR |
@@ -713,6 +713,7 @@ IDs.
 | `linkableOnly` | boolean | No | Return only paragraphs with a `url` |
 | `offset` | number | No | First paragraph to return (default 0). Use `page.nextOffset` |
 | `limit` | number | No | Maximum paragraphs per page (default 500, max 5000) |
+| `recordAnchors` | boolean | No | Also record a [paragraph anchor](#paragraph-anchors) for each returned paragraph (at most 500 per call); each row gains `anchorId` and the result gains `anchorsRecorded` (the new ones). Writes only the local anchor registry |
 
 ---
 
@@ -747,6 +748,119 @@ and an edit in Notes can later replace the ID and break the link.
 | `match` | string | One of `contains`, `match`, `blockIndex` | The whole paragraph |
 | `blockIndex` | number | One of `contains`, `match`, `blockIndex` | The paragraph's `blockIndex` |
 | `occurrence` | number | No | Which match to use when several paragraphs match |
+| `recordAnchor` | boolean | No | Also record a [paragraph anchor](#paragraph-anchors) for the linked paragraph and return its `anchorId`. Writes only the local anchor registry |
+
+---
+
+#### Paragraph anchors
+
+A paragraph link breaks when Notes replaces or copies the paragraph's ID. A
+paragraph anchor records enough about the paragraph to find it again: the
+note's Notes UUID, the paragraph ID and its status, the paragraph's normalized
+text and a fingerprint of it, the fingerprints of the paragraphs before and
+after it, its `blockIndex`, and when it was recorded. Anchors are kept in one
+local file, `~/Library/Application Support/apple-notes-mcp/paragraph-anchors.json`
+(or the absolute path in `APPLE_NOTES_MCP_ANCHOR_FILE`). It is created with
+mode 0600 in a 0700 directory, replaced atomically under a lock file, and
+holds the text of every anchored paragraph. A symlinked, unreadable or
+corrupt registry is refused and left as it is. The anchor tools never change
+Notes.
+
+Resolving an anchor tries three steps in order, and every step fails closed:
+
+1. **Paragraph ID.** A paragraph whose ID is still unique in the note is the
+   anchored paragraph, even if its text was edited or it moved. A link to that
+   ID opens exactly that paragraph.
+2. **Exact text.** The same normalized text. When several paragraphs have it,
+   only the one whose neighbours still match is chosen; a tie is `ambiguous`.
+3. **Text and neighbours.** Similar text between both recorded neighbours, or
+   nearly identical text beside one of them. Two close candidates are
+   `ambiguous`; one below `minConfidence` is `low-confidence`.
+
+A match whose ID is now shared or missing is `needs-reminting`: the paragraph
+is found (the result names its block), but no safe link exists until it gets a
+new ID. Public automation cannot set a paragraph ID, so this server only
+reports it; `remint: true` hands the block to a paragraph-ID writer when one
+is installed (none is by default) and reports `writer-unavailable` otherwise.
+
+To share anchored links outside Notes, see the
+[paragraph anchor resolver](#paragraph-anchor-resolver-opt-in).
+
+#### `create-paragraph-anchor`
+
+Records an anchor for one paragraph, selected exactly as in
+`get-paragraph-link` (note by `id` or `title`/`folder`; paragraph by one of
+`contains`, `match`, `blockIndex`, plus `occurrence`). Unlike
+`get-paragraph-link`, a paragraph whose ID is shared or missing can be
+anchored. Recording the same paragraph again (same note, ID, text and block)
+returns the existing anchor with `created: false`.
+
+Returns `anchor`, `created`, and `url` when the paragraph currently has a
+unique ID.
+
+**Requires:** Full Disk Access. Writes only the anchor registry.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id`, `title`, `folder` | string | One of `id`, `title` | Note selector, as in `list-note-paragraphs` |
+| `contains`, `match`, `blockIndex`, `occurrence` | | One of `contains`, `match`, `blockIndex` | Paragraph selector, as in `get-paragraph-link` |
+
+#### `resolve-paragraph-anchor`
+
+Finds an anchored paragraph in the note as it is now. The result has `status`
+(`resolved`, `needs-reminting`, `ambiguous`, `low-confidence`, `not-found`,
+`note-not-found`, `note-deleted` for a note in Recently Deleted, or
+`note-unreadable` for a locked note), `method` (`paragraph-id`, `exact-text`,
+`text-and-neighbours`), `confidence` (0 to 1), `match` (`blockIndex`, `text`,
+`paragraphId`, `paragraphIdStatus`), `changes` (`textChanged`,
+`blockIndexChanged`, `paragraphIdChanged`), and `message`. `url`, the current
+`applenotes://` link, is present only when `status` is `resolved`.
+
+**Requires:** Full Disk Access.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `anchorId` | string | Yes | The anchor (`pa_` and 24 hex digits) |
+| `minConfidence` | number | No | Lowest confidence accepted as a match (default 0.6) |
+| `refresh` | boolean | No | After a match with confidence 0.8 or more, store the paragraph as it is now (text, neighbours, block, ID), so later edits are tracked from here. Reports `refreshed` or `refreshSkipped` |
+| `remint` | boolean | No | On `needs-reminting`, ask the installed paragraph-ID writer for a new ID and resolve again. Reports `remint.reason: "writer-unavailable"` when none is installed |
+
+#### `list-paragraph-anchors`
+
+Lists recorded anchors in the order recorded, with `total`, the `registry`
+path and `page` info. Reads only the registry.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `noteIdentifier` | string | No | Only anchors in the note with this Notes UUID |
+| `offset` | number | No | First anchor to return (default 0) |
+| `limit` | number | No | Maximum anchors (default 100, max 1000) |
+
+#### `get-paragraph-anchor`
+
+Returns one stored anchor as recorded. Reads only the registry.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `anchorId` | string | Yes | The anchor |
+
+#### `prune-paragraph-anchors`
+
+Removes anchors that no longer resolve, or the anchors you list. It is a dry
+run unless `dryRun` is `false`. Without `anchorIds` it resolves every anchor
+in scope and treats `not-found` and `note-not-found` as stale. A note in
+Recently Deleted (`note-deleted`) is kept by default because it can be
+restored. Returns `stale` (`anchorId`, `status`, `message`), `examined`, and
+`removed`.
+
+**Requires:** Full Disk Access unless `anchorIds` is given.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `anchorIds` | string[] | No | Remove exactly these anchors instead of resolving |
+| `noteIdentifier` | string | No | Only anchors in the note with this Notes UUID |
+| `statuses` | string[] | No | Statuses treated as stale (default `not-found`, `note-not-found`) |
+| `dryRun` | boolean | No | Report without removing (default `true`) |
 
 ---
 
@@ -1799,7 +1913,7 @@ disabled checkboxes, block quotes and monospaced paragraphs become
 `blockquote` and `pre`, and inline runs keep bold, italic, underline,
 strikethrough, highlight, superscript, subscript, text color and safe links.
 Tables are semantic `<table>` elements with a header row. Images, drawings
-(Notes' fallback image, or its preview), scans (PDF with preview), audio,
+(see below), scans (PDF with preview), audio,
 video, files and link cards (title, domain and preview thumbnail) appear in
 body order. Attachments with no body marker are appended in creation order.
 An attachment with no usable source renders a visible
@@ -1808,6 +1922,19 @@ An attachment with no usable source renders a visible
 
 A folder export is one presentation document with notes separated by
 `<hr class="note-separator">`. It is not a backup or restore format.
+
+Classic PencilKit drawings (`com.apple.drawing.2` and `com.apple.drawing`)
+are rendered as SVG, decoded through the public native helper exactly as
+[`get-note-drawings`](#get-note-drawings) does. The SVG is embedded as a data
+URL, or written to the sidecar directory with `embedAssets: false`, and it is
+subject to the same size limits as any other asset. It stays sharp at any
+zoom, while Notes' own fallback image is a fixed-size PNG. Paper drawings
+(`com.apple.paper`) have no public decoder and keep Notes' fallback image or
+preview. If the helper is not built (`apple-notes-mcp setup --public-helper`),
+a drawing does not decode, the helper stopped at its stroke limit, or the SVG
+is too large, that drawing falls back to the PNG; the export never fails for
+it. The SVG traces each stroke's points with its color and mean width, so
+pencil grain and marker blending are approximated.
 
 **Requires:** Full Disk Access. Password-protected notes are skipped in a
 folder export and refused for a single note.
@@ -1821,6 +1948,7 @@ folder export and refused for a single note.
 | `outputPath` | string | Yes | Absolute HTML file to create. Create-only: an existing file is refused with `[output_exists]` |
 | `embedAssets` | boolean | No | Embed assets as data URLs (default `true`). Each asset is capped at 10 MiB and a document at 256 MiB of embedded assets; a larger one renders as unavailable with a hint to use `embedAssets: false` |
 | `assetsDir` | string | No | With `embedAssets: false`, the sidecar directory (default `<output stem>.assets` beside the file). Existing files are never replaced; a taken name gets `-2`, `-3`, ... |
+| `vectorDrawings` | boolean | No | Render classic drawings as SVG through the public native helper (default `true`). `false` keeps Notes' PNG for every drawing and never runs the helper |
 
 The HTML is always written to a file, because an embedded document is too
 large for an MCP message. Paths follow the `save-attachment` rules and may not
@@ -1828,8 +1956,14 @@ point inside the Notes library container. Sidecar URLs are relative to the
 HTML file, so the file and its `.assets` directory can be moved together.
 
 **Returns:** `format`, `count`, `bytes`, `output`, either `embedded` (assets
-embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. Nothing
-already written is deleted if a later step fails.
+embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. When the notes
+contain classic drawings and `vectorDrawings` is on, `vectorDrawings` reports
+`rendered` (drawings placed as SVG), `fallback` (drawings left as PNG), and
+`fallbackReasons`, a count per code such as `helper_not_installed`,
+`undecodable`, `truncated`, `timeout`, or `too-large`. After one helper
+timeout, or when the helper is not usable, the remaining drawings in the
+export are not decoded. Nothing already written is deleted if a later step
+fails.
 
 ---
 
@@ -1912,6 +2046,20 @@ be deleted.
 | `name` | string | Yes | The saved template to delete |
 
 **Returns:** `name`, `path`, and `deleted: true`.
+
+#### Template editor (command line)
+
+`apple-notes-mcp templates edit [name]` starts a local web editor for
+templates: edit the JSON on one side and see it validated and rendered
+against built-in sample notes on the other, then save it to the library
+(create-only unless you tick "replace"). It prints one address with a
+per-run token, listens on `127.0.0.1` only, refuses cross-origin requests,
+and stops on Ctrl-C or after 30 idle minutes (`--idle-minutes`). It reads a
+real note only when you pass `--note <id>`, and then read-only. `--tailnet`
+listens on this Mac's Tailscale address instead, so another device on your
+tailnet can open it; it never changes Tailscale or firewall settings. See
+[docs/markdown-templates.md](docs/markdown-templates.md#editing-in-a-browser)
+for options and exactly what it exposes.
 
 ---
 
@@ -3405,6 +3553,8 @@ All configuration is optional — the server works out of the box. Override beha
 | `APPLE_NOTES_MCP_CONFIG_FILE` | `~/Library/Application Support/apple-notes-mcp/config.json` | Path to the JSON config file (see below). |
 | `APPLE_NOTES_MCP_TIMEOUT_MS` | `30000` (30 s) | Total AppleScript operation timeout, including retry attempts and delays. Raise it if full-library operations (large searches, exports) time out on a big Notes library. Per-call `timeoutMs` options still win, and a write tool's `timeoutSeconds` argument overrides it for that call. |
 | `APPLE_NOTES_MCP_TEMPLATE_DIR` | `~/Library/Application Support/apple-notes-mcp/templates` | Absolute directory of the saved Markdown template library (`save-markdown-template` and friends). |
+| `APPLE_NOTES_MCP_ANCHOR_FILE` | `~/Library/Application Support/apple-notes-mcp/paragraph-anchors.json` | Absolute path of the [paragraph anchor](#paragraph-anchors) registry. |
+| `APPLE_NOTES_MCP_ANCHORS_TOKEN` | unset | Token for `apple-notes-mcp anchors serve` (at least 32 characters). Unset, the resolver makes a new random token each run. |
 | `APPLE_NOTES_MCP_EXPORT_MAX_BYTES` | `8388608` (8 MB) | Largest response `export-notes-json` sends; a page closes early to stay under it. `export-notes-markdown` returns inline Markdown up to half of it. The default sits below the 10 MB per-message limit of MCP SDK stdio clients, which drop the connection on anything larger. Raise it only if your MCP client accepts bigger messages. |
 | `APPLE_NOTES_MCP_BLOCKS_MAX_BYTES` | `4194304` (4 MB) | Largest block payload one [`get-note-blocks`](#get-note-blocks) page returns; the page closes early to stay under it, and a single oversized paragraph comes back with `textOmitted: true`. [`get-note-structure`](#get-note-structure) also omits note text larger than this. A [`list-note-paragraphs`](#list-note-paragraphs) or [`list-note-links`](#list-note-links) page also stops early to stay under it. |
 | `APPLE_NOTES_MCP_MAX_RETRIES` | `2` | Maximum attempts for a read-only AppleScript call that fails with a **transient** error (Notes.app busy / not responding / lost connection). `2` means one retry; set `1` to fail fast with no retries. Retries share the single `APPLE_NOTES_MCP_TIMEOUT_MS` budget rather than each getting a fresh one, and a retry is skipped when under a second of that budget remains — so this is a ceiling, not a guarantee. In particular a call that exhausts the budget with a **timeout** has no time left to retry by construction. Mutating operations run once because a timeout can occur after Notes.app applied the change. Non-transient errors (e.g. "note not found") never retry. |
@@ -3478,6 +3628,41 @@ Every tool that does not read the Notes database works normally without Full Dis
 
 ---
 
+## Permissions check
+
+`apple-notes-mcp setup --permissions` checks, in one report, the four grants that decide what the server can do on this Mac:
+
+| Item | How it is checked | Needed for |
+|------|-------------------|------------|
+| Full Disk Access | one read-only `SELECT 1` against `NoteStore.sqlite` | every database-backed tool (see [Full Disk Access](#full-disk-access)) |
+| Automation of Notes.app | one read-only Apple event (the first account's name) | every AppleScript tool |
+| Shortcut bridges (optional) | `shortcuts list`, like `setup --check` | the native-write tools |
+| Speech Recognition (optional) | the public helper's `speech_status`, read without prompting | `transcribe-note-audio` before macOS 26 |
+
+```bash
+apple-notes-mcp setup --permissions          # report, then press Enter to check again
+apple-notes-mcp setup --permissions --open   # also open the System Settings pane of each missing grant
+apple-notes-mcp setup --permissions --once   # report once and exit (also --json)
+```
+
+For each missing grant the report names the System Settings pane and its URL, for example `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles` (the `com.apple.preference.security` form before macOS 13). Panes open only with `--open`, each once per run. The command never changes a setting or a grant: you make the change in System Settings, then press Enter to check again. Type `q` to stop. It exits 0 when Full Disk Access and Automation are both granted, 1 otherwise. The first check may make macOS ask whether the app may control Notes; choose **Allow**, since that prompt is the only way to add an Automation grant.
+
+macOS attributes these grants to the app that launched the process, so the report names it (for example `/Applications/iTerm.app`). Run the check from the app you use as the MCP host when you can. Claude Desktop launches servers as their own responsible process, so for it use the `doctor` tool inside Claude Desktop, and add the Node binary it names to Full Disk Access. The Speech item reads `unknown` until the [public native helper](#public-native-helper) is built.
+
+### Optional checklist window
+
+The same checklist is also available in a small window with **Open Settings** and **Re-check** buttons. Like the public helper, it is built on your Mac from the packaged Swift source, never shipped as a binary:
+
+```bash
+apple-notes-mcp setup --permissions-window           # compile, ad-hoc sign, verify, install
+apple-notes-mcp setup --permissions-window --check   # report the installed state only
+apple-notes-mcp setup --permissions --window         # open the window
+```
+
+Setup compiles `native/permissions-window/apple-notes-permissions-window.swift`, signs it ad hoc, runs its `hello` handshake (which shows no window), and installs it in `~/Library/Application Support/apple-notes-mcp/permissions-window/` with a manifest of source and binary SHA-256 digests; `APPLE_NOTES_MCP_PERMISSIONS_WINDOW_DIR` overrides the folder. The window probes nothing itself. The command runs every check and sends the results to it, and opens a pane only for an item it reported. If the window is not built, is stale after an upgrade, or was modified, `--window` says so and shows the checklist in the terminal instead. The server never uses the window.
+
+---
+
 ## Public native helper
 
 `get-note-drawings` needs Apple's PencilKit framework and `transcribe-note-audio` needs the Speech framework; neither has an AppleScript or command-line interface. For them, the server uses a small Swift helper that links public Apple frameworks only (AppKit, PencilKit, AVFoundation, and Speech). No prebuilt binary ships with the package. Build it once on your Mac:
@@ -3490,6 +3675,45 @@ apple-notes-mcp setup --public-helper --check  # report the installed state only
 Setup compiles `native/public-helper/apple-notes-public-helper.swift` with `xcrun swiftc` (install the Command Line Tools with `xcode-select --install` if it is missing), signs it ad hoc, runs its `hello` handshake, and installs it in `~/Library/Application Support/apple-notes-mcp/public-helper/` next to a manifest recording the SHA-256 of the source and the binary. Before every use the server re-checks both digests: after an upgrade that changes the helper source, or if the binary is replaced, the helper is refused until you run setup again. `APPLE_NOTES_MCP_PUBLIC_HELPER_DIR` overrides the install folder and `APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS` the per-call timeout.
 
 The helper never opens the Notes database and never writes under the Notes group container. The server reads the bytes it needs (read-only) and passes them to the helper on stdin, or, for transcription, names one audio file that the helper opens for reading; the helper answers with one JSON object on stdout.
+
+---
+
+## Paragraph anchor resolver (opt-in)
+
+An `applenotes://` paragraph link only opens on an Apple device, and it breaks
+when the paragraph's ID changes. For links shared outside Notes, you can run a
+small local resolver that looks up a [paragraph anchor](#paragraph-anchors)
+when the link is opened and redirects to the paragraph's current link:
+
+```bash
+apple-notes-mcp anchors serve                 # http://127.0.0.1:<random port>
+apple-notes-mcp anchors serve --port 8765     # a fixed port
+apple-notes-mcp anchors serve --tailnet       # this Mac's Tailscale address instead
+```
+
+It serves one route, `GET /a/<anchor-id>?token=<token>`. A `resolved` anchor
+answers with a 302 redirect to the `applenotes://` link. Any other status gets
+a short plain-text answer and no redirect: 409 for `ambiguous`,
+`low-confidence`, `needs-reminting` and `note-unreadable`, and 404 for a gone
+paragraph or note.
+
+- **Off by default.** Only this command starts it; the MCP server never does.
+  It runs in the foreground until you press Ctrl-C.
+- **Loopback by default.** It binds `127.0.0.1`. `--tailnet` binds the first
+  `100.64.0.0/10` address on this Mac (a Tailscale address) instead, and fails
+  if there is none. It never runs `tailscale` and never changes Tailscale,
+  firewall or system settings.
+- **Token required.** Every request needs the token, as `?token=` or
+  `Authorization: Bearer`. It is `APPLE_NOTES_MCP_ANCHORS_TOKEN` when set (at
+  least 32 characters; use this for links that must survive a restart), or a
+  random token printed once at startup. Tokens are compared in constant time
+  and never logged; request logs on stderr omit the query string. After 20
+  failed token checks in a minute, requests get 429 until the minute passes.
+- **Host check.** The `Host` header must name the bound address, which blocks
+  DNS rebinding. Only `GET` and `HEAD` are served, with `Cache-Control:
+  no-store` and `Referrer-Policy: no-referrer`.
+- It needs Full Disk Access for the terminal or process that runs it, and it
+  reads the same registry as the anchor tools.
 
 ---
 
@@ -3582,6 +3806,7 @@ In a JSON string literal the two characters `\\` denote **one** literal backslas
 - macOS needs automation permission
 - Go to System Settings > Privacy & Security > Automation
 - Ensure your terminal/Claude has permission to control Notes
+- `apple-notes-mcp setup --permissions --open` checks every grant and opens the pane of each missing one ([Permissions check](#permissions-check))
 
 ### Native writes time out or report an uncertain outcome
 - Symptom: `add-native-tags`, `set-note-pinned`, `append-native` or another native write fails with "Shortcuts timed out waiting for …", "Operation outcome uncertain" or "readback was not verified", while `doctor` and `get-capabilities` report the bridges installed
