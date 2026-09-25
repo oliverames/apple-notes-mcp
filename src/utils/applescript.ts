@@ -8,8 +8,10 @@
  */
 
 import { execFileSync } from "child_process";
+import { constants as bufferConstants } from "node:buffer";
 import type { AppleScriptResult, AppleScriptOptions } from "@/types.js";
 import { AUTOMATION_REMEDIATION } from "@/utils/docsUrls.js";
+import { callTimeoutMs } from "@/utils/callTimeout.js";
 
 /**
  * Default execution timeout for AppleScript commands in milliseconds.
@@ -33,7 +35,7 @@ const DEFAULT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
  * variable is unset or not a valid positive number. Shared by the reliability
  * knobs (max buffer, timeout, retries) so they all validate the same way.
  */
-function envPositiveNumber(name: string): number | undefined {
+export function envPositiveNumber(name: string): number | undefined {
   const raw = process.env[name];
   if (raw !== undefined) {
     const n = Number(raw);
@@ -42,8 +44,60 @@ function envPositiveNumber(name: string): number | undefined {
   return undefined;
 }
 
-function getMaxBuffer(): number {
+export function getMaxBuffer(): number {
   return envPositiveNumber("APPLE_NOTES_MCP_MAX_BUFFER") ?? DEFAULT_MAX_BUFFER_BYTES;
+}
+
+/**
+ * The most output one call can accept, whatever APPLE_NOTES_MCP_MAX_BUFFER
+ * says: the output becomes one string, and V8 cannot build a string longer
+ * than MAX_STRING_LENGTH (about 512 MB on 64-bit Node). A UTF-8 byte count at
+ * or below this also keeps the decoded string within it.
+ */
+const MAX_OUTPUT_BYTES = bufferConstants.MAX_STRING_LENGTH;
+
+/**
+ * Output cap for reading one note body. Notes.app returns a body with every
+ * inline image embedded as base64, so a 40 MB TIFF yields a body of about
+ * 110 MB, past the general 64 MB cap (#237).
+ */
+const NOTE_BODY_MAX_BUFFER_BYTES = Math.min(512 * 1024 * 1024, MAX_OUTPUT_BYTES);
+
+/**
+ * Output cap for a note body read: the general cap or the body cap, whichever
+ * is larger, and never past the largest string Node.js can hold.
+ */
+export function noteBodyMaxBuffer(): number {
+  return Math.min(Math.max(getMaxBuffer(), NOTE_BODY_MAX_BUFFER_BYTES), MAX_OUTPUT_BYTES);
+}
+
+/**
+ * True when osascript printed more than maxBuffer allows. Node then kills the
+ * child with killSignal (SIGKILL here) and reports ENOBUFS, so this must be
+ * checked before isTimeoutError, which also matches SIGKILL. Before #237 an
+ * oversized note body was reported as a 30-second timeout and retried.
+ * ERR_STRING_TOO_LONG (output that fit the buffer but not in one string) is
+ * the same failure; the cap is clamped so it should not occur.
+ */
+function isOutputOverflowError(error: unknown): boolean {
+  const code = error instanceof Error ? (error as Error & { code?: string }).code : undefined;
+  return code === "ENOBUFS" || code === "ERR_STRING_TOO_LONG";
+}
+
+/**
+ * Explains an output overflow; worded so RETRYABLE_ERROR_PATTERNS never match
+ * it. Every variant starts "Notes.app returned more than <limit> of output",
+ * which classifyBodyReadError (utils/bodyReadFailure) recognizes.
+ */
+export function outputOverflowMessage(maxBufferBytes: number): string {
+  const mib = 1024 * 1024;
+  const limit =
+    maxBufferBytes >= mib ? `${Math.round(maxBufferBytes / mib)} MB` : `${maxBufferBytes} bytes`;
+  const remedy =
+    maxBufferBytes >= MAX_OUTPUT_BYTES
+      ? "That is the longest string Node.js can hold, so raising APPLE_NOTES_MCP_MAX_BUFFER will not help; remove or shrink the large image or attachment in Notes.app."
+      : "Raise APPLE_NOTES_MCP_MAX_BUFFER (in bytes) to allow more.";
+  return `Notes.app returned more than ${limit} of output, the most this server accepts from one AppleScript call. A note whose body carries large inline images or attachments can reach this. ${remedy}`;
 }
 
 /**
@@ -186,14 +240,65 @@ function sleep(ms: number): void {
 }
 
 /**
+ * What a raw AppleScript TCC refusal looks like before normalisation.
+ *
+ * Exported alongside the message below because the two MUST derive from one
+ * source. They did not: `healthCheck` classified a denial by re-testing raw
+ * substrings ("not authorized" / "not permitted") that this mapping had
+ * already REPLACED, in three independent copies of the same knowledge. Each
+ * copy was free to drift from the mapping — and from the OS.
+ *
+ * Locale note: macOS emits this refusal in the system language. An `en_GB` /
+ * `en_AU` / `en_IE` Mac says "Not authorised", so the American-only spelling
+ * silently failed to classify a genuine denial. `(?:i[sz])` covers both.
+ *
+ * `\(-1743\)` is `errAEEventNotPermitted`, the OSStatus AppleScript reports
+ * for a TCC Automation refusal. It is emitted REGARDLESS OF SYSTEM LANGUAGE,
+ * so it is the only signal that classifies a fully localised (fr/de/es)
+ * refusal no English regex can match. Do not "simplify" it away.
+ */
+export const PERMISSION_DENIED_PATTERN =
+  /not author(?:i[sz])ed|not permitted|access.*denied|\(-1743\)/i;
+
+/** The normalised text a permission failure is reported to callers as. */
+export const PERMISSION_DENIED_MESSAGE = `Permission denied. ${AUTOMATION_REMEDIATION}`;
+
+/**
+ * Is this error a TCC/Automation refusal?
+ *
+ * Accepts BOTH forms deliberately — the raw text AppleScript emits and the
+ * normalised text callers actually receive — so a caller cannot be caught out
+ * by which side of the error mapping it happens to be reading.
+ */
+export function isPermissionDenied(error?: string | null): boolean {
+  if (!error) return false;
+  return PERMISSION_DENIED_PATTERN.test(error) || error.includes(PERMISSION_DENIED_MESSAGE);
+}
+
+/**
+ * Double-quoted segments on one line, straight or curly. Error text
+ * interpolates caller data (note titles, folder names, tags) inside double
+ * quotes, so a note titled "Meeting timed out" must not read as a timeout.
+ */
+const QUOTED = /"[^"\n]*"|“[^”\n]*”/g;
+
+/**
+ * Replace quoted caller data with `""`, so error classification sees only the
+ * wording that AppleScript or the server itself produced.
+ */
+export function stripQuoted(text: string): string {
+  return text.replace(QUOTED, '""');
+}
+
+/**
  * User-friendly error messages mapped from common AppleScript errors.
  * Each entry maps a pattern (regex or string) to a user-friendly message.
  */
 const ERROR_MAPPINGS: Array<{ pattern: RegExp; message: string }> = [
   // Permission errors
   {
-    pattern: /not authorized|not permitted|access.*denied/i,
-    message: `Permission denied. ${AUTOMATION_REMEDIATION}`,
+    pattern: PERMISSION_DENIED_PATTERN,
+    message: PERMISSION_DENIED_MESSAGE,
   },
   // Application not running
   {
@@ -276,10 +381,24 @@ function parseErrorMessage(errorOutput: string): string {
     coreError = executionError[1].trim();
   }
 
-  // Try to match against known error patterns for user-friendly messages
+  // Classify permission refusals against the RAW output, before the mapping
+  // loop. The `execution error:` extraction above deliberately strips the
+  // trailing OSStatus code, and on a fully localised Mac `(-1743)` is the only
+  // part of the refusal any pattern can match — matching coreError alone would
+  // throw the sole locale-independent signal away.
+  // Quoted note, folder and account names are caller data: a note titled
+  // "Access denied" must not read as a permission refusal.
+  if (isPermissionDenied(stripQuoted(errorOutput))) {
+    return PERMISSION_DENIED_MESSAGE;
+  }
+
+  // Try to match against known error patterns for user-friendly messages.
+  // A rule without a capture group must match outside quoted names; a rule
+  // with one captures the quoted name itself, so it matches the raw text.
+  const unquoted = stripQuoted(coreError);
   for (const { pattern, message } of ERROR_MAPPINGS) {
     const match = coreError.match(pattern);
-    if (match) {
+    if (match && (match.length > 1 || pattern.test(unquoted))) {
       // Replace $1, $2, etc. with captured groups
       let result = message;
       for (let i = 1; i < match.length; i++) {
@@ -337,15 +456,24 @@ export function executeAppleScript(
   script: string,
   options: AppleScriptOptions = {}
 ): AppleScriptResult {
-  // Per-call options win; then process-wide env knobs; then built-in defaults.
+  // Per-call options win; then a tool call's timeoutSeconds override; then
+  // process-wide env knobs; then built-in defaults.
   const timeoutMs =
-    options.timeoutMs ?? envPositiveNumber("APPLE_NOTES_MCP_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS;
-  const maxRetries =
-    options.maxRetries ?? envPositiveNumber("APPLE_NOTES_MCP_MAX_RETRIES") ?? DEFAULT_MAX_RETRIES;
+    options.timeoutMs ??
+    callTimeoutMs() ??
+    envPositiveNumber("APPLE_NOTES_MCP_TIMEOUT_MS") ??
+    DEFAULT_TIMEOUT_MS;
+  // maxRetries counts attempts, so anything below 1 (a caller passing 0 to
+  // mean "no retries") still runs the script once.
+  const maxRetries = Math.max(
+    1,
+    options.maxRetries ?? envPositiveNumber("APPLE_NOTES_MCP_MAX_RETRIES") ?? DEFAULT_MAX_RETRIES
+  );
   const retryDelayMs =
     options.retryDelayMs ??
     envPositiveNumber("APPLE_NOTES_MCP_RETRY_DELAY_MS") ??
     DEFAULT_RETRY_DELAY_MS;
+  const maxBufferBytes = Math.min(options.maxBufferBytes ?? getMaxBuffer(), MAX_OUTPUT_BYTES);
 
   // Validate input - empty scripts are likely programmer errors
   if (!script || !script.trim()) {
@@ -391,7 +519,7 @@ export function executeAppleScript(
         killSignal: "SIGKILL",
         // Raise the output cap above Node's 1 MB default so large exports /
         // long notes aren't truncated into an ENOBUFS failure. (#16)
-        maxBuffer: getMaxBuffer(),
+        maxBuffer: maxBufferBytes,
       });
 
       const duration = Date.now() - attemptStart;
@@ -415,8 +543,12 @@ export function executeAppleScript(
       let isTimeout = false;
       let rawError: string | undefined;
 
-      // Check for timeout first - provide specific message
-      if (isTimeoutError(error)) {
+      // An output overflow also kills osascript with SIGKILL, so it is told
+      // apart from a timeout first. Retrying cannot help: the output is the
+      // same size next time.
+      if (isOutputOverflowError(error)) {
+        errorMessage = outputOverflowMessage(maxBufferBytes);
+      } else if (isTimeoutError(error)) {
         isTimeout = true;
         const timeoutSecs = Math.round(timeoutMs / 1000);
         errorMessage = `Operation timed out after ${timeoutSecs} seconds. Notes.app may be unresponsive or the operation involves too many notes.`;

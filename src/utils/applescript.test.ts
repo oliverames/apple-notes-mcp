@@ -7,7 +7,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "child_process";
-import { executeAppleScript } from "./applescript.js";
+import { constants as bufferConstants } from "node:buffer";
+import {
+  executeAppleScript,
+  getMaxBuffer,
+  noteBodyMaxBuffer,
+  isPermissionDenied,
+  PERMISSION_DENIED_MESSAGE,
+} from "./applescript.js";
 
 // Mock the child_process module
 vi.mock("child_process", () => ({
@@ -123,6 +130,94 @@ describe("executeAppleScript", () => {
       executeAppleScript("get name of notes");
       expect(execOptions().maxBuffer).toBe(1048576);
     });
+
+    it("lets one call set its own output cap", () => {
+      mockExecFileSync.mockReturnValue("ok");
+      executeAppleScript("get body of note 1", { maxBufferBytes: 123456789 });
+      expect(execOptions().maxBuffer).toBe(123456789);
+    });
+  });
+
+  // Node kills osascript with killSignal when output passes maxBuffer, so the
+  // error also carries SIGKILL. Before #237 it read as a timeout and retried.
+  describe("output overflow (#237)", () => {
+    afterEach(() => {
+      delete process.env.APPLE_NOTES_MCP_MAX_BUFFER;
+    });
+
+    function makeOverflowError(): Error {
+      return Object.assign(new Error("spawnSync osascript ENOBUFS"), {
+        code: "ENOBUFS",
+        signal: "SIGKILL",
+      });
+    }
+
+    it("names the output cap instead of reporting a timeout, and does not retry", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw makeOverflowError();
+      });
+      const result = executeAppleScript("get body of note 1", { maxRetries: 3 });
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        "Notes.app returned more than 64 MB of output, the most this server accepts from one AppleScript call. A note whose body carries large inline images or attachments can reach this. Raise APPLE_NOTES_MCP_MAX_BUFFER (in bytes) to allow more."
+      );
+      expect(result.error).not.toMatch(/timed? out/i);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    });
+
+    it("clamps any cap to V8's largest string and says raising it will not help", () => {
+      process.env.APPLE_NOTES_MCP_MAX_BUFFER = String(4 * 1024 * 1024 * 1024);
+      mockExecFileSync.mockImplementation(() => {
+        throw makeOverflowError();
+      });
+      const result = executeAppleScript("get body of note 1", {
+        maxBufferBytes: noteBodyMaxBuffer(),
+      });
+      expect(execOptions().maxBuffer).toBe(bufferConstants.MAX_STRING_LENGTH);
+      expect(result.error).toMatch(/^Notes\.app returned more than \d+ MB of output/);
+      expect(result.error).toContain("raising APPLE_NOTES_MCP_MAX_BUFFER will not help");
+      expect(result.error).not.toMatch(/timed? out/i);
+    });
+
+    it("treats output too long for one string as the same overflow", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw Object.assign(new Error("Cannot create a string longer than 0x1fffffe8 characters"), {
+          code: "ERR_STRING_TOO_LONG",
+        });
+      });
+      const result = executeAppleScript("get body of note 1", { maxRetries: 3 });
+      expect(result.error).toMatch(/^Notes\.app returned more than 64 MB of output/);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    });
+
+    it("states a cap under 1 MB in bytes", () => {
+      process.env.APPLE_NOTES_MCP_MAX_BUFFER = "50";
+      mockExecFileSync.mockImplementation(() => {
+        throw makeOverflowError();
+      });
+      expect(executeAppleScript("get name of notes").error).toContain(
+        "returned more than 50 bytes of output"
+      );
+    });
+  });
+
+  describe("noteBodyMaxBuffer (#237)", () => {
+    afterEach(() => {
+      delete process.env.APPLE_NOTES_MCP_MAX_BUFFER;
+    });
+
+    it("allows up to 512 MB, within V8's largest string", () => {
+      expect(noteBodyMaxBuffer()).toBe(
+        Math.min(512 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH)
+      );
+      expect(noteBodyMaxBuffer()).toBeGreaterThan(getMaxBuffer());
+    });
+
+    it("never passes V8's largest string, whatever APPLE_NOTES_MCP_MAX_BUFFER says", () => {
+      // Past that, the output could not become one string.
+      process.env.APPLE_NOTES_MCP_MAX_BUFFER = String(2 * 1024 * 1024 * 1024);
+      expect(noteBodyMaxBuffer()).toBe(bufferConstants.MAX_STRING_LENGTH);
+    });
   });
 
   describe("error handling", () => {
@@ -173,6 +268,37 @@ describe("executeAppleScript", () => {
 
       expect(result.error).toContain("Permission denied");
       expect(result.error).toContain("System Settings");
+      expect(result.error).toBe(PERMISSION_DENIED_MESSAGE);
+    });
+
+    it('normalises the en-GB "Not authorised" spelling to the same message', () => {
+      // What an en_GB / en_AU / en_IE Mac actually emits. Before the shared
+      // classifier this fell through every mapping and the raw AppleScript
+      // text was handed to the user with no remediation.
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error(
+          "27:44: execution error: Not authorised to send Apple events to Notes. (-1743)"
+        );
+      });
+
+      const result = executeAppleScript("test");
+
+      expect(result.error).toBe(PERMISSION_DENIED_MESSAGE);
+    });
+
+    it("normalises a fully localised refusal on the -1743 OSStatus alone", () => {
+      // No English substring to match: only errAEEventNotPermitted identifies
+      // this as a TCC refusal. The `execution error:` extraction strips the
+      // trailing code, which is why classification runs against the raw text.
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error(
+          "27:44: execution error: Non autorisé à envoyer des événements Apple à Notes. (-1743)"
+        );
+      });
+
+      const result = executeAppleScript("test");
+
+      expect(result.error).toBe(PERMISSION_DENIED_MESSAGE);
     });
 
     it("provides helpful message for folder not found", () => {
@@ -219,6 +345,55 @@ describe("executeAppleScript", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe("AppleScript execution failed with unknown error");
+    });
+  });
+
+  describe("quoted names in error text", () => {
+    it("does not read a quoted note title as a transport failure", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error('execution error: Can\'t get note "Lost connection plan". (-1728)');
+      });
+
+      const result = executeAppleScript('get note "Lost connection plan"', { maxRetries: 1 });
+
+      expect(result.error).toBe(
+        'Note "Lost connection plan" not found. Verify the title is exact (case-sensitive).'
+      );
+    });
+
+    it("does not read a quoted note title as a permission refusal", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error('execution error: Can\'t get note "Access denied log". (-1728)');
+      });
+
+      const result = executeAppleScript('get note "Access denied log"', { maxRetries: 1 });
+
+      expect(result.error).toContain("not found");
+      expect(result.error).not.toBe(PERMISSION_DENIED_MESSAGE);
+    });
+
+    it("does not read a quoted note title as a script syntax error", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error('execution error: Can\'t get note "Expected results". (-1728)');
+      });
+
+      const result = executeAppleScript('get note "Expected results"', { maxRetries: 1 });
+
+      expect(result.error).toContain("not found");
+    });
+  });
+
+  describe("maxRetries: 0", () => {
+    it("runs the script once instead of throwing", () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error("execution error: Note not found (-1728)");
+      });
+
+      const result = executeAppleScript("get note 1", { maxRetries: 0 });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Note not found");
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -591,5 +766,47 @@ describe("executeAppleScript", () => {
       expect(result.success).toBe(true);
       expect(mockExecFileSync).toHaveBeenCalledTimes(4);
     });
+  });
+});
+
+describe("isPermissionDenied", () => {
+  it("recognises the American spelling", () => {
+    expect(isPermissionDenied("execution error: Not authorized to send Apple events (-1743)")).toBe(
+      true
+    );
+  });
+
+  it("recognises the en-GB spelling", () => {
+    expect(
+      isPermissionDenied("27:44: execution error: Not authorised to send Apple events to Notes.")
+    ).toBe(true);
+  });
+
+  it("recognises a fully localised refusal by its -1743 OSStatus alone", () => {
+    // errAEEventNotPermitted is emitted regardless of system language, so it
+    // is the only handle on a refusal no English regex can match.
+    expect(isPermissionDenied("erreur d'exécution : Non autorisé (-1743)")).toBe(true);
+    expect(isPermissionDenied("Fehler: Keine Berechtigung (-1743)")).toBe(true);
+  });
+
+  it("recognises the normalised remediation message (the both-sides property)", () => {
+    // A caller must not depend on which side of the error mapping it reads:
+    // the raw AppleScript text and the message that replaced it both classify.
+    expect(isPermissionDenied(PERMISSION_DENIED_MESSAGE)).toBe(true);
+    expect(isPermissionDenied(`AppleScript failed. ${PERMISSION_DENIED_MESSAGE}`)).toBe(true);
+  });
+
+  it("still recognises the other raw refusal wordings", () => {
+    expect(isPermissionDenied("The operation is not permitted")).toBe(true);
+    expect(isPermissionDenied("access to Notes denied")).toBe(true);
+  });
+
+  it("returns false for non-permission errors and for missing input", () => {
+    expect(isPermissionDenied('Can\'t get note "Missing".')).toBe(false);
+    expect(isPermissionDenied("Operation timed out after 30 seconds.")).toBe(false);
+    expect(isPermissionDenied("execution error: something else (-1728)")).toBe(false);
+    expect(isPermissionDenied(undefined)).toBe(false);
+    expect(isPermissionDenied(null)).toBe(false);
+    expect(isPermissionDenied("")).toBe(false);
   });
 });

@@ -12,6 +12,13 @@ import { spawnSync } from "child_process";
 import type { AppleNotesManager } from "@/services/appleNotesManager.js";
 import { hasFullDiskAccess } from "@/utils/checklistParser.js";
 import { FULL_DISK_ACCESS_GUIDE_URL, NODE_RUNTIME_TCC_GUIDE_URL } from "@/utils/docsUrls.js";
+import { NATIVE_TAGS_SHORTCUT, nativeTagsStatus } from "@/services/nativeTags.js";
+import { BACKGROUND_SHORTCUT, MARKDOWN_NOTE_SHORTCUT } from "@/services/backgroundNotes.js";
+import {
+  formatCapabilityMatrix,
+  getCapabilityMatrix,
+  type CapabilityMatrix,
+} from "@/services/capabilityMatrix.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 export interface DoctorCheck {
@@ -22,9 +29,15 @@ export interface DoctorCheck {
 export interface DoctorReport {
   healthy: boolean;
   checks: DoctorCheck[];
+  /** OS-version-aware feature matrix; absent only if probing it threw. */
+  runtimeOS?: CapabilityMatrix["runtimeOS"];
+  features?: CapabilityMatrix["features"];
 }
 
-export function runDoctor(manager: AppleNotesManager): DoctorReport {
+export function runDoctor(
+  manager: AppleNotesManager,
+  capabilityMatrix: () => CapabilityMatrix = getCapabilityMatrix
+): DoctorReport {
   const checks: DoctorCheck[] = [];
 
   // 1. Notes.app reachability + Automation permission (existing health checks).
@@ -71,19 +84,100 @@ export function runDoctor(manager: AppleNotesManager): DoctorReport {
         "get-note-markdown won't work; get-note-link fails on macOS 26+ (macOS 12-15 falls back to " +
         "AppleScript); get-sync-status still answers but cannot see pending uploads. Everything else " +
         "is pure AppleScript and is unaffected. " +
-        "In System Settings > Privacy & Security > Full Disk Access, grant access to the app that " +
-        "launches this server (Claude Desktop / Terminal / iTerm2), then fully quit and relaunch it " +
-        `and re-run doctor. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`,
+        fdaRemediation(),
   });
 
-  // 4. Node runtime code signature. An ad-hoc signed Node (typically Homebrew's)
+  // 4. Optional native-write bridges. Installation is explicit because macOS
+  // requires the user to approve every imported Shortcut. Installed is not the
+  // same as consented: a background run cannot display Shortcuts' first-run
+  // consent prompt, and the `shortcuts` CLI exposes no consent or run history to
+  // check, so the reminder is unconditional rather than a detected state (#172).
+  const consentReminder =
+    "After install or upgrade, run each bridge Shortcut once in the foreground in Shortcuts.app " +
+    "and choose Always Allow: a background run cannot display a first-run consent prompt, so an " +
+    "unanswered one stalls that bridge's native writes until they time out while this check stays ok";
+  try {
+    const bridgeStatuses = [NATIVE_TAGS_SHORTCUT, BACKGROUND_SHORTCUT].map((name) =>
+      nativeTagsStatus(name)
+    );
+    const missing = bridgeStatuses.filter((status) => !status.installed);
+    const markdown = markdownBridgeDetail();
+    checks.push({
+      name: "Native write Shortcuts",
+      status: missing.length ? "warn" : "ok",
+      detail: missing.length
+        ? `missing: ${missing.map((status) => status.shortcut).join(", ")}. Run apple-notes-mcp setup and approve Add Shortcut in macOS. ${markdown} ${consentReminder}`
+        : `both native-write bridges are installed. ${markdown} ${consentReminder}`,
+    });
+  } catch (error) {
+    checks.push({
+      name: "Native write Shortcuts",
+      status: "warn",
+      detail: `could not inspect Shortcuts: ${String(error)}. Run apple-notes-mcp setup --check`,
+    });
+  }
+
+  // 5. Node runtime code signature. An ad-hoc signed Node (typically Homebrew's)
   // gets a new cdhash on every update, so macOS TCC treats it as a brand-new
   // binary and silently drops its Automation / Full Disk Access grants — the
   // most common cause of "this worked last week" permission flakiness.
   checks.push(checkNodeRuntimeSignature());
 
   const healthy = !checks.some((c) => c.status === "fail");
-  return { healthy, checks };
+  // 6. Feature matrix. Informational: an unavailable optional feature is not a
+  // setup failure, so it never changes `healthy` or adds a check.
+  let matrix: CapabilityMatrix | undefined;
+  try {
+    matrix = capabilityMatrix();
+  } catch {
+    matrix = undefined;
+  }
+  return matrix
+    ? { healthy, checks, runtimeOS: matrix.runtimeOS, features: matrix.features }
+    : { healthy, checks };
+}
+
+/**
+ * Say which identity needs the Full Disk Access grant (#220). macOS checks FDA
+ * against the *responsible process*. A terminal passes its own responsibility to
+ * its children, so granting Terminal/iTerm2 is enough there. Claude Desktop
+ * launches MCP servers through a helper that disclaims responsibility, which
+ * makes the Node binary itself the responsible process: a grant on Claude.app
+ * never reaches it, and the Node binary needs its own entry.
+ */
+export function fdaRemediation(execPath: string = process.execPath): string {
+  const versioned =
+    /\/(\.nvm|\.fnm|\.volta|\.asdf|\.local\/share\/mise|\.nodenv|n\/versions)\//.test(execPath);
+  return (
+    "In System Settings > Privacy & Security > Full Disk Access, click + and add the Node binary " +
+    `running this server: ${execPath} (press Cmd+Shift+G in the file picker to paste the path). ` +
+    "Under Claude Desktop that entry is required: Claude Desktop launches servers as their own " +
+    "responsible process, so a grant on Claude.app does not reach them. When the server runs from " +
+    "a terminal (Terminal, iTerm2) or an editor, granting that app is enough. Then fully quit (Cmd+Q) " +
+    "and relaunch the host app and re-run doctor; if it still reports not granted, restart the Mac. " +
+    (versioned
+      ? "This Node lives under a version manager, so the path changes with each Node version and the " +
+        "grant has to be added again after switching; pointing the MCP config at one fixed Node path avoids that. "
+      : "") +
+    `Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`
+  );
+}
+
+/**
+ * Describe the optional Create Markdown Note bridge. It serves only create-note's
+ * `format: "markdown"` and cannot run before macOS 26, so it never changes the
+ * native-write check's status (#172 review); get-capabilities reports whether
+ * `create-note-markdown` is available.
+ */
+function markdownBridgeDetail(): string {
+  const purpose = 'needed only for create-note format: "markdown" on macOS 26+';
+  try {
+    return nativeTagsStatus(MARKDOWN_NOTE_SHORTCUT).installed
+      ? `Optional ${MARKDOWN_NOTE_SHORTCUT} bridge: installed (${purpose}).`
+      : `Optional ${MARKDOWN_NOTE_SHORTCUT} bridge: not installed (${purpose}; apple-notes-mcp setup offers it).`;
+  } catch (error) {
+    return `Optional ${MARKDOWN_NOTE_SHORTCUT} bridge: could not inspect (${purpose}): ${String(error)}.`;
+  }
 }
 
 /**
@@ -132,5 +226,7 @@ export function formatDoctorReport(r: DoctorReport): string {
   const icon = (s: CheckStatus): string => (s === "ok" ? "✅" : s === "warn" ? "⚠️ " : "❌");
   const lines = [`🩺 apple-notes-mcp doctor — ${r.healthy ? "healthy" : "ISSUES FOUND"}`, ""];
   for (const c of r.checks) lines.push(`${icon(c.status)} ${c.name}: ${c.detail}`);
+  if (r.runtimeOS && r.features)
+    lines.push("", formatCapabilityMatrix({ runtimeOS: r.runtimeOS, features: r.features }));
   return lines.join("\n");
 }

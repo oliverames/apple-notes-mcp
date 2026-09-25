@@ -31,9 +31,30 @@ import type {
   ExportedAccount,
   ExportedFolder,
   ExportedNote,
+  ExportNotesOptions,
+  FolderAppFacts,
+  AudioTranscriptOptions,
+  AudioTranscriptsResult,
+  NoteTablesResult,
+  SmartFolder,
+  DeleteGuardNote,
+  AppleScriptResult,
 } from "@/types.js";
-import { BULK_LIST_MUTATION_ERROR, executeAppleScript } from "@/utils/applescript.js";
+import {
+  BULK_LIST_MUTATION_ERROR,
+  executeAppleScript,
+  isPermissionDenied,
+  noteBodyMaxBuffer,
+} from "@/utils/applescript.js";
 import { getChecklistItems, type ChecklistItem } from "@/utils/checklistParser.js";
+import { CodedError } from "@/utils/errorCodes.js";
+import { stripLargeInlineImages } from "@/utils/inlineImages.js";
+import { enrichNoteRead, readRichNote } from "@/utils/noteRichText.js";
+import { readAudioTranscripts } from "@/utils/audioTranscripts.js";
+import { collectNoteTables } from "@/utils/tableMarkdown.js";
+import { readSmartFolders, type SmartFoldersResult } from "@/utils/smartFolders.js";
+import { uniqueById } from "@/utils/uniqueById.js";
+import { readTrashFolderIds, RECENTLY_DELETED_FOLDER_NAME } from "@/utils/trashFolders.js";
 import {
   assertSafeSavePath,
   readFileBase64Capped,
@@ -42,9 +63,29 @@ import {
   cleanupTempDir,
   ensureParentDir,
 } from "@/utils/attachmentFs.js";
+import {
+  describeDrawings,
+  exportDrawingRaster,
+  readDrawingRows,
+  selectDrawing,
+} from "@/utils/paperAttachments.js";
+import type { DrawingAttachment, DrawingRasterExport } from "@/types.js";
+import {
+  assembleAttachmentAssets,
+  exportAttachmentAssets,
+  readNoteAttachmentRows,
+  selectFirstImage,
+} from "@/utils/attachmentAssets.js";
+import type { AttachmentExportResult, FirstImage, NoteAttachmentAssets } from "@/types.js";
 import { AUTOMATION_REMEDIATION } from "@/utils/docsUrls.js";
-import { existsSync } from "fs";
-import { homedir } from "os";
+import {
+  buildScopeGuardScript,
+  parseScopeFailure,
+  scopeConflictMessage,
+  type ScopeGuard,
+} from "@/utils/scopeGuard.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import TurndownService from "turndown";
 
@@ -57,12 +98,156 @@ import TurndownService from "turndown";
 // content (a note titled "Groceries, etc." used to split into phantom notes).
 //   FIELD_SEP  (US, \x1f) separates fields within a record
 //   RECORD_SEP (RS, \x1e) separates records within a list
-// In AppleScript these are emitted via `ASCII character 31 / 30`.
+// In AppleScript these are emitted via `character id 31 / 30`.
+//
+// Never `ASCII character` (#162): that is a Standard Additions command, so
+// inside a `tell application "Notes"` block — where every script here runs —
+// each evaluation is dispatched to Notes.app as its own Apple Event. 718
+// evaluations took 6.12 s there, against 0.05 s for `character id`, which is
+// core AppleScript evaluated locally. Scripts that build one record per note,
+// folder, account or attachment paid several round trips per item. Same
+// characters, same output.
 // =============================================================================
 const FIELD_SEP = "\x1f";
 const RECORD_SEP = "\x1e";
-const AS_FIELD_SEP = "(ASCII character 31)";
-const AS_RECORD_SEP = "(ASCII character 30)";
+const AS_FIELD_SEP = "(character id 31)";
+const AS_RECORD_SEP = "(character id 30)";
+// Group separator: splits a bulk listing from the trailing list of note ids
+// found in Recently Deleted (#207).
+const GROUP_SEP = "\x1d";
+const AS_GROUP_SEP = "(character id 29)";
+
+/** One note from a bulk listing. */
+export interface NoteListRef {
+  title: string;
+  id: string;
+  /** Present (true) only for a note in Recently Deleted, when those are included. */
+  inRecentlyDeleted?: boolean;
+}
+
+/** A bulk listing plus how many Recently Deleted notes it skipped. */
+export interface NoteListResult {
+  refs: NoteListRef[];
+  excludedRecentlyDeleted: number;
+}
+
+/** Folder ids from the database are interpolated, so only exact Core Data ids pass. */
+const FOLDER_ID_PATTERN = /^x-coredata:\/\/[0-9A-F-]+\/ICFolder\/p\d+$/i;
+
+/**
+ * AppleScript list literal of the Recently Deleted folder ids known to the
+ * database; `{}` when none are known (no Full Disk Access).
+ */
+function trashFolderIdList(): string {
+  const ids = readTrashFolderIds().filter((id) => FOLDER_ID_PATTERN.test(id));
+  return `{${ids.map((id) => `"${id}"`).join(", ")}}`;
+}
+
+/**
+ * AppleScript that sets `flagVar` to true when the container held in
+ * `containerVar` is Recently Deleted. It fails closed: a container that is not
+ * a folder, or whose class cannot be read, counts as Recently Deleted, because
+ * a note trashed earlier in the same Notes session reports such a container
+ * (#214). `trashIds` is a {@link trashFolderIdList} literal.
+ */
+function inRecentlyDeletedScript(containerVar: string, flagVar: string, trashIds: string): string {
+  return `
+      set ${flagVar} to true
+      try
+        if (class of ${containerVar}) is folder then set ${flagVar} to false
+      end try
+      try
+        if ${trashIds} contains (id of ${containerVar}) then set ${flagVar} to true
+      end try
+      try
+        if (name of ${containerVar}) is "${RECENTLY_DELETED_FOLDER_NAME}" then set ${flagVar} to true
+      end try`;
+}
+
+/**
+ * AppleScript that sets `__trashNoteIds` to the ids of every note Notes.app
+ * currently shows in Recently Deleted, within the enclosing tell target (an
+ * account). The folder is found by its database id and, as a fallback that
+ * needs no Full Disk Access, by its English name. Each lookup is guarded, so
+ * an account without a trash folder contributes nothing. (#207)
+ */
+function buildTrashNoteIdsCollector(): string {
+  return `
+        set __trashNoteIds to {}
+        repeat with __trashFolderId in ${trashFolderIdList()}
+          try
+            set __trashNoteIds to __trashNoteIds & (id of notes of folder id (contents of __trashFolderId))
+          end try
+        end repeat
+        try
+          repeat with __trashFolder in (every folder whose name is "${RECENTLY_DELETED_FOLDER_NAME}")
+            set __trashNoteIds to __trashNoteIds & (id of notes of __trashFolder)
+          end repeat
+        end try`;
+}
+
+// =============================================================================
+// Export paging (#162)
+// =============================================================================
+
+/** Notes per export-notes-json page when the caller gives no limit. */
+export const DEFAULT_EXPORT_PAGE_SIZE = 50;
+
+/**
+ * Default ceiling on one export-notes-json response: 8 MiB, leaving headroom
+ * under the 10 MiB per-message limit of the MCP SDK stdio reader
+ * (STDIO_DEFAULT_MAX_BUFFER_SIZE). A client handed a larger message closes the
+ * connection before any error text can reach the caller (#162).
+ */
+const DEFAULT_EXPORT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The export response ceiling in bytes: APPLE_NOTES_MCP_EXPORT_MAX_BYTES when it
+ * is a positive number, otherwise the 8 MiB default.
+ */
+export function exportMaxResponseBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.APPLE_NOTES_MCP_EXPORT_MAX_BYTES;
+  if (raw !== undefined) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return DEFAULT_EXPORT_MAX_RESPONSE_BYTES;
+}
+
+/**
+ * Upper-bound estimate of the bytes one exported note adds to the
+ * export-notes-json tool response. The response carries every note twice: once
+ * in structuredContent, and once inside a pretty-printed JSON text block that
+ * the JSON-RPC envelope escapes a second time. The fixed 256 bytes cover the
+ * deeper indentation and separators of that nested pretty-printed copy.
+ */
+export function estimateExportNoteBytes(note: ExportedNote): number {
+  return (
+    Buffer.byteLength(JSON.stringify(note)) +
+    Buffer.byteLength(JSON.stringify(JSON.stringify(note, null, 2))) +
+    256
+  );
+}
+
+/**
+ * Shrinks a note that on its own exceeds the export budget, giving up the least
+ * first: oversized inline images become placeholders, then the HTML body is
+ * dropped, then the plaintext too. Metadata always survives.
+ */
+function fitExportNoteToBudget(note: ExportedNote, maxBytes: number): ExportedNote {
+  const stripped = stripLargeInlineImages(note.content);
+  if (stripped.strippedCount > 0) {
+    const withPlaceholders: ExportedNote = {
+      ...note,
+      content: stripped.html,
+      strippedImages: stripped.strippedCount,
+    };
+    if (estimateExportNoteBytes(withPlaceholders) <= maxBytes) return withPlaceholders;
+  }
+  const withoutHtml: ExportedNote = { ...note, content: "", contentOmitted: true };
+  if (estimateExportNoteBytes(withoutHtml) <= maxBytes) return withoutHtml;
+  return { ...withoutHtml, plaintext: "" };
+}
 
 /**
  * Run an AppleScript that changes Notes.app or writes an attachment exactly
@@ -238,6 +423,23 @@ export function sanitizeId(id: string): string {
     );
   }
   // Even with validation, escape for defense-in-depth
+  return escapeForAppleScript(id);
+}
+
+/**
+ * Validates a real Apple Note identity for any operation that targets a note.
+ *
+ * Generic CoreData IDs and historical `temp-*` fallbacks are intentionally
+ * rejected. A synthetic identity is not safe enough for a write because it
+ * cannot name one exact object in Notes.app.
+ */
+export function sanitizeNoteId(id: string): string {
+  const noteIdPattern = /^x-coredata:\/\/[0-9A-Fa-f-]+\/ICNote\/p\d+$/;
+  if (!noteIdPattern.test(id)) {
+    throw new Error(
+      `Invalid note ID format: "${id.substring(0, 80)}". Expected canonical Apple Note ID (x-coredata://.../ICNote/p...).`
+    );
+  }
   return escapeForAppleScript(id);
 }
 
@@ -466,7 +668,7 @@ export function splitFolderPath(folderPath: string): string[] {
  * @param name - Raw folder name (may contain `/`)
  * @returns Folder name with `/` escaped as `\/`
  */
-function escapeFolderName(name: string): string {
+export function escapeFolderName(name: string): string {
   return name.replace(/\//g, "\\/");
 }
 
@@ -505,6 +707,187 @@ export function buildFolderReference(folderPath: string): string {
  * resolved account reference.
  */
 const AS_ACCOUNT_REF = "__acctRef";
+
+/** Error text raised by {@link buildLiveFolderResolution} when no live folder matches. */
+export const LIVE_FOLDER_NOT_FOUND = "Folder not found";
+
+/**
+ * Error text raised by {@link buildLiveFolderResolution} when a path segment
+ * names only excluded (smart) folders.
+ */
+export const SMART_FOLDER_DESTINATION = "SMART_FOLDER_DESTINATION";
+
+/**
+ * Core Data ids of every smart folder, read-only from the NoteStore database
+ * with the same reader as list-smart-folders. Empty when the database cannot
+ * be read (no Full Disk Access, unknown schema): Notes.app's scripting
+ * dictionary has no folder-type property, so without the database a smart
+ * folder cannot be told from an ordinary one and resolution behaves as before.
+ *
+ * @param read - Smart folder reader (tests pass a fixture-backed one)
+ */
+export function readSmartFolderIds(
+  read: () => { folders: { id: string }[] | null } = readSmartFolders
+): string[] {
+  return (read().folders ?? [])
+    .map((folder) => folder.id)
+    .filter((id) => FOLDER_ID_PATTERN.test(id));
+}
+
+/**
+ * The refusal for a destination that is a smart folder. A smart folder only
+ * gathers notes by its rules: Notes.app accepts `move` and `make` against one,
+ * but a moved note lands in Recently Deleted and a created note is stored where
+ * no folder shows it, while the call reports failure. Thrown before any write.
+ */
+export function smartFolderDestinationError(folderPath: string): CodedError {
+  return new CodedError(
+    `Refused: "${folderPath}" is a smart folder. Smart folders only gather notes by their rules and cannot hold notes or folders; choose an ordinary folder (list-folders marks smart folders smartFolder: true). Nothing was changed`,
+    {
+      code: "unsupported",
+      committed: false,
+      indeterminate: false,
+      reason: "smart_folder_destination",
+    }
+  );
+}
+
+/**
+ * The error for a smart-folder read that failed. A database without the smart
+ * folder columns is an unsupported macOS version, not an unclassified failure.
+ */
+export function smartFoldersReadError(
+  kind: SmartFoldersResult["error"],
+  message: string
+): CodedError {
+  return new CodedError(message, {
+    code:
+      kind === "unsupported_schema"
+        ? "unsupported"
+        : kind === "no_fda"
+          ? "full_disk_access_missing"
+          : "operation_failed",
+  });
+}
+
+/** Throws {@link smartFolderDestinationError} when an AppleScript error is the smart-folder refusal. */
+export function throwIfSmartFolderDestination(error: string | undefined, folderPath: string): void {
+  if (error?.includes(SMART_FOLDER_DESTINATION)) throw smartFolderDestinationError(folderPath);
+}
+
+/**
+ * Builds AppleScript that binds `varName` to a folder reference by id, walking
+ * `folderPath` one segment at a time and accepting only folders that still
+ * exist by id.
+ *
+ * A name-based reference (`folder "A" of folder "B"`) keeps resolving a folder
+ * deleted earlier in the same Notes session, while `exists folder id` reports
+ * it gone (#213). So each segment looks at every same-named candidate under
+ * its parent and takes the first whose id still exists, which also picks a
+ * live folder over a deleted namesake. When nothing matches, the script raises
+ * error -1728 with {@link LIVE_FOLDER_NOT_FOUND}.
+ *
+ * The first segment prefers a folder at the account root. `rootOnly` makes
+ * that strict (creating "A" must not settle for a nested "X/A"); otherwise a
+ * live same-named folder elsewhere in the account is the fallback, as a bare
+ * name lookup has always allowed.
+ *
+ * `excludeFolderIds` (smart folder ids from {@link readSmartFolderIds}) are
+ * never bound. AppleScript lists smart folders among `folders` and resolves
+ * them by name, so without this a destination named like a smart folder binds
+ * to it. When a segment's only live candidates are excluded, the script raises
+ * {@link SMART_FOLDER_DESTINATION}, before any statement after the fragment.
+ *
+ * The fragment must run inside `tell application "Notes"` after
+ * `buildAccountResolution` has bound the account variable, either at app level
+ * or inside `tell` that account.
+ *
+ * @param folderPath - Slash-separated path, validated like buildFolderReference
+ * @param varName - AppleScript variable to bind (also prefixes the temporaries)
+ * @param opts.rootOnly - Match the first segment only at the account root
+ * @param opts.excludeFolderIds - Folder ids never to bind (smart folders)
+ * @returns AppleScript statements
+ */
+export function buildLiveFolderResolution(
+  folderPath: string,
+  varName: string,
+  opts: { rootOnly?: boolean; excludeFolderIds?: readonly string[] } = {}
+): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName)) throw new Error("Invalid AppleScript variable");
+  buildFolderReference(folderPath); // validates length, depth, emptiness
+  const parts = splitFolderPath(folderPath);
+  const c = `${varName}_c`;
+  const cid = `${varName}_cid`;
+  const any = `${varName}_any`;
+  const parent = `${varName}_p`;
+  const quotedPath = escapePlainStringForAppleScript(folderPath);
+  const notFound = `error "${LIVE_FOLDER_NOT_FOUND}: ${quotedPath}" number -1728`;
+  // Ids are interpolated into the script, so only exact Core Data ids pass.
+  const excluded = (opts.excludeFolderIds ?? []).filter((id) => FOLDER_ID_PATTERN.test(id));
+  const skipIds = `${varName}_sx`;
+  const skipped = `${varName}_sh`;
+  // Without exclusions the generated script is exactly what it was before.
+  const candidateTest = excluded.length
+    ? [
+        `    if ${skipIds} contains ${cid} then`,
+        `      set ${skipped} to true`,
+        `    else if exists folder id ${cid} then`,
+      ]
+    : [`    if exists folder id ${cid} then`];
+  const unresolved = excluded.length
+    ? [
+        `if ${varName} is missing value then`,
+        `  if ${skipped} then error "${SMART_FOLDER_DESTINATION}: ${quotedPath}" number -1728`,
+        `  ${notFound}`,
+        `end if`,
+      ]
+    : [`if ${varName} is missing value then ${notFound}`];
+
+  const lines: string[] = excluded.length
+    ? [`set ${skipIds} to {${excluded.map((id) => `"${id}"`).join(", ")}}`]
+    : [];
+  parts.forEach((part, i) => {
+    const name = escapePlainStringForAppleScript(part);
+    if (excluded.length) lines.push(`set ${skipped} to false`);
+    if (i === 0) {
+      lines.push(
+        `set ${varName} to missing value`,
+        `set ${any} to missing value`,
+        `repeat with ${c} in (folders of ${AS_ACCOUNT_REF} whose name is "${name}")`,
+        `  try`,
+        `    set ${cid} to id of ${c}`,
+        ...candidateTest,
+        `      if class of (container of ${c}) is not folder then`,
+        `        set ${varName} to folder id ${cid}`,
+        `        exit repeat`,
+        `      else if ${any} is missing value then`,
+        `        set ${any} to folder id ${cid}`,
+        `      end if`,
+        `    end if`,
+        `  end try`,
+        `end repeat`
+      );
+      if (!opts.rootOnly)
+        lines.push(`if ${varName} is missing value then set ${varName} to ${any}`);
+    } else {
+      lines.push(
+        `set ${parent} to ${varName}`,
+        `set ${varName} to missing value`,
+        `repeat with ${c} in (folders of ${parent} whose name is "${name}")`,
+        `  try`,
+        `    set ${cid} to id of ${c}`,
+        ...candidateTest,
+        `      set ${varName} to folder id ${cid}`,
+        `      exit repeat`,
+        `    end if`,
+        `  end try`,
+        `end repeat`
+      );
+    }
+    lines.push(...unresolved);
+  });
+  return lines.join("\n");
+}
 
 /**
  * Sentinel prefixed to every account-resolution failure raised from AppleScript.
@@ -639,6 +1022,88 @@ function buildAppLevelScript(command: string): string {
 }
 
 /**
+ * Longest expected body a guarded write embeds in its AppleScript as a string
+ * literal. A note's body carries its inline images as base64, so a note with
+ * one large image can hold a body of tens or hundreds of megabytes (#237).
+ */
+const INLINE_EXPECTED_BODY_LIMIT = MAX_CONTENT_LENGTH;
+
+/**
+ * Supplies the body a guarded write compares a note against. A body within
+ * INLINE_EXPECTED_BODY_LIMIT becomes a string literal; a longer one is written
+ * to a private temporary file (mode 0600 in a fresh mkdtemp directory) that
+ * the script reads, so the comparison still covers the whole body. Call
+ * `cleanup()` once the script has run.
+ */
+export class ExpectedBodies {
+  private directory: string | undefined;
+  private files = 0;
+
+  /**
+   * Returns AppleScript `setup` to run before the comparison (empty for a
+   * literal) and the `operand` to compare the note's body against.
+   * `variable` names the AppleScript variable a file-backed body is read into.
+   */
+  bind(body: string, variable: string): { setup: string; operand: string } {
+    if (body.length <= INLINE_EXPECTED_BODY_LIMIT) {
+      return { setup: "", operand: `"${escapeHtmlForAppleScript(body)}"` };
+    }
+    this.directory ??= mkdtempSync(join(tmpdir(), "apple-notes-expected-body-"));
+    const file = join(this.directory, `body-${this.files++}.html`);
+    writeFileSync(file, body, { encoding: "utf8", mode: 0o600 });
+    // `read` runs in osascript, not in sandboxed Notes.app, and «class utf8»
+    // decodes the file exactly as it was written.
+    return {
+      setup: `
+      tell current application to set ${variable} to read (POSIX file "${escapePlainStringForAppleScript(file)}") as «class utf8»`,
+      operand: variable,
+    };
+  }
+
+  /** Removes any temporary files. Safe to call more than once. */
+  cleanup(): void {
+    if (this.directory) rmSync(this.directory, { recursive: true, force: true });
+    this.directory = undefined;
+  }
+}
+
+/**
+ * AppleScript (inside `tell application "Notes"`) that binds the facts guarded
+ * folder deletion checks: `f`, `folderName`, `parentId` ("" at an account
+ * root), `acctId`, `defaultId`, `sharedAny` (folder or any ancestor shared),
+ * `childCount`, and `noteCount`. The id is validated by FOLDER_ID_PATTERN, so
+ * it cannot break out of the string literal.
+ */
+function folderDeleteFactsScript(id: string): string {
+  if (!FOLDER_ID_PATTERN.test(id)) throw new Error("An exact folder ID is required");
+  return `
+      set f to folder id "${id}"
+      set folderName to name of f
+      set parentRef to container of f
+      set parentId to ""
+      if class of parentRef is folder then set parentId to id of parentRef
+      set sharedAny to (shared of f)
+      set acct to parentRef
+      repeat while class of acct is folder
+        if shared of acct then set sharedAny to true
+        set acct to container of acct
+      end repeat
+      set acctId to id of acct
+      set defaultId to ""
+      try
+        set defaultId to id of default folder of acct
+      end try
+      -- "folders of f" keeps listing a child deleted earlier in this Notes
+      -- session, while "exists folder id" reports it gone, so count only
+      -- children that still exist.
+      set childCount to 0
+      repeat with childRef in folders of f
+        if exists folder id (id of childRef) then set childCount to childCount + 1
+      end repeat
+      set noteCount to count of notes of f`;
+}
+
+/**
  * Queries the local Notes SQLite database for the sync identifier of a note,
  * then returns the notes://showNote?identifier=<uuid> deep-link URL.
  *
@@ -733,7 +1198,7 @@ function extractCoreDataId(output: string, prefix: string): string {
  * ```typescript
  * const notes = new AppleNotesManager();
  *
- * // Create a note in the default (iCloud) account
+ * // Create a note in Notes.app's default account (not necessarily iCloud)
  * const note = notes.createNote("Shopping List", "Eggs, Milk, Bread");
  *
  * // Search across all notes
@@ -791,6 +1256,17 @@ export class AppleNotesManager {
     }
 
     return this.defaultAccountName || undefined;
+  }
+
+  /**
+   * The account a search with this `account` argument is scoped to: the
+   * caller's account when named, else Notes.app's default account (cached).
+   * Returns `undefined` when no account was named and the default cannot be
+   * determined. Used by search-notes' database path so it searches the same
+   * account the AppleScript path would.
+   */
+  searchAccountScope(account?: string): string | undefined {
+    return this.reportedAccount(this.resolveAccount(account));
   }
 
   /**
@@ -893,8 +1369,12 @@ export class AppleNotesManager {
       // Note: We avoid `set newNote` + `return id of newNote` because AppleScript
       // fails to resolve the note reference in deeply nested folder contexts (-1728).
       // The implicit return from `make new note` includes the ID which we parse.
-      const folderRef = buildFolderReference(folder);
-      createCommand = `make new note at ${folderRef} with properties {body:"${safeBody}"}`;
+      // The folder is resolved to a live id first, so a folder deleted earlier
+      // in this Notes session is never the target (#213), nor a smart folder.
+      createCommand = `${buildLiveFolderResolution(folder, "__folder", {
+        excludeFolderIds: this.smartFolderIds(),
+      })}
+      make new note at __folder with properties {body:"${safeBody}"}`;
     } else {
       // Create note in default location
       createCommand = `
@@ -909,6 +1389,7 @@ export class AppleNotesManager {
 
     if (!result.success) {
       throwIfAccountResolutionFailed(result.error);
+      if (folder) throwIfSmartFolderDestination(result.error, folder);
       console.error(`Failed to create note "${title}":`, result.error);
       return null;
     }
@@ -919,12 +1400,27 @@ export class AppleNotesManager {
     // Strip that prefix so we return the bare x-coredata:// URL that the id
     // validator and downstream tools (get-note-content, update-note) accept.
     const rawOutput = result.output.trim();
+    // Notes.app returns either `note id x-coredata://...` or the bare URL,
+    // depending on the account/context. Accept only those two canonical forms.
     const noteId = extractCoreDataId(rawOutput, "note") || rawOutput;
+    if (!noteId) {
+      // The note may exist even when AppleScript returned an unexpected object
+      // specifier. Fail closed instead of handing out a synthetic or unverified
+      // identity that a later mutation could mis-target.
+      console.error(`Created note "${title}" but Notes.app returned no canonical note ID`);
+      return null;
+    }
+    try {
+      sanitizeNoteId(noteId);
+    } catch {
+      console.error(`Created note "${title}" but Notes.app returned an invalid note ID`);
+      return null;
+    }
 
     // Return a Note object representing the created note with real ID
     const now = new Date();
     return {
-      id: noteId || generateFallbackId(), // Use real ID, fallback to unique temp ID
+      id: noteId,
       title,
       content,
       tags,
@@ -1117,7 +1613,7 @@ export class AppleNotesManager {
     // Retrieve the body property of the note
     const getCommand = `get body of note "${safeTitle}"`;
     const script = buildAccountScopedScript({ account: targetAccount }, getCommand);
-    const result = executeAppleScript(script);
+    const result = executeAppleScript(script, { maxBufferBytes: noteBodyMaxBuffer() });
 
     if (!result.success) {
       throwIfAccountResolutionFailed(result.error);
@@ -1142,18 +1638,33 @@ export class AppleNotesManager {
    * @returns HTML content of the note, or empty string if not found
    */
   getNoteContentById(id: string): string {
+    return this.readNoteBodyById(id).body;
+  }
+
+  /**
+   * Like {@link getNoteContentById}, but keeps the automation error so a
+   * caller can explain a failed read (for example a timeout on a note whose
+   * body carries a very large inline image, #237) instead of reporting a bare
+   * failure.
+   *
+   * @param id - CoreData URL identifier for the note
+   * @returns The HTML body, or an empty body plus the error that stopped the read
+   */
+  readNoteBodyById(id: string): { body: string; error?: string } {
     const safeId = sanitizeId(id);
     // Note IDs work at the application level, not scoped to account
     const getCommand = `get body of note id "${safeId}"`;
     const script = buildAppLevelScript(getCommand);
-    const result = executeAppleScript(script);
+    // A body carries its inline images as base64, so it can far exceed the
+    // general output cap (#237).
+    const result = executeAppleScript(script, { maxBufferBytes: noteBodyMaxBuffer() });
 
     if (!result.success) {
       console.error(`Failed to get content of note with ID "${id}":`, result.error);
-      return "";
+      return { body: "", error: result.error };
     }
 
-    return result.output;
+    return { body: result.output };
   }
 
   /**
@@ -1260,6 +1771,24 @@ export class AppleNotesManager {
   }
 
   /**
+   * Reads every native table in one note, in body order, as JSON rows and
+   * GitHub-flavored Markdown.
+   *
+   * Reads the NoteStore database read-only (Full Disk Access required); no
+   * AppleScript is involved. Cells that cannot be decoded are returned as null
+   * and flagged, never guessed.
+   *
+   * @param id - CoreData URL identifier for the note
+   * @returns Tables in body order with a combined Markdown rendering
+   * @throws Error when the note's rich data cannot be read (e.g. no Full Disk Access)
+   */
+  getNoteTablesById(id: string): NoteTablesResult {
+    // Tables never feed a rewrite, so a link Notes stores with a scheme the
+    // write path refuses (tel:, sms:) must not make the tables unreadable.
+    return collectNoteTables(readRichNote(id, { skipUnsafeLinks: true }), id);
+  }
+
+  /**
    * Retrieves detailed metadata for a note by title.
    *
    * Similar to getNoteContent but returns structured metadata
@@ -1311,173 +1840,227 @@ export class AppleNotesManager {
   }
 
   /**
-   * Deletes a note by its title.
+   * Replaces one exact note body only if the body is still the snapshot the
+   * caller reviewed and the note has no attachments.
    *
-   * Note: This permanently deletes the note. It may be recoverable
-   * from the "Recently Deleted" folder in Notes.app.
-   *
-   * @param title - Exact title of the note to delete
-   * @param account - Account containing the note (defaults to Notes.app's default account)
-   * @returns true if deletion succeeded, false otherwise
+   * Both guards and the write execute inside one AppleScript. This closes the
+   * race that would exist if JavaScript checked the note and then issued a
+   * separate unconditional `set body` command.
    */
-  deleteNote(title: string, account?: string): boolean {
-    const targetAccount = this.resolveAccount(account);
-    const safeTitle = escapePlainStringForAppleScript(title);
-
-    const deleteCommand = `delete note "${safeTitle}"`;
-    const script = buildAccountScopedScript({ account: targetAccount }, deleteCommand);
-    const result = executeMutationAppleScript(script);
-
-    if (!result.success) {
-      throwIfAccountResolutionFailed(result.error);
-      console.error(`Failed to delete note "${title}":`, result.error);
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Deletes a note by its CoreData ID.
-   *
-   * This is more reliable than deleteNote() because IDs are unique
-   * across all accounts, while titles can be duplicated.
-   *
-   * @param id - CoreData URL identifier for the note
-   * @returns true if deletion succeeded, false otherwise
-   */
-  deleteNoteById(id: string): boolean {
-    const safeId = sanitizeId(id);
-    const deleteCommand = `delete note id "${safeId}"`;
-    const script = buildAppLevelScript(deleteCommand);
-    const result = executeMutationAppleScript(script);
-
-    if (!result.success) {
-      console.error(`Failed to delete note with ID "${id}":`, result.error);
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Updates an existing note's content and optionally its title.
-   *
-   * Apple Notes derives the title from the first line of the body,
-   * so updating content also allows title changes. If newTitle is
-   * not provided, the original title is preserved.
-   *
-   * When format is 'html', newTitle is ignored — the caller must include
-   * the title in the HTML content.
-   *
-   * Note: Password-protected notes will fail with an AppleScript error.
-   * Callers should check for password protection beforehand using
-   * getNoteDetails() or isNotePasswordProtected().
-   *
-   * @param title - Current title of the note to update
-   * @param newTitle - New title (optional, keeps existing if not provided; ignored in html format)
-   * @param newContent - New content for the note body
-   * @param account - Account containing the note (defaults to Notes.app's default account)
-   * @param format - Content format: "plaintext" wraps in div tags (default), "html" uses content as-is
-   * @returns true if update succeeded, false otherwise
-   */
-  updateNote(
-    title: string,
-    newTitle: string | undefined,
-    newContent: string,
-    account?: string,
-    format: "plaintext" | "html" = "plaintext"
-  ): boolean {
-    if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
-    validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
-    const targetAccount = this.resolveAccount(account);
-    const safeCurrentTitle = escapePlainStringForAppleScript(title);
-
-    let fullBody: string;
-    if (format === "html") {
-      // HTML mode: content is the complete body, escaped only for AppleScript string
-      fullBody = escapeHtmlForAppleScript(newContent);
-    } else {
-      // Plaintext mode: wrap title + content in <div> tags (existing behavior)
-      const effectiveTitle = newTitle || title;
-      const safeEffectiveTitle = escapeForAppleScript(effectiveTitle);
-      const safeContent = escapeForAppleScript(newContent);
-      fullBody = `<div>${safeEffectiveTitle}</div><div>${safeContent}</div>`;
-    }
-
-    const updateCommand = `set body of note "${safeCurrentTitle}" to "${fullBody}"`;
-    const script = buildAccountScopedScript({ account: targetAccount }, updateCommand);
-    const result = executeMutationAppleScript(script);
-
-    if (!result.success) {
-      throwIfAccountResolutionFailed(result.error);
-      console.error(`Failed to update note "${title}":`, result.error);
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Updates an existing note by its CoreData ID.
-   *
-   * This is more reliable than updateNote() because IDs are unique,
-   * while titles can be duplicated.
-   *
-   * When format is 'html', newTitle is ignored — the caller must include
-   * the title in the HTML content.
-   *
-   * Note: Password-protected notes will fail with an AppleScript error.
-   * Callers should check for password protection beforehand using
-   * getNoteById() or isNotePasswordProtectedById().
-   *
-   * @param id - CoreData URL identifier for the note
-   * @param newTitle - New title (optional, keeps existing if not provided; ignored in html format)
-   * @param newContent - New content for the note body
-   * @param format - Content format: "plaintext" wraps in div tags (default), "html" uses content as-is
-   * @returns true if update succeeded, false otherwise
-   */
-  updateNoteById(
+  updateNoteByIdIfUnchanged(
     id: string,
+    currentTitle: string,
+    expectedBody: string,
     newTitle: string | undefined,
     newContent: string,
-    format: "plaintext" | "html" = "plaintext"
-  ): boolean {
+    format: "plaintext" | "html" = "plaintext",
+    expectedRichRevision?: string,
+    scope?: ScopeGuard
+  ):
+    | { status: "updated"; writtenBody: string }
+    | { status: "conflict" | "attachments" | "failed" }
+    | { status: "scope_conflict"; reason: string } {
+    const safeId = sanitizeNoteId(id);
+    if (expectedRichRevision) {
+      const rich = readRichNote(id);
+      if (rich.revision !== expectedRichRevision) return { status: "conflict" };
+      if (rich.hasNativeObjects || rich.hasChecklist) return { status: "attachments" };
+    }
     if (newTitle) validateLength(newTitle, MAX_TITLE_LENGTH, "Note title");
     validateLength(newContent, MAX_CONTENT_LENGTH, "Note content");
-    let fullBody: string;
-    if (format === "html") {
-      // HTML mode: content is the complete body, escaped only for AppleScript string
-      fullBody = escapeHtmlForAppleScript(newContent);
-    } else {
-      // Plaintext mode: wrap title + content in <div> tags (existing behavior)
-      // Get the note to retrieve current title if newTitle not provided
-      let effectiveTitle = newTitle;
-      if (!effectiveTitle) {
-        const note = this.getNoteById(id);
-        if (!note) {
-          console.error(`Cannot update note: note with ID "${id}" not found`);
-          return false;
-        }
-        effectiveTitle = note.title;
-      }
+    validateLength(expectedBody, MAX_CONTENT_LENGTH, "Expected note content");
 
-      const safeEffectiveTitle = escapeForAppleScript(effectiveTitle);
-      const safeContent = escapeForAppleScript(newContent);
-      fullBody = `<div>${safeEffectiveTitle}</div><div>${safeContent}</div>`;
+    // Keep the unescaped form for exact-ID post-write verification. Escape only
+    // at the AppleScript boundary so the comparison reflects Notes.app's body.
+    let writtenBody: string;
+    if (format === "html") {
+      writtenBody = newContent;
+    } else {
+      const effectiveTitle = newTitle || currentTitle;
+      const encodePlaintext = (value: string): string =>
+        escapeForAppleScript(value).replace(/\\"/g, '"');
+      writtenBody = `<div>${encodePlaintext(effectiveTitle)}</div><div>${encodePlaintext(newContent)}</div>`;
     }
 
-    const safeId = sanitizeId(id);
-    const updateCommand = `set body of note id "${safeId}" to "${fullBody}"`;
-    const script = buildAppLevelScript(updateCommand);
+    const safeExpectedBody = escapeHtmlForAppleScript(expectedBody);
+    const safeWrittenBody = escapeHtmlForAppleScript(writtenBody);
+    const script = buildAppLevelScript(`
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope)}
+      if (count of attachments of noteRef) is greater than 0 then return "SAFETY_ATTACHMENTS"
+      set currentBody to body of noteRef
+      considering case
+        if currentBody is not "${safeExpectedBody}" and currentBody is not "${safeExpectedBody}" & linefeed then return "SAFETY_CONFLICT"
+        set body of noteRef to "${safeWrittenBody}"
+      end considering
+      return "SAFETY_UPDATED"
+    `);
     const result = executeMutationAppleScript(script);
 
     if (!result.success) {
-      console.error(`Failed to update note with ID "${id}":`, result.error);
-      return false;
+      console.error(`Failed guarded update for note ID "${id}":`, result.error);
+      return { status: "failed" };
+    }
+    const updateScopeFailure = parseScopeFailure(result.output);
+    if (updateScopeFailure) return { status: "scope_conflict", reason: updateScopeFailure };
+    const status = result.output.trim();
+    if (status === "SAFETY_CONFLICT") return { status: "conflict" };
+    if (status === "SAFETY_ATTACHMENTS") return { status: "attachments" };
+    if (status !== "SAFETY_UPDATED") return { status: "failed" };
+    return { status: "updated", writtenBody };
+  }
+
+  /**
+   * Deletes one exact note only when its complete body still matches the body
+   * the caller reviewed. The comparison and delete are one AppleScript action,
+   * so a concurrent edit cannot slip between the guard and deletion.
+   *
+   * `guards` are other notes that must still be active when the delete runs
+   * (the copy-then-retire guard of delete-note): each must exist, be unlocked,
+   * and sit in a folder other than Recently Deleted, and one with
+   * `expectedBody` must still have that body. They are checked in the same
+   * script, just before the delete; `index` in a guard outcome points into
+   * `guards`.
+   */
+  deleteNoteByIdIfUnchanged(
+    id: string,
+    expectedBody: string,
+    scope?: ScopeGuard,
+    guards: DeleteGuardNote[] = []
+  ):
+    | {
+        status:
+          | "deleted"
+          | "conflict"
+          | "not-deleted"
+          | "in-recently-deleted"
+          | "container-unknown"
+          | "unverified"
+          | "failed";
+      }
+    | { status: "scope_conflict"; reason: string }
+    | { status: "guard-conflict"; index: number }
+    | { status: "guard-inactive"; index: number; reason: string } {
+    const safeId = sanitizeNoteId(id);
+    // Deleting a note that is already in Recently Deleted removes it for good,
+    // so the script refuses one whose folder is Recently Deleted (#198). The
+    // folder is read from Notes.app in the same script, not from the database,
+    // which can still show a just-deleted note in its old folder; the database
+    // only supplies which folder ids are Recently Deleted.
+    //
+    // A note trashed earlier in the same Notes session reports a container
+    // whose class is not folder (#214), so neither the id nor the name check
+    // matches it. The script fails closed: a container that is not a folder,
+    // or whose class cannot be read, is treated as Recently Deleted. A note
+    // whose container cannot be read at all is refused as container-unknown,
+    // since whether it is in Recently Deleted cannot be ruled out.
+    //
+    // Guard notes get the same live checks, so a copy that was trashed, locked,
+    // or edited after it was verified stops the delete.
+    //
+    // Notes can accept a scripting `delete` without acting on it, so the script
+    // re-reads the note's original folder afterwards: a note still listed there
+    // was not moved to Recently Deleted and must not be reported as deleted.
+    // When that re-read fails, the outcome is unverified, not deleted.
+    //
+    // A body too long for a script literal (a note with large inline images) is
+    // compared against a private temporary file instead, still in full (#237).
+    const trashIds = trashFolderIdList();
+    const bodies = new ExpectedBodies();
+    let result: AppleScriptResult;
+    try {
+      const guardChecks = guards
+        .map((guard, index) => {
+          const safeGuardId = sanitizeNoteId(guard.id);
+          const ref = `__guardRef${index}`;
+          const folderVar = `__guardFolder${index}`;
+          const inactive = (reason: string) => `return "SAFETY_GUARD_INACTIVE:${index}:${reason}"`;
+          let bodyCheck = "";
+          if (guard.expectedBody !== undefined) {
+            const expected = bodies.bind(guard.expectedBody, `__expectedGuardBody${index}`);
+            bodyCheck = `${expected.setup}
+      set __guardBody to body of ${ref}
+      considering case
+        if __guardBody is not ${expected.operand} and __guardBody is not ${expected.operand} & linefeed then return "SAFETY_GUARD_CONFLICT:${index}"
+      end considering`;
+          }
+          return `
+      if not (exists note id "${safeGuardId}") then ${inactive("missing")}
+      set ${ref} to note id "${safeGuardId}"
+      if (id of ${ref}) is (id of noteRef) then ${inactive("the note being deleted")}
+      if password protected of ${ref} then ${inactive("locked")}
+      set ${folderVar} to missing value
+      try
+        set ${folderVar} to container of ${ref}
+      end try
+      if ${folderVar} is missing value then ${inactive("folder unknown")}${inRecentlyDeletedScript(folderVar, "__guardInTrash", trashIds)}
+      if __guardInTrash then ${inactive("in Recently Deleted")}${bodyCheck}`;
+        })
+        .join("");
+      const expected = bodies.bind(expectedBody, "__expectedBody");
+      const script = buildAppLevelScript(`
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope)}
+      set originalFolder to missing value
+      try
+        set originalFolder to container of noteRef
+      end try
+      if originalFolder is missing value then return "SAFETY_CONTAINER_UNKNOWN"${inRecentlyDeletedScript("originalFolder", "__inTrash", trashIds)}
+      if __inTrash then return "SAFETY_IN_RECENTLY_DELETED"${guardChecks}${expected.setup}
+      set currentBody to body of noteRef
+      considering case
+        if currentBody is not ${expected.operand} and currentBody is not ${expected.operand} & linefeed then return "SAFETY_CONFLICT"
+        delete noteRef
+      end considering
+      set __stillThere to missing value
+      try
+        set __stillThere to (id of notes of originalFolder) contains "${safeId}"
+      end try
+      if __stillThere is missing value then return "SAFETY_DELETE_UNVERIFIED"
+      if __stillThere then return "SAFETY_NOT_DELETED"
+      return "SAFETY_DELETED"
+    `);
+      result = executeMutationAppleScript(script);
+    } finally {
+      bodies.cleanup();
     }
 
-    return true;
+    if (!result.success) {
+      console.error(`Failed guarded delete for note ID "${id}":`, result.error);
+      return { status: "failed" };
+    }
+    const deleteScopeFailure = parseScopeFailure(result.output);
+    if (deleteScopeFailure) return { status: "scope_conflict", reason: deleteScopeFailure };
+    const status = result.output.trim();
+    const guardOutcome = /^SAFETY_GUARD_(CONFLICT|INACTIVE):(\d+)(?::(.+))?$/.exec(status);
+    if (guardOutcome && Number(guardOutcome[2]) < guards.length) {
+      const index = Number(guardOutcome[2]);
+      return guardOutcome[1] === "CONFLICT"
+        ? { status: "guard-conflict", index }
+        : { status: "guard-inactive", index, reason: guardOutcome[3] ?? "inactive" };
+    }
+    if (status === "SAFETY_CONFLICT") return { status: "conflict" };
+    if (status === "SAFETY_IN_RECENTLY_DELETED") return { status: "in-recently-deleted" };
+    if (status === "SAFETY_CONTAINER_UNKNOWN") return { status: "container-unknown" };
+    if (status === "SAFETY_NOT_DELETED") return { status: "not-deleted" };
+    if (status === "SAFETY_DELETE_UNVERIFIED") return { status: "unverified" };
+    return status === "SAFETY_DELETED" ? { status: "deleted" } : { status: "failed" };
+  }
+
+  /**
+   * Read-only scope pre-check for writes that do not run as AppleScript (the
+   * native Shortcuts operations). Runs the same checks the AppleScript writes
+   * embed, but in a separate script, so it is not atomic with the write.
+   *
+   * @returns null when every precondition holds, otherwise the failure reason
+   */
+  checkNoteScope(id: string, scope: ScopeGuard): string | null {
+    const safeId = sanitizeNoteId(id);
+    const result = executeAppleScript(
+      buildAppLevelScript(`
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope)}
+      return "SCOPE_OK"`)
+    );
+    if (!result.success) return result.error || "the note's folder could not be read";
+    return parseScopeFailure(result.output);
   }
 
   /**
@@ -1502,14 +2085,20 @@ export class AppleNotesManager {
    *   dateSetup: a date filter must scan every note's date). The script then
    *   returns the total note count as a leading record so the caller can
    *   detect a dedup shortfall and fall back to a full fetch.
+   * @param trashCheck - Also return the ids of notes in Recently Deleted,
+   *   after a group separator, so the caller can exclude or flag them (#207).
+   *   Only valid inside an account-scoped script.
    */
   private buildBulkListCommand(opts: {
     folderRef?: string;
     dateSetup?: string;
     sliceLimit?: number;
+    trashCheck?: boolean;
   }): string {
-    const { folderRef, dateSetup, sliceLimit } = opts;
+    const { folderRef, dateSetup, sliceLimit, trashCheck } = opts;
     const fullSource = folderRef ? `notes of ${folderRef}` : "notes";
+    const trashSetup = trashCheck ? `${buildTrashNoteIdsCollector()}\n` : "";
+    const trashSuffix = trashCheck ? ` & ${AS_GROUP_SEP} & (__trashNoteIds as text)` : "";
     const countGuard = (listVar: string) =>
       `if (count of ${listVar}) is not (count of noteNames) then error "${BULK_LIST_MUTATION_ERROR}"`;
 
@@ -1522,18 +2111,28 @@ export class AppleNotesManager {
       // remapped to the retryable mutation error. Every other error number
       // (AppleEvent timeout -1712, lost connection, permissions) is rethrown
       // unchanged so its honest message and mapping survive. (#86)
+      //
+      // When the limit covers the whole collection the range adds nothing but
+      // cost: Notes resolves a "notes 1 thru N" range about 8x slower than the
+      // plain whole-collection read (1.3 s versus 0.16 s for 359 notes), so
+      // that case reads the collection directly. (#162)
       const slicedSource = folderRef
         ? `(notes 1 thru fetchCount of ${folderRef})`
         : `(notes 1 thru fetchCount)`;
-      return `
+      return `${trashSetup}
         set totalCount to count of ${fullSource}
         set fetchCount to ${sliceLimit}
         if fetchCount > totalCount then set fetchCount to totalCount
         set resultList to {}
         if fetchCount > 0 then
           try
-            set noteNames to name of ${slicedSource}
-            set noteIds to id of ${slicedSource}
+            if fetchCount is totalCount then
+              set noteNames to name of ${fullSource}
+              set noteIds to id of ${fullSource}
+            else
+              set noteNames to name of ${slicedSource}
+              set noteIds to id of ${slicedSource}
+            end if
           on error errMsg number errNum
             if errNum is -1719 or errNum is -1728 then
               error "${BULK_LIST_MUTATION_ERROR}"
@@ -1547,7 +2146,7 @@ export class AppleNotesManager {
           end repeat
         end if
         set AppleScript's text item delimiters to ${AS_RECORD_SEP}
-        return (totalCount as text) & ${AS_RECORD_SEP} & (resultList as text)
+        return (totalCount as text) & ${AS_RECORD_SEP} & (resultList as text)${trashSuffix}
       `;
     }
 
@@ -1564,7 +2163,7 @@ export class AppleNotesManager {
       ? `if (item i of noteDates) >= thresholdDate then\n            `
       : "";
     const dateGuardClose = dateSetup ? `\n          end if` : "";
-    return `
+    return `${trashSetup}
         ${dateSetup ?? ""}set noteNames to name of ${fullSource}
         set noteIds to id of ${fullSource}
         ${dateFetch}${countGuard("noteIds")}
@@ -1573,8 +2172,99 @@ export class AppleNotesManager {
           ${dateGuardOpen}set end of resultList to (item i of noteNames) & ${AS_FIELD_SEP} & (item i of noteIds)${dateGuardClose}
         end repeat
         set AppleScript's text item delimiters to ${AS_RECORD_SEP}
-        return resultList as text
+        return (resultList as text)${trashSuffix}
       `;
+  }
+
+  /**
+   * Smart folder ids that a destination folder must never resolve to. Read
+   * fresh on every write (a smart folder can be added at any time); empty
+   * without Full Disk Access. See {@link readSmartFolderIds}.
+   */
+  smartFolderIds(): string[] {
+    return readSmartFolderIds();
+  }
+
+  /**
+   * Read-only preflight: throws the smart-folder refusal when `folderPath`
+   * resolves in `account` only to a smart folder. For write paths that create
+   * something before they reach their own destination check (the Markdown
+   * bridge creates first and moves second). Other failures are left to the
+   * write itself, which reports them as before.
+   *
+   * @param folderPath - Destination folder path (list-folders syntax)
+   * @param account - Account to resolve in (defaults to Notes' default)
+   */
+  assertNotSmartFolderDestination(folderPath: string, account?: string): void {
+    const excludeFolderIds = this.smartFolderIds();
+    if (excludeFolderIds.length === 0) return;
+    const script = buildAccountScopedScript(
+      { account: this.resolveAccount(account) },
+      `${buildLiveFolderResolution(folderPath, "__folder", { excludeFolderIds })}
+      return id of __folder`
+    );
+    const result = executeAppleScript(script);
+    if (!result.success) throwIfSmartFolderDestination(result.error, folderPath);
+  }
+
+  /**
+   * Lists every smart folder with its decoded query, read-only.
+   *
+   * Folder metadata and queries come from the NoteStore database (Full Disk
+   * Access). With `includeMatchingNotes`, Notes.app itself is asked which notes
+   * each smart folder currently shows, so membership reflects Notes' own
+   * evaluation of the query rather than a reimplementation of it.
+   *
+   * @param options.includeMatchingNotes - Also list the notes each folder shows
+   * @param options.limit - Maximum matching notes per folder (default 50)
+   * @throws Error when the database cannot be read (message says why)
+   */
+  listSmartFolders(
+    options: { includeMatchingNotes?: boolean; limit?: number } = {}
+  ): SmartFolder[] {
+    const result = readSmartFolders();
+    if (!result.folders)
+      throw smartFoldersReadError(result.error, result.message || "Failed to read smart folders.");
+    if (!options.includeMatchingNotes) return result.folders;
+    const limit = options.limit ?? 50;
+    return result.folders.map((folder) => {
+      try {
+        const { total, notes } = this.listSmartFolderNoteRefs(folder.id, limit);
+        return { ...folder, matchingNoteCount: total, matchingNotes: notes };
+      } catch (error) {
+        return {
+          ...folder,
+          matchingNotesError: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+  }
+
+  /**
+   * Asks Notes.app for the notes one smart folder currently shows.
+   *
+   * @returns The folder's total note count and up to `limit` (title, id) pairs
+   */
+  listSmartFolderNoteRefs(
+    folderId: string,
+    limit: number
+  ): { total: number; notes: { title: string; id: string }[] } {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(folderId))
+      throw new Error("An exact folder ID is required");
+    const safeLimit = Math.max(1, Math.floor(limit));
+    const script = buildAppLevelScript(
+      this.buildBulkListCommand({ folderRef: `folder id "${folderId}"`, sliceLimit: safeLimit })
+    );
+    const result = executeAppleScript(script);
+    if (!result.success) {
+      throw new Error(`Failed to list smart folder notes: ${result.error ?? "unknown error"}`);
+    }
+    const sepIdx = result.output.indexOf(RECORD_SEP);
+    const header = sepIdx === -1 ? result.output : result.output.slice(0, sepIdx);
+    const total = Number.parseInt(header.trim(), 10);
+    if (Number.isNaN(total)) throw new Error("Unexpected smart folder listing output");
+    const records = sepIdx === -1 ? "" : result.output.slice(sepIdx + 1);
+    return { total, notes: this.parseBulkListOutput(records, safeLimit) };
   }
 
   /**
@@ -1584,19 +2274,61 @@ export class AppleNotesManager {
    * after dedup so duplicates never count against it.
    */
   private parseBulkListOutput(output: string, safeLimit?: number): { title: string; id: string }[] {
-    if (!output.trim()) return [];
+    return this.parseBulkListRecords(output, safeLimit).refs;
+  }
+
+  /**
+   * Splits a trash-checked listing (see buildBulkListCommand's trashCheck)
+   * into the listing records and the set of note ids in Recently Deleted.
+   * Output without the group separator carries no trash information (null).
+   */
+  private splitTrashIds(output: string): { records: string; trashIds: Set<string> | null } {
+    const idx = output.lastIndexOf(GROUP_SEP);
+    if (idx === -1) return { records: output, trashIds: null };
+    const trashIds = new Set(
+      output
+        .slice(idx + 1)
+        .split(RECORD_SEP)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    );
+    return { records: output.slice(0, idx), trashIds };
+  }
+
+  /**
+   * Parses bulk listing records, deduplicated by id. Notes whose id is in
+   * `trash.ids` are dropped (and counted) unless `trash.include`, in which
+   * case they are kept and flagged `inRecentlyDeleted`. The limit applies
+   * after both dedup and trash filtering.
+   */
+  private parseBulkListRecords(
+    output: string,
+    safeLimit?: number,
+    trash?: { ids: Set<string> | null; include: boolean }
+  ): { refs: NoteListRef[]; excludedRecentlyDeleted: number } {
+    const refs: NoteListRef[] = [];
+    let excludedRecentlyDeleted = 0;
+    if (!output.trim()) return { refs, excludedRecentlyDeleted };
     const seenIds = new Set<string>();
-    const refs: { title: string; id: string }[] = [];
     for (const item of output.split(RECORD_SEP)) {
       const [title, id] = item.split(FIELD_SEP);
       if (!title?.trim()) continue;
       const noteId = id?.trim() || generateFallbackId();
       if (seenIds.has(noteId)) continue;
       seenIds.add(noteId);
-      refs.push({ title: title.trim(), id: noteId });
+      const trashed = trash?.ids?.has(noteId) ?? false;
+      if (trashed && !trash?.include) {
+        excludedRecentlyDeleted++;
+        continue;
+      }
+      refs.push(
+        trashed
+          ? { title: title.trim(), id: noteId, inRecentlyDeleted: true }
+          : { title: title.trim(), id: noteId }
+      );
       if (safeLimit !== undefined && refs.length >= safeLimit) break;
     }
-    return refs;
+    return { refs, excludedRecentlyDeleted };
   }
 
   /**
@@ -1609,8 +2341,9 @@ export class AppleNotesManager {
     account?: string,
     folder?: string,
     modifiedSince?: string,
-    limit?: number
-  ): { title: string; id: string }[] {
+    limit?: number,
+    includeRecentlyDeleted = false
+  ): NoteListResult {
     const targetAccount = this.resolveAccount(account);
     const safeLimit = limit !== undefined && limit > 0 ? Math.floor(limit) : undefined;
     const folderRef = folder ? buildFolderReference(folder) : undefined;
@@ -1630,32 +2363,44 @@ export class AppleNotesManager {
     if (safeLimit !== undefined && !dateSetup) {
       const script = buildAccountScopedScript(
         { account: targetAccount },
-        this.buildBulkListCommand({ folderRef, sliceLimit: safeLimit })
+        this.buildBulkListCommand({ folderRef, sliceLimit: safeLimit, trashCheck: true })
       );
       const result = executeAppleScript(script);
       if (!result.success) {
         throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
       }
-      const sepIdx = result.output.indexOf(RECORD_SEP);
-      const header = sepIdx === -1 ? result.output : result.output.slice(0, sepIdx);
+      const { records: body, trashIds } = this.splitTrashIds(result.output);
+      const sepIdx = body.indexOf(RECORD_SEP);
+      const header = sepIdx === -1 ? body : body.slice(0, sepIdx);
       const totalCount = Number.parseInt(header.trim(), 10);
-      const records = sepIdx === -1 ? "" : result.output.slice(sepIdx + 1);
-      const refs = this.parseBulkListOutput(records, safeLimit);
-      // A malformed header (NaN) also falls through to the full fetch.
-      if (!Number.isNaN(totalCount) && (refs.length >= safeLimit || totalCount <= safeLimit)) {
-        return refs;
+      const records = sepIdx === -1 ? "" : body.slice(sepIdx + 1);
+      const parsed = this.parseBulkListRecords(records, safeLimit, {
+        ids: trashIds,
+        include: includeRecentlyDeleted,
+      });
+      // A malformed header (NaN) also falls through to the full fetch, as
+      // does a slice thinned by dedup or by Recently Deleted exclusion.
+      if (
+        !Number.isNaN(totalCount) &&
+        (parsed.refs.length >= safeLimit || totalCount <= safeLimit)
+      ) {
+        return parsed;
       }
     }
 
     const script = buildAccountScopedScript(
       { account: targetAccount },
-      this.buildBulkListCommand({ folderRef, dateSetup })
+      this.buildBulkListCommand({ folderRef, dateSetup, trashCheck: true })
     );
     const result = executeAppleScript(script);
     if (!result.success) {
       throw new Error(`Failed to list notes: ${result.error ?? "unknown error"}`);
     }
-    return this.parseBulkListOutput(result.output, safeLimit);
+    const { records, trashIds } = this.splitTrashIds(result.output);
+    return this.parseBulkListRecords(records, safeLimit, {
+      ids: trashIds,
+      include: includeRecentlyDeleted,
+    });
   }
 
   /**
@@ -1668,7 +2413,7 @@ export class AppleNotesManager {
    * @returns Array of note titles
    */
   listNotes(account?: string, folder?: string, modifiedSince?: string, limit?: number): string[] {
-    return this.listNotesCore(account, folder, modifiedSince, limit).map((ref) => ref.title);
+    return this.listNotesCore(account, folder, modifiedSince, limit).refs.map((ref) => ref.title);
   }
 
   /**
@@ -1680,6 +2425,9 @@ export class AppleNotesManager {
    * specifier resolves ambiguously to the same one note every time — see
    * the fix in exportNotesAsJson for the failure mode this avoids).
    *
+   * Notes in Recently Deleted are excluded (#207); use
+   * `listNoteRefsDetailed()` to include and flag them.
+   *
    * @returns Array of { title, id } pairs, deduplicated by id
    */
   listNoteRefs(
@@ -1688,7 +2436,24 @@ export class AppleNotesManager {
     modifiedSince?: string,
     limit?: number
   ): { title: string; id: string }[] {
-    return this.listNotesCore(account, folder, modifiedSince, limit);
+    return this.listNotesCore(account, folder, modifiedSince, limit).refs;
+  }
+
+  /**
+   * Same as `listNoteRefs()`, plus control over notes in Recently Deleted and
+   * a count of how many were skipped. Notes.app's account-wide `notes`
+   * includes Recently Deleted, so they are excluded unless
+   * `includeRecentlyDeleted`, in which case each is flagged
+   * `inRecentlyDeleted: true`. (#207)
+   */
+  listNoteRefsDetailed(
+    account?: string,
+    folder?: string,
+    modifiedSince?: string,
+    limit?: number,
+    includeRecentlyDeleted = false
+  ): NoteListResult {
+    return this.listNotesCore(account, folder, modifiedSince, limit, includeRecentlyDeleted);
   }
 
   /**
@@ -1712,19 +2477,36 @@ export class AppleNotesManager {
     const accounts = this.listAccounts();
 
     for (const account of accounts) {
-      // Use delimited output to avoid fragile comma-based parsing.
-      // Format: name|||id|||createdDate|||modifiedDate|||shared|||passwordProtected
+      // Bulk property reads (#162): one Apple Event per property for the whole
+      // account instead of one per note, and nothing past the first read when
+      // no note is shared. Records keep the control-char format (#18):
+      // name, id, created, modified, shared, passwordProtected.
+      const countGuard = (listVar: string) =>
+        `if (count of ${listVar}) is not (count of noteShared) then error "${BULK_LIST_MUTATION_ERROR}"`;
       const script = buildAccountScopedScript(
         { account: account.name },
         `
+        set noteShared to shared of notes
         set resultList to {}
-        repeat with n in notes
-          if shared of n is true then
-            set cd to creation date of n
-            set md to modification date of n
-            set end of resultList to (name of n) & ${AS_FIELD_SEP} & (id of n) & ${AS_FIELD_SEP} & ${asDatePartsExpr("cd")} & ${AS_FIELD_SEP} & ${asDatePartsExpr("md")} & ${AS_FIELD_SEP} & (shared of n as text) & ${AS_FIELD_SEP} & (password protected of n as text)
-          end if
-        end repeat
+        if noteShared contains true then
+          set noteNames to name of notes
+          set noteIds to id of notes
+          set noteCreated to creation date of notes
+          set noteModified to modification date of notes
+          set noteLocked to password protected of notes
+          ${countGuard("noteIds")}
+          ${countGuard("noteNames")}
+          ${countGuard("noteCreated")}
+          ${countGuard("noteModified")}
+          ${countGuard("noteLocked")}
+          repeat with i from 1 to count of noteShared
+            if (item i of noteShared) is true then
+              set cd to item i of noteCreated
+              set md to item i of noteModified
+              set end of resultList to (item i of noteNames) & ${AS_FIELD_SEP} & (item i of noteIds) & ${AS_FIELD_SEP} & ${asDatePartsExpr("cd")} & ${AS_FIELD_SEP} & ${asDatePartsExpr("md")} & ${AS_FIELD_SEP} & "true" & ${AS_FIELD_SEP} & ((item i of noteLocked) as text)
+            end if
+          end repeat
+        end if
         set AppleScript's text item delimiters to ${AS_RECORD_SEP}
         return resultList as text
         `
@@ -1770,15 +2552,214 @@ export class AppleNotesManager {
       }
     }
 
-    return sharedNotes;
+    // Notes.app can enumerate one note twice under `notes of account` (#183).
+    return uniqueById(sharedNotes);
   }
 
   // ===========================================================================
   // Folder Operations
   // ===========================================================================
 
+  /** Rename a folder in place while preserving its identity and contents. */
+  renameFolderById(id: string, expectedName: string, expectedParentId: string, newName: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(id))
+      throw new Error("An exact folder ID is required");
+    if (
+      !newName.trim() ||
+      newName.length > 1000 ||
+      Array.from(newName).some((char) => char.charCodeAt(0) < 32)
+    )
+      throw new Error("Invalid folder name");
+    const literal = (value: string) => `"${escapePlainStringForAppleScript(value)}"`;
+    const script = `tell application "Notes"
+      set targetFolder to folder id ${literal(id)}
+      set parentRef to container of targetFolder
+      set parentId to id of parentRef
+      considering case
+        if name of targetFolder is not ${literal(expectedName)} or parentId is not ${literal(expectedParentId)} then error "Folder changed; read it again"
+      end considering
+      repeat with sibling in folders of parentRef
+        if name of sibling is ${literal(newName)} and id of sibling is not ${literal(id)} then error "A sibling folder already has this name"
+      end repeat
+      set name of targetFolder to ${literal(newName)}
+      considering case
+        if id of targetFolder is not ${literal(id)} or name of targetFolder is not ${literal(newName)} or id of container of targetFolder is not parentId then error "Rename readback failed"
+      end considering
+      return id of targetFolder
+    end tell`;
+    const result = executeMutationAppleScript(script);
+    if (!result.success)
+      throw new Error(
+        result.error || "Rename outcome uncertain; read folder by ID before retrying"
+      );
+    return { id, name: newName, parentId: expectedParentId };
+  }
+
+  /** Read the exact name, parent, and account identity used by guarded folder writes. */
+  getFolderById(id: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICFolder\/p\d+$/i.test(id))
+      throw new Error("An exact folder ID is required");
+    const result = executeAppleScript(`tell application "Notes"
+      set f to folder id "${id}"
+      set acct to container of f
+      repeat while class of acct is folder
+        set acct to container of acct
+      end repeat
+      return (name of f) & ${AS_FIELD_SEP} & (id of container of f) & ${AS_FIELD_SEP} & (id of acct)
+    end tell`);
+    if (!result.success) throw new Error(result.error || "Folder not found");
+    const [name, parentId, accountId] = result.output.replace(/\n$/, "").split(FIELD_SEP);
+    if (!name || !parentId) throw new Error("Incomplete folder metadata");
+    return accountId
+      ? { id, name, parentId, accountId, isRoot: parentId === accountId }
+      : { id, name, parentId };
+  }
+
+  /**
+   * Reads, in one AppleScript, everything Notes.app itself knows about a folder
+   * that guarded deletion checks: name, parent (empty at an account root),
+   * account, the account's default folder, shared state of the folder or any
+   * ancestor, and the counts of direct child folders and notes.
+   */
+  readFolderForDelete(id: string): FolderAppFacts {
+    if (!FOLDER_ID_PATTERN.test(id)) throw new Error("An exact folder ID is required");
+    const result = executeAppleScript(
+      buildAppLevelScript(`${folderDeleteFactsScript(id)}
+      return folderName & ${AS_FIELD_SEP} & parentId & ${AS_FIELD_SEP} & acctId & ${AS_FIELD_SEP} & defaultId & ${AS_FIELD_SEP} & (sharedAny as text) & ${AS_FIELD_SEP} & (childCount as text) & ${AS_FIELD_SEP} & (noteCount as text)`)
+    );
+    if (!result.success) throw new Error(result.error || "Folder not found");
+    const parts = result.output.replace(/\n$/, "").split(FIELD_SEP);
+    if (parts.length !== 7 || !parts[0] || !parts[2]) throw new Error("Incomplete folder metadata");
+    const count = (value: string) => {
+      const parsed = Number(value.trim());
+      if (!Number.isInteger(parsed) || parsed < 0) throw new Error("Incomplete folder metadata");
+      return parsed;
+    };
+    return {
+      id,
+      name: parts[0],
+      parentId: parts[1] || null,
+      accountId: parts[2],
+      defaultFolderId: parts[3] || null,
+      shared: parts[4].trim() === "true",
+      childFolderCount: count(parts[5]),
+      noteCount: count(parts[6]),
+    };
+  }
+
+  /**
+   * Deletes one empty folder by exact id, repeating every Notes.app-visible
+   * guard inside the same AppleScript as the `delete` command: exact name
+   * (case-sensitive), parent or account root, account, not the default folder,
+   * not shared (itself or an ancestor), no child folders, no notes.
+   *
+   * Store-only facts (folder type, stable identifier) are checked by the caller
+   * before this runs, so the whole guard is a pre-check followed by an
+   * AppleScript delete, not one atomic transaction.
+   */
+  deleteEmptyFolderIfUnchanged(
+    id: string,
+    expected: { name: string; parentId: string | null; accountId: string }
+  ): { status: "deleted" } | { status: "conflict" | "refused" | "failed"; reason: string } {
+    if (!FOLDER_ID_PATTERN.test(id)) throw new Error("An exact folder ID is required");
+    const literal = (value: string) => `"${escapePlainStringForAppleScript(value)}"`;
+    const script = buildAppLevelScript(`${folderDeleteFactsScript(id)}
+      considering case
+        if folderName is not ${literal(expected.name)} then return "SAFETY_CONFLICT:name"
+      end considering
+      if parentId is not ${literal(expected.parentId ?? "")} then return "SAFETY_CONFLICT:parent"
+      if acctId is not ${literal(expected.accountId)} then return "SAFETY_CONFLICT:account"
+      if defaultId is ${literal(id)} then return "SAFETY_REFUSED:default folder"
+      if sharedAny then return "SAFETY_REFUSED:shared folder"
+      if childCount is not 0 then return "SAFETY_REFUSED:folder has child folders"
+      if noteCount is not 0 then return "SAFETY_REFUSED:folder has notes"
+      delete f
+      return "SAFETY_DELETED"`);
+    const result = executeMutationAppleScript(script);
+    if (!result.success) {
+      console.error(`Failed guarded folder delete for "${id}":`, result.error);
+      return { status: "failed", reason: result.error || "AppleScript failed" };
+    }
+    const output = result.output.trim();
+    const colon = output.indexOf(":");
+    const status = colon === -1 ? output : output.slice(0, colon);
+    const reason = colon === -1 ? "" : output.slice(colon + 1);
+    if (status === "SAFETY_DELETED") return { status: "deleted" };
+    if (status === "SAFETY_CONFLICT") return { status: "conflict", reason };
+    if (status === "SAFETY_REFUSED") return { status: "refused", reason };
+    return { status: "failed", reason: "Unexpected AppleScript result" };
+  }
+
+  /**
+   * Counts how many of the given notes Notes.app currently places outside the
+   * folder: in another folder, or in Recently Deleted (a note trashed this
+   * session reports a non-folder container). A note Notes.app cannot resolve
+   * is not counted, so the caller keeps treating it as present.
+   *
+   * The local store can keep a just-trashed note in its old folder for
+   * minutes; this lets guarded folder deletion discount such notes using
+   * Notes.app's live view instead of refusing until the store catches up.
+   */
+  countNotesOutsideFolder(folderId: string, noteIds: string[]): number {
+    if (!FOLDER_ID_PATTERN.test(folderId)) throw new Error("An exact folder ID is required");
+    if (noteIds.length === 0) return 0;
+    const ids = noteIds.map((noteId) => `"${sanitizeNoteId(noteId)}"`).join(", ");
+    const result = executeAppleScript(
+      buildAppLevelScript(`
+      set movedCount to 0
+      repeat with noteIdRef in {${ids}}
+        try
+          set c to container of note id (contents of noteIdRef)
+          if class of c is not folder then
+            set movedCount to movedCount + 1
+          else if (id of c) is not "${folderId}" then
+            set movedCount to movedCount + 1
+          end if
+        end try
+      end repeat
+      return movedCount as text`)
+    );
+    if (!result.success) return 0;
+    const moved = Number(result.output.trim());
+    return Number.isInteger(moved) && moved >= 0 && moved <= noteIds.length ? moved : 0;
+  }
+
+  /** Whether Notes.app still resolves an exact folder id. */
+  folderExistsById(id: string): boolean {
+    if (!FOLDER_ID_PATTERN.test(id)) throw new Error("An exact folder ID is required");
+    const result = executeAppleScript(
+      buildAppLevelScript(`return (exists folder id "${id}") as text`)
+    );
+    if (!result.success) throw new Error(result.error || "Could not check folder existence");
+    return result.output.trim() === "true";
+  }
+
+  /** Insert one file into an unchanged exact note and return Notes' attachment ID. */
+  addAttachmentById(id: string, expectedBody: string, filePath: string) {
+    if (!/^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p\d+$/i.test(id))
+      throw new Error("Exact note ID required");
+    const quote = (value: string) => `"${escapePlainStringForAppleScript(value)}"`;
+    const result = executeMutationAppleScript(`tell application "Notes"
+      set n to note id ${quote(id)}
+      if password protected of n then error "Locked note"
+      considering case
+        if body of n is not ${quote(expectedBody)} and body of n is not (${quote(expectedBody)} & linefeed) then error "Note changed before attachment insertion"
+      end considering
+      set a to make new attachment at n with data (POSIX file ${quote(filePath)})
+      return id of a
+    end tell`);
+    if (!result.success)
+      throw new Error(
+        result.error || "Attachment insertion outcome uncertain; read note before retrying"
+      );
+    return result.output.trim();
+  }
+
   /**
    * Lists all folders in an account with full hierarchical paths.
+   *
+   * Smart folders are included (AppleScript lists them like ordinary folders)
+   * and carry `smartFolder: true` when the NoteStore database is readable.
    *
    * Each folder's `name` field contains the full path (e.g., "Work/Clients/Omnia")
    * so that duplicate folder names (e.g., multiple "Archive" folders) are
@@ -1852,11 +2833,16 @@ export class AppleNotesManager {
       return safeName;
     };
 
+    // `every folder` lists smart folders like ordinary ones (macOS 27, #247) and
+    // the scripting dictionary has no folder-type property, so mark them from
+    // the NoteStore database. Unmarked when it cannot be read (no Full Disk Access).
+    const smart = new Set(entries.some((entry) => entry.id) ? this.smartFolderIds() : []);
     return entries.map((entry) => ({
       id: entry.id,
       name: buildPath(entry),
       account: entry.account || targetAccount || "",
       shared: entry.shared,
+      ...(smart.has(entry.id) ? { smartFolder: true } : {}),
     }));
   }
 
@@ -1877,24 +2863,31 @@ export class AppleNotesManager {
     }
 
     // Create each segment of the path, checking existence first to avoid duplicates.
-    // For "A/B/C": ensure "A" exists, then "A/B", then "A/B/C".
+    // For "A/B/C": ensure "A" exists, then "A/B", then "A/B/C". Existence is
+    // decided by id, never by a name reference alone: a name reference still
+    // resolves a folder deleted earlier in this Notes session (#213). A segment
+    // that names only a smart folder is refused before anything is created: a
+    // smart folder cannot hold folders, and treating it as the existing folder
+    // would hand its id back as if it were an ordinary one.
+    const smart = { rootOnly: true, excludeFolderIds: this.smartFolderIds() };
     for (let i = 0; i < parts.length; i++) {
       const currentPath = parts
         .slice(0, i + 1)
         .map((p) => escapeFolderName(p))
         .join("/");
-      const currentRef = buildFolderReference(currentPath);
 
       // Check if this folder already exists
       const checkScript = buildAccountScopedScript(
         { account: targetAccount },
-        `return id of ${currentRef}`
+        `${buildLiveFolderResolution(currentPath, "__folder", smart)}
+        return id of __folder`
       );
       const checkResult = executeAppleScript(checkScript);
       if (checkResult.success) {
         // Folder exists, move to next segment
         continue;
       }
+      throwIfSmartFolderDestination(checkResult.error, currentPath);
 
       // Folder doesn't exist — create it
       const segmentName = escapePlainStringForAppleScript(parts[i]);
@@ -1907,8 +2900,8 @@ export class AppleNotesManager {
           .slice(0, i)
           .map((p) => escapeFolderName(p))
           .join("/");
-        const parentRef = buildFolderReference(parentPath);
-        createCommand = `make new folder at ${parentRef} with properties {name:"${segmentName}"}`;
+        createCommand = `${buildLiveFolderResolution(parentPath, "__parent", smart)}
+        make new folder at __parent with properties {name:"${segmentName}"}`;
       }
 
       const script = buildAccountScopedScript({ account: targetAccount }, createCommand);
@@ -1916,6 +2909,7 @@ export class AppleNotesManager {
 
       if (!result.success) {
         throwIfAccountResolutionFailed(result.error);
+        throwIfSmartFolderDestination(result.error, name);
         console.error(`Failed to create folder "${name}":`, result.error);
         return null;
       }
@@ -1924,14 +2918,32 @@ export class AppleNotesManager {
     // Get the ID of the final (deepest) folder
     // Ask for the account's real name in the same call, so an omitted `account`
     // reports the resolved default rather than a hardcoded "iCloud" (#128).
-    const fullRef = buildFolderReference(name);
+    // This is also the honest post-check (#213): only a folder that exists by
+    // id counts, so a create that silently did nothing is reported as failure.
     const idScript = buildAccountScopedScript(
       { account: targetAccount },
-      `return (id of ${fullRef}) & ${AS_FIELD_SEP} & (name of it)`
+      `${buildLiveFolderResolution(name, "__folder", smart)}
+      return (id of __folder) & ${AS_FIELD_SEP} & (name of it)`
     );
     const idResult = executeAppleScript(idScript);
     const [rawId = "", rawAccount = ""] = idResult.success ? idResult.output.split(FIELD_SEP) : [];
-    const folderId = idResult.success ? extractCoreDataId(rawId, "folder") : "";
+    // `id of <folder>` yields the bare x-coredata URL; accept the older
+    // "folder id <url>" rendering too.
+    const bareId = rawId.trim();
+    const folderId = !idResult.success
+      ? ""
+      : FOLDER_ID_PATTERN.test(bareId)
+        ? bareId
+        : extractCoreDataId(rawId, "folder");
+
+    if (!folderId) {
+      throwIfAccountResolutionFailed(idResult.error);
+      console.error(
+        `Folder "${name}" could not be confirmed after creation:`,
+        idResult.error ?? "no folder id returned"
+      );
+      return null;
+    }
 
     return {
       id: folderId,
@@ -1952,7 +2964,10 @@ export class AppleNotesManager {
   deleteFolder(name: string, account?: string): boolean {
     const targetAccount = this.resolveAccount(account);
 
-    const deleteCommand = `delete ${buildFolderReference(name)}`;
+    // Resolve by id first: a name reference still reaches a folder deleted
+    // earlier in this Notes session, so a repeat delete "succeeded" (#213).
+    const deleteCommand = `${buildLiveFolderResolution(name, "__folder")}
+    delete __folder`;
     const script = buildAccountScopedScript({ account: targetAccount }, deleteCommand);
     const result = executeMutationAppleScript(script);
 
@@ -1963,38 +2978,6 @@ export class AppleNotesManager {
     }
 
     return true;
-  }
-
-  /**
-   * Moves a note to a different folder, looked up by title.
-   *
-   * Uses Notes.app's native `move` command (the same one `batchMoveNotes`
-   * uses), which relocates the note in place — preserving its identity, id,
-   * creation date, AND all embedded attachments (files/images/PDFs/scans/audio).
-   * The previous copy-then-delete implementation rebuilt the note from its body
-   * HTML, which silently dropped attachments and reset the note's identity.
-   *
-   * The note is resolved to its id first (titles can be duplicated), then moved
-   * by id so the title-based and id-based paths share the same native move.
-   *
-   * @param title - Title of the note to move
-   * @param destinationFolder - Name of the folder to move to (must already exist)
-   * @param account - Account containing the note (defaults to Notes.app's default account)
-   * @returns true if the move succeeded, false otherwise
-   */
-  moveNote(title: string, destinationFolder: string, account?: string): boolean {
-    const targetAccount = this.resolveAccount(account);
-
-    // Resolve the note's id first (titles can be duplicated), then delegate to
-    // the id-based native move so both paths preserve attachments + identity.
-    const originalNote = this.getNoteDetails(title, targetAccount);
-
-    if (!originalNote) {
-      console.error(`Cannot move note "${title}": note not found`);
-      return false;
-    }
-
-    return this.moveNoteById(originalNote.id, destinationFolder, targetAccount);
   }
 
   /**
@@ -2010,28 +2993,54 @@ export class AppleNotesManager {
    * @param account - Account containing the destination folder (defaults to Notes.app's default account)
    * @returns true if the move succeeded, false otherwise
    */
-  moveNoteById(id: string, destinationFolder: string, account?: string): boolean {
+  moveNoteById(
+    id: string,
+    destinationFolder: string,
+    account?: string,
+    scope?: ScopeGuard
+  ): boolean {
     const targetAccount = this.resolveAccount(account);
-    const safeId = sanitizeId(id);
+    const safeId = sanitizeNoteId(id);
     // buildFolderReference validates the destination path; a malformed folder is
     // a precondition error, so let it throw. The destination folder must already
     // exist — Notes.app's `move` does not create it.
-    const destFolderRef = `${buildFolderReference(destinationFolder)} of ${AS_ACCOUNT_REF}`;
+    // The destination resolves to a live folder id, never a folder deleted
+    // earlier in this Notes session (#213), and never a smart folder: moving a
+    // note "into" one sends it to Recently Deleted.
+    const destFolderSetup = buildLiveFolderResolution(destinationFolder, "destFolder", {
+      excludeFolderIds: this.smartFolderIds(),
+    });
 
+    // Optional folder preconditions run in the same script, just before `move`.
     const moveCommand = `
       ${buildAccountResolution(targetAccount)}
-      set destFolder to ${destFolderRef}
-      set noteRef to note id "${safeId}"
+      ${destFolderSetup}
+      set noteRef to note id "${safeId}"${buildScopeGuardScript("noteRef", scope, "destFolder")}
       move noteRef to destFolder
+      set movedNoteRef to note id "${safeId}"
+      set actualFolder to container of movedNoteRef
+      if (id of actualFolder) is not (id of destFolder) then return "SAFETY_WRONG_FOLDER"
+      return "SAFETY_MOVED"
     `;
     const script = buildAppLevelScript(moveCommand);
     const result = executeMutationAppleScript(script);
 
     if (!result.success) {
       throwIfAccountResolutionFailed(result.error);
+      throwIfSmartFolderDestination(result.error, destinationFolder);
       console.error(
         `Cannot move note to "${destinationFolder}" (folder may not exist):`,
         result.error
+      );
+      return false;
+    }
+
+    const scopeFailure = parseScopeFailure(result.output);
+    if (scopeFailure) throw new Error(scopeConflictMessage(scopeFailure));
+
+    if (result.output.trim() !== "SAFETY_MOVED") {
+      console.error(
+        `Move result for note ID "${id}" did not verify destination "${destinationFolder}"`
       );
       return false;
     }
@@ -2401,7 +3410,7 @@ export class AppleNotesManager {
         message: "Notes.app is accessible",
       });
     } else {
-      const errorHint = appCheck.error?.includes("not authorized")
+      const errorHint = isPermissionDenied(appCheck.error)
         ? " (check Automation permissions in System Settings > Privacy & Security > Automation)"
         : "";
       checks.push({
@@ -2422,8 +3431,7 @@ export class AppleNotesManager {
         message: "AppleScript automation permissions granted",
       });
     } else {
-      const isPermError =
-        permCheck.error?.includes("not authorized") || permCheck.error?.includes("not permitted");
+      const isPermError = isPermissionDenied(permCheck.error);
       checks.push({
         name: "permissions",
         passed: !isPermError,
@@ -2729,7 +3737,8 @@ export class AppleNotesManager {
       }
     }
 
-    return attachments;
+    // A freshly added attachment can be enumerated twice (#197).
+    return uniqueById(attachments);
   }
 
   /**
@@ -2824,7 +3833,8 @@ export class AppleNotesManager {
       }
     }
 
-    return attachments;
+    // A freshly added attachment can be enumerated twice (#197).
+    return uniqueById(attachments);
   }
 
   /**
@@ -2958,6 +3968,72 @@ export class AppleNotesManager {
     }
   }
 
+  /**
+   * Lists a note's Paper (`com.apple.paper`) and classic drawing attachments
+   * with Notes' rendered raster, read-only from NoteStore and the Notes group
+   * container. Requires Full Disk Access.
+   *
+   * @throws PaperStoreError (`no_fda`, `invalid_id`, `not_found`, `query_error`)
+   */
+  listPaperAttachmentsById(noteId: string): DrawingAttachment[] {
+    return describeDrawings(readDrawingRows(noteId));
+  }
+
+  /**
+   * Copies Notes' rendered raster of one drawing to a new file. `attachmentId`
+   * (identifier or AppleScript id) is required when the note has more than one.
+   */
+  exportPaperImageById(
+    noteId: string,
+    savePath: string,
+    attachmentId?: string
+  ): DrawingRasterExport {
+    const drawing = selectDrawing(this.listPaperAttachmentsById(noteId), noteId, attachmentId);
+    return { drawing, ...exportDrawingRaster(drawing, savePath) };
+  }
+
+  /**
+   * Reads one note's attachments with their on-disk asset and preview paths,
+   * in body order, from the NoteStore database and the Notes group container
+   * (both read-only). Requires Full Disk Access.
+   *
+   * @param noteId - canonical CoreData note id
+   * @throws AttachmentStoreError (`no_fda`, `invalid_id`, `not_found`, `query_error`)
+   */
+  getAttachmentAssetsById(noteId: string): NoteAttachmentAssets {
+    const { rows, bodyOrder } = readNoteAttachmentRows(noteId);
+    return assembleAttachmentAssets(rows, bodyOrder);
+  }
+
+  /**
+   * The note's lead visual: the first image in body order (even when its asset
+   * has not downloaded), else the first scan or drawing, else null.
+   */
+  getFirstImageById(noteId: string): FirstImage | null {
+    return selectFirstImage(this.getAttachmentAssetsById(noteId));
+  }
+
+  /**
+   * Copies a note's attachment files into a directory. Each attachment exports
+   * its real asset; its rendered preview only when no asset exists. Existing
+   * files are never replaced: name collisions get `-2`, `-3`, ... suffixes.
+   * The directory must satisfy the same allowlist as save-attachment and may
+   * not be inside the Notes group container.
+   */
+  exportAttachmentsById(
+    noteId: string,
+    exportDir: string,
+    firstImageOnly = false
+  ): {
+    exportDir: string;
+    results: AttachmentExportResult[];
+    firstImage?: FirstImage | null;
+  } {
+    return exportAttachmentAssets(this.getAttachmentAssetsById(noteId), exportDir, {
+      firstImageOnly,
+    });
+  }
+
   // ===========================================================================
   // Batch Operations
   // ===========================================================================
@@ -2974,111 +4050,9 @@ export class AppleNotesManager {
   }
 
   /**
-   * Deletes multiple notes by their IDs.
-   *
-   * Each deletion is attempted independently; failures don't stop other deletions.
-   * Returns results for each note indicating success or failure.
-   *
-   * @param ids - Array of CoreData URL identifiers for notes to delete
-   * @returns Array of results with id, success status, and optional error message
-   *
-   * @example
-   * ```typescript
-   * const results = manager.batchDeleteNotes([
-   *   "x-coredata://ABC/ICNote/p1",
-   *   "x-coredata://ABC/ICNote/p2"
-   * ]);
-   * results.forEach(r => {
-   *   if (r.success) console.log(`Deleted ${r.id}`);
-   *   else console.log(`Failed to delete ${r.id}: ${r.error}`);
-   * });
-   * ```
-   */
-  batchDeleteNotes(ids: string[]): { id: string; success: boolean; error?: string }[] {
-    if (ids.length === 0) return [];
-
-    // Collapse the whole batch into ONE osascript spawn (#26): a single
-    // app-level script loops over every id, with a per-id `try` so one bad note
-    // can't abort the rest. The old path spawned 3 processes per note
-    // (getNoteById + isNotePasswordProtectedById + deleteNoteById) — i.e. 3N
-    // spawns for N notes. This is one spawn total, with the same per-item
-    // isolation and result semantics.
-    const results: { id: string; success: boolean; error?: string }[] = new Array(ids.length);
-    const runnable: { index: number; safe: string }[] = [];
-
-    ids.forEach((id, i) => {
-      try {
-        runnable.push({ index: i, safe: sanitizeId(id) });
-      } catch (e) {
-        results[i] = this.createBatchResult(
-          id,
-          false,
-          e instanceof Error ? e.message : "Invalid note ID"
-        );
-      }
-    });
-
-    if (runnable.length > 0) {
-      const idList = runnable.map((r) => `"${r.safe}"`).join(", ");
-      const script = buildAppLevelScript(`
-        set out to ""
-        repeat with rawId in {${idList}}
-          set theId to (rawId as text)
-          set noteRef to missing value
-          try
-            set noteRef to note id theId
-          end try
-          if noteRef is missing value then
-            set out to out & "missing" & ${AS_RECORD_SEP}
-          else
-            set isPw to false
-            try
-              set isPw to (password protected of noteRef)
-            end try
-            if isPw then
-              set out to out & "pw" & ${AS_RECORD_SEP}
-            else
-              try
-                delete noteRef
-                set out to out & "ok" & ${AS_RECORD_SEP}
-              on error
-                set out to out & "fail" & ${AS_RECORD_SEP}
-              end try
-            end if
-          end if
-        end repeat
-        return out
-      `);
-      const res = executeMutationAppleScript(script);
-
-      if (!res.success) {
-        // Whole-batch failure (e.g. Notes.app not responding): can't isolate,
-        // so mark every runnable note as failed with the underlying error.
-        for (const r of runnable) {
-          results[r.index] = this.createBatchResult(
-            ids[r.index],
-            false,
-            res.error ?? "Batch delete failed"
-          );
-        }
-      } else {
-        const statuses = res.output
-          .split(RECORD_SEP)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
-        runnable.forEach((r, k) => {
-          results[r.index] = this.mapBatchStatus(ids[r.index], statuses[k], "delete");
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
    * Maps a per-item status token emitted by a batch AppleScript loop to a
    * BatchResult, preserving the human-readable error messages of the original
-   * per-note implementation. See {@link batchDeleteNotes} / {@link batchMoveNotes}.
+   * per-note implementation. See {@link batchMoveNotes}.
    */
   private mapBatchStatus(
     id: string,
@@ -3098,6 +4072,8 @@ export class AppleNotesManager {
           false,
           op === "delete" ? "Deletion failed" : "Move failed"
         );
+      case "wrongfolder":
+        return this.createBatchResult(id, false, "Destination folder verification failed");
       default:
         return this.createBatchResult(id, false, "Unknown error");
     }
@@ -3137,14 +4113,18 @@ export class AppleNotesManager {
     const targetAccount = this.resolveAccount(account);
     // buildFolderReference validates the (single, shared) destination path; a
     // malformed folder is a precondition error for the whole call, so let it throw.
-    const destFolderRef = `${buildFolderReference(folder)} of ${AS_ACCOUNT_REF}`;
+    // The destination resolves to a live folder id, never a folder deleted
+    // earlier in this Notes session (#213), and never a smart folder.
+    const destFolderSetup = buildLiveFolderResolution(folder, "destFolder", {
+      excludeFolderIds: this.smartFolderIds(),
+    });
 
     const results: { id: string; success: boolean; error?: string }[] = new Array(ids.length);
     const runnable: { index: number; safe: string }[] = [];
 
     ids.forEach((id, i) => {
       try {
-        runnable.push({ index: i, safe: sanitizeId(id) });
+        runnable.push({ index: i, safe: sanitizeNoteId(id) });
       } catch (e) {
         results[i] = this.createBatchResult(
           id,
@@ -3158,7 +4138,7 @@ export class AppleNotesManager {
       const idList = runnable.map((r) => `"${r.safe}"`).join(", ");
       const script = buildAppLevelScript(`
         ${buildAccountResolution(targetAccount)}
-        set destFolder to ${destFolderRef}
+        ${destFolderSetup}
         set out to ""
         repeat with rawId in {${idList}}
           set theId to (rawId as text)
@@ -3178,7 +4158,13 @@ export class AppleNotesManager {
             else
               try
                 move noteRef to destFolder
-                set out to out & "ok" & ${AS_RECORD_SEP}
+                set movedNoteRef to note id theId
+                set actualFolder to container of movedNoteRef
+                if (id of actualFolder) is (id of destFolder) then
+                  set out to out & "ok" & ${AS_RECORD_SEP}
+                else
+                  set out to out & "wrongfolder" & ${AS_RECORD_SEP}
+                end if
               on error
                 set out to out & "fail" & ${AS_RECORD_SEP}
               end try
@@ -3192,8 +4178,10 @@ export class AppleNotesManager {
       if (!res.success) {
         // An unresolvable/ambiguous account is a precondition error for the
         // whole call, not a per-note outcome — surface it rather than reporting
-        // N identical "batch move failed" rows that hide the real cause.
+        // N identical "batch move failed" rows that hide the real cause. A
+        // smart-folder destination is refused for the whole call the same way.
         throwIfAccountResolutionFailed(res.error);
+        throwIfSmartFolderDestination(res.error, folder);
         // Whole-batch failure (e.g. destination folder unresolved, Notes not
         // responding): can't isolate, so fail every runnable note.
         for (const r of runnable) {
@@ -3275,31 +4263,60 @@ export class AppleNotesManager {
   }
 
   /**
-   * Exports all notes as a JSON structure for backup/migration.
+   * Exports notes as a JSON structure for backup/migration, one page at a time.
    *
    * Exports complete note data including:
    * - Metadata (id, title, dates, flags)
    * - Content (HTML and plaintext)
    * - Organization (folder, account)
    *
+   * Notes are numbered 0..N-1 in account, folder, note order, after the optional
+   * `modifiedSince` filter. A call returns the window starting at `offset`, at
+   * most `limit` notes (DEFAULT_EXPORT_PAGE_SIZE by default), and closes the page
+   * early once the next note would push the estimated tool response past
+   * `maxResponseBytes`. Every account and folder is listed on every page so the
+   * structure is stable; `page.nextOffset` says where to continue. Only the
+   * page's notes have their metadata and bodies read.
+   *
+   * Why pages (#162): the whole library does not fit in one MCP message. A
+   * 359-note library holding inline images serialized to a 95 MB response, and
+   * the MCP SDK stdio reader closes the connection on any message over 10 MB, so
+   * the caller saw a bare "Connection closed" with no error text.
+   *
+   * A note that alone exceeds the budget is degraded rather than dropped:
+   * oversized inline images become placeholders (`strippedImages`), or failing
+   * that its HTML, and if necessary its plaintext, is omitted (`contentOmitted`).
+   *
    * Note: Password-protected notes are included with metadata only (no content).
    *
-   * @returns JSON-serializable export object
+   * @param options - offset, limit, modifiedSince, and maxResponseBytes
+   * @returns JSON-serializable export object for the requested page
    *
    * @example
    * ```typescript
-   * const snapshot = manager.exportNotesAsJson();
-   * fs.writeFileSync('notes-backup.json', JSON.stringify(snapshot, null, 2));
+   * let offset: number | undefined = 0;
+   * while (offset !== undefined) {
+   *   const snapshot = manager.exportNotesAsJson({ offset });
+   *   fs.appendFileSync("notes-backup.jsonl", JSON.stringify(snapshot) + "\n");
+   *   offset = snapshot.page.nextOffset;
+   * }
    * ```
    */
-  exportNotesAsJson(): NotesExport {
+  exportNotesAsJson(options: ExportNotesOptions = {}): NotesExport {
+    const offset = Math.max(0, Math.floor(options.offset ?? 0));
+    const limit = Math.max(1, Math.floor(options.limit ?? DEFAULT_EXPORT_PAGE_SIZE));
+    const maxResponseBytes = options.maxResponseBytes ?? exportMaxResponseBytes();
+    const exportDate = new Date().toISOString();
     const accounts = this.listAccounts();
-    const exportData: NotesExport = {
-      exportDate: new Date().toISOString(),
-      version: "1.0",
-      accounts: [],
-      summary: { totalNotes: 0, totalFolders: 0, totalAccounts: accounts.length },
-    };
+    const exportedAccounts: ExportedAccount[] = [];
+    const summary = { totalNotes: 0, totalFolders: 0, totalAccounts: accounts.length };
+
+    // `position` numbers every listed note in the library and keeps counting
+    // past the page, so the export can report how many notes exist in total.
+    let position = 0;
+    let usedBytes = 0;
+    let nextOffset: number | undefined;
+    let stoppedAtSizeLimit = false;
 
     for (const account of accounts) {
       const folders = this.listFolders(account.name);
@@ -3317,9 +4334,17 @@ export class AppleNotesManager {
         // Get all (title, id) pairs in this folder. Re-fetching by id below
         // (instead of by title) avoids AppleScript's ambiguous `note "<name>"`
         // resolution silently collapsing notes that share an exact title.
-        const noteRefs = this.listNoteRefs(account.name, folder.name);
+        const noteRefs = this.listNoteRefs(account.name, folder.name, options.modifiedSince);
 
         for (const ref of noteRefs) {
+          const index = position++;
+          // Before the window, or after the page closed: count it, read nothing.
+          if (index < offset || nextOffset !== undefined) continue;
+          if (summary.totalNotes >= limit) {
+            nextOffset = index;
+            continue;
+          }
+
           const note = this.getNoteById(ref.id);
           if (!note) continue;
           // getNoteById() doesn't scope to an account (ids are already unique
@@ -3333,18 +4358,46 @@ export class AppleNotesManager {
             content = this.getNoteContentById(ref.id);
           }
 
-          folderData.notes.push(this.exportNote(note, content));
-          exportData.summary.totalNotes++;
+          let exported = this.exportNote(note, content);
+          let bytes = estimateExportNoteBytes(exported);
+          if (usedBytes + bytes > maxResponseBytes) {
+            if (summary.totalNotes > 0) {
+              // Leave it for the next page, where it starts with the full budget.
+              nextOffset = index;
+              stoppedAtSizeLimit = true;
+              continue;
+            }
+            exported = fitExportNoteToBudget(exported, maxResponseBytes);
+            bytes = estimateExportNoteBytes(exported);
+          }
+
+          folderData.notes.push(exported);
+          usedBytes += bytes;
+          summary.totalNotes++;
         }
 
         accountData.folders.push(folderData);
-        exportData.summary.totalFolders++;
+        summary.totalFolders++;
       }
 
-      exportData.accounts.push(accountData);
+      exportedAccounts.push(accountData);
     }
 
-    return exportData;
+    return {
+      exportDate,
+      version: "1.0",
+      accounts: exportedAccounts,
+      summary,
+      page: {
+        offset,
+        limit,
+        totalAvailable: position,
+        returned: summary.totalNotes,
+        ...(nextOffset !== undefined ? { nextOffset } : {}),
+        hasMore: nextOffset !== undefined,
+        stoppedAtSizeLimit,
+      },
+    };
   }
 
   // ===========================================================================
@@ -3453,10 +4506,11 @@ export class AppleNotesManager {
   getNoteMarkdown(title: string, account?: string): string {
     const html = this.getNoteContent(title, account);
     if (!html) return "";
-    let markdown = this.htmlToMarkdown(html);
+    const note = this.getNoteDetails(title, account);
+    const rich = note?.id ? enrichNoteRead(note.id, html) : undefined;
+    let markdown = this.htmlToMarkdown(rich?.content || html);
 
     // Try to enrich with checklist state (requires note ID)
-    const note = this.getNoteDetails(title, account);
     if (note?.id) {
       const result = getChecklistItems(note.id);
       if (result.items) {
@@ -3483,7 +4537,8 @@ export class AppleNotesManager {
   getNoteMarkdownById(id: string): string {
     const html = this.getNoteContentById(id);
     if (!html) return "";
-    let markdown = this.htmlToMarkdown(html);
+    const rich = enrichNoteRead(id, html);
+    let markdown = this.htmlToMarkdown(rich.content);
 
     // Try to enrich with checklist state
     const result = getChecklistItems(id);
@@ -3492,5 +4547,19 @@ export class AppleNotesManager {
     }
 
     return markdown;
+  }
+
+  /**
+   * Reads the transcripts Notes has stored for a note's top-level audio
+   * recordings, one entry per attachment in body order. Read-only: queries the
+   * NoteStore database with `sqlite3 -readonly` and needs Full Disk Access.
+   *
+   * @param id - CoreData URL identifier for the note
+   * @param options - word-level segment inclusion and cap
+   * @throws AudioTranscriptError for an invalid id, a missing or locked note,
+   *   missing Full Disk Access, or a database read failure
+   */
+  getAudioTranscripts(id: string, options: AudioTranscriptOptions = {}): AudioTranscriptsResult {
+    return readAudioTranscripts(id, options);
   }
 }

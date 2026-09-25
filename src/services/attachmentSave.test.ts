@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 
 vi.mock("@/utils/applescript.js", () => ({ executeAppleScript: vi.fn() }));
@@ -50,16 +50,19 @@ describe("saveAttachmentById (#27)", () => {
   it("emits real separator characters in the OK/ERR sentinel protocol", () => {
     // Regression: `return "OK${AS_FIELD_SEP}" & ...` interpolated the
     // separator INSIDE the AppleScript string literal, so the script returned
-    // the literal text "OK(ASCII character 31)..." instead of a control
-    // character. The TS split never matched and every successful save was
-    // misreported as "attachment not found" even though the file was written.
+    // the literal separator expression text ("OK(ASCII character 31)..." at
+    // the time) instead of a control character. The TS split never matched
+    // and every successful save was misreported as "attachment not found"
+    // even though the file was written. The separator is `character id` since
+    // #162: inside a Notes tell block `ASCII character` costs an Apple Event.
     mockExec.mockReturnValueOnce({ success: true, output: "" });
 
     manager.saveAttachmentById("x-coredata://A/ICNote/p1", "att-1", join(tmpdir(), "x.png"));
 
     const script = mockExec.mock.calls[0][0] as string;
-    expect(script).not.toMatch(/"(?:OK|ERR|ERRSAVE)\(ASCII character/);
-    expect(script).toContain('return "OK" & (ASCII character 31) &');
+    expect(script).not.toMatch(/"(?:OK|ERR|ERRSAVE)\((?:ASCII )?character/);
+    expect(script).not.toContain("ASCII character");
+    expect(script).toContain('return "OK" & (character id 31) &');
   });
 
   it("creates missing parent directories before invoking Notes", () => {
@@ -116,6 +119,14 @@ describe("saveAttachmentById (#27)", () => {
     const r = manager.saveAttachmentById("x-coredata://A/ICNote/p1", "att-1", "/etc/evil.png");
     expect(r.success).toBe(false);
     expect(r.error).toMatch(/outside allowed/);
+    expect(mockExec).not.toHaveBeenCalled();
+  });
+
+  it("refuses a destination inside the Notes library container (#208)", () => {
+    const dest = join(homedir(), "Library/Group Containers/group.com.apple.notes/Media/export.png");
+    const r = manager.saveAttachmentById("x-coredata://A/ICNote/p1", "att-1", dest);
+    expect(r.success).toBe(false);
+    expect(r.error).toMatch(/Notes library container/);
     expect(mockExec).not.toHaveBeenCalled();
   });
 

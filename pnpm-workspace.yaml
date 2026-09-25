@@ -7,9 +7,19 @@
 allowBuilds:
   esbuild: true
 
-# Pin pnpm 11's supply-chain minimum-release-age default explicitly (1440 min = 1 day)
-# so it is documented and stable across pnpm upgrades. See https://pnpm.io/supply-chain-security.
-minimumReleaseAge: 1440
+# Supply-chain soak: refuse any package version younger than 7 days (10080 min).
+# Deliberately stricter than pnpm 11's 1440-minute default, and deliberately NOT
+# redundant with dependabot.yml's 7-day cooldown: the cooldown governs only what
+# Dependabot *proposes* (direct deps), while this governs everything a resolution
+# *installs*. Transitive packages reach the lockfile without Dependabot ever seeing
+# them -- apple-mail-mcp carried a 5-day-old transitive ip-address@10.5.0 under the
+# 1440 default, which this value rejects. See https://pnpm.io/supply-chain-security.
+#
+# Cost of the stricter value, stated here so it is not rediscovered painfully: an
+# urgent upstream fix cannot be installed until it is 7 days old. There is no
+# minimumReleaseAgeExclude carve-out; if one is ever needed, add it narrowly and
+# remove it once the version ages past the cutoff.
+minimumReleaseAge: 10080
 
 # The MCP SDK currently caps these transitive dependencies below their first
 # fully patched releases. Keep the overrides until the SDK's ranges move past
@@ -37,10 +47,20 @@ overrides:
   # security floor and then became a CEILING: when GHSA-7p8r-x3mc-p8w7 (high, host
   # confusion via a backslash authority introducer) landed with a 3.1.5 fix, the
   # exact pin held the tree on the vulnerable 3.1.4 and the advisory could never
-  # clear. Use a caret range so patch fixes flow in on their own while staying
-  # inside the major the parent's API expects. fast-uri IS in the shipped bundle
-  # (via @modelcontextprotocol/sdk -> ajv), so this one ships.
-  fast-uri: ^3.1.5
+  # clear. Use a range so patch fixes flow in on their own while staying inside
+  # the major the parent's API expects. fast-uri IS in the shipped bundle (via
+  # @modelcontextprotocol/sdk -> ajv), so this one ships.
+  #
+  # Raised from ^3.1.5 to >=3.1.6 <4 (still two-sided, still capped below 4.x)
+  # because ^3.1.5 itself was satisfied by the already-installed, already-
+  # vulnerable 3.1.5 and pnpm never re-resolved past it. Four more GHSAs landed
+  # against 3.1.5 (fixed in 3.1.6): GHSA-jqff-g426-hqxp (host confusion via
+  # percent-encoded scheme normalization), GHSA-fph4-wmhf-6fwf (SSRF via
+  # repeated hostname percent-decoding), GHSA-f65p-4m7j-42xc (SSRF via
+  # malformed IPv6 normalization), GHSA-5jgf-p345-68v8 (host confusion via
+  # skipped IDN canonicalization). Do not float to 4.x (latest on npm) without
+  # confirming ajv's fast-uri range accepts it.
+  fast-uri: ">=3.1.6 <4"
   # GHSA-mwp4-54f8-5fhr (high, leading-zero octets decoded as decimal -> SSRF /
   # trust-boundary bypass) plus GHSA-4xrf-jv44-h6hh and GHSA-22jq-vg5j-6vgg.
   # Reached via @modelcontextprotocol/sdk -> express-rate-limit, which caps
@@ -54,10 +74,38 @@ overrides:
   # because 4.12.34 was still inside the 24h minimumReleaseAge gate — it missed by
   # 2m36s. It matured at 2026-08-04T02:36:40Z and is floored here now, with no
   # minimumReleaseAgeExclude carve-out ever having been added.
-  hono: ^4.12.34
+  #
+  # Raised to ^4.13.5 on 2026-09-09 for three more advisories, all with the range
+  # < 4.13.5: GHSA-gqvv-2mrq-wpjv (incomplete fix for CVE-2026-39408 — toSSG()
+  # still writes files outside the output directory), GHSA-g6gw-c38x-mqfc
+  # (unbounded dot-notation nesting in parseBody() -> memory exhaustion), and
+  # GHSA-crvj-82cr-hjcx (the query parser reads parameters after the URL fragment,
+  # giving cache-key / proxy interpretation differentials). Reached via
+  # @modelcontextprotocol/sdk -> @hono/node-server; NOT in the shipped bundle,
+  # since this stdio server tree-shakes the HTTP transports out. Dependabot never
+  # alerted on this repo (an alert-rollout timing artifact — only apple-numbers-mcp
+  # got the alerts), but the identical vulnerable version was carried here.
+  # Caret range, never an exact pin, for the reason recorded on fast-uri above.
+  hono: ^4.13.5
   # GHSA-5p4m-2wfm-xmqj (high): quadratic CPU consumption resolving !!omap,
   # fixed in 4.3.1 — the CVE-2026-59870 fix was never backported to the 3.x line.
   # Reached as eslint -> js-yaml, so development scope, and absent from the
   # shipped build/index.js bundle: nothing vulnerable was ever published. Floored
   # as a caret range, never an exact pin, for the reason recorded on fast-uri above.
-  js-yaml: ^4.3.1
+  #
+  # Raised to ^4.3.2 on 2026-09-09 for GHSA-2883-xcg3-v3hh (range >= 4.0.0,
+  # < 4.3.2): maxTotalMergeKeys does not bound CPU use when the merge sources are
+  # empty, so the earlier merge-key cap can still be walked into quadratic work.
+  # Same reachability as above — eslint -> @eslint/eslintrc -> js-yaml, so
+  # development scope — and still absent from the shipped build/index.js bundle.
+  js-yaml: ^4.3.2
+  # GHSA-x5fp-wj9c-mxmx (medium, array-limit bypass via bracket-key comma
+  # parsing) and GHSA-4mjr-xmp4-gh2g (medium, DoS via attacker-controlled
+  # isBuffer), both fixed in 6.16.0. Reached via @modelcontextprotocol/sdk ->
+  # express -> body-parser/express-rate-limit. This server is stdio-only, so
+  # the HTTP path is never entered -- exposure is near-zero -- but the floor
+  # still needs raising to close the alerts. Deferred until 2026-09-05T23:50Z
+  # for the 7-day minimumReleaseAge soak on 6.16.0 (published 2026-08-29); the
+  # soak cleared naturally by 2026-09-06. Two-sided range, never an exact pin,
+  # for the reason recorded on fast-uri above.
+  qs: ">=6.16.0 <7"

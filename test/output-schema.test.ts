@@ -21,6 +21,17 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve } from "path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import Ajv2020Import from "ajv/dist/2020.js";
+
+// ajv ships CJS. Under Node's ESM loader the default export IS the constructor;
+// under some bundler/loader interops it is the module namespace with the
+// constructor on `.default`. Unwrap so this works either way — a `.default`
+// that is missing at runtime is exactly how this guard would silently stop
+// running. ajv is a DIRECT devDependency on purpose: it is also a transitive
+// dep of @modelcontextprotocol/sdk, but pnpm's strict node_modules layout makes
+// transitive deps unimportable, so the import would fail without it.
+const Ajv2020 =
+  (Ajv2020Import as unknown as { default?: typeof Ajv2020Import }).default ?? Ajv2020Import;
 
 const SERVER = resolve(__dirname, "../build/index.js");
 
@@ -89,6 +100,168 @@ describe("outputSchema contract (real server over stdio)", () => {
       `outputSchemas must tolerate undeclared keys — these advertise ` +
         `additionalProperties:false, so any field they don't enumerate is rejected ` +
         `client-side and the whole result is lost: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+
+  it("advertises exact-ID and revision-bound contracts for existing-note mutations", async () => {
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+
+    for (const name of ["update-note", "append-to-note", "delete-note"]) {
+      const schema = byName.get(name)?.inputSchema as
+        | { required?: string[]; properties?: Record<string, unknown> }
+        | undefined;
+      expect(schema, `${name} must be registered`).toBeDefined();
+      expect(schema?.required).toContain("id");
+      expect(schema?.required).toContain("expectedContentHash");
+      expect(schema?.properties).not.toHaveProperty("title");
+      expect(schema?.properties).not.toHaveProperty("account");
+    }
+
+    const move = byName.get("move-note")?.inputSchema as
+      | { required?: string[]; properties?: Record<string, unknown> }
+      | undefined;
+    expect(move?.required).toContain("id");
+    expect(move?.properties).not.toHaveProperty("title");
+
+    const batchDelete = byName.get("batch-delete-notes")?.inputSchema as
+      | { required?: string[]; properties?: Record<string, unknown> }
+      | undefined;
+    expect(batchDelete?.required).toContain("notes");
+    expect(batchDelete?.properties).not.toHaveProperty("ids");
+  });
+
+  it("every advertised schema declares JSON Schema 2020-12 and no draft-07 construct", async () => {
+    // MCP standardized on 2020-12 (SEP-834 / SEP-1613 / SEP-2106) and clients
+    // now HARD-REJECT anything else: "JSON Schema declares an unsupported
+    // dialect … The default validator supports JSON Schema 2020-12 only",
+    // which takes out every tool at once. The SDK converts our zod schemas
+    // with a draft-07 target and stamps draft-07 on every emitted
+    // inputSchema/outputSchema (upgrading zod does not change that — the SDK
+    // calls its converter with no target, and both branches fall back to
+    // draft-07), so src/index.ts wraps the transport with
+    // withJsonSchema2020_12 to normalize the outgoing tools/list payload.
+    // Asserted against the REAL advertised schemas, since that wrapper sits at
+    // the transport boundary and a unit test of the converter alone would not
+    // prove the server is actually using it. (sweetrb/apple-mail-mcp#147)
+    const { tools } = await client.listTools();
+    const EXPECTED = "https://json-schema.org/draft/2020-12/schema";
+    // Keywords that either changed spelling in 2020-12 or were removed.
+    const DRAFT_07_ONLY = ["definitions", "dependencies", "additionalItems"] as const;
+
+    const isObject = (v: unknown): v is Record<string, unknown> =>
+      typeof v === "object" && v !== null && !Array.isArray(v);
+
+    // Walk schema POSITIONS, not raw text: a substring scan would false-flag a
+    // tool that legitimately has a property named "definitions". Keys under
+    // "properties" / "$defs" are names, not keywords, so only their values are
+    // re-entered as schemas.
+    const walk = (node: unknown, path: string, report: (msg: string) => void): void => {
+      if (Array.isArray(node)) {
+        node.forEach((child, i) => walk(child, `${path}[${i}]`, report));
+        return;
+      }
+      if (!isObject(node)) return;
+
+      if (path !== "" && "$schema" in node) {
+        report(`${path} declares its own $schema (only the root may)`);
+      }
+      for (const keyword of DRAFT_07_ONLY) {
+        if (keyword in node) report(`${path || "(root)"} uses draft-07-only "${keyword}"`);
+      }
+      if (Array.isArray(node.items)) {
+        report(`${path || "(root)"} uses tuple-form "items" (2020-12 spells it "prefixItems")`);
+      }
+      for (const key of ["exclusiveMinimum", "exclusiveMaximum"] as const) {
+        if (typeof node[key] === "boolean") {
+          report(`${path || "(root)"} uses draft-4 boolean "${key}"`);
+        }
+      }
+      if (typeof node.$ref === "string" && node.$ref.startsWith("#/definitions/")) {
+        report(`${path || "(root)"} $ref points into "#/definitions/" (should be "#/$defs/")`);
+      }
+
+      for (const [key, value] of Object.entries(node)) {
+        if (key === "properties" || key === "$defs" || key === "patternProperties") {
+          if (isObject(value)) {
+            for (const [name, sub] of Object.entries(value)) {
+              walk(sub, `${path}.${key}.${name}`, report);
+            }
+          }
+          continue;
+        }
+        walk(value, path ? `${path}.${key}` : key, report);
+      }
+    };
+
+    const offenders: string[] = [];
+    for (const tool of tools) {
+      for (const [kind, schema] of [
+        ["inputSchema", tool.inputSchema],
+        ["outputSchema", tool.outputSchema],
+      ] as const) {
+        if (!schema) continue;
+        const dialect = (schema as { $schema?: unknown }).$schema;
+        if (dialect !== EXPECTED) {
+          offenders.push(`${tool.name}.${kind}: $schema=${JSON.stringify(dialect)}`);
+        }
+        if (JSON.stringify(schema).includes("draft-07")) {
+          offenders.push(`${tool.name}.${kind}: mentions draft-07`);
+        }
+        walk(schema, "", (msg) => offenders.push(`${tool.name}.${kind}: ${msg}`));
+      }
+    }
+
+    expect(
+      offenders,
+      `every advertised schema must declare ${EXPECTED} and use no draft-07-only construct — ` +
+        `clients reject the whole tool otherwise: ${offenders.join("; ")}`
+    ).toEqual([]);
+  });
+
+  it("every advertised schema compiles under a REAL 2020-12 validator (ajv)", async () => {
+    // The dialect assertion above checks the label; this checks the goods.
+    // A schema can declare 2020-12 and still be structurally invalid under it —
+    // and a client that rejects it will say only that our tool is broken. ajv is
+    // the same validator the MCP SDK itself uses, so "ajv compiles it" is the
+    // closest thing to "a real client will accept it" we can assert offline.
+    //
+    // strict: false on purpose. Strict mode rejects unknown keywords and would
+    // fail on benign annotations the SDK emits; the contract being guarded is
+    // structural validity under the 2020-12 dialect, not ajv's style opinions.
+    //
+    // No advertised schema uses the `format` KEYWORD (verified: the only
+    // "format" occurrences are tool PARAMETER names under `properties` on
+    // create-note / update-note / append-to-note), so ajv-formats is
+    // deliberately not installed. Note that under strict:false ajv only warns
+    // ("unknown format ... ignored") rather than failing — so if a real `format`
+    // is ever introduced, add ajv-formats and register it here, or this guard
+    // will pass over it without checking anything.
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+
+    const failures: string[] = [];
+    for (const tool of tools) {
+      for (const [kind, schema] of [
+        ["inputSchema", tool.inputSchema],
+        ["outputSchema", tool.outputSchema],
+      ] as const) {
+        if (!schema) continue;
+        try {
+          // A fresh instance per schema: ajv keys compiled schemas by $id, so
+          // one shared instance would let an unrelated tool's collision surface
+          // as this tool's failure.
+          new Ajv2020({ strict: false }).compile(schema);
+        } catch (err) {
+          failures.push(`${tool.name}.${kind}: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    expect(
+      failures,
+      `every advertised schema must compile under JSON Schema 2020-12 — a client ` +
+        `that cannot compile it drops the tool entirely: ${failures.join("; ")}`
     ).toEqual([]);
   });
 
