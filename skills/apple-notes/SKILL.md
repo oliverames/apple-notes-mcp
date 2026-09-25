@@ -174,6 +174,7 @@ the note is no longer where the guard requires, and
 | `native-delete-smart-folder` | Delete one empty smart folder; dry run first, then apply with its revision                                                                                                                                     |
 | `compose-note`               | Write styled blocks or Markdown (headings, lists, checklists, quotes, code, dividers, tables, local files, link cards) in one verified save; create, append, or prepend; existing attachments proven unchanged  |
 | `native-repair-purge-flag`   | Find a note flagged for purge outside Recently Deleted and move it there; dry run, then `confirm: true`                                                                                                        |
+| `native-read-paper`          | Decode one Paper drawing: strokes, typed shapes (macOS 27; check `shapeDecode`), and fallback-PDF geometry (read-only)                                                                                         |
 
 ## Usage Patterns
 

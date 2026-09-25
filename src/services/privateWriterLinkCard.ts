@@ -46,6 +46,11 @@ export const urlCardResultSchema = z
     insertedAtUTF16: z.number().int().nonnegative(),
     glyphIndexUTF16: z.number().int().nonnegative(),
     separatorInserted: z.boolean(),
+    /** A body-style newline after the card, when text follows it. */
+    terminatorInserted: z.boolean().optional(),
+    /** Dry run only: whether this macOS offers the write the plan describes. */
+    writeAvailable: z.boolean().optional(),
+    writeMissing: z.array(z.string()).optional(),
     revisionBefore: revision,
     revisionAfter: revision,
     attachment: z

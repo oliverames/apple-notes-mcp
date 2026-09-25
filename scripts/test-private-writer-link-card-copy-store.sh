@@ -55,8 +55,9 @@ done
 OUT="$(copy_run "$(card_request "https://example.com/" "$ZERO")" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "stale card revision not refused"
 OUT="$(copy_run "$(card_request "https://example.com/" "$REV" ",\"afterParagraph\":\"$ANCHOR\",\"dryRun\":true")" || true)"
-[ "$(field "$OUT" status)" = "planned" ] && [ "$(field "$OUT" separatorInserted)" = "true" ] ||
-  fail "card dry run failed: $(field "$OUT" code)"
+[ "$(field "$OUT" status)" = "planned" ] && [ "$(field "$OUT" separatorInserted)" = "false" ] &&
+  [ "$(field "$OUT" terminatorInserted)" = "true" ] || fail "card dry run failed: $(field "$OUT" code)"
+[ -n "$(field "$OUT" writeAvailable)" ] || fail "card dry run did not report writeAvailable"
 [ "$(field "$(copy_run "$READ")" revision)" = "$REV" ] || fail "card dry run changed the note"
 echo "ok: anchor guard, URL checks, stale revision, and dry run (no write) behave"
 
@@ -84,6 +85,26 @@ OUT="$(copy_run "$(card_request "https://example.org/" "$REV")" || true)"
 NEW_FILES="$(/usr/bin/find "$(dirname "$LIVE")" -newer "$MARKER_FILE" -type f ! -name 'NoteStore.sqlite*' 2>/dev/null | wc -l | tr -d ' ')"
 [ "$NEW_FILES" = "0" ] || fail "$NEW_FILES file(s) appeared under the live Notes container during the card test"
 echo "ok: three public.url cards inserted and read back at the planned glyph index (+6 UTF-16 units); replay refused; no live container files"
+
+# 3b. A card after a checklist item goes after the item's own newline and is
+#     a body paragraph: the item keeps its line and todo, and the writer's
+#     read-back checks the card line's style.
+CHK="card-checklist-$(date +%s)"
+REV="$(field "$(copy_run "$READ")" revision)"
+OUT="$(copy_run "{\"protocol\":1,\"action\":\"compose_note\",\"identifier\":\"$NOTE\",\"mode\":\"append\",\"ifRevision\":\"$REV\",\"paragraphs\":[{\"style\":\"checklist\",\"checked\":false,\"runs\":[{\"text\":\"$CHK\"}]},{\"style\":\"body\",\"runs\":[{\"text\":\"after the checklist\"}]}]}" || true)"
+[ "$(field "$OUT" verified)" = "true" ] || fail "could not add the checklist fixture: $(field "$OUT" code) $(field "$OUT" message)"
+CL0="$(copy_run "{\"protocol\":1,\"action\":\"read_checklist\",\"identifier\":\"$NOTE\"}" || true)"
+ITEMS_BEFORE="$(field "$CL0" total)"
+[ -n "$ITEMS_BEFORE" ] || fail "read_checklist failed: $(field "$CL0" code) $(field "$CL0" message)"
+OUT="$(copy_run "$(card_request "https://example.net/" "$(field "$OUT" revisionAfter)" ",\"afterParagraph\":\"$CHK\"")" || true)"
+[ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
+  fail "card after a checklist item failed: $(field "$OUT" code) $(field "$OUT" message)"
+[ "$(field "$OUT" terminatorInserted)" = "true" ] && [ "$(field "$OUT" separatorInserted)" = "false" ] ||
+  fail "card after a checklist item was not placed after the item's newline"
+CHECKLIST="$(copy_run "{\"protocol\":1,\"action\":\"read_checklist\",\"identifier\":\"$NOTE\"}")"
+[ "$(field "$CHECKLIST" total)" = "$ITEMS_BEFORE" ] || fail "the card changed the checklist item count ($ITEMS_BEFORE -> $(field "$CHECKLIST" total))"
+grep -q "\"text\":\"$CHK\"" <<<"$CHECKLIST" || fail "the checklist item lost its text"
+echo "ok: card after a checklist item is its own body line; the item is unchanged"
 
 # 4. The live note is untouched.
 assert_live_unchanged "$NOTE" "$LIVE_BEFORE"

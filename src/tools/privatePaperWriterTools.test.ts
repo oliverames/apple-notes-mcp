@@ -9,12 +9,13 @@ import type { AppleNotesManager } from "../services/appleNotesManager.js";
 vi.mock(import("../services/privatePaperWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   addPaper: vi.fn(),
+  readPaper: vi.fn(),
 }));
 vi.mock(import("../services/privateSyncNudge.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   nudgeInPlace: vi.fn(),
 }));
-import { addPaper } from "../services/privatePaperWriter.js";
+import { addPaper, readPaper } from "../services/privatePaperWriter.js";
 import { nudgeInPlace } from "../services/privateSyncNudge.js";
 import { PrivateWriteError } from "../services/privateWriter.js";
 import { prepareDrawing, registerPrivatePaperWriterTools } from "./privatePaperWriterTools.js";
@@ -33,7 +34,10 @@ const CREATED = {
   attachmentIdentifier: ATTACHMENT,
 };
 
-function fixture(link: string | null = `notes://showNote?identifier=${NOTE}`) {
+function fixture(
+  link: string | null = `notes://showNote?identifier=${NOTE}`,
+  tool = "native-add-paper"
+) {
   const registerTool = vi.fn();
   const manager = { getNoteLinkById: vi.fn(() => link) } as unknown as AppleNotesManager;
   const writer = { env: {} };
@@ -42,7 +46,7 @@ function fixture(link: string | null = `notes://showNote?identifier=${NOTE}`) {
     writer: writer as never,
     nudge: nudge as never,
   }));
-  const entry = registerTool.mock.calls.find((c) => c[0] === "native-add-paper")!;
+  const entry = registerTool.mock.calls.find((c) => c[0] === tool)!;
   const call = async (args: Record<string, unknown>) => entry[2](args);
   return { call, config: entry[1], names: registerTool.mock.calls.map((c) => c[0]), writer, nudge };
 }
@@ -69,7 +73,7 @@ const svgFile = (body: string, name = "a.svg") => {
 describe("native-add-paper registration", () => {
   it("registers one non-destructive write that documents its guards", () => {
     const { config, names } = fixture();
-    expect(names).toEqual(["native-add-paper"]);
+    expect(names).toEqual(["native-add-paper", "native-read-paper"]);
     expect(config.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(config.description).toMatch(/ifSvgAnalysis/);
     expect(config.description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
@@ -313,5 +317,63 @@ describe("native-add-paper writer results", () => {
     const planned = await call({ ...args, dryRun: true, nudge: true });
     expect(planned.structuredContent.sync).toBeUndefined();
     expect(vi.mocked(nudgeInPlace)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("native-read-paper", () => {
+  const READ = {
+    status: "ok",
+    strokeCount: 1,
+    shapes: [{ index: 0, kind: "rectangle" }],
+    shapeDecode: { available: true, reason: null },
+    fallbackGeometry: { available: false, reason: "no_fallback_pdf" },
+  };
+
+  it("registers a read-only tool that names its layers and its OS gate", () => {
+    const { config } = fixture(undefined, "native-read-paper");
+    expect(config.annotations).toMatchObject({ readOnlyHint: true });
+    expect(config.description).toMatch(/macOS 27/);
+    expect(config.description).toMatch(/fallback PDF/);
+    expect(config.description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
+    expect(config.description).not.toMatch(/ALLOW_UNVERIFIED/);
+    expect(Object.keys(config.inputSchema)).toEqual(
+      expect.arrayContaining([
+        "attachmentIdentifier",
+        "includePoints",
+        "maxPoints",
+        "includeShapes",
+      ])
+    );
+  });
+
+  it("reads through the writer with the resolved identifier", async () => {
+    vi.mocked(readPaper).mockReturnValue(READ as never);
+    const { call, writer } = fixture(undefined, "native-read-paper");
+    const r = await call({ id: CD, attachmentIdentifier: ATTACHMENT, maxPoints: 5 });
+    expect(r.structuredContent).toMatchObject({ ok: true, status: "ok", strokeCount: 1 });
+    const [request, deps] = vi.mocked(readPaper).mock.calls[0];
+    expect(deps).toBe(writer);
+    expect(request).toEqual({
+      identifier: NOTE,
+      attachmentIdentifier: ATTACHMENT,
+      includePoints: undefined,
+      maxPoints: 5,
+      includeShapes: undefined,
+    });
+  });
+
+  it("reports a refusal as a read that committed nothing", async () => {
+    vi.mocked(readPaper).mockImplementation(() => {
+      throw new PrivateWriteError("ambiguous_attachment", "two drawings", undefined, {
+        attachmentIdentifiers: [ATTACHMENT],
+      });
+    });
+    const { call } = fixture(undefined, "native-read-paper");
+    const error = parsed(await call({ identifier: NOTE }));
+    expect(error).toMatchObject({
+      helperCode: "ambiguous_attachment",
+      committed: false,
+      attachmentIdentifiers: [ATTACHMENT],
+    });
   });
 });

@@ -1470,7 +1470,10 @@ The fresh read-back requires the same text, the item covering the same
 characters with the requested done bit on every run, and every other item
 unchanged in identity, characters, and state. A request for the state the item
 already has writes nothing (`status: "unchanged"`, `committed: false`). A UUID
-found in two separate places is refused as `ambiguous_target`. The MCP tools
+found in two separate places is refused as `ambiguous_target`, and so is one
+whose characters, newlines at either end aside, still contain a line break:
+two adjacent lines that share a todo UUID read as one item, and a toggle would
+change both. The MCP tools
 are `native-checklist-state` and `native-set-checklist-item` (optional
 `nudge`, skipped when nothing was written).
 
@@ -1592,12 +1595,16 @@ no `TTStyle`, so the card's line is body text.
 The writer calls `-[ICNote addURLAttachmentWithURL:]`, which creates the
 attachment row with the URL and type but does not place a glyph
 (`-rangeForAttachment:` returns NotFound; if a future release places one, the
-writer rolls back and refuses rather than guess). It then inserts
-`"\n" + glyph` through `insertAttributedString:atIndex:` at the end of the
-chosen paragraph's text, so the card becomes the next line and the original
-newline follows it. The separator copies the anchor paragraph's `TTStyle`,
-keeping that paragraph's style. With no anchor the card goes at the end, with
-a separator only when the body does not already end in a newline. An anchor
+writer rolls back and refuses rather than guess). It then inserts the glyph
+through `insertAttributedString:atIndex:` right after the chosen paragraph's
+own newline, followed by a newline in the default (body) paragraph style when
+text follows the card. The anchor keeps its terminator, and the card's line
+takes no style from it: inserting `"\n" + glyph` before the anchor's newline,
+as the first version did, left the card terminated by the anchor's newline,
+so after a checklist item the card carried the item's todo. When the anchor is
+the last paragraph and has no newline, a separator that copies its `TTStyle`
+goes first, as at the end of a note. With no anchor the card goes at the end,
+with a separator only when the body does not already end in a newline. An anchor
 that matches zero or several whole paragraphs is `match_count_mismatch` with
 `found`. `updateChangeCountWithReason:` runs on both the note and the
 attachment, because the attachment is its own cloud object; the result reports
@@ -1607,9 +1614,11 @@ the attachment's own `cloudSync` counters. The probe also checks the
 
 The fresh read-back requires the text to equal the old text plus the
 insertion at the planned index, the glyph to name the new attachment exactly
-once at the planned index, and the attachment row to be a `public.url`
+once at the planned index, the glyph and its terminator to carry no paragraph
+style or a body style with no todo, and the attachment row to be a `public.url`
 attachment for that URL on that note. `dryRun` opens the store read-only and
-reports the insertion point. The MCP tool is `native-add-url-card` (optional
+reports the insertion point and `writeAvailable`, the write feature's probe
+result. The MCP tool is `native-add-url-card` (optional
 `nudge`, which moves the note; whether the move alone also uploads the
 attachment has not been observed).
 
@@ -1688,7 +1697,11 @@ in one save:
    section chips already there. `clearExistingSectionLinks` first removes
    glyphs whose attachment answers `isParagraphLinkAttachment` (note-link
    chips share the type but not that answer) and marks those attachments for
-   deletion.
+   deletion. A chip alone on its line is removed with its line break; the
+   ranges are merged first, because two chip lines at the end of a note widen
+   into overlapping ranges, and deleting them one after the other ran past the
+   end of the text. A separator added below the title copies only the last
+   paragraph's style, never its other attributes.
 
 A link into another note needs that note's `ifTargetRevision` as well, and
 the target is written only when an identifier is minted. The read-back
@@ -1727,9 +1740,13 @@ table document.
   body glyph (an orphan: invisible, but still synced and counted). It calls
   `updateMarkedForDeletionStateAttachmentIsInUse:NO` and `markForDeletion`,
   which is Notes' own deletion path, and bumps the note's change count so a
-  concurrent Notes save conflicts. The note body and modification date do not
-  change, so the note `revision` stays the same; the read-back checks that
-  the active table count dropped by exactly one.
+  concurrent Notes save conflicts. It refuses a body with an attachment glyph
+  whose attachment it cannot identify, since that glyph could be the table's,
+  and before saving it refuses any staged change beyond the note and the table
+  (`unexpected_changes`), as the smart-folder writes do. The note body and
+  modification date do not change, so the note `revision` stays the same; the
+  read-back checks that the table row still exists, is marked for deletion,
+  and that the active table count dropped by exactly one.
 
 Every table write takes `ifTableDigest` as a second compare-and-swap token
 (`attachment_conflict`, `committed: false`). Row deletion and the prune are
@@ -1774,7 +1791,10 @@ reader decodes those rows with SQL; the writer adds `read_smart_folder`
   `newFolderInParentFolder:`, sets the title, query, and type, and stamps
   `dateForLastTitleModification` (and `parentModificationDate` when nested),
   which the factories leave nil and which otherwise let the first server echo
-  revert the title or drop the parent. The delete calls `-markForDeletion`.
+  revert the title or drop the parent. The update changes the query only: a
+  folder without a title or parent timestamp keeps it missing, reported in
+  `timestampsMissing`, since stamping one would claim a title or parent change
+  that did not happen. The delete calls `-markForDeletion`.
   Before each save the writer checks that the context holds only the intended
   changes (`unexpected_changes`, `committed: false`), and after it re-reads
   the folder through a new read-only stack.
@@ -1829,10 +1849,67 @@ Findings, macOS 27.2, on copy stores:
 - Shapes are traced as strokes. Notes' typed shapes live in the Paper bundle's
   own model, which no stable entry point exposes, so none are created.
 
-Only the write path is included. Stroke decoding as a read tool is not
-part of it;
-`get-note-drawings` decodes classic drawings, and `list-paper-attachments`
-and `export-paper-image` read Paper's own rendering.
+The read-back also requires the new glyph to be in the text exactly once and
+the rest of the text to equal the text before the write. Reading a Paper
+drawing back is `read_paper`, below.
+
+### Paper reading (`read_paper`)
+
+`native-read-paper` decodes one Paper drawing read-only. Like the add's
+verification of a live write, it copies the drawing's bundle into a private
+temporary directory, redirects every `ICAccount` directory method there before
+the store opens (read-only), and removes the copy afterwards; nothing opens
+the live bundle. The result has three layers, each with its own availability:
+
+- **Strokes**: `+[ICSystemPaperDrawingsHelper drawingsForAttachment:]` returns
+  public `PKDrawing` objects; each stroke's ink, sRGB color, transform, render
+  bounds, and points are reported, within a point budget.
+- **Typed shapes** (macOS 27): PaperKit's public `ShapeMarkup` describes a
+  shape's kind, frame, rotation, colors, line markers, text, and path, but
+  only inside a `PaperMarkup`. The only way from a Notes bundle to one is two
+  internal Swift entry points, `CRDataStoreBundle<Paper>.readPaper(_:url:)`
+  (in Coherence, exported by PaperKit) and `PaperMarkup.init(model:)`. The
+  writer is Objective-C, so it calls them, and then only public PaperKit
+  accessors, through the Swift calling convention with clang's `swiftcall`
+  attributes: resilient values (`URL`, `Capsule<Paper>`, `PaperMarkup`, the
+  shape enums, `AttributedString`) travel by address in buffers sized from
+  their runtime metadata; `readPaper` takes the `CRDataStoreBundle<Paper>`
+  metadata as `self` (from `swift_getTypeByMangledNameInContext`); the
+  element list is walked as `any Markup` existentials whose type is compared
+  with `ShapeMarkup`'s metadata; enum cases come from the value witness
+  table's `getEnumTag`. Every symbol and type is resolved with `dlsym` when
+  first needed, so a missing one is reported (`private_api_unavailable` with
+  `missing`), never a failed load, and the layer is offered only on macOS 27
+  (`requires_macos_27` elsewhere). The shape's path is in unit space mapped
+  onto the frame; the writer applies the frame and the rotation (about the
+  frame's center) and reports the path as SVG path data. A text box is a
+  rectangle with text. Swift values this action creates are not released;
+  the writer handles one request and exits.
+- **Fallback geometry**: when the attachment records a
+  `fallbackPDFGeneration`, Notes keeps a vector PDF of the drawing for
+  clients that cannot read the bundle, at
+  `Accounts/<account>/FallbackPDFs/<attachment>/<generation>/FallbackPDF.pdf`.
+  The writer opens it with `O_NOFOLLOW` (at most 16 MiB, a regular file) and
+  runs `CGPDFScanner` over each page's content stream, tracking the
+  transformation matrix, line width, and gray, RGB, or CMYK colors, and
+  reports every stroked or filled path in page space. Text, images,
+  shadings, and form XObjects are counted, not decoded. None of the Paper
+  drawings on the test library had a fallback PDF (only scanned documents
+  did); `-[ICSystemPaperDocument toFallbackPDFData]` returned nothing for them
+  in a writer process, and `+[ICAttachmentPaperBundleModel
+  generateFallbackPDFDataForAttachment:]` needs Notes' shared context, which
+  the writer does not start, so the writer reads the stored file only.
+
+Findings, macOS 27.2, 2026-09-24: on the live library (read-only) a Paper
+drawing decoded to 19 strokes, and PaperKit's element list reported the same
+19 strokes and no shapes. On a store copy, a bundle written with PaperKit's
+own model (a rectangle, a rotated ellipse, a star, an arrow shape, a line with
+an arrow marker, a text box, and one stroke) decoded to those six shapes with
+their kinds, frames, colors, markers, and text; each shape's path bounds
+matched its frame and its `renderFrame` less half the line width.
+`scripts/test-private-writer-paper-copy-store.sh` checks the strokes of a
+drawing it adds, the element list, a fallback PDF fixture, and a live read
+that leaves the note and bundle unchanged.
 
 ### Purge-flag repair (`repair_purge_flag`)
 

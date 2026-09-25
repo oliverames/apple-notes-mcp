@@ -98,6 +98,7 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
   delete_smart_folder: "write",
   add_paper: "write",
   repair_purge_flag: "write",
+  read_paper: "read",
 };
 
 /**
@@ -336,6 +337,8 @@ export const writerProbeSchema = z
         editReplaceFile: featureSchema.optional(),
         scopeGuards: featureSchema.optional(),
         purgeRepair: featureSchema.optional(),
+        readPaper: featureSchema.optional(),
+        readPaperShapes: featureSchema.optional(),
       })
       .passthrough(),
   })
@@ -1292,6 +1295,8 @@ export const WRITER_FEATURES = [
   // Folder scope guards only refuse writes; there is nothing to validate live.
   { key: "scopeGuards", probeKey: "scopeGuards", liveValidated: true },
   { key: "purgeRepair", probeKey: "purgeRepair", liveValidated: PURGE_REPAIR_LIVE_VALIDATED },
+  { key: "readPaper", probeKey: "readPaper", liveValidated: true },
+  { key: "readPaperShapes", probeKey: "readPaperShapes", liveValidated: true },
 ] as const;
 export type WriterFeatureKey = (typeof WRITER_FEATURES)[number]["key"];
 

@@ -2975,8 +2975,9 @@ The writer re-reads the note through a new Core Data stack and reports
 `persistedDone`, and fails verification if the text, the item's characters,
 or any other item changed. When the item already has the requested state it
 writes nothing and returns `status: "unchanged"`, `committed: false`. An
-identifier that matches no item is `not_found`; one that appears in two places
-is `ambiguous_target` (envelope code `ambiguous`). Sync reporting and the
+identifier that matches no item is `not_found`; one that appears in two places,
+or that two adjacent lines share, is `ambiguous_target` (envelope code
+`ambiguous`). Sync reporting and the
 optional `nudge` match `native-append-plain-text`; the nudge is skipped when
 nothing was written.
 
@@ -2987,8 +2988,12 @@ removes it (`color: "none"`) from, every exact occurrence of a literal,
 case-sensitive `match` within one paragraph. It refuses with
 `match_count_mismatch` (envelope code `validation_error`, with `found`),
 writing nothing, unless the text occurs exactly `expectedCount` times
-(default 1). `dryRun: true` reports each match and its current highlight
-without writing; a write needs `ifRevision` from `native-note-state`. Only the
+(default 1). A match that starts or ends inside a composed character (a
+letter and its combining accent, an emoji sequence) is refused with
+`invalid_request` and `splittingMatches`; include the whole character.
+`dryRun: true` reports each match and its current highlight without writing,
+plus `writeAvailable` (whether this macOS offers the write); a write needs
+`ifRevision` from `native-note-state`. Only the
 highlight attribute of the matched characters changes. The writer re-reads
 the note through a new Core Data stack and requires the text to be unchanged,
 every highlight run in the note to match the request, and Notes' `hasEmphasis`
@@ -3015,13 +3020,18 @@ as `nothing_to_highlight` (envelope code `validation_error`).
 Adds a rich web link card (the preview tile Notes shows for a pasted URL) to
 one note: a new `public.url` attachment plus its attachment glyph on a line of
 its own, at the end of the note or directly after the one paragraph whose full
-text equals `afterParagraph`. Zero or several matching paragraphs refuse with
-`match_count_mismatch` (envelope code `validation_error`, with `found`) and
-write nothing. `url` must be an absolute `http` or `https` URL. `dryRun: true`
-reports the insertion point without writing; a write needs `ifRevision` from
-`native-note-state`. The writer re-reads the note through a new Core Data
-stack and requires the text to equal the old text plus the card at the planned
-index, the glyph to name the new attachment exactly once, and the attachment
+text equals `afterParagraph`. After a paragraph, the card goes after that
+paragraph's own line break and ends with a body-style line break of its own
+(`terminatorInserted`), so it never takes the paragraph's style: a card after
+a checklist item is a plain line, not a second item. Zero or several matching
+paragraphs refuse with `match_count_mismatch` (envelope code
+`validation_error`, with `found`) and write nothing. `url` must be an absolute
+`http` or `https` URL. `dryRun: true` reports the insertion point without
+writing, plus `writeAvailable` (whether this macOS offers the write); a write
+needs `ifRevision` from `native-note-state`. The writer re-reads the note
+through a new Core Data stack and requires the text to equal the old text plus
+the card at the planned index, the glyph to name the new attachment exactly
+once, the card's line to have the body paragraph style, and the attachment
 row to be a `public.url` attachment for that URL on that note. It makes no
 network request: Notes fetches the card's title and preview image itself. The
 result carries the attachment's own `cloudSync` counters. Not idempotent: a
@@ -3105,7 +3115,11 @@ Replaces one cell's text and returns `previousText`.
 
 Two phases, like the row delete. Tombstones a table attachment that no body
 glyph shows (`orphan: true`), the same way Notes deletes an attachment. It
-refuses a visible table.
+refuses a visible table, and a note whose body has an attachment glyph it
+cannot identify, since that glyph could be the table's
+(`unsupported_attachment`, `unidentifiedGlyphs`). Before saving it refuses
+any change beyond the note and the table (`unexpected_changes`), and the
+read-back requires the table row to exist and be marked deleted.
 
 #### Smart folders
 
@@ -3148,6 +3162,9 @@ title is refused (`folder_exists`).
 #### `native-update-smart-folder`
 
 Replaces one smart folder's query, guarded by its `revision` as `ifRevision`.
+It changes only the query. A folder that has no title or parent timestamp
+keeps it missing, and the result lists it in `timestampsMissing` rather than
+stamping one.
 
 #### `native-delete-smart-folder`
 
@@ -3213,6 +3230,43 @@ device. Only repair a note the user recognizes as wrongly lost. The move then
 needs Notes.app to upload it; the in-place nudge skips trashed notes, so use
 `native-sync-push` with `method: "relaunch"` if it should upload now. The
 apply needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated.
+
+#### `native-read-paper`
+
+Read-only. Decodes one Paper drawing (`com.apple.paper`) in a note, in three
+layers that each report whether they ran:
+
+- `strokes`: every pen stroke with its `ink`, sRGB `color`, `width`,
+  `transform`, `renderBounds`, and `points` as compact arrays in `pointFields`
+  order (x, y, width, height, opacity, force, azimuth, altitude, timeOffset).
+  `maxPoints` (default 20000, at most 40000) caps the points returned;
+  `includePoints: false` leaves them out.
+- `shapes` (macOS 27 or later): the drawing's typed shapes as Notes stores
+  them, not traced strokes: `kind` (`rectangle`, `roundedRectangle`,
+  `ellipse`, `line`, `arrowShape`, `star`, `regularPolygon`, `chatBubble`),
+  `frame` and `rotation` (radians about the frame's center), `lineWidth`,
+  `opacity`, `fillColor`, `strokeColor`, `startLineMarker` and `endLineMarker`
+  (`none` or `arrow`), `path` as SVG path data in drawing coordinates with the
+  frame and rotation applied, and `text` for a text box (a rectangle with
+  text). `shapeDecode` gives `available`, a `reason` when it did not run
+  (`requires_macos_27`, `private_api_unavailable` with `missing`, or
+  `not_requested` with `includeShapes: false`), and `elementKinds`, the count
+  of every PaperKit element by kind.
+- `fallbackGeometry`: the painted paths of the fallback PDF Notes keeps for
+  older devices, when the drawing has one (`reason: "no_fallback_pdf"`
+  otherwise). Each path has `paint` (`stroke`, `fill`, or `fillStroke`),
+  `kind` (`rectangle` or `path`), `d` as SVG path data in PDF page space
+  (points, origin at the bottom left), `fillRule`, colors, and `lineWidth`.
+  Text, images, and shadings are counted in `skipped`, not decoded.
+
+Pass `attachmentIdentifier` when the note has more than one Paper drawing
+(`ambiguous_attachment` lists them). The writer opens the store read-only and
+decodes a private copy of the drawing's bundle, never the live one. The typed
+shapes come from PaperKit through two internal entry points, so they are
+checked at run time and offered only on macOS 27; the other layers use
+NotesShared's drawing reader and the stored PDF. Like every writer tool it
+needs both writer switches, but it writes nothing and needs no
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED`.
 
 ## Usage Patterns
 

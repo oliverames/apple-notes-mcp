@@ -138,6 +138,38 @@
   destructive, since relaunch quits Notes.app.
 - The per-feature copy-store test scripts now link PencilKit, which the writer
   needs since paper authoring.
+### Added
+
+- `native-read-paper` (writer, read-only) decodes one Paper drawing: its
+  strokes with points, its typed shapes (kind, frame, rotation, colors, line
+  markers, text, and an SVG path) on macOS 27 or later, and the painted paths
+  of Notes' fallback PDF when the drawing has one. Each layer reports whether
+  it ran and why not; `native-writer-status` lists `readPaper` and
+  `readPaperShapes`.
+
+### Fixed
+
+- `native-add-section-link` no longer fails with `internal_error` when
+  clearing chips from a note whose last two lines are chips, and a separator
+  it adds below the title copies only the paragraph style.
+- Writer lookups by attachment identifier no longer match a row whose
+  identifier is missing.
+- `native-add-url-card` places a card after a paragraph's own line break, so
+  it no longer takes that paragraph's style (a card after a checklist item
+  became part of the item); the read-back checks the card line's style.
+- `native-set-checklist-item` refuses an identifier that two adjacent lines
+  share (`ambiguous_target`) instead of toggling both.
+- `native-highlight-text` refuses a match that would split a composed
+  character, and its dry run, like `native-add-url-card`'s, reports
+  `writeAvailable`.
+- `native-prune-orphan-table` refuses a note with an unidentifiable
+  attachment glyph, refuses unexpected staged changes before saving, and
+  requires the pruned table row on read-back.
+- `native-add-paper` verifies that the new glyph is the only change to the
+  note text, and a dry-run timeout is no longer described as a possible save.
+- `native-update-smart-folder` reports a missing title or parent timestamp in
+  `timestampsMissing` instead of stamping it, and the writer probes the
+  account deletion flag it reads.
 
 ## [2.9.21] - 2026-09-24
 

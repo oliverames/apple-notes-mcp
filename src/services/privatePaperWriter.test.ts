@@ -1,7 +1,8 @@
 /**
- * Paper authoring client tests. A small Node script stands in for the native
- * writer, so these exercise the real spawn, gating, and committed paths of
- * `add_paper` without NotesShared, PencilKit, or the store.
+ * Paper client tests. A small Node script stands in for the native writer,
+ * so these exercise the real spawn, gating, and committed paths of
+ * `add_paper` and `read_paper` without NotesShared, PencilKit, PaperKit, or
+ * the store.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -9,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { packageRoot, sha256Hex } from "./privateHelper.js";
 import { compileArguments } from "./privateHelperBuild.js";
-import { addPaper } from "./privatePaperWriter.js";
+import { MAX_PAPER_READ_POINTS, addPaper, readPaper } from "./privatePaperWriter.js";
 import { writerCompileArguments } from "./privateWriterBuild.js";
 import {
   PAPER_WRITE_LIVE_VALIDATED,
@@ -39,7 +40,15 @@ process.stdin.on("end", () => {
   if (mode === "hang") { setTimeout(() => {}, 60000); return; }
   const feature = { available: true, reason: null, missing: [] };
   if (req.action === "probe")
-    out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: true, os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature, appendPlainText: feature, ...(mode === "old-writer" ? {} : { addPaper: mode === "no-paper-api" ? { available: false, reason: "private_api_unavailable", missing: ["+[ICPaperAttachmentCreationHelper createSystemPaperAttachmentWithPKDrawing:inNote:]"], formats: ["drawing"] } : { ...feature, formats: ["paper", "drawing"] } }) } });
+    out({ status: "ok", protocolVersion: 1, role: "writer", readOnly: false, writesEnabled: true, os: { version: "27.2.0", notesAppVersion: "4.13" }, framework: { loaded: true, error: null }, store: { kind: "live", opened: true, reason: null, noteRows: 3 }, syncHostRunning: true, features: { readNoteState: feature, appendPlainText: feature, ...(mode === "old-writer" ? {} : { addPaper: mode === "no-paper-api" ? { available: false, reason: "private_api_unavailable", missing: ["+[ICPaperAttachmentCreationHelper createSystemPaperAttachmentWithPKDrawing:inNote:]"], formats: ["drawing"] } : { ...feature, formats: ["paper", "drawing"] }, readPaper: feature, readPaperShapes: mode === "macos-26" ? { available: false, reason: "requires_macos_27", missing: ["macOS 27 or later"] } : feature }) } });
+  if (req.action === "read_paper") {
+    if (mode === "ambiguous") out({ status: "error", code: "ambiguous_attachment", message: "two", attachmentIdentifiers: ["A", "B"] }, 1);
+    const shapeDecode = mode === "macos-26"
+      ? { available: false, reason: "requires_macos_27", missing: ["macOS 27 or later"], elementCount: null, elementKinds: null }
+      : { available: true, reason: null, missing: [], elementCount: 2, elementKinds: { shape: 1, stroke: 1 } };
+    const shapes = mode === "macos-26" ? [] : [{ index: 0, kind: "rectangle", frame: [10, 20, 120, 60], renderFrame: [8.5, 18.5, 123, 63], rotation: 0, lineWidth: 3, opacity: 1, fillColor: null, strokeColor: [1, 0, 0, 1], startLineMarker: "none", endLineMarker: "none", path: "M 10 20 L 10 80 L 130 80 L 130 20 Z", pathBounds: [10, 20, 120, 60], text: null }];
+    out({ status: "ok", storeKind: "live", identifier: req.identifier, revision: "r1:" + "b".repeat(64), attachmentIdentifier: "${ATTACHMENT}", typeUTI: "com.apple.paper", drawingCount: 1, strokeCount: 1, returnedStrokeCount: 1, pointCount: 2, bounds: [0, 0, 1, 1], inks: ["pen"], pointFields: ["x", "y", "width", "height", "opacity", "force", "azimuth", "altitude", "timeOffset"], strokes: [{ ink: "pen", inkIdentifier: "com.apple.ink.pen", color: [0, 0, 0, 1], width: 2, transform: [1, 0, 0, 1, 0, 0], pointCount: 2, renderBounds: [0, 0, 1, 1], masked: false, points: [[0, 0, 2, 2, 1, 1, 0, 1.5708, 0], [1, 1, 2, 2, 1, 1, 0, 1.5708, 0.01]] }], shapeDecode, shapes, fallbackGeometry: { available: false, reason: "no_fallback_pdf" }, truncated: false, warnings: [], echo: req });
+  }
   if (req.action !== "add_paper") out({ status: "error", code: "unknown_action", message: "no" }, 1);
   if (mode === "conflict") out({ status: "error", code: "revision_conflict", message: "changed", committed: false, currentRevision: "r1:" + "c".repeat(64) }, 1);
   if (mode === "verify-failed") out({ status: "error", code: "verification_failed", message: "decoded 0 strokes", committed: true, attachmentIdentifier: "${ATTACHMENT}" }, 1);
@@ -272,6 +281,9 @@ describe("addPaper", SPAWN_TIMEOUT, () => {
       )
     );
     expect(timedOut).toMatchObject({ code: "timeout", committed: false });
+    // The transport treats the dry run as a read, so the message does not
+    // describe a possible save.
+    expect(timedOut.message).not.toMatch(/INDETERMINATE|may have been saved/);
   });
 
   it("reports a timed-out write as indeterminate", () => {
@@ -282,6 +294,120 @@ describe("addPaper", SPAWN_TIMEOUT, () => {
       )
     );
     expect(timedOut).toMatchObject({ code: "timeout", committed: "unknown" });
+  });
+});
+
+describe("read_paper contract", () => {
+  const writerSource = readFileSync(join(packageRoot(__dirname), WRITER_SOURCE_RELATIVE), "utf8");
+  const section = writerSource.slice(
+    writerSource.indexOf("#pragma mark - Paper reading"),
+    writerSource.indexOf("#pragma mark - Sync state")
+  );
+  const handler = section.slice(section.indexOf("static NSDictionary *HandleReadPaper("));
+
+  it("is a read action that decodes a private copy of the bundle", () => {
+    expect(WRITER_ACTIONS.read_paper).toBe("read");
+    const sandbox = handler.indexOf("InstallAccountSandbox(sandbox);");
+    expect(sandbox).toBeGreaterThan(-1);
+    expect(sandbox).toBeLessThan(handler.indexOf("OpenContext(store, YES)"));
+    expect(handler).not.toMatch(/OpenContext\(store, NO\)/);
+    expect(handler.indexOf("SnapshotPaperBundle(")).toBeLessThan(
+      handler.indexOf("DrawingsForAttachment(")
+    );
+    expect(handler).toMatch(/removeItemAtPath:sandbox/);
+  });
+
+  it("reaches PaperKit only through symbols resolved at run time on macOS 27", () => {
+    // Every Swift entry point is looked up with dlsym, so a missing one is a
+    // reported gap, not a failed load; nothing is linked by symbol name.
+    expect(section).toMatch(/dlsym\(RTLD_DEFAULT, kPaperKitSymbols\[i\]\)/);
+    expect(section).not.toMatch(/extern [^;]*\$s/);
+    expect(section).toMatch(/operatingSystemVersion\.majorVersion >= 27/);
+    expect(section).toMatch(/@"requires_macos_27"/);
+    // Buffers are sized from runtime metadata, never from a constant.
+    expect(section).toMatch(/SwiftSize\(gPaperKitTypes\[type\]\)/);
+  });
+
+  it("reads the fallback PDF without following links and within a size limit", () => {
+    expect(section).toMatch(/O_RDONLY \| O_NOFOLLOW/);
+    expect(section).toMatch(/S_ISREG\(info\.st_mode\)/);
+    expect(section).toMatch(/MAX_FALLBACK_PDF_BYTES/);
+    expect(section).toMatch(/CGPDFScannerScan/);
+  });
+});
+
+describe("readPaper", SPAWN_TIMEOUT, () => {
+  it("sends only the fields given and returns the decoded layers", () => {
+    const read = readPaper(
+      { identifier: NOTE, attachmentIdentifier: ATTACHMENT, maxPoints: 10, includeShapes: true },
+      deps(ON)
+    );
+    expect(read).toMatchObject({
+      status: "ok",
+      strokeCount: 1,
+      shapeDecode: { available: true },
+      fallbackGeometry: { available: false, reason: "no_fallback_pdf" },
+    });
+    expect(read.shapes[0]).toMatchObject({
+      kind: "rectangle",
+      path: expect.stringMatching(/^M 10 20/),
+    });
+    expect((read as Record<string, unknown>).echo).toEqual({
+      protocol: 1,
+      action: "read_paper",
+      identifier: NOTE,
+      attachmentIdentifier: ATTACHMENT,
+      maxPoints: 10,
+      includeShapes: true,
+    });
+  });
+
+  it("reports an unavailable shape layer as data, not as a failure", () => {
+    const read = readPaper({ identifier: NOTE }, deps({ ...ON, FAKE_MODE: "macos-26" }));
+    expect(read.shapeDecode).toMatchObject({ available: false, reason: "requires_macos_27" });
+    expect(read.shapes).toEqual([]);
+    expect(read.strokes).toHaveLength(1);
+  });
+
+  it("validates before spawning and never reports a read as committed", () => {
+    expect(thrown(() => readPaper({ identifier: "x" }, deps(ON)))).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(
+      thrown(() => readPaper({ identifier: NOTE, attachmentIdentifier: "nope" }, deps(ON)))
+    ).toMatchObject({ code: "invalid_request" });
+    for (const maxPoints of [0, 1.5, MAX_PAPER_READ_POINTS + 1])
+      expect(thrown(() => readPaper({ identifier: NOTE, maxPoints }, deps(ON)))).toMatchObject({
+        code: "invalid_request",
+      });
+    const ambiguous = thrown(() =>
+      readPaper({ identifier: NOTE }, deps({ ...ON, FAKE_MODE: "ambiguous" }))
+    );
+    expect(ambiguous).toMatchObject({ code: "ambiguous_attachment" });
+    expect(ambiguous.committed).toBeUndefined();
+    const timedOut = thrown(() =>
+      readPaper(
+        { identifier: NOTE },
+        deps({ ...ON, FAKE_MODE: "hang", APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS: "300" })
+      )
+    );
+    expect(timedOut).toMatchObject({ code: "timeout" });
+    expect(timedOut.committed).toBeUndefined();
+  });
+
+  it("reports both Paper read layers in the capability matrix, needing no unverified gate", () => {
+    expect(privateWriterCapabilities(deps(ON)).features.readPaper).toEqual({
+      available: true,
+      reason: null,
+      detail: null,
+    });
+    const old = privateWriterCapabilities(deps({ ...ON, FAKE_MODE: "macos-26" }));
+    expect(old.features.readPaper.available).toBe(true);
+    expect(old.features.readPaperShapes).toMatchObject({
+      available: false,
+      reason: "private_api_unavailable",
+    });
+    expect(old.features.readPaperShapes.detail).toMatch(/macOS 27/);
   });
 });
 
