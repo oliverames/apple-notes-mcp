@@ -49,6 +49,11 @@
   `confirm: true`, finishes an ordinary delete: it clears the flag and moves
   the note to Recently Deleted, verified by a fresh read-back. It never
   purges. Needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated.
+- `resolve-paragraph-anchor` with `remint: true` gives a `needs-reminting`
+  paragraph a new ID through the writer's `set_paragraph_id` (with a fresh
+  revision and the matched block's text) and resolves again, when both writer
+  switches are on. Otherwise it still reports `writer-unavailable`; a writer
+  refusal is `writer-failed` with its `committed` state.
 - `native-sync-push` relaunch and the smart-folder writes report
   `adoptedByNotesApp` per folder: whether Notes.app shows the folder (or no
   longer shows a deleted one), read through AppleScript.
@@ -420,6 +425,11 @@
   requires the pruned table row on read-back.
 - `native-add-paper` verifies that the new glyph is the only change to the
   note text, and a dry-run timeout is no longer described as a possible save.
+- Highlight and link-card dry runs pass `dryRun` to the transport too, so a
+  dry-run timeout is no longer described as a possible save.
+- The copy-store table step picks a table the live store holds in the same
+  state instead of one an earlier step created in the copy, and the highlight
+  whole-note step accepts a body that opens with an attachment.
 - `native-update-smart-folder` reports a missing title or parent timestamp in
   `timestampsMissing` instead of stamping it, and the writer probes the
   account deletion flag it reads.

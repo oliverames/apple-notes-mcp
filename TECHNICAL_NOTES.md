@@ -589,15 +589,27 @@ marked for deletion is `note-deleted`, a locked or undecodable body is
 reaches the matcher.
 
 **Re-minting hook.** Public automation cannot set a paragraph UUID. The
-module exports `setParagraphIdReminter(fn)`; nothing in this package installs
-one. A writer that can set ParagraphStyle field 9 on one block's runs can
-register a function that receives `{ anchorId, noteId, noteIdentifier,
-blockIndex, expectedText, currentParagraphId }`, must refuse when the block's
-text no longer equals `expectedText`, and resolves with the new UUID only
-after its write is committed and verified. `resolve-paragraph-anchor` with
-`remint: true` then reads the note again and resolves as usual, so the new
-link is still checked for uniqueness. Without a writer the tool reports
-`remint.reason: "writer-unavailable"`.
+module exports `setParagraphIdReminter(fn)`. A registered function receives
+`{ anchorId, noteId, noteIdentifier, blockIndex, expectedText,
+currentParagraphId }`, must refuse when the block's text no longer equals
+`expectedText`, and resolves with the new UUID only after its write is
+committed and verified. `resolve-paragraph-anchor` with `remint: true` then
+reads the note again and resolves as usual, so the new link is still checked
+for uniqueness. Without a registered function the tool reports
+`remint.reason: "writer-unavailable"`; when the function throws it reports
+`writer-failed` with the message and, for a writer error, its `committed`
+state.
+
+The server registers one at startup only when both writer switches are on
+(`src/services/privateWriterReminter.ts`). It reads the note's `revision`
+through the writer's read-only `read_note_state`, then calls
+`set_paragraph_id` with that revision as `ifRevision` and the resolver's
+`blockIndex` and `text` as `expectedText`. The writer's own checks do the
+rest: a changed note is `revision_conflict`, a changed paragraph is
+`paragraph_changed`, and its read-back verifies that the new UUID is unique.
+`native-set-paragraph-id`'s live-validation gate applies unchanged. The
+copy-store script records an anchor for a shared or missing paragraph on the
+copy and heals it this way.
 
 **Registry.** One JSON file, `{ "version": 1, "anchors": [...] }`, at
 `APPLE_NOTES_MCP_ANCHOR_FILE` or `~/Library/Application
@@ -1016,7 +1028,7 @@ running, else `queued_for_next_launch`).
 The writer's read-only `read_sync_state` action reports Notes' own counters
 (`currentLocalVersion`, `latestVersionSyncedToCloud`, `uploadPending`) for up
 to 50 notes or folders plus the library's pending-upload count. Observed on
-macOS 27.2 on 2026-09-23 with the earlier combined helper: Notes.app merges a
+macOS 27.2 on 2026-09-23 with an earlier prototype of this writer: Notes.app merges a
 helper save and queues the note, but when it already holds that note in
 memory its upload check reads cached counters and skips it. Moving the note
 through AppleScript into the folder it is already in makes Notes.app save it
@@ -1622,7 +1634,7 @@ the live store) and then passed: two items, one toggled and back, the no-op
 and every refusal as expected, and the live note unchanged.
 
 Earlier live test (2026-09-23, macOS 27.2, Notes running), run with the same
-edit logic in the earlier combined helper, before it moved into this writer:
+edit logic in an earlier prototype, before it moved into this writer:
 on a note built with two `create-checklist-item` items in an iCloud folder,
 the tool refused a stale revision, checked the second item
 (`persistedDone: true`, protobuf `done` 1 on exactly that item's run, the
@@ -1640,7 +1652,7 @@ the sync nudge. The writer build of this action has not been live-tested yet.
 Notes' highlight is the `TTEmphasis` attribute, an `NSNumber` on the
 highlighted characters, serialized as `AttributeRun` field 14. On 2026-09-23 a
 scan of a store copy on macOS 27.2 found one note with Notes-written field 14
-(value 1), and the earlier combined helper read the same run back as
+(value 1), and an earlier prototype read the same run back as
 `TTEmphasis` = 1, confirming the mapping. The values follow Notes' color
 order: 1 purple, 2 pink, 3 orange, 4 mint, 5 blue. That Notes-written run also
 carried a `TTColor` attribute; whether Notes always pairs the two was not
@@ -1709,7 +1721,7 @@ highlighted blue and read back with `hasEmphasis` false to true, a no-op
 repeat, and removal read back with `hasEmphasis` false.
 
 Earlier live test (2026-09-23, macOS 27.2, Notes running), run with the same
-edit logic in the earlier combined helper, before it moved into this writer:
+edit logic in an earlier prototype, before it moved into this writer:
 on a note created in an iCloud folder, a dry run reported two matches without
 changing the revision, a stale revision was refused, the write stored orange
 (field 14 = 3) on both matches and nothing else, a repeat returned
@@ -1769,7 +1781,7 @@ unchanged. On the copy the attachment reported `currentLocalVersion` 1 and
 `latestVersionSyncedToCloud` 0, so it is marked for upload.
 
 Earlier live test (2026-09-23, macOS 27.2), run with the same edit logic in
-the earlier combined helper, before it moved into this writer: on a test note
+an earlier prototype, before it moved into this writer: on a test note
 in an iCloud folder the attachment row started with no title, summary,
 metadata, or preview image, and AppleScript already listed it with its URL.
 About 20 seconds after the note was shown in Notes.app, Notes had fetched the

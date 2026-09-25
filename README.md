@@ -779,9 +779,13 @@ Resolving an anchor tries three steps in order, and every step fails closed:
 
 A match whose ID is now shared or missing is `needs-reminting`: the paragraph
 is found (the result names its block), but no safe link exists until it gets a
-new ID. Public automation cannot set a paragraph ID, so this server only
-reports it; `remint: true` hands the block to a paragraph-ID writer when one
-is installed (none is by default) and reports `writer-unavailable` otherwise.
+new ID. Public automation cannot set a paragraph ID. `remint: true` gives the
+block a new ID through the opt-in private writer's `native-set-paragraph-id`
+(with a fresh revision, refusing if the paragraph changed) and resolves again.
+It runs only when `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and
+`APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1` are set and the writer is built
+(plus `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until that write is
+live-validated); otherwise it reports `writer-unavailable`.
 
 To share anchored links outside Notes, see the
 [paragraph anchor resolver](#paragraph-anchor-resolver-opt-in).
@@ -823,7 +827,7 @@ Finds an anchored paragraph in the note as it is now. The result has `status`
 | `anchorId` | string | Yes | The anchor (`pa_` and 24 hex digits) |
 | `minConfidence` | number | No | Lowest confidence accepted as a match (default 0.6) |
 | `refresh` | boolean | No | After a match with confidence 0.8 or more, store the paragraph as it is now (text, neighbours, block, ID), so later edits are tracked from here. Reports `refreshed` or `refreshSkipped` |
-| `remint` | boolean | No | On `needs-reminting`, ask the installed paragraph-ID writer for a new ID and resolve again. Reports `remint.reason: "writer-unavailable"` when none is installed |
+| `remint` | boolean | No | On `needs-reminting`, give the paragraph a new ID through the private writer and resolve again. Reports `remint.reason: "writer-unavailable"` unless both writer switches are on, and `"writer-failed"` (with the writer's message and `committed`) when the writer refuses |
 
 #### `list-paragraph-anchors`
 

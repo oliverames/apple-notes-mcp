@@ -63275,11 +63275,13 @@ function setHighlight(request, deps = defaultWriterDeps()) {
   try {
     return parseWriterResult(
       highlightResultSchema,
-      callPrivateWriter("set_highlight", fields, deps),
-      true
+      // Passing dryRun keeps a dry-run timeout from being described as a
+      // possible save.
+      callPrivateWriter("set_highlight", fields, deps, { dryRun }),
+      !dryRun
     );
   } catch (error2) {
-    if (dryRun && error2 instanceof PrivateWriteError && error2.committed === "unknown")
+    if (dryRun && error2 instanceof PrivateWriteError && error2.committed !== false)
       throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
     throw error2;
   }
@@ -63428,11 +63430,13 @@ function addUrlCard(request, deps = defaultWriterDeps()) {
   try {
     return parseWriterResult(
       urlCardResultSchema,
-      callPrivateWriter("add_url_card", fields, deps),
-      true
+      // Passing dryRun keeps a dry-run timeout from being described as a
+      // possible save.
+      callPrivateWriter("add_url_card", fields, deps, { dryRun }),
+      !dryRun
     );
   } catch (error2) {
-    if (dryRun && error2 instanceof PrivateWriteError && error2.committed === "unknown")
+    if (dryRun && error2 instanceof PrivateWriteError && error2.committed !== false)
       throw new PrivateWriteError(error2.code, error2.message, false, error2.details);
     throw error2;
   }
