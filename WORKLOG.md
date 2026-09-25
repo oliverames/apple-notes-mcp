@@ -3,7 +3,7 @@
 ## 2026-09-25 - Upstream submission, live tests, fork and clone sync (Mac) - START HERE
 
 **What changed**:
-- `feat/gap-parity` rebuilt on `origin/feat/gap-parity` (`da9dff0`): cherry-picked the #84 heal wiring (`edd4a63`, was `32933d0`) and the writer harness fixes (`81f808a`, was `d714f5d`), carried their README/TECHNICAL_NOTES/CHANGELOG text (`2f57069`), and dropped `60b4ace` (2.9.28 release). `c6d3497` was already on origin. Later merged upstream 2.9.30 and renumbered to **2.9.31** (`3e4ef92`), then fixed a CodeQL test finding (`65029da`). No force-push.
+- `feat/gap-parity` rebuilt on `origin/feat/gap-parity` (`da9dff0`): cherry-picked the #84 heal wiring (`edd4a63`, was `32933d0`) and the writer harness fixes (`81f808a`, was `d714f5d`), carried their README/TECHNICAL_NOTES/CHANGELOG text (`2f57069`), and dropped `60b4ace` (2.9.28 release). `c6d3497` was already on origin. Later merged upstream 2.9.30 and renumbered to **2.9.31** (`3e4ef92`), then fixed two CodeQL `js/file-system-race` findings in `anchorRegistry.test.ts` (`65029da`, `686e714`). No force-push.
 - Upstream: opened **sweetrb/apple-notes-mcp#262** (combined writer + #181 roadmap, not draft, Testing section rewritten to what ran). Closed #250 pointing at it. Posted on #248 (rerun result), #220 (npx-chain suggestion) and #181 (status).
 - #248 root cause found: the bridge's Find Notes step matches `scopeText` against Body, which leaves out the title line. Fix **#261** (`textBelowTitle` pre-check) merged by sweetrb with a follow-up making it `validation_error`; shipped 2.9.30. sweetrb closed #248. sweetrb also shipped #263 (2.9.30 CI timing fix; 2.9.29 never published).
 - Fork: merged PR #3; closed #4 and #5 (carried by #262); merged upstream/main twice (2.9.28, then 2.9.30) into fork main with merge commits. Kept the fork-only publish guard and the removal of the two marketplace manifests. **Restored upstream's CLAUDE.md** (Oliver, 2026-09-25) because upstream's docs tests read it. Publish workflow skipped on every run.
@@ -19,14 +19,15 @@
 - PR descriptions carry no Claude Code footer (harness rule); comments do.
 
 **Left off at**:
-- [ ] #262: auto-fix monitor is on. Watch the CodeQL rerun on `65029da` and sweetrb's review.
-- [ ] #220: waiting on the reporter to try launching without npx.
+- [ ] #262: every check green on `686e714` (CodeQL included), both CodeQL threads replied to and resolved. sweetrb (2026-09-25 11:35) is holding it for Rob's decision on the three write questions, flag defaults and 3.0.0. Auto-fix monitor is on. Nothing to do until review.
+- [ ] #220: sweetrb replied (2026-09-25) that the disclaimer breaks the TCC chain at the first child, so npx likely doesn't matter; a direct-node test is optional data. Left open. No action needed unless Oliver wants to run that test.
 - [ ] Unverified: `list-attachments` reported `contentType` as a `cid:` string for writer-added attachments on the compose test note. Check whether AppleScript-added attachments do the same before filing upstream.
 - [ ] Fork Dependabot security-update runs for js-yaml and qs failed on `434c2bd` (not investigated).
 - [ ] A detached worktree from another session remains at `/private/tmp/claude-501/-Users-oliverames/b7151a52-.../scratchpad/sync-wt/feat-markdown-templates` with 14 uncommitted changes. Not ours to discard.
 - [ ] Live-test the items listed as not run live when a flagged note or Notes-drawn shape is available.
+- Tracking: issues are disabled on the fork, so this list is the tracker. The `list-attachments` item stays unfiled upstream until it is reproduced with an AppleScript-added attachment.
 
-**Verification**: gap-parity: lint, typecheck, format check, `test:coverage` 3219 passed with none skipped, bundle matches; fork CI green on `2f57069`; upstream CI on #262 green except CodeQL (fixed in `65029da`, rerun pending). #261: 2531 tests, live refusal confirmed. Fork main: 2531 tests pass, CI and CodeQL green on the final merge, npm publish skipped. Clean `pnpm install --frozen-lockfile` plus build leaves `git status` clean.
+**Verification**: gap-parity: lint, typecheck, format check, `test:coverage` 3219 passed with none skipped, bundle matches; fork CI green on `2f57069`; upstream CI on #262 fully green on `686e714`. #261: 2531 tests, live refusal confirmed. Fork main: 2531 tests pass, CI and CodeQL green on the final merge, npm publish skipped. Clean `pnpm install --frozen-lockfile` plus build leaves `git status` clean.
 
 ## 2026-09-25 - Integration pushed; Mac handoff (cloud session)
 
