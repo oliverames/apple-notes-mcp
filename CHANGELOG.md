@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+### Security
+
+- `compose-note` file blocks now follow the file policy that
+  `add-attachment`, `create-note`'s `contentPath`, `analyze-svg` and the
+  template tools use (#259, #260). A file must be a regular file in home,
+  temp or `/Volumes`, not a symbolic link or a FIFO. Hidden paths and
+  `~/Library` outside iCloud Drive and CloudStorage are refused unless
+  `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Before this, a prompt could
+  compose `~/.ssh/id_ed25519` into a synced note, and a FIFO could block the
+  server. The check uses a new `assertAllowedFile`, which shares
+  `readAllowedFile`'s checks without reading the file, since the writer reads
+  it itself.
+
 ### Fixed
 
 - `native-add-paper`'s `svgPath` reads the file through `readAllowedFile`,

@@ -4,6 +4,7 @@
  * real spawn, checksum, gating, and response-validation paths run.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -245,6 +246,9 @@ describe("blocksToParagraphs", () => {
       writeFileSync(join(dir, "report.pdf"), "%PDF-1.4\n");
       writeFileSync(join(dir, "empty.txt"), "");
       symlinkSync(join(dir, "report.pdf"), join(dir, "link.pdf"));
+      mkdirSync(join(dir, ".ssh"));
+      writeFileSync(join(dir, ".ssh", "id_ed25519.pdf"), "secret");
+      execFileSync("mkfifo", [join(dir, "pipe.pdf")]);
     });
     afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -268,6 +272,8 @@ describe("blocksToParagraphs", () => {
       ["an empty file", { type: "file", path: "EMPTY" }],
       ["a symbolic link", { type: "file", path: "LINK" }],
       ["a directory", { type: "file", path: "DIR" }],
+      ["a file in a hidden directory", { type: "file", path: "HIDDEN" }],
+      ["a FIFO", { type: "file", path: "FIFO" }],
       ["a changed extension", { type: "file", path: "PDF", filename: "report.txt" }],
       ["a name with a slash", { type: "file", path: "PDF", filename: "a/b.pdf" }],
       ["a hidden name", { type: "file", path: "PDF", filename: ".pdf" }],
@@ -279,6 +285,8 @@ describe("blocksToParagraphs", () => {
         EMPTY: join(dir, "empty.txt"),
         LINK: join(dir, "link.pdf"),
         DIR: dir,
+        HIDDEN: join(dir, ".ssh", "id_ed25519.pdf"),
+        FIFO: join(dir, "pipe.pdf"),
         PDF: join(dir, "report.pdf"),
       };
       const resolved =

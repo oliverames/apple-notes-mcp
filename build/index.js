@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants9) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants10);
+          this.rhs = optimizeExpr(this.rhs, names, constants9);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants9) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants10);
+        this.rhs = optimizeExpr(this.rhs, names, constants9);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants10) {
-        this.code = optimizeExpr(this.code, names, constants10);
+      optimizeNames(names, constants9) {
+        this.code = optimizeExpr(this.code, names, constants9);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants9) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants10))
+          if (n.optimizeNames(names, constants9))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants9) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
-        if (!(super.optimizeNames(names, constants10) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants9);
+        if (!(super.optimizeNames(names, constants9) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants10);
+        this.condition = optimizeExpr(this.condition, names, constants9);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants10) {
-        if (!super.optimizeNames(names, constants10))
+      optimizeNames(names, constants9) {
+        if (!super.optimizeNames(names, constants9))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants10);
+        this.iteration = optimizeExpr(this.iteration, names, constants9);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants10) {
-        if (!super.optimizeNames(names, constants10))
+      optimizeNames(names, constants9) {
+        if (!super.optimizeNames(names, constants9))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants10);
+        this.iterable = optimizeExpr(this.iterable, names, constants9);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants10) {
+      optimizeNames(names, constants9) {
         var _a, _b;
-        super.optimizeNames(names, constants10);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants10);
+        super.optimizeNames(names, constants9);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants9);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants9);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants10) {
+    function optimizeExpr(expr, names, constants9) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants10[n.str];
+        const c = constants9[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants10[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants9[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants10 = {
+    var constants9 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants10) {
-      v = { value: constants10[c] };
+    for (c in constants9) {
+      v = { value: constants9[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -41485,6 +41485,23 @@ function privateContentReason(p, roots) {
 }
 var CLOUD_DOCUMENT_DIRS = ["Mobile Documents", "CloudStorage"];
 function readAllowedFile(p, maxBytes, options = {}) {
+  const label = options.label ?? "Content file";
+  const { descriptor, size } = openAllowedFile(p, maxBytes, options);
+  try {
+    const bytes = readFileSync(descriptor);
+    if (bytes.length !== size)
+      throw new Error(`${label} changed while it was being read; try again`);
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+function assertAllowedFile(p, maxBytes, options = {}) {
+  const { descriptor, size } = openAllowedFile(p, maxBytes, options);
+  closeSync(descriptor);
+  return size;
+}
+function openAllowedFile(p, maxBytes, options) {
   const roots = options.roots ?? allowedSaveRoots();
   const allowPrivate = options.allowPrivate ?? process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1";
   const label = options.label ?? "Content file";
@@ -41527,12 +41544,10 @@ function readAllowedFile(p, maxBytes, options = {}) {
     if (stat.size === 0) throw new Error(`${label} is empty: "${abs}"`);
     if (stat.size > maxBytes)
       throw new Error(`${label} is ${stat.size} bytes, over the ${maxBytes}-byte limit.`);
-    const bytes = readFileSync(descriptor);
-    if (bytes.length !== stat.size)
-      throw new Error(`${label} changed while it was being read; try again`);
-    return bytes;
-  } finally {
+    return { descriptor, size: stat.size };
+  } catch (error2) {
     closeSync(descriptor);
+    throw error2;
   }
 }
 function readAllowedTextFile(p, maxBytes, roots = allowedSaveRoots(), allowPrivate = process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1") {
@@ -60641,7 +60656,6 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
 import { basename as basename8 } from "node:path";
 
 // src/services/privateCompose.ts
-import { closeSync as closeSync9, constants as constants9, fstatSync as fstatSync9, openSync as openSync9 } from "node:fs";
 import { basename as basename7, extname as extname8, isAbsolute as isAbsolute6 } from "node:path";
 var HIGHLIGHTS2 = ["purple", "pink", "orange", "mint", "blue"];
 var MAX_INDENT = 8;
@@ -60773,22 +60787,16 @@ function assertAttachmentName(path10, filename, where) {
   if (extname8(filename).toLowerCase() !== extname8(basename7(path10)).toLowerCase())
     throw invalid3(`${where}: filename must keep the source file's extension`);
 }
-function composeFileSize(path10, where = "file") {
+function composeFileSize(path10, where = "file", roots) {
   if (!isAbsolute6(path10) || FORBIDDEN.test(path10))
     throw invalid3(`${where}: path must be an absolute path`);
-  let descriptor;
   try {
-    descriptor = openSync9(path10, constants9.O_RDONLY | constants9.O_NOFOLLOW);
-  } catch {
-    throw invalid3(`${where}: cannot open ${path10} (missing, unreadable, or a symbolic link)`);
-  }
-  try {
-    const stat = fstatSync9(descriptor);
-    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_COMPOSE_FILE_BYTES)
-      throw invalid3(`${where}: must be a nonempty regular file of at most 64 MiB`);
-    return stat.size;
-  } finally {
-    closeSync9(descriptor);
+    return assertAllowedFile(path10, MAX_COMPOSE_FILE_BYTES, {
+      ...roots ? { roots } : {},
+      label: "File"
+    });
+  } catch (error2) {
+    throw invalid3(`${where}: ${error2.message}`);
   }
 }
 function wireRun(run, where) {

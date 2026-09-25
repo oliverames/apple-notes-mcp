@@ -16,7 +16,6 @@
  *
  * @module services/privateCompose
  */
-import { closeSync, constants, fstatSync, openSync } from "node:fs";
 import { basename, extname, isAbsolute } from "node:path";
 import { z } from "zod";
 import {
@@ -30,6 +29,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { assertAllowedFile } from "../utils/attachmentFs.js";
 import { readNoteBlocks, type NoteBlock, type NoteBlocksDocument } from "../utils/noteBlocks.js";
 import { parseNotesShowUrl } from "../utils/noteLinks.js";
 
@@ -294,26 +294,24 @@ function assertAttachmentName(path: string, filename: string | undefined, where:
 }
 
 /**
- * The writer reads the file itself; this checks it the same way first
- * (absolute, not a symbolic link, a nonempty regular file of at most 64 MiB)
- * so a bad path is refused before anything is created. Returns its size.
+ * The writer reads the file itself; this checks it first under the same policy
+ * as add-attachment's path (see readAllowedFile: a nonempty regular file of at
+ * most 64 MiB in home, temp or /Volumes, not a symbolic link or a FIFO, and
+ * not a hidden path or ~/Library outside iCloud Drive and CloudStorage unless
+ * APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1), so a prompt cannot put
+ * ~/.ssh/id_ed25519 into a synced note and a bad path is refused before
+ * anything is created. Returns its size.
  */
-export function composeFileSize(path: string, where = "file"): number {
+export function composeFileSize(path: string, where = "file", roots?: string[]): number {
   if (!isAbsolute(path) || FORBIDDEN.test(path))
     throw invalid(`${where}: path must be an absolute path`);
-  let descriptor: number;
   try {
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  } catch {
-    throw invalid(`${where}: cannot open ${path} (missing, unreadable, or a symbolic link)`);
-  }
-  try {
-    const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_COMPOSE_FILE_BYTES)
-      throw invalid(`${where}: must be a nonempty regular file of at most 64 MiB`);
-    return stat.size;
-  } finally {
-    closeSync(descriptor);
+    return assertAllowedFile(path, MAX_COMPOSE_FILE_BYTES, {
+      ...(roots ? { roots } : {}),
+      label: "File",
+    });
+  } catch (error) {
+    throw invalid(`${where}: ${(error as Error).message}`);
   }
 }
 
