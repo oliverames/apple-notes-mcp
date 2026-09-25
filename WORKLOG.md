@@ -18,6 +18,7 @@
 - [ ] Open the combined upstream PR, not as a draft. Close #250 pointing at it, post on #248 (after the rerun), #220 and #181, and check every upstream thread.
 - [ ] #248 rerun: see the 2026-09-25 entry below.
 - [ ] Sync fork `main` with upstream (Oliver, 2026-09-25): merge `upstream/main`, keep the fork-only publish guard, merge PR #3 first. Note that `main` currently tracks `origin/main` (2026-07-24 entry).
+- [ ] Close fork PRs #4 and #5 unmerged, noting that `feat/gap-parity` carries them. Then sync the Mac's local clone: fast-forward local `main` to `origin/main` (tracking `origin`), remove superseded worktrees, and ask Oliver before deleting remote branches. The full prompt is in the session's final handoff.
 
 ## 2026-09-24 (evening) - Upstream review from a cloud session
 
