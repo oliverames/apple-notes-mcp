@@ -109,6 +109,37 @@
   10,000 UTF-16 units together.
 
 ## [2.9.29] - 2026-09-25
+### Added
+
+- Folder scope guards on every private-writer write tool: `ifFolderId`,
+  `ifAncestorFolderId`, and `forbiddenAncestorFolderIds`, with the same shapes
+  as the AppleScript tools' guards. The writer checks them in the write's own
+  Core Data transaction just before the save, and in dry runs. Every id must
+  name an existing folder; an unknown id, or a forbidden id naming a deleted
+  folder, refuses the call (`scope_folder_not_found`) instead of matching
+  nothing. Smart-folder writes guard the smart folder's parent.
+  `compose-note` takes them in append and prepend mode.
+- `native-repair-purge-flag` finds notes that carry Notes' permanent-deletion
+  flag while still in an ordinary folder and, after a dry run and with
+  `confirm: true`, finishes an ordinary delete: it clears the flag and moves
+  the note to Recently Deleted, verified by a fresh read-back. It never
+  purges. Needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated.
+- `native-sync-push` relaunch and the smart-folder writes report
+  `adoptedByNotesApp` per folder: whether Notes.app shows the folder (or no
+  longer shows a deleted one), read through AppleScript.
+
+### Fixed
+
+- `native-sync-push` relaunch counted another logged-in user's Notes.app
+  process as running, and read any `pgrep` failure as "Notes.app quit". It now
+  checks only this user's process and stops without relaunching when it cannot
+  tell. A failure to read the counters after the relaunch now says Notes.app
+  was already restarted (`relaunched: true`). The tool is annotated as
+  destructive, since relaunch quits Notes.app.
+- The per-feature copy-store test scripts now link PencilKit, which the writer
+  needs since paper authoring.
+
+## [2.9.21] - 2026-09-24
 
 ### Added
 

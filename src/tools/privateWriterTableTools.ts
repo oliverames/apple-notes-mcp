@@ -38,6 +38,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 const uuid = (what: string) => notesUuid.describe(what);
 const noteRef = {
@@ -124,6 +125,7 @@ export function registerPrivateWriterTableTools(
       dryRun: z.boolean().describe("true = plan only; false = apply the planned deletion"),
       ifRevision: ifRevision.optional(),
       ifTableDigest: ifTableDigest.optional(),
+      ...writerScopeGuardInput(),
       ...nudgeFields,
     },
     DESTRUCTIVE,
@@ -137,6 +139,7 @@ export function registerPrivateWriterTableTools(
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );
@@ -164,6 +167,7 @@ export function registerPrivateWriterTableTools(
         .describe("Cell text by column order; missing trailing cells stay empty"),
       ifRevision,
       ifTableDigest,
+      ...writerScopeGuardInput(),
       ...nudgeFields,
     },
     WRITE,
@@ -177,6 +181,7 @@ export function registerPrivateWriterTableTools(
           cells: args.cells,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );
@@ -201,6 +206,7 @@ export function registerPrivateWriterTableTools(
       text: cellText.describe("New plain text for the cell; may be empty"),
       ifRevision,
       ifTableDigest,
+      ...writerScopeGuardInput(),
       ...nudgeFields,
     },
     WRITE,
@@ -215,6 +221,7 @@ export function registerPrivateWriterTableTools(
           text: args.text,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );
@@ -237,6 +244,7 @@ export function registerPrivateWriterTableTools(
       dryRun: z.boolean().describe("true = plan only; false = apply the planned prune"),
       ifRevision: ifRevision.optional(),
       ifTableDigest: ifTableDigest.optional(),
+      ...writerScopeGuardInput(),
       ...nudgeFields,
     },
     DESTRUCTIVE,
@@ -249,6 +257,7 @@ export function registerPrivateWriterTableTools(
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

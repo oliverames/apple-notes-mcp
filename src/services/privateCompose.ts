@@ -32,6 +32,7 @@ import {
 import { assertAllowedFile } from "../utils/attachmentFs.js";
 import { readNoteBlocks, type NoteBlock, type NoteBlocksDocument } from "../utils/noteBlocks.js";
 import { parseNotesShowUrl } from "../utils/noteLinks.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export const HIGHLIGHTS = ["purple", "pink", "orange", "mint", "blue"] as const;
 export const MAX_INDENT = 8;
@@ -994,6 +995,8 @@ export interface ComposeRequest {
   dryRun?: boolean;
   requireNonSystemPaper?: boolean;
   insertBeforeHeading?: InsertBeforeHeading;
+  /** Folder preconditions, checked by the writer just before the save. */
+  scope?: ScopeGuard;
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,6 +1276,7 @@ export function composeNote(
   else fields.ifRevision = request.ifRevision;
   if (request.requireNonSystemPaper) fields.requireNonSystemPaper = true;
   if (request.insertBeforeHeading) fields.insertBeforeHeading = request.insertBeforeHeading;
+  Object.assign(fields, writerScopeFields(request.scope));
 
   assertWriterRequestSize(fields);
 

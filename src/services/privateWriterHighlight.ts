@@ -35,6 +35,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export const HIGHLIGHT_COLORS = ["purple", "pink", "orange", "mint", "blue"] as const;
 export type HighlightColor = (typeof HIGHLIGHT_COLORS)[number] | "none";
@@ -130,6 +131,8 @@ export interface HighlightRequest {
   color: HighlightColor;
   ifRevision?: string;
   dryRun?: boolean;
+  /** Folder preconditions, checked by the writer just before the save. */
+  scope?: ScopeGuard;
 }
 
 /** The writer fields for one target. */
@@ -166,6 +169,7 @@ export function setHighlight(
   const fields: Record<string, unknown> = {
     identifier: request.identifier,
     ...targetFields(request.target),
+    ...writerScopeFields(request.scope),
   };
   if (request.color !== "none" && !HIGHLIGHT_COLORS.includes(request.color))
     throw new PrivateWriteError(

@@ -30,6 +30,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 /** The optional post-write nudge, shared by the paragraph write tools. */
 export const nudgeInput = {
@@ -80,6 +81,7 @@ export function registerPrivateWriterParagraphTools(
       paragraphId: notesUuid
         .optional()
         .describe("Optional UUID to assign; must not be in use in the note. Omit to mint one"),
+      ...writerScopeGuardInput(),
       ...nudgeInput,
     },
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -92,6 +94,7 @@ export function registerPrivateWriterParagraphTools(
           expectedText: args.expectedText,
           ifRevision: args.ifRevision,
           paragraphId: args.paragraphId,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );
@@ -154,6 +157,7 @@ export function registerPrivateWriterParagraphTools(
       ifTargetRevision: revisionToken
         .optional()
         .describe("The target note's `revision` from native-note-state; required for another note"),
+      ...writerScopeGuardInput(),
       ...nudgeInput,
     },
     // destructiveHint: clearExistingSectionLinks removes chips.
@@ -172,6 +176,7 @@ export function registerPrivateWriterParagraphTools(
           clearExistingSectionLinks: args.clearExistingSectionLinks,
           ifRevision: args.ifRevision,
           ifTargetRevision: args.ifTargetRevision,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

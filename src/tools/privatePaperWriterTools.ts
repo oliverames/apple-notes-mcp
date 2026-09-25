@@ -45,6 +45,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 // Factories, not shared instances: JSON Schema conversion turns a reused zod
 // instance into a $ref, and some refs (into tuple items) do not resolve under
@@ -301,6 +302,7 @@ export function registerPrivatePaperWriterTools(
           "auto (default): Paper when this macOS can create it, else a classic drawing; paper or drawing to insist"
         ),
       dryRun: z.boolean().optional().describe("Validate and plan without writing"),
+      ...writerScopeGuardInput(),
       nudge: z
         .boolean()
         .optional()
@@ -326,6 +328,7 @@ export function registerPrivatePaperWriterTools(
           drawing,
           format: args.format,
           dryRun: args.dryRun,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

@@ -29,6 +29,7 @@ import {
   type PrivateHelperDeps,
 } from "./privateWriter.js";
 import { PARAGRAPH_URL } from "./privateWriterParagraphs.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 const revision = z.string().regex(/^r1:[a-f0-9]{64}$/);
 
@@ -79,6 +80,8 @@ export interface AddSectionLinkRequest {
   ifRevision: string;
   /** `revision` of `target` from native-note-state; required when it is another note. */
   ifTargetRevision?: string;
+  /** Folder preconditions on the note that receives the chip, checked just before the save. */
+  scope?: ScopeGuard;
 }
 
 function invalid(message: string): never {
@@ -139,6 +142,7 @@ export function addSectionLink(
   if (request.position !== undefined) fields.position = request.position;
   if (request.clearExistingSectionLinks !== undefined)
     fields.clearExistingSectionLinks = request.clearExistingSectionLinks;
+  Object.assign(fields, writerScopeFields(request.scope));
   return parseWriterResult(
     addSectionLinkSchema,
     callPrivateWriter("add_section_link", fields, deps),

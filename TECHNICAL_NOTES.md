@@ -902,6 +902,66 @@ place. It never writes to the store and adds no writer action. Not verified
 live: the relaunch path (it would quit Notes.app while others use it) and the
 upload of a writer-changed folder after a relaunch.
 
+Relaunch details (#52 and a review of the relaunch path):
+
+- The running check is `pgrep -x -u <uid> Notes`, so another logged-in user's
+  Notes.app never counts, and only pgrep's "no match" exit (1) means not
+  running. Any other failure stops the relaunch before Notes.app is opened
+  (`relaunch_failed`), instead of reading as "quit".
+- Once Notes.app has been quit or opened, a failure to read the counters
+  afterwards is reported as `relaunch_failed` with `relaunched: true`, so the
+  caller knows not to relaunch again.
+- Folder adoption: for each folder target, the relaunch then asks Notes.app
+  through AppleScript whether `folder id "<x-coredata id>"` exists, and its
+  name, polling for up to 20 s. `adoptedByNotesApp` is true when a live folder
+  is shown (with the stored title when the caller knows it) or a deleted one
+  is gone. The smart-folder write tools run the same read-only check after a
+  committed write when Notes.app is already running (`adoptionWaitSeconds`,
+  default 10). The check never launches Notes.app. AppleScript lists smart
+  folders among `folders`, so smart folders are covered.
+- The tool is annotated `destructiveHint: true`: annotations are per tool,
+  and relaunch interrupts whoever is using Notes.app.
+
+### Folder scope guards on writes
+
+Every write action (and `plan_edit`, the edit plan) accepts the AppleScript
+tools' three folder preconditions, `ifFolderId`, `ifAncestorFolderId`, and
+`forbiddenAncestorFolderIds` (at most 50), as exact `x-coredata://…/ICFolder/pN`
+ids. The actions and what each guards are listed in `kScopeGuardedActions`:
+a note (its folder chain), a smart folder (its parent chain; a forbidden id
+may also name the smart folder itself), or a new smart folder (its
+destination parent). The source test requires every write action to be in
+that table.
+
+- Where: `Dispatch` validates the fields before the handler runs. Every save
+  goes through `EnforceScopeGuard` (in `SaveOrFailFor` and in the append's own
+  save), which evaluates the guard in the write's own context immediately
+  before `-save:`. A call that returns without saving (a dry run, a no-op, a
+  plan) evaluates it in a fresh read-only context before it answers.
+- What it reads: the note's folder as the write read it
+  (`committedValuesForKeys:`), which the save's optimistic locking protects:
+  if Notes.app moved the note meanwhile, the save fails with
+  `revision_conflict`. Each folder above it is re-read from the store with a
+  dictionary fetch (`includesPendingChanges = NO`), not from the context's
+  cache. A folder moved by another process between that read and the save is
+  not detected; the window is the few milliseconds of the save itself.
+- A write that moves the note (the purge-flag repair) also checks the
+  destination's chain against the forbidden ids.
+- Fail closed: every id must resolve, through the coordinator, to an existing
+  `ICFolder` in this store, and a forbidden id must not name a deleted folder
+  (`scope_folder_not_found`, `committed: false`). The AppleScript guards match
+  ids by string and treat an unknown forbidden id as "not an ancestor"; the
+  writer refuses instead, because an unknown id is almost always a stale or
+  mistyped one.
+- A failure is `scope_conflict` with a `scopeReason` (`not_in_folder`,
+  `not_in_expected_folder`, `not_inside_expected_ancestor`,
+  `inside_forbidden_folder`, `destination_inside_forbidden_folder`,
+  `folder_vanished`, `folder_chain_invalid`), always `committed: false`. The
+  server maps it to `revision_conflict`.
+- `compose-note` create mode refuses the guards: Notes.app makes the note in
+  the named folder before the writer runs, so a guard there could only refuse
+  after the note exists.
+
 ### In-place edit
 
 `native-edit-note` uses two writer actions: `plan_edit` (read) and
@@ -1773,6 +1833,49 @@ Only the write path is included. Stroke decoding as a read tool is not
 part of it;
 `get-note-drawings` decodes classic drawings, and `list-paper-attachments`
 and `export-paper-image` read Paper's own rendering.
+
+### Purge-flag repair (`repair_purge_flag`)
+
+Notes deletes a note by moving it to the account's Recently Deleted folder
+(`-[ICAccount trashFolder]`, `folderType` 1); `markedForDeletion` stays clear.
+It sets that flag only when the note leaves Recently Deleted for good (the
+30-day expiry, measured from `folderModificationDate`, or a delete there), and
+the flag makes Notes purge the record locally and in iCloud. A note flagged
+while still in an ordinary folder is in neither state: Notes hides it and will
+purge it, but it never passed through Recently Deleted, so the user cannot
+recover it. The known cause is a tool that called `-markForDeletion` instead
+of moving the note.
+
+The writer's `repair_purge_flag` action:
+
+- Dry run without `identifier`: scans for notes flagged outside Recently
+  Deleted (or flagged with no folder), up to 50.
+- Dry run with `identifier`: the note's state, blockers (locked, shared,
+  still downloading, no Recently Deleted folder in its account, an account
+  being deleted, attachments that carry the flag themselves), and its `r1:`
+  revision.
+- Apply (`dryRun: false`, `ifRevision`, `confirm: true`): re-checks the state
+  and revision in the write context, calls `-unmarkForDeletion`,
+  `-notifyAttachmentsNoteWillMoveToRecentlyDeletedFolder` (when present; what
+  Notes calls before a trash move), `-setFolder:` with the account's trash
+  folder, stamps `folderModificationDate` (CloudKit's last-writer-wins stamp
+  for the folder reference and the start of the 30-day clock), and
+  `-updateChangeCountWithReason:`. It refuses any staged change beyond the
+  note, its old and new folder, its account, and its attachments
+  (`unexpected_changes`). A fresh read-only stack then checks the flag is
+  clear, the folder is Recently Deleted, `isDeletedOrInTrash` is true, the
+  timestamp was stored, and the body data is unchanged.
+
+It never calls `-markForDeletion`, `+deleteNote:`, or `deleteObject:`.
+
+Risk: a flag Notes set on purpose (a permanent delete on another device whose
+record has synced here but not yet been purged) looks the same locally.
+Repairing it moves that note back into Recently Deleted, and the move then
+syncs to every device. Hence the dry run, `confirm`, and the advice to repair
+only a note the user recognizes. Verified on copy stores
+(`scripts/test-private-writer-guards-copy-store.sh`, which puts a note into the
+flagged state with sqlite3 on the copy only); not validated live, so
+`PURGE_REPAIR_LIVE_VALIDATED` is false.
 
 ### Still open
 

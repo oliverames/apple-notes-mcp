@@ -24,6 +24,7 @@ import {
   revisionToken,
   type WriterToolDeps,
 } from "./privateWriterTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 export function registerPrivateWriterLinkCardTools(
   server: McpServer,
@@ -54,6 +55,7 @@ export function registerPrivateWriterLinkCardTools(
         .optional()
         .describe("The `revision` from native-note-state; required unless dryRun is true"),
       dryRun: z.boolean().optional().describe("Report where the card would go without writing"),
+      ...writerScopeGuardInput(),
       nudge: z
         .boolean()
         .optional()
@@ -78,6 +80,7 @@ export function registerPrivateWriterLinkCardTools(
           afterParagraph: args.afterParagraph,
           ifRevision: args.ifRevision,
           dryRun: args.dryRun,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );

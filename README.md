@@ -1129,6 +1129,10 @@ alone and the call fails with `Scope guard failed: …`. The one exception is a
 native append to a protected note (it runs through Shortcuts): there the check
 is a separate read just before the append, so it is not atomic.
 
+The [private writer](#private-writer-opt-in-unsupported-apple-api) tools take
+the same three guards and check them inside the writer's own transaction; see
+that section for how they differ.
+
 **Example - retire a note only while it is still in the inbox:**
 ```json
 {
@@ -2661,6 +2665,18 @@ writer cannot upload to iCloud; only Notes.app can, and it may skip a note it
 already holds in memory. The optional `nudge` asks Notes.app to save the note
 by moving it into the folder it is already in.
 
+Every writer tool that writes a note also takes the three
+[folder scope guards](#folder-scope-guards) (`ifFolderId`,
+`ifAncestorFolderId`, `forbiddenAncestorFolderIds`); the smart-folder writes
+apply them to the smart folder's parent. The writer checks them itself, in
+the same Core Data transaction as the write and just before the save, and a
+dry run checks them too. A failure is `code: "revision_conflict"` with
+`helperCode: "scope_conflict"` and `committed: false`. Unlike the AppleScript
+tools, every id must name an existing folder: an unknown id, or a forbidden id
+that names a deleted folder, refuses the call (`helperCode:
+"scope_folder_not_found"`) instead of matching nothing. `compose-note` takes
+the guards in `append` and `prepend` mode only.
+
 #### `native-writer-status`
 
 Reports both switches, the writer's installation and checksum state, its live
@@ -2696,11 +2712,22 @@ counters whether they were. Pass up to 50 note or folder UUIDs in
   and non-iCloud notes, and folders, are skipped with a `reason`.
 - `method: "relaunch"` quits and reopens Notes.app (or opens it when it is not
   running) so its launch sweep uploads everything pending, folders included.
-  It interrupts anyone using Notes, so it requires `confirm: true`.
+  It interrupts anyone using Notes, so it requires `confirm: true`, and the
+  tool is annotated as destructive. It only counts this user's Notes.app
+  process, and stops without relaunching when it cannot tell whether Notes.app
+  quit.
 
 Afterwards the tool watches the counters for `waitSeconds` (default 30, or 0
 for `status`). `uploadRecorded` is true only when Notes recorded the current
 version as synced to iCloud; `pushScheduled` is always `false`.
+
+After a relaunch, each folder target also reports `adoptedByNotesApp`: whether
+the reopened Notes.app shows the folder by its id (or, for a deleted folder,
+no longer shows it), read through AppleScript for up to 20 seconds, with the
+details under `adoption`. `null` means it could not be checked. If reading the
+counters fails after Notes.app was restarted, the error
+(`helperCode: "relaunch_failed"`, `relaunched: true`) says so; check again with
+`method: "status"` rather than relaunching again.
 
 #### `native-edit-note`
 
@@ -3095,7 +3122,12 @@ smart folder is never a parent: the create refuses one with `code:
 "unsupported"`, `committed: false`, and `reason: "smart_folder_destination"`.
 Every write is verified through a fresh Core Data stack. The sync nudge is
 not offered, because it moves notes and a folder has no equivalent; check
-`cloudSync` with `native-read-smart-folder` after Notes.app saves. Writes
+`cloudSync` with `native-read-smart-folder` after Notes.app saves. After a
+committed write, the result reports `adoptedByNotesApp`: whether a running
+Notes.app shows the change (the folder, with its title, or after a delete its
+absence), polled for `adoptionWaitSeconds` (0 to 60, default 10). Notes.app is
+never launched for this; when it is not running, `adoptedByNotesApp` is
+`null`. Writes
 need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; the read and the delete's dry run
 do not.
 
@@ -3151,6 +3183,36 @@ fields; `nudge` works as for `native-append-plain-text`. The writer embeds a
 bundle identifier because PencilKit needs one to build a drawing, so the
 first Paper write creates
 `~/Library/Preferences/io.github.apple-notes-mcp.private-writer.plist`.
+
+#### `native-repair-purge-flag`
+
+Finds and repairs a note that carries Notes' permanent-deletion flag
+(`markedForDeletion`) while it is still in an ordinary folder. Notes deletes a
+note by moving it to Recently Deleted and sets that flag only when the note
+leaves Recently Deleted for good. A note flagged outside Recently Deleted is in
+neither state: Notes hides it and will purge it, but the user cannot recover
+it. The known cause is a tool that set the flag instead of moving the note.
+
+- No `identifier` (dry run): scans the store and returns up to 50 candidates.
+- `identifier` with `dryRun` (the default): returns the note's `state`
+  (`active`, `in_recently_deleted`, `purging_from_recently_deleted`,
+  `purge_flag_outside_recently_deleted`, `purge_flag_without_folder`,
+  `folderless`), `repairable`, `blockers` (`locked`, `shared`, `downloading`,
+  `attachments_marked_for_deletion`, `no_recently_deleted_folder`, …), and the
+  note's `revision`.
+- `dryRun: false` with that `revision` as `ifRevision` and `confirm: true`
+  clears the flag and moves the note to its account's Recently Deleted
+  folder, as an ordinary delete would, and stamps the folder time, which
+  starts Notes' 30-day clock. It never purges anything. A fresh read-back
+  checks the flag, the folder, the timestamp, and an unchanged body.
+
+Risk: a flag Notes set on purpose, for example a permanent delete on another
+device that has not finished syncing, looks the same on this Mac. Repairing
+that note brings it back into Recently Deleted, and the move syncs to every
+device. Only repair a note the user recognizes as wrongly lost. The move then
+needs Notes.app to upload it; the in-place nudge skips trashed notes, so use
+`native-sync-push` with `method: "relaunch"` if it should upload now. The
+apply needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated.
 
 ## Usage Patterns
 

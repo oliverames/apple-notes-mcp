@@ -44,7 +44,7 @@ if [ -z "${HELPER:-}" ]; then
   HELPER="$WORK/apple-notes-private-writer"
   SHA="$(/usr/bin/shasum -a 256 "$SOURCE" | cut -d' ' -f1)"
   /usr/bin/xcrun clang -fobjc-arc -O2 -Wall -framework Foundation -framework CoreData \
-    -framework AppKit "-DHELPER_SOURCE_SHA256=\"$SHA\"" -o "$HELPER" "$SOURCE"
+    -framework AppKit -framework PencilKit "-DHELPER_SOURCE_SHA256=\"$SHA\"" -o "$HELPER" "$SOURCE"
   echo "built writer from source sha256 $SHA"
 fi
 

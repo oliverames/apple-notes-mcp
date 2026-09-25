@@ -146,13 +146,43 @@ export function moveInPlaceScript(noteURI: string, folderURI: string): string {
   ].join("\n");
 }
 
+/**
+ * Whether this user has a Notes.app process. `pgrep` is scoped to the
+ * current user, so another logged-in user's Notes.app does not count, and
+ * only its "no match" exit (1) means not running: any other failure throws
+ * rather than reading as "quit".
+ */
+export function notesRunningForThisUser(
+  run: typeof execFileSync = execFileSync,
+  uid: number = process.getuid?.() ?? -1
+): boolean {
+  if (uid < 0)
+    throw new Error("Cannot tell whose Notes.app is running: no user id on this platform");
+  try {
+    run("/usr/bin/pgrep", ["-x", "-u", String(uid), "Notes"], {
+      timeout: 5_000,
+      stdio: "ignore",
+    });
+    return true;
+  } catch (error) {
+    if ((error as { status?: number | null }).status === 1) return false;
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not check whether Notes.app is running (pgrep: ${reason})`, {
+      cause: error,
+    });
+  }
+}
+
 /** Machine side effects of a nudge or relaunch, injectable for tests. */
 export interface NudgeDeps {
   helper: PrivateHelperDeps;
   runAppleScript: (script: string) => { success: boolean; output: string; error?: string };
   /** Opens Notes.app in the background (`open -g -a Notes`); used only by relaunch. */
   launchNotes: () => void;
-  /** Whether a Notes.app process exists; used only by relaunch. */
+  /**
+   * Whether this user's Notes.app process exists; used by relaunch and the
+   * folder adoption check. Throws when it cannot tell.
+   */
   notesRunning: () => boolean;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
@@ -165,14 +195,7 @@ export function defaultNudgeDeps(overrides: Partial<NudgeDeps> = {}): NudgeDeps 
     launchNotes: () => {
       execFileSync("/usr/bin/open", ["-g", "-a", "Notes"], { timeout: 15_000 });
     },
-    notesRunning: () => {
-      try {
-        execFileSync("/usr/bin/pgrep", ["-x", "Notes"], { timeout: 5_000, stdio: "ignore" });
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    notesRunning: () => notesRunningForThisUser(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     ...overrides,
@@ -190,6 +213,13 @@ export interface NudgeTargetResult {
   reason: string | null;
   /** For a nudged note: the writer's revision token and folder were identical before and after. */
   contentUnchanged?: boolean;
+  /**
+   * For a folder after a relaunch: Notes.app shows it (or, for a deleted
+   * folder, no longer shows it). null when it could not be checked.
+   */
+  adoptedByNotesApp?: boolean | null;
+  /** The folder adoption check behind `adoptedByNotesApp`. */
+  adoption?: FolderAdoption;
 }
 
 function versions(state: SyncObjectState | undefined) {
@@ -356,18 +386,237 @@ export type SyncPushReport = Omit<NudgeReport, "before" | "after" | "syncHostRun
 
 const QUIT_SCRIPT = 'tell application "Notes" to quit';
 const QUIT_TIMEOUT_MS = 20_000;
+/** How long a relaunch waits for Notes.app to show writer-changed folders. */
+const RELAUNCH_ADOPTION_WAIT_SECONDS = 20;
 
 async function waitForQuit(deps: NudgeDeps, timeoutMs: number): Promise<boolean> {
   const end = deps.now() + timeoutMs;
   for (;;) {
-    if (!deps.notesRunning()) return true;
+    let running: boolean;
+    try {
+      running = deps.notesRunning();
+    } catch (error) {
+      throw relaunchFailed(
+        `Notes.app was asked to quit, but ${errorText(error)}. Nothing was relaunched; check Notes.app.`
+      );
+    }
+    if (!running) return true;
     if (deps.now() >= end) return false;
     await deps.sleep(500);
   }
 }
 
-function relaunchFailed(message: string): PrivateWriteError {
-  return new PrivateWriteError("relaunch_failed", message, false);
+function errorText(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function relaunchFailed(message: string, details?: Record<string, unknown>): PrivateWriteError {
+  return new PrivateWriteError("relaunch_failed", message, false, details);
+}
+
+// ---------------------------------------------------------------------------
+// Folder adoption: does Notes.app show a writer-created or -changed folder?
+// ---------------------------------------------------------------------------
+
+export const MAX_ADOPTION_WAIT_SECONDS = 60;
+
+/** A folder whose presence in Notes.app should be confirmed. */
+export interface FolderAdoptionTarget {
+  identifier: string;
+  /** The folder's x-coredata id, which is also its AppleScript id. */
+  objectURI?: string | null;
+  /** Its title in the store, compared with the name Notes.app shows when given. */
+  title?: string | null;
+  /** A deleted folder is adopted when Notes.app no longer shows it. */
+  deleted?: boolean;
+}
+
+export interface FolderAdoption {
+  identifier: string;
+  objectURI: string | null;
+  expected: "visible" | "absent";
+  /** Whether Notes.app shows a folder with that id; null when not checked. */
+  visibleInNotesApp: boolean | null;
+  nameInNotesApp: string | null;
+  adoptedByNotesApp: boolean | null;
+  /** Why it is not adopted, or not checked: name_mismatch, still_visible, not_visible, no_object_id, notes_not_running, applescript: ... */
+  reason: string | null;
+}
+
+export interface FolderAdoptionReport {
+  checked: boolean;
+  reason: string | null;
+  waitedSeconds: number;
+  allAdopted: boolean;
+  folders: FolderAdoption[];
+}
+
+/**
+ * Read-only AppleScript that reports, for each folder id, whether Notes.app
+ * shows it and its name. Every id is a validated x-coredata folder URI, so no
+ * caller text reaches the script.
+ */
+export function folderAdoptionScript(objectURIs: string[]): string {
+  for (const uri of objectURIs)
+    if (!FOLDER_URI.test(uri))
+      throw invalid("Refusing to build an adoption script from an unexpected folder id");
+  return [
+    'tell application "Notes"',
+    '  set out to ""',
+    `  repeat with fid in {${objectURIs.map((uri) => `"${uri}"`).join(", ")}}`,
+    "    set fidText to contents of fid",
+    "    try",
+    "      if exists folder id fidText then",
+    '        set out to out & fidText & tab & "1" & tab & (name of folder id fidText) & linefeed',
+    "      else",
+    '        set out to out & fidText & tab & "0" & tab & linefeed',
+    "      end if",
+    "    on error",
+    '      set out to out & fidText & tab & "E" & tab & linefeed',
+    "    end try",
+    "  end repeat",
+    "  return out",
+    "end tell",
+  ].join("\n");
+}
+
+/** Parse {@link folderAdoptionScript} output into id → visibility and name. */
+export function parseFolderAdoption(
+  output: string,
+  objectURIs: string[]
+): Map<string, { visible: boolean | null; name: string | null }> {
+  const known = new Set(objectURIs);
+  const found = new Map<string, { visible: boolean | null; name: string | null }>();
+  let last: string | null = null;
+  for (const line of output.split(/\r?\n/)) {
+    const [uri, flag, ...rest] = line.split("\t");
+    if (known.has(uri) && (flag === "1" || flag === "0" || flag === "E")) {
+      const visible = flag === "1" ? true : flag === "0" ? false : null;
+      found.set(uri, { visible, name: visible ? rest.join("\t") : null });
+      last = visible ? uri : null;
+    } else if (last && line.length) {
+      // A folder name that itself contains a line break.
+      const entry = found.get(last)!;
+      entry.name = `${entry.name}\n${line}`;
+    }
+  }
+  return found;
+}
+
+function adoptionOf(
+  target: FolderAdoptionTarget,
+  seen: { visible: boolean | null; name: string | null } | undefined,
+  failure: string | null
+): FolderAdoption {
+  const objectURI = target.objectURI && FOLDER_URI.test(target.objectURI) ? target.objectURI : null;
+  const expected = target.deleted ? "absent" : "visible";
+  const base = { identifier: target.identifier, objectURI, expected } as const;
+  if (!objectURI)
+    return {
+      ...base,
+      visibleInNotesApp: null,
+      nameInNotesApp: null,
+      adoptedByNotesApp: null,
+      reason: "no_object_id",
+    };
+  if (!seen || seen.visible === null)
+    return {
+      ...base,
+      visibleInNotesApp: null,
+      nameInNotesApp: null,
+      adoptedByNotesApp: null,
+      reason: failure ?? "applescript: no answer for this folder",
+    };
+  let adopted: boolean;
+  let reason: string | null = null;
+  if (expected === "absent") {
+    adopted = !seen.visible;
+    if (!adopted) reason = "still_visible";
+  } else if (!seen.visible) {
+    adopted = false;
+    reason = "not_visible";
+  } else if (typeof target.title === "string" && seen.name !== target.title) {
+    adopted = false;
+    reason = "name_mismatch";
+  } else {
+    adopted = true;
+  }
+  return {
+    ...base,
+    visibleInNotesApp: seen.visible,
+    nameInNotesApp: seen.name,
+    adoptedByNotesApp: adopted,
+    reason,
+  };
+}
+
+/**
+ * Ask Notes.app (read-only, through AppleScript) whether it shows each
+ * folder, polling for up to `waitSeconds` while any is not yet adopted. Never
+ * launches Notes.app: when it is not running nothing is checked. Never
+ * throws; a failure is reported per folder.
+ */
+export async function checkFolderAdoption(
+  targets: FolderAdoptionTarget[],
+  deps: NudgeDeps,
+  waitSeconds = 10
+): Promise<FolderAdoptionReport> {
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_ADOPTION_WAIT_SECONDS)
+    throw invalid(`adoption wait must be 0-${MAX_ADOPTION_WAIT_SECONDS} seconds`);
+  const notChecked = (reason: string): FolderAdoptionReport => ({
+    checked: false,
+    reason,
+    waitedSeconds: 0,
+    allAdopted: false,
+    folders: targets.map((t) => adoptionOf(t, undefined, reason)),
+  });
+  if (!targets.length)
+    return {
+      checked: false,
+      reason: "no_folders",
+      waitedSeconds: 0,
+      allAdopted: true,
+      folders: [],
+    };
+  let running: boolean;
+  try {
+    running = deps.notesRunning();
+  } catch (error) {
+    return notChecked(errorText(error));
+  }
+  if (!running) return notChecked("notes_not_running");
+
+  const uris = targets
+    .map((t) => t.objectURI)
+    .filter((uri): uri is string => typeof uri === "string" && FOLDER_URI.test(uri));
+  const start = deps.now();
+  const end = start + waitSeconds * 1000;
+  let folders: FolderAdoption[] = [];
+  for (;;) {
+    let seen = new Map<string, { visible: boolean | null; name: string | null }>();
+    let failure: string | null = null;
+    if (uris.length) {
+      const run = deps.runAppleScript(folderAdoptionScript([...new Set(uris)]));
+      if (run.success) seen = parseFolderAdoption(run.output, uris);
+      else failure = `applescript: ${run.error ?? run.output}`.slice(0, 300);
+    }
+    folders = targets.map((t) =>
+      adoptionOf(t, t.objectURI ? seen.get(t.objectURI) : undefined, failure)
+    );
+    const waiting = folders.some(
+      (f) => f.adoptedByNotesApp === false || (f.adoptedByNotesApp === null && f.objectURI)
+    );
+    if (!waiting || deps.now() >= end) break;
+    await deps.sleep(1000);
+  }
+  return {
+    checked: true,
+    reason: null,
+    waitedSeconds: Math.round((deps.now() - start) / 1000),
+    allAdopted: folders.every((f) => f.adoptedByNotesApp === true),
+    folders,
+  };
 }
 
 function pushReport(
@@ -442,8 +691,19 @@ export async function syncPush(
     );
   }
 
-  // Watch the counters without nudging, then report against the pre-relaunch state.
-  const report = await nudgeInPlace({ identifiers, waitSeconds, nudge: false }, deps);
+  // Watch the counters without nudging, then report against the pre-relaunch
+  // state. From here on Notes.app has been restarted, so a failure must say so.
+  const restarted = first.syncHostRunning ? "quit and reopened" : "opened";
+  let report: NudgeReport;
+  try {
+    report = await nudgeInPlace({ identifiers, waitSeconds, nudge: false }, deps);
+  } catch (error) {
+    throw relaunchFailed(
+      `Notes.app was ${restarted}, but reading the sync state afterwards failed: ` +
+        `${errorText(error)}. Check again with method status; do not relaunch again.`,
+      { relaunched: true, syncHostRunningBefore: first.syncHostRunning }
+    );
+  }
   const firstById = new Map(first.objects.map((o) => [o.identifier, o]));
   for (const target of report.targets) {
     const was = firstById.get(target.identifier);
@@ -458,5 +718,36 @@ export async function syncPush(
       `${stillPending.length} target(s) still show a pending upload after ${report.waitedSeconds} s. ` +
         "Notes.app uploads on its own schedule; check again later with method status."
     );
+
+  // Folders the writer created or changed: does the relaunched Notes.app show
+  // them (and no longer show deleted ones)?
+  const afterById = new Map(report.after.objects.map((o) => [o.identifier, o]));
+  const folderTargets = report.targets.filter((t) => t.kind === "folder");
+  if (folderTargets.length) {
+    const adoption = await checkFolderAdoption(
+      folderTargets.map((t) => {
+        const state = afterById.get(t.identifier);
+        return {
+          identifier: t.identifier,
+          objectURI: state?.objectURI ?? null,
+          deleted: Boolean(state?.markedForDeletion),
+        };
+      }),
+      deps,
+      RELAUNCH_ADOPTION_WAIT_SECONDS
+    );
+    const byId = new Map(adoption.folders.map((f) => [f.identifier, f]));
+    for (const target of folderTargets) {
+      const folder = byId.get(target.identifier);
+      target.adoption = folder;
+      target.adoptedByNotesApp = folder?.adoptedByNotesApp ?? null;
+    }
+    const notAdopted = folderTargets.filter((t) => t.adoptedByNotesApp !== true);
+    if (notAdopted.length)
+      report.warnings.push(
+        `${notAdopted.length} folder(s) are not confirmed in Notes.app after the relaunch ` +
+          `(${notAdopted.map((t) => `${t.identifier}: ${t.adoption?.reason ?? "unknown"}`).join("; ")}).`
+      );
+  }
   return pushReport(method, report, true, first.syncHostRunning);
 }

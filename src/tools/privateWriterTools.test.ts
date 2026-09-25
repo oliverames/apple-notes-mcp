@@ -63,7 +63,11 @@ describe("private writer tools", () => {
       "native-edit-note",
     ]);
     expect(config("native-sync-push").description).toMatch(/requires confirm: true/);
-    expect(config("native-sync-push").annotations.destructiveHint).toBe(false);
+    // relaunch quits Notes.app, so the tool as a whole is marked destructive.
+    expect(config("native-sync-push").annotations).toMatchObject({
+      destructiveHint: true,
+      idempotentHint: false,
+    });
     expect(config("native-edit-note").annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: true,

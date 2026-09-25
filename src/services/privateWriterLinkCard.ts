@@ -28,6 +28,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
+import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export const MAX_URL_UTF16 = 2048;
 export const MAX_ANCHOR_UTF16 = 2000;
@@ -94,6 +95,8 @@ export interface UrlCardRequest {
   afterParagraph?: string;
   ifRevision?: string;
   dryRun?: boolean;
+  /** Folder preconditions, checked by the writer just before the save. */
+  scope?: ScopeGuard;
 }
 
 /** Insert a URL link card at the end of a note or after one exact paragraph. */
@@ -117,6 +120,7 @@ export function addUrlCard(
   const dryRun = request.dryRun === true;
   const fields: Record<string, unknown> = { identifier: request.identifier, url: request.url };
   if (request.afterParagraph !== undefined) fields.afterParagraph = request.afterParagraph;
+  Object.assign(fields, writerScopeFields(request.scope));
   if (request.ifRevision !== undefined) {
     assertRevision(request.ifRevision);
     fields.ifRevision = request.ifRevision;

@@ -64,6 +64,7 @@ import {
 } from "../utils/errorCodes.js";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
 import { envelopeCode, resolveIdentifier } from "./privateHelperTools.js";
+import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 export const coreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
 export const notesUuid = z.string().regex(UUID_PATTERN);
@@ -74,6 +75,7 @@ export { resolveIdentifier };
 export function writerEnvelopeCode(helperCode: string, message: string): ErrorCode {
   switch (helperCode) {
     case "revision_conflict":
+    case "scope_conflict": // the note is no longer where the guard requires
     case "paragraph_changed": // the selected paragraph moved or changed since it was listed
     case "attachment_conflict":
     case "plan_mismatch": // the request or a replacement file differs from the dry run (ifPlanDigest)
@@ -86,6 +88,7 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "invalid_query":
       return "validation_error";
     case "tag_not_found":
+    case "scope_folder_not_found":
       return "not_found";
     case "folder_exists":
       return "validation_error";
@@ -238,6 +241,7 @@ export function registerPrivateWriterTools(
       ifRevision: revisionToken.describe(
         "The `revision` returned by native-note-state for this note"
       ),
+      ...writerScopeGuardInput(),
       nudge: z
         .boolean()
         .optional()
@@ -256,7 +260,12 @@ export function registerPrivateWriterTools(
     async (args, deps) => {
       const identifier = resolveIdentifier(manager, args);
       const result = appendPlainText(
-        { identifier, text: args.text, ifRevision: args.ifRevision },
+        {
+          identifier,
+          text: args.text,
+          ifRevision: args.ifRevision,
+          scope: scopeGuardFrom(args),
+        },
         deps.writer
       );
       if (!args.nudge) return { ...result };
@@ -274,7 +283,7 @@ export function registerPrivateWriterTools(
     "Use when: a note or folder changed through the private writer earlier (native-append-plain-text and the other native write tools, without nudge or with a nudge that timed out) still shows cloudSync.uploadPending, and you want Notes.app to upload it, or just to check whether it has.\n" +
       "Returns: per target, Notes' own version counters before and after, uploadRecorded (true only when Notes recorded the current version as synced to iCloud), the action taken, and a skip reason; the library-wide pendingUploadCount before and after; warnings. pushScheduled is always false: only Notes.app uploads.\n" +
       "Do not use when: the change was made through AppleScript or Shortcuts tools (Notes.app uploads those itself), or right after a native write that already ran with nudge: true and reported uploadRecorded.\n" +
-      'Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer\'s revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).',
+      'Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer\'s revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. After a relaunch, each folder target reports adoptedByNotesApp: whether the reopened Notes.app shows it (or, for a deleted folder, no longer shows it), read through AppleScript. If reading the state after the relaunch fails, the error says Notes.app was already restarted; check with method status rather than relaunching again. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).',
     {
       identifiers: z
         .array(notesUuid)
@@ -299,7 +308,9 @@ export function registerPrivateWriterTools(
         .optional()
         .describe("Seconds to watch the counters afterwards (default 30; 0 for status)"),
     },
-    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    // destructiveHint: method relaunch quits Notes.app, interrupting whoever uses
+    // it. Annotations are per tool, so the most disruptive mode sets it.
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     async (args, deps) => ({ ...(await syncPush(args, deps.nudge)) })
   );
 
@@ -329,6 +340,7 @@ export function registerPrivateWriterTools(
         .boolean()
         .optional()
         .describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
+      ...writerScopeGuardInput(),
       operations: editOperationsSchema.describe(
         "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}|{file, filename?}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, append_to_paragraph {anchor (as for inserts), runs}, replace_checklist {select?:'block'|'all', containing?, occurrence?, items:[{text|runs, checked, indent?}], expectedCount?}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. A run is {text, bold?, italic?, underline?, strikethrough?, link? (http, https, mailto, tel, notes, applenotes), highlight? (purple, pink, orange, mint, blue), color? (#RRGGBB)}; its formatting replaces the replaced text's inline formatting. An attachment replace with position 'self' and text '' removes that attachment from the body, and with {file, filename?} (an absolute path to an image or PDF of at most 64 MiB in home, temp, or /Volumes) puts a new attachment in its place in the same save; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else; deleting the last paragraph leaves the previous paragraph's line break. ordinal counts the note's attachments in body order. append_to_paragraph adds the runs at the end of the anchor paragraph, on the same line (put a leading space in the first run). replace_checklist replaces one contiguous run of checklist rows (the one holding a row whose text equals containing, the occurrence-th, or the only one) or, with select 'all', every checklist row; all other text and attachments stay. expectedCount (default 1) must equal the full match count; occurrence picks one of them and may not exceed it. For replace_checklist, expectedCount is optional and counts replaced rows. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
       ),
@@ -357,6 +369,7 @@ export function registerPrivateWriterTools(
           ifPlanDigest: args.ifPlanDigest,
           requireNonSystemPaper: args.requireNonSystemPaper,
           operations: args.operations,
+          scope: scopeGuardFrom(args),
         },
         deps.writer
       );
