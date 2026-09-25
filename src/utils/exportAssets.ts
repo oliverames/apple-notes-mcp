@@ -70,6 +70,11 @@ export interface ResolvedAsset {
   name: string;
   /** "original" is the attachment's own file; the others stand in for it. */
   role: "original" | "fallback" | "preview";
+  /**
+   * A fallback rendering from an older generation than the one Notes
+   * recorded (that one is missing on disk), so it may lag the attachment.
+   */
+  stale?: true;
 }
 
 /** The files found for one attachment. */
@@ -187,7 +192,14 @@ export class AssetLocator {
           ["FallbackImage.png", "FallbackImage.jpg"]
         );
         if (fallback)
-          return { primary: { path: fallback, name: `${source.kind}.png`, role: "fallback" } };
+          return {
+            primary: {
+              path: fallback.path,
+              name: `${source.kind}.png`,
+              role: "fallback",
+              ...(fallback.stale ? { stale: true as const } : {}),
+            },
+          };
         return preview ? { primary: preview } : {};
       }
       case "scan": {
@@ -195,7 +207,16 @@ export class AssetLocator {
           "FallbackPDF.pdf",
         ]);
         return {
-          ...(pdf ? { primary: { path: pdf, name: "scan.pdf", role: "fallback" as const } } : {}),
+          ...(pdf
+            ? {
+                primary: {
+                  path: pdf.path,
+                  name: "scan.pdf",
+                  role: "fallback" as const,
+                  ...(pdf.stale ? { stale: true as const } : {}),
+                },
+              }
+            : {}),
           ...(preview ? { preview } : {}),
         };
       }
@@ -226,14 +247,18 @@ export class AssetLocator {
     return undefined;
   }
 
-  /** <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation. */
+  /**
+   * <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation.
+   * `stale` is set when a generation was recorded but the file came from
+   * somewhere else.
+   */
   private fallback(
     account: string,
     dir: string,
     id: string,
     generation: string | undefined,
     names: string[]
-  ): string | undefined {
+  ): { path: string; stale: boolean } | undefined {
     const base = join(account, dir, id);
     const gen = safeComponent(generation);
     const generations = [
@@ -246,7 +271,7 @@ export class AssetLocator {
     for (const g of generations)
       for (const name of names) {
         const path = confine(g ? join(base, g, name) : join(base, name), account);
-        if (path && isFile(path)) return path;
+        if (path && isFile(path)) return { path, stale: Boolean(gen) && g !== gen };
       }
     return undefined;
   }
@@ -453,6 +478,11 @@ export interface AssetWriter {
   readonly count: number;
 }
 
+/** Message for an assets directory that could not be created. */
+export function directoryFailure(dir: string, error: unknown): string {
+  return `Could not create the assets directory ${dir}: ${error instanceof Error ? error.message : String(error)}`;
+}
+
 /**
  * Copies assets into one directory, create-only. A name already taken gets a
  * `-2`, `-3`, ... suffix; the same source placed twice reuses its copy. URLs
@@ -462,6 +492,12 @@ export class SidecarWriter implements AssetWriter {
   private readonly placed = new Map<string, { url: string; mime: string }>();
   private created = false;
   count = 0;
+  /**
+   * Set when the directory could not be created. Every later asset fails the
+   * same way without another attempt; the export checks this and fails
+   * instead of reporting each asset as unavailable.
+   */
+  directoryError?: string;
 
   constructor(
     readonly dir: string,
@@ -471,6 +507,7 @@ export class SidecarWriter implements AssetWriter {
   place(asset: ResolvedAsset): PlacedAsset {
     const done = this.placed.get(asset.path);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     let source: { fd: number; size: number };
     try {
       source = openSource(asset.path);
@@ -480,8 +517,13 @@ export class SidecarWriter implements AssetWriter {
     try {
       const mime = sniffMime(readHead(source.fd), asset.name);
       if (!this.created) {
-        assertExportPath(this.dir);
-        mkdirSync(this.dir, { recursive: true });
+        try {
+          assertExportPath(this.dir);
+          mkdirSync(this.dir, { recursive: true });
+        } catch (error) {
+          this.directoryError = directoryFailure(this.dir, error);
+          return { error: this.directoryError };
+        }
         this.created = true;
       }
       const name = safeAssetName(asset.name, mime);

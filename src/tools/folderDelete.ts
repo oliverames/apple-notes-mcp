@@ -27,10 +27,17 @@ import { CodedError, errorResult } from "../utils/errorCodes.js";
 // Notes UUID or numeric Core Data key, resolved to the x-coredata id before the
 // handler runs. The manager methods then require the exact x-coredata form.
 const folderIdSchema = z.string().max(2000).transform(looseIdTransform("ICFolder"));
+// The account's Notes UUID or numeric key is resolved the same way, then the
+// result must be an exact account id.
 const accountIdSchema = z
   .string()
   .max(2000)
-  .regex(/^x-coredata:\/\/[0-9a-f-]+\/ICAccount\/p\d+$/i, "An exact account ID is required");
+  .transform(looseIdTransform("ICAccount"))
+  .pipe(
+    z
+      .string()
+      .regex(/^x-coredata:\/\/[0-9a-f-]+\/ICAccount\/p\d+$/i, "An exact account ID is required")
+  );
 const revisionSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
 /** Arguments accepted by `delete-folder-by-id`. */
@@ -227,15 +234,30 @@ export function runFolderDelete(
       `The delete outcome is uncertain (${outcome.reason}); read folder ${args.id} before retrying`
     );
 
-  if (manager.folderExistsById(args.id))
+  // Notes.app accepted the delete. From here on a failed check must not escape
+  // as a plain error, which would hide that the folder is probably gone.
+  let stillExists: boolean;
+  try {
+    stillExists = manager.folderExistsById(args.id);
+  } catch (error) {
+    throw uncertain(
+      `The delete outcome is uncertain: Notes.app accepted the delete, but the readback failed (${error instanceof Error ? error.message : String(error)}); read folder ${args.id} before retrying`
+    );
+  }
+  if (stillExists)
     throw uncertain(
       `The delete outcome is uncertain: Notes.app still resolves folder ${args.id}; read it before retrying`
     );
+  // The store tombstone is a best-effort extra: a read failure leaves it false.
   let storeTombstoned = false;
   for (let attempt = 0; attempt < 5 && !storeTombstoned; attempt++) {
     if (attempt > 0) deps.sleep(200);
-    const after = deps.readStore(coreDataPk(args.id));
-    storeTombstoned = !after || after.markedForDeletion;
+    try {
+      const after = deps.readStore(coreDataPk(args.id));
+      storeTombstoned = !after || after.markedForDeletion;
+    } catch {
+      break;
+    }
   }
   return {
     ...base,

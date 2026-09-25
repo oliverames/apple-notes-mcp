@@ -55,6 +55,28 @@ export interface XmlElement {
 export interface XmlLimits {
   maxElements: number;
   maxDepth: number;
+  /** Attributes on one element (default 1,024). */
+  maxAttributes?: number;
+  /** `xmlns` declarations across the whole document (default 1,024). */
+  maxNamespaceDeclarations?: number;
+}
+
+/**
+ * Namespace bindings, linked to the enclosing element's scope rather than
+ * copied into every element, so deep or wide documents stay linear. Lookups
+ * walk at most `maxDepth` links.
+ */
+interface NamespaceScope {
+  own: Map<string, string> | null;
+  parent: NamespaceScope | null;
+}
+
+function lookupNamespace(scope: NamespaceScope | null, prefix: string): string | undefined {
+  for (let s = scope; s; s = s.parent) {
+    const ns = s.own?.get(prefix);
+    if (ns !== undefined) return ns;
+  }
+  return undefined;
 }
 
 const NAME_START = /[A-Za-z_À-￿]/;
@@ -79,7 +101,7 @@ export function decodeEntities(raw: string, line: number): string {
     if (body in PREDEFINED) return PREDEFINED[body];
     throw new SvgError(
       "svg_unsafe",
-      `Named entity "&${body.slice(0, 40)};" on line ${line}: only the five XML entities are allowed`
+      `A named entity on line ${line} is not allowed: only the five XML entities are`
     );
   });
 }
@@ -89,7 +111,10 @@ export function parseXml(source: string, limits: XmlLimits): XmlElement {
   let pos = 0;
   let line = 1;
   let elementCount = 0;
-  const stack: { element: XmlElement; scope: Map<string, string> }[] = [];
+  let namespaceDeclarations = 0;
+  const maxAttributes = limits.maxAttributes ?? 1_024;
+  const maxNamespaceDeclarations = limits.maxNamespaceDeclarations ?? 1_024;
+  const stack: { element: XmlElement; scope: NamespaceScope }[] = [];
   let root: XmlElement | null = null;
 
   const fail = (message: string): never => {
@@ -153,7 +178,13 @@ export function parseXml(source: string, limits: XmlLimits): XmlElement {
     if (!NAME_START.test(source[i] ?? "")) fail("Invalid tag");
     while (i < source.length && NAME_CHAR.test(source[i])) i++;
     const name = source.slice(pos + 1, i);
+    // Refuse a file that is not SVG at its first tag, before any error could
+    // quote one of its names: analyze-svg can be pointed at any readable file,
+    // and its errors must not echo another format's contents.
+    if (!root && !stack.length && name.slice(name.indexOf(":") + 1) !== "svg")
+      fail("The root element is not <svg>");
     const rawAttributes: { name: string; value: string }[] = [];
+    const attributeNames = new Set<string>();
     let selfClosing = false;
     for (;;) {
       const ws = i;
@@ -183,8 +214,13 @@ export function parseXml(source: string, limits: XmlLimits): XmlElement {
       if (close < 0) fail("Unterminated attribute value");
       const rawValue = source.slice(i + 1, close);
       if (rawValue.includes("<")) fail("'<' in an attribute value");
-      if (rawAttributes.some((a) => a.name === attrName))
-        fail(`Duplicate attribute ${attrName.slice(0, 40)}`);
+      if (attributeNames.has(attrName)) fail(`Duplicate attribute ${attrName.slice(0, 40)}`);
+      attributeNames.add(attrName);
+      if (attributeNames.size > maxAttributes)
+        throw new SvgError(
+          "svg_complexity_limit",
+          `An element has more than ${maxAttributes} attributes (line ${line})`
+        );
       // Attribute-value normalization: literal whitespace becomes a space.
       rawAttributes.push({
         name: attrName,
@@ -204,19 +240,32 @@ export function parseXml(source: string, limits: XmlLimits): XmlElement {
     if (stack.length + 1 > limits.maxDepth)
       throw new SvgError("svg_complexity_limit", `Elements nest deeper than ${limits.maxDepth}`);
 
-    const parentScope = stack.length ? stack[stack.length - 1].scope : new Map<string, string>();
-    const scope = new Map(parentScope);
+    const parentScope = stack.length ? stack[stack.length - 1].scope : null;
+    let own: Map<string, string> | null = null;
     for (const a of rawAttributes) {
-      if (a.name === "xmlns") scope.set("", a.value);
-      else if (a.name.startsWith("xmlns:")) scope.set(a.name.slice(6), a.value);
+      const prefix = a.name === "xmlns" ? "" : a.name.startsWith("xmlns:") ? a.name.slice(6) : null;
+      if (prefix === null) continue;
+      if (++namespaceDeclarations > maxNamespaceDeclarations)
+        throw new SvgError(
+          "svg_complexity_limit",
+          `The document declares more than ${maxNamespaceDeclarations} namespaces`
+        );
+      (own ??= new Map()).set(prefix, a.value);
     }
+    const scope: NamespaceScope = own
+      ? { own, parent: parentScope }
+      : (parentScope ?? { own: null, parent: null });
     const resolve = (qualified: string, isAttribute: boolean) => {
       const colon = qualified.indexOf(":");
-      if (colon < 0) return { local: qualified, ns: isAttribute ? null : (scope.get("") ?? null) };
+      if (colon < 0)
+        return {
+          local: qualified,
+          ns: isAttribute ? null : (lookupNamespace(scope, "") ?? null),
+        };
       const prefix = qualified.slice(0, colon);
       const local = qualified.slice(colon + 1);
       if (prefix === "xml") return { local, ns: XML_NS };
-      const ns = scope.get(prefix);
+      const ns = lookupNamespace(scope, prefix);
       if (ns === undefined) fail(`Undeclared namespace prefix "${prefix.slice(0, 40)}"`);
       return { local, ns: ns as string };
     };

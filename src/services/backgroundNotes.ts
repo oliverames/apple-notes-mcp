@@ -469,7 +469,17 @@ export function mutateBackground(
     transportError = (error ?? {}) as NonNullable<typeof transportError>;
     transportMessage = describeTransportFailure(error);
   }
-  const after = deps.read(request.id);
+  let after: BackgroundSnapshot;
+  try {
+    after = deps.read(request.id);
+  } catch (error) {
+    // The bridge has run (or may still be running), so a readback that fails
+    // here says nothing about whether the note changed.
+    throw new CodedError(
+      `Operation outcome uncertain; read exact note before any retry: readback failed: ${error instanceof Error ? error.message : String(error)}${transportMessage ? "; " + transportMessage : ""}`,
+      { code: "verification_failed", indeterminate: true }
+    );
+  }
   try {
     verify(before, after);
   } catch (error) {
@@ -717,19 +727,36 @@ export function createMarkdownNote(
     // moveNoteById needs an existing folder, so check before the bridge creates
     // anything.
     const wanted = segments(request.folder);
-    const accounts = manager.listAccounts().filter((account) => account.defaultFolder);
-    if (
-      !accounts.some((account) =>
-        manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
-      )
-    )
+    const accounts = manager
+      .listAccounts()
+      .filter(
+        (account) =>
+          account.defaultFolder &&
+          manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
+      );
+    if (!accounts.length)
       throw new Error(
         `Folder "${request.folder}" does not exist; create it with create-folder first. Nothing was created`
       );
     // The bridge creates before it moves, so refuse a smart folder now, while
-    // nothing exists yet, rather than at the move.
-    for (const account of accounts)
-      manager.assertNotSmartFolderDestination(request.folder, account.name);
+    // nothing exists yet, rather than at the move. Which account receives the
+    // note is known only afterwards, so refuse only when the path is a smart
+    // folder in every account that has it: a same-named smart folder in
+    // another account must not block a valid create (#245). The move itself
+    // still refuses a smart folder in the account the note landed in.
+    let smartRefusal: unknown;
+    const ordinary = accounts.filter((account) => {
+      try {
+        manager.assertNotSmartFolderDestination(request.folder!, account.name);
+        return true;
+      } catch (error) {
+        if (!(error instanceof CodedError && error.envelope.reason === "smart_folder_destination"))
+          throw error;
+        smartRefusal ??= error;
+        return false;
+      }
+    });
+    if (!ordinary.length) throw smartRefusal;
   }
   const defaultFolderNotes = () =>
     new Map(

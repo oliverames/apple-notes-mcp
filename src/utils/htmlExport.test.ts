@@ -138,6 +138,10 @@ describe("attachment plans", () => {
     expect(blockPlanHtml({ type: "placeholder", label: "PDF" })).toBe(
       '<p><span class="attachment-placeholder">[PDF]</span></p>'
     );
+    // A file without a preview has no block form (#210): it used to throw.
+    expect(blockPlanHtml({ ...image, display: "link", name: "s", url: "s.pdf" })).toBe(
+      '<p><a class="attachment attachment-file" href="s.pdf">s</a></p>'
+    );
   });
 });
 
@@ -267,6 +271,61 @@ describe("renderNoteHtml", () => {
     expect(html).not.toMatch(/file:|\/x"/);
     expect(balanced(html)).toBe(true);
     expect(c.stats).toMatchObject({ placed: 1, tables: 1, unavailable: 2, unreferenced: 1 });
+  });
+});
+
+describe("unreferenced attachments (#210)", () => {
+  it("renders an unreferenced file with no preview as a link instead of throwing", () => {
+    const note = exportNote(
+      [block("Stored", "title"), block("text")],
+      [attachment("PDF", "com.adobe.pdf", { title: "report.pdf" })]
+    );
+    const writer: AssetWriter = {
+      count: 0,
+      place: (a) => ({ url: `assets/${a.name}`, mime: "application/pdf" }),
+    };
+    const locator = {
+      locate: () => ({ primary: { path: "/r", name: "report.pdf", role: "original" } }),
+    } as unknown as AssetLocator;
+    const c: ExportContext = { stats: emptyStats(), writer, locator };
+    const html = renderNoteHtml(note, c);
+    expect(html).toContain(
+      '<p><a class="attachment attachment-file" href="assets/report.pdf">report.pdf</a></p>'
+    );
+    expect(c.stats.unreferenced).toBe(1);
+  });
+});
+
+describe("stale renderings", () => {
+  it("counts a Notes rendering taken from an older generation in the export stats", () => {
+    const note = exportNote(
+      [
+        block("Sketch", "title"),
+        block("\ufffc", "body", {}, [attachmentRun("D", "com.apple.paper")]),
+      ],
+      [attachment("D", "com.apple.paper")]
+    );
+    const writer: AssetWriter = {
+      count: 0,
+      place: (a) => ({ url: `assets/${a.name}`, mime: "image/png" }),
+    };
+    const locator = (stale: boolean) =>
+      ({
+        locate: () => ({
+          primary: {
+            path: "/p",
+            name: "paper.png",
+            role: "fallback",
+            ...(stale ? { stale: true } : {}),
+          },
+        }),
+      }) as unknown as AssetLocator;
+    const fresh: ExportContext = { stats: emptyStats(), writer, locator: locator(false) };
+    renderNoteHtml(note, fresh);
+    expect(fresh.stats).not.toHaveProperty("staleRenderings");
+    const old: ExportContext = { stats: emptyStats(), writer, locator: locator(true) };
+    renderNoteHtml(note, old);
+    expect(old.stats.staleRenderings).toBe(1);
   });
 });
 

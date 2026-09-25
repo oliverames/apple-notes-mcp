@@ -490,6 +490,66 @@ describe("asset and preview discovery (synthetic container)", () => {
     ]);
     expect(assetPathsFor(accountDir, { ...row, identifier: ".." })).toEqual([]);
   });
+
+  it("flags fallback renderings from an older generation than the one recorded", () => {
+    const row: AttachmentRow = {
+      pk: 1,
+      identifier: ID.paper,
+      uti: "com.apple.paper",
+      parentPk: null,
+      filename: null,
+      mediaIdentifier: null,
+      mediaFilename: null,
+      mediaGeneration: null,
+      fallbackImageGeneration: "3_NEW",
+      fallbackPdfGeneration: null,
+      accountIdentifier: null,
+    };
+    let stale = false;
+    assetPathsFor(accountDir, row, () => (stale = true));
+    expect(stale).toBe(false);
+    const paths = assetPathsFor(
+      accountDir,
+      { ...row, fallbackImageGeneration: "9_GONE" },
+      () => (stale = true)
+    );
+    expect(stale).toBe(true);
+    expect(paths[0]).toContain("3_NEW");
+    // Without a recorded generation there is nothing to be stale against.
+    stale = false;
+    assetPathsFor(accountDir, { ...row, fallbackImageGeneration: null }, () => (stale = true));
+    expect(stale).toBe(false);
+  });
+
+  it("carries the stale flag into the record and the export result", () => {
+    const [record] = assembleAttachmentAssets(
+      [
+        {
+          pk: 1,
+          identifier: ID.paper,
+          uti: "com.apple.paper",
+          parentPk: null,
+          filename: null,
+          mediaIdentifier: null,
+          mediaFilename: null,
+          mediaGeneration: null,
+          fallbackImageGeneration: "9_GONE",
+          fallbackPdfGeneration: null,
+          accountIdentifier: ACCT,
+        },
+      ],
+      null,
+      container
+    ).attachments;
+    expect(record.fallbackStale).toBe(true);
+    const dir = join(exportRoot, "stale");
+    const result = exportOneAttachment(
+      record,
+      prepareExportDir(dir, container),
+      exportSource(record)
+    );
+    expect(result).toMatchObject({ exportedKind: "fallback", stale: true });
+  });
 });
 
 describe("small helpers", () => {
@@ -547,6 +607,15 @@ describe("small helpers", () => {
         "asset"
       )
     ).toBe("ID1.pdf");
+    // A stored identifier that could traverse never becomes part of the name.
+    for (const identifier of ["../../escape", "..", "a/b", ""]) {
+      expect(exportFileName({ identifier, filename: null }, "/x/FallbackImage.png", "asset")).toBe(
+        "attachment.png"
+      );
+      expect(exportFileName({ identifier, filename: null }, "/x/Preview.png", "preview")).toBe(
+        "attachment-preview.png"
+      );
+    }
     expect(collisionName("a.png", 1)).toBe("a.png");
     expect(collisionName("a.png", 2)).toBe("a-2.png");
     expect(collisionName("README", 3)).toBe("README-3");
@@ -655,15 +724,24 @@ describe("export", () => {
     const kinds = Object.fromEntries(r.results.map((x) => [x.identifier, x.exportedKind]));
     expect(kinds).toEqual({
       [ID.undownloaded]: "preview",
-      [ID.scan]: "asset",
+      // Notes' own renderings, not the attachment's file (#202).
+      [ID.scan]: "fallback",
       [ID.image]: "asset",
       [ID.url]: "preview",
-      [ID.paper]: "asset",
+      [ID.paper]: "fallback",
       // The gallery has no file of its own, so its children export in its place.
       [ID.child1]: null,
       [ID.child2]: "asset",
       [ID.orphan]: null,
     });
+    // A rendering keeps its own format's extension.
+    const exported = (id: string) => r.results.find((x) => x.identifier === id)!;
+    expect(basename(exported(ID.scan).exportedTo!)).toBe(`${ID.scan}.pdf`);
+    expect(basename(exported(ID.paper).exportedTo!)).toBe(`${ID.paper}.png`);
+    // Only the attachment the body no longer shows is flagged.
+    expect(r.results.filter((x) => x.inBody === false).map((x) => x.identifier)).toEqual([
+      ID.orphan,
+    ]);
     // The pre-existing file is untouched and the exports took -2 and -3.
     expect(readFileSync(join(dir, "photo.jpg"), "utf8")).toBe("PRE-EXISTING");
     const image = r.results.find((x) => x.identifier === ID.image)!;
@@ -679,6 +757,41 @@ describe("export", () => {
     );
     expect(readFileSync(join(dir, "photo-2.jpg"), "utf8")).toBe("JPEGDATA");
     expect(readdirSync(dir).filter((f) => f.endsWith(".json"))).toEqual([]);
+  });
+
+  it("names a rendering from the stored name's stem with the rendering's extension (#202)", () => {
+    expect(
+      exportFileName({ identifier: "X", filename: "Scan.jpeg" }, "/a/FallbackPDF.pdf", "fallback")
+    ).toBe("Scan.pdf");
+    expect(
+      exportFileName({ identifier: "X", filename: null }, "/a/FallbackImage.png", "fallback")
+    ).toBe("X.png");
+    expect(
+      exportSource({ assetPaths: ["/acct/FallbackPDFs/X/1/FallbackPDF.pdf"], previewPath: null })
+    ).toEqual({ path: "/acct/FallbackPDFs/X/1/FallbackPDF.pdf", kind: "fallback" });
+    expect(exportSource({ assetPaths: ["/acct/Media/M/photo.jpg"], previewPath: null })!.kind).toBe(
+      "asset"
+    );
+  });
+
+  it("does not export the children of a container marked for deletion (#202)", () => {
+    sqlite(
+      dbPath,
+      [
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZMARKEDFORDELETION, ZACCOUNT7) VALUES (13, 12, 'NOTE-DEAD', 0, 1);",
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZNOTE, ZMARKEDFORDELETION, ZACCOUNT1) VALUES (130, 5, 'DEAD-GALLERY', 'com.apple.notes.gallery', 13, 1, 1);",
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZNOTE, ZPARENTATTACHMENT, ZMEDIA, ZMARKEDFORDELETION, ZACCOUNT1) VALUES (131, 5, 'DEAD-CHILD', 'public.jpeg', 13, 130, 21, 0, 1);",
+        "INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZNOTE, ZMEDIA, ZMARKEDFORDELETION, ZACCOUNT1) VALUES (132, 5, 'LIVE-IMAGE', 'public.jpeg', 13, 20, 0, 1);",
+      ].join("\n")
+    );
+    const note = `x-coredata://${STORE}/ICNote/p13`;
+    const { rows } = readNoteAttachmentRows(note, dbPath);
+    expect(rows.find((row) => row.pk === 131)).toMatchObject({ parentDeleted: true });
+    const assets = readAssets(note);
+    expect(assets.attachments.map((a) => a.identifier)).toEqual(["LIVE-IMAGE"]);
+    const dir = join(exportRoot, "dead-parent");
+    const r = exportAttachmentAssets(assets, dir, { containerDir: container });
+    expect(r.results.map((x) => x.identifier)).toEqual(["LIVE-IMAGE"]);
   });
 
   it("exports a container's children only when the container has no file of its own", () => {
@@ -754,6 +867,21 @@ describe("export", () => {
       exportedKind: null,
       exportedTo: null,
     });
+  });
+
+  it("keeps a traversing stored identifier inside the export directory", () => {
+    const sourceDir = join(root, "generic-source");
+    mkdirSync(sourceDir, { recursive: true });
+    const source = join(sourceDir, "FallbackImage.png");
+    writeFileSync(source, "png");
+    const dir = join(exportRoot, "traversal");
+    mkdirSync(dir, { recursive: true });
+    const r = exportOneAttachment(rec("../../escape", "image", { filename: null }), dir, {
+      path: source,
+      kind: "asset",
+    });
+    expect(r.exportedTo).toBe(join(dir, "attachment.png"));
+    expect(existsSync(join(exportRoot, "..", "escape.png"))).toBe(false);
   });
 
   it("chooses the asset over the preview", () => {

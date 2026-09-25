@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -18,7 +19,7 @@ import { nudgeInPlace } from "../services/privateSyncNudge.js";
 import { PrivateWriteError } from "../services/privateWriter.js";
 import { prepareDrawing, registerPrivatePaperWriterTools } from "./privatePaperWriterTools.js";
 import { writerEnvelopeCode } from "./privateWriterTools.js";
-import { analyzeSvgFile } from "../utils/svgAnalyzer.js";
+import { analyzeSvgBuffer } from "../utils/svgAnalyzer.js";
 
 const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
 const ATTACHMENT = "0F3C2B1A-1111-4222-8333-444455556666";
@@ -203,9 +204,26 @@ describe("native-add-paper SVG input", () => {
     expect(vi.mocked(addPaper)).toHaveBeenCalledTimes(1);
   });
 
+  it("reads svgPath under analyze-svg's policy: no hidden paths or FIFOs", async () => {
+    const { call } = fixture();
+    mkdirSync(join(dir, ".ssh"));
+    const hidden = svgFile('<path d="M1 1 L9 9" stroke="red"/>', ".ssh/a.svg");
+    const fifo = join(dir, "pipe.svg");
+    execFileSync("mkfifo", [fifo]);
+    for (const [svgPath, pattern] of [
+      [hidden, /hidden file or directory/],
+      [fifo, /not a regular file/],
+    ] as const) {
+      const raw = await call({ identifier: NOTE, ifRevision: REV, svgPath });
+      expect(parsed(raw)).toMatchObject({ helperCode: "svg_file_invalid", committed: false });
+      expect(JSON.stringify(raw.content)).toMatch(pattern);
+    }
+    expect(vi.mocked(addPaper)).not.toHaveBeenCalled();
+  });
+
   it("writes a lossy SVG when the digest and losses match exactly", async () => {
     const lossy = svgFile('<rect width="10" height="10" fill="blue"/>', "lossy.svg");
-    const { analysis } = analyzeSvgFile(lossy);
+    const { analysis } = analyzeSvgBuffer(readFileSync(lossy));
     expect(analysis.requiredLosses.length).toBeGreaterThan(0);
     const prepared = prepareDrawing({
       svgPath: lossy,

@@ -96,14 +96,14 @@ Use this skill when the user:
 | Tool                             | Purpose                                                                                                                                                                            |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `list-attachments`               | List attachments in a note; `includePaths` adds on-disk `assetPaths`/`previewPath`, `firstImage` returns the lead visual in body order                                             |
-| `add-attachment`                 | Attach one local file to an exact note (`filename` renames it); a macOS 27 PDF "outcome uncertain": read the note before retrying                                                  |
+| `add-attachment`                 | Attach one local file (home, temp or /Volumes; no hidden paths or ~/Library) to an exact note (`filename` renames it); a macOS 27 PDF "outcome uncertain": read the note first     |
 | `create-note-with-attachment`    | Create a note and attach one local file in one call; on a failed attach, reuse the named note id with `add-attachment`                                                             |
 | `add-attachment-from-pasteboard` | Attach the copied image, PDF, or one file to an exact note (note checked first, pasteboard frozen, never modified); `pasteboard_access_denied`: ask before `allowPasteAlert: true` |
 | `save-attachment`                | Save an attachment to disk                                                                                                                                                         |
 | `list-paper-attachments`         | List Paper and classic drawings in a note, with Notes' rendered image size and any recognized handwriting text                                                                     |
 | `export-paper-image`             | Save Notes' rendered PNG (or JPEG) of one drawing to a new file                                                                                                                    |
 | `analyze-svg`                    | Read-only SVG preflight: can a local SVG become editable strokes, which losses it needs, and a digest of the result                                                                |
-| `export-attachments`             | Copy a note\'s attachment files (or only its lead visual) into a directory; `exportedKind` says asset or preview                                                                   |
+| `export-attachments`             | Copy a note\'s attachment files (or only its lead visual) into a directory; `exportedKind` says asset, fallback, or preview                                                        |
 | `fetch-attachment`               | Fetch attachment bytes as base64                                                                                                                                                   |
 | `show-attachment`                | Reveal an attachment in the Notes.app UI                                                                                                                                           |
 | `get-checklist-state`            | Read checked/unchecked state for existing checklists                                                                                                                               |
@@ -385,7 +385,9 @@ Use HTML for predictable rich notes. Apple Notes normalizes HTML internally, but
   become list rows with a visible ☐ / ☑ character (text, not a checkable
   checklist; say so to the user).
 - To import a Markdown or text file, pass its absolute path as `contentPath`
-  instead of `content` (UTF-8, at most 1 MiB, inside home, temp, or `/Volumes`).
+  instead of `content` (UTF-8, at most 1 MiB, inside home, temp, or `/Volumes`;
+  hidden paths such as `~/.ssh` and anything in `~/Library` are refused, except
+  iCloud Drive and `~/Library/CloudStorage`).
 - On the default Shortcut route, `create-note` with `format: "markdown"` also
   maps block constructs to native Notes styles (`create-note-markdown-blocks` in `get-capabilities`): `- [ ]`/`- [x]` → native checklist items with that done state,
   `> text` → a block quote, a bare ` ``` ` fence (no language) →

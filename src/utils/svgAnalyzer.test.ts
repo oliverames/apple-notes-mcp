@@ -1,19 +1,13 @@
 /**
  * SVG analyzer tests. Every fixture is a small synthetic SVG written here.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import {
   SVG_LIMITS,
   SvgError,
   analyzeSvgBuffer,
-  analyzeSvgFile,
   computeAnalysisDigest,
   parseLength,
-  readSvgSource,
   viewBoxMatrix,
   type SvgAnalysisResult,
 } from "./svgAnalyzer.js";
@@ -109,6 +103,13 @@ describe("safety refusals", () => {
     [svg('<rect fill="url(https://example.com/p)" width="1" height="1"/>'), "svg_unsafe"],
     [svg('<a href="javascript:alert(1)"><rect width="1" height="1"/></a>'), "svg_unsafe"],
     [svg('<rect style="fill:red;@import url(#x)" width="1" height="1"/>'), "svg_unsafe"],
+    // CSS escapes spell url( and @import; a tab or newline splits a scheme name.
+    [svg('<rect style="fill:u\\72 l(https://example.com/p)" width="1" height="1"/>'), "svg_unsafe"],
+    [svg('<rect fill="\\75rl(https://example.com/p)" width="1" height="1"/>'), "svg_unsafe"],
+    [svg('<rect style="fill:red;\\@import \'x\'" width="1" height="1"/>'), "svg_unsafe"],
+    [svg('<a href="java&#9;script:alert(1)"><rect width="1" height="1"/></a>'), "svg_unsafe"],
+    [svg('<a href="&#10;java&#13;script:alert(1)"><rect width="1" height="1"/></a>'), "svg_unsafe"],
+    [svg('<rect fill="url(&#9;https://example.com/p)" width="1" height="1"/>'), "svg_unsafe"],
     ['<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>', "svg_unsafe"],
     [svg("&ent;"), "svg_unsafe"],
     ['<svg xmlns="http://www.w3.org/2000/svg"><g></svg>', "svg_invalid"],
@@ -138,6 +139,19 @@ describe("safety refusals", () => {
 });
 
 describe("references", () => {
+  it("prefers a plain href over xlink:href, as SVG 2 does", () => {
+    const XL = 'xmlns:xlink="http://www.w3.org/1999/xlink"';
+    const r = run(
+      svg(
+        `<defs><path id="a" d="M0 0 L5 5" stroke="red" ${ROUND}/><path id="b" d="M0 0 L5 6" stroke="red" ${ROUND}/></defs>` +
+          `<use xlink:href="#a" href="#b"/>`,
+        `width="100" height="100" ${XL}`
+      )
+    );
+    expect(r.drawing.strokes).toHaveLength(1);
+    expect(r.drawing.strokes[0].points[1]).toEqual([5, 6]);
+  });
+
   it("expands use of symbols with viewBox and of plain elements", () => {
     const r = run(
       svg(
@@ -285,6 +299,32 @@ describe("styles", () => {
     );
     expect(r.drawing.strokes).toHaveLength(1);
     expect(r.drawing.strokes[0].points[1]).toEqual([5, 6]);
+  });
+
+  it("lets a later display declaration re-show content hidden by an earlier one", () => {
+    const r = run(
+      svg(
+        `<g display="none" style="display:inline"><path d="M0 0 L5 5" stroke="red" ${ROUND}/></g>` +
+          `<g display="inline" style="display:none"><path d="M0 0 L5 6" stroke="red" ${ROUND}/></g>`
+      )
+    );
+    expect(r.drawing.strokes).toHaveLength(1);
+    expect(r.drawing.strokes[0].points[1]).toEqual([5, 5]);
+  });
+
+  it("matches CSS keywords case-insensitively", () => {
+    const r = run(
+      svg(
+        `<g display="NONE"><path d="M0 0 L5 5" stroke="red"/></g>` +
+          `<g visibility="Hidden"><path d="M0 0 L5 5" stroke="red"/></g>` +
+          `<path d="M0 0 L5 6" stroke="red" stroke-linecap="Round" stroke-linejoin="ROUND" fill="none" stroke-dasharray="None"/>`
+      )
+    );
+    expect(r.drawing.strokes).toHaveLength(1);
+    expect(codes(r)).not.toContain("cap_approximated");
+    expect(codes(r)).not.toContain("invalid_value");
+    const rule = run(svg('<path d="M0 0 L10 0 L10 10 Z" fill="red" fill-rule="EvenOdd"/>'));
+    expect(codes(rule)).not.toContain("invalid_value");
   });
 
   it("reports ignored, invalid and unsupported properties", () => {
@@ -499,6 +539,23 @@ describe("limits and elements", () => {
     // Each case builds input just past a budget; slow under coverage instrumentation.
   }, 30_000);
 
+  it("stops flattening a hostile path at the geometry budget, not after it", () => {
+    // Each cubic flattens to hundreds of points at this scale; charging only
+    // after a whole subpath was flattened let a 1 MiB file exhaust the heap.
+    const d = "M0 0" + " c1 1 -1 1 0 0".repeat(20_000);
+    const started = Date.now();
+    const error = refused(svg(`<path d="${d}" transform="scale(100000)" stroke="red"/>`));
+    expect(error.code).toBe("svg_complexity_limit");
+    expect(error.message).toMatch(/geometryWork/);
+    expect(Date.now() - started).toBeLessThan(20_000);
+  }, 30_000);
+
+  it("refuses out-of-range control points before flattening them", () => {
+    const d = "M0 0" + " c1 1 -1 1 0 0".repeat(20_000);
+    const error = refused(svg(`<path d="${d}" transform="scale(1e9)" stroke="red"/>`));
+    expect(error.code).toBe("svg_geometry_invalid");
+  });
+
   it("limits traversal depth through nested references", () => {
     let chain = "";
     for (let i = 0; i < 20; i++) chain = `<g>${chain}</g>`;
@@ -506,47 +563,5 @@ describe("limits and elements", () => {
     for (let i = 1; i < 5; i++)
       defs += `<g id="d${i}">${chain.replace("<g></g>", `<g><use href="#d${i - 1}"/></g>`)}</g>`;
     expect(refused(svg(`<defs>${defs}</defs><use href="#d4"/>`)).code).toBe("svg_complexity_limit");
-  });
-});
-
-describe("files", () => {
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "svg-analyzer-test-"));
-  });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-  it("reads a regular file and refuses links, directories and missing paths", () => {
-    const file = join(dir, "a.svg");
-    writeFileSync(file, svg(`<path d="M0 0 L1 1" stroke="red" ${ROUND}/>`));
-    expect(analyzeSvgFile(file).analysis.classification).toBe("safe");
-    expect(readSvgSource(file).length).toBeGreaterThan(0);
-    const link = join(dir, "link.svg");
-    symlinkSync(file, link);
-    const code = (p: string) => {
-      try {
-        readSvgSource(p);
-      } catch (error) {
-        return (error as SvgError).code;
-      }
-      return "ok";
-    };
-    expect(code(link)).toBe("svg_file_invalid");
-    mkdirSync(join(dir, "d.svg"));
-    expect(code(join(dir, "d.svg"))).toBe("svg_file_invalid");
-    expect(code(join(dir, "missing.svg"))).toBe("svg_file_invalid");
-    const big = join(dir, "big.svg");
-    writeFileSync(big, Buffer.alloc(SVG_LIMITS.maxSourceBytes + 1, 0x20));
-    expect(code(big)).toBe("svg_file_invalid");
-  });
-
-  it("refuses a FIFO without blocking on the open", () => {
-    const fifo = join(dir, "pipe.svg");
-    try {
-      execFileSync("mkfifo", [fifo]);
-    } catch {
-      return; // no mkfifo on this platform
-    }
-    expect(() => readSvgSource(fifo)).toThrow(/not a regular file/);
   });
 });

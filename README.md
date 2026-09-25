@@ -1,6 +1,8 @@
 # Apple Notes MCP Server
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that enables AI assistants like Claude to read, create, search, and manage notes in Apple Notes on macOS.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that lets Claude (Claude Code and Claude Desktop), Codex, and other MCP clients read, search, create, edit, organize, and export notes in Apple Notes on macOS. It runs locally on your Mac and talks to Notes through AppleScript, Apple Shortcuts, and read-only access to the Notes database.
+
+Beyond creating and editing notes, it manages folders and accounts, native tags, checklists, tables, pinned notes, links, and attachments. It can also export notes as Markdown, HTML, or JSON, read audio transcripts and drawings, and run a query language across your whole library.
 
 [![npm version](https://img.shields.io/npm/v/apple-notes-mcp)](https://www.npmjs.com/package/apple-notes-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/apple-notes-mcp)](https://www.npmjs.com/package/apple-notes-mcp)
@@ -15,6 +17,13 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that e
   <img src="https://raw.githubusercontent.com/sweetrb/apple-notes-mcp/main/codex/assets/screenshot.png" alt="Apple Notes MCP — create, search, and organize Apple Notes from Codex, Claude, and other AI assistants" width="680">
 </p>
 
+## Contents
+
+- [What is This?](#what-is-this) · [Quick Start](#quick-start) · [Requirements](#requirements) · [Features](#features)
+- [Tool Reference](#tool-reference): [notes](#note-operations), [folders](#folder-operations), [accounts](#account-operations), [batch](#batch-operations), [export, attachments, and media](#export-operations), [diagnostics](#diagnostics), [native background operations](#native-background-operations), [private helper](#private-helper-opt-in-unsupported-apple-api)
+- [Usage Patterns](#usage-patterns) · [Installation Options](#installation-options) · [Configuration](#configuration) · [Full Disk Access](#full-disk-access) · [Public native helper](#public-native-helper)
+- [Security and Privacy](#security-and-privacy) · [Known Limitations](#known-limitations) · [Troubleshooting](#troubleshooting) · [Recurring macOS permission prompts](#recurring-macos-permission-prompts) · [Development](#development)
+
 ## What is This?
 
 This server acts as a bridge between AI assistants and Apple Notes. Once configured, you can ask Claude (or any MCP-compatible AI) to:
@@ -25,7 +34,7 @@ This server acts as a bridge between AI assistants and Apple Notes. Once configu
 - "Move my draft notes to the Archive folder"
 - "What notes do I have in my Work folder?"
 
-The AI assistant communicates with this server, which then uses AppleScript to interact with the Notes app on your Mac. All data stays local on your machine.
+The AI assistant communicates with this server, which then uses AppleScript to interact with the Notes app on your Mac. Some features also use packaged Apple Shortcuts (native tags, checklists, tables, pinning) or read the Notes database read-only (queries, checklist state, transcripts). The server itself makes no network requests; what your MCP client does with the results is up to that client.
 
 ## Quick Start
 
@@ -56,7 +65,7 @@ Install as a Claude Code plugin for automatic configuration and enhanced AI beha
 
 This method also installs a **skill** that teaches Claude when and how to use Apple Notes effectively.
 
-On the first tool call, macOS shows an Automation permission prompt ("Claude" wants access to control "Notes") — click **OK**. Optionally, grant **Full Disk Access** (under Claude Desktop, to the Node binary that runs the server; from a terminal, to the terminal app) to enable the database-backed tools (`get-checklist-state`, `get-note-metadata`, `get-audio-transcripts`, `list-special-notes`, `list-native-tags`, `list-recent-notes`, `list-folder-tree`, `get-note-link`, checklist annotations in `get-note-markdown`, and full `get-sync-status` detail); see the [Full Disk Access Setup Guide](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/FULL-DISK-ACCESS.md). The rest of the server is pure AppleScript and works without it.
+On the first tool call, macOS shows an Automation permission prompt ("Claude" wants access to control "Notes") — click **OK**. Optionally, grant **Full Disk Access** (under Claude Desktop, to the Node binary that runs the server; from a terminal, to the terminal app) to enable the database-backed tools, such as `query-notes`, `get-checklist-state`, `get-note-tables`, `get-audio-transcripts`, `list-native-tags`, and `list-recent-notes` (the full list is under [Full Disk Access](#full-disk-access)); see the [Full Disk Access Setup Guide](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/FULL-DISK-ACCESS.md). The rest of the server is pure AppleScript and works without it.
 
 Native tag, checklist, table, pin, and rich append operations use two packaged
 Apple Shortcuts. A third, `Apple Notes MCP - Create Markdown Note`, is optional:
@@ -148,6 +157,10 @@ npm install -g apple-notes-mcp
 
 On first use, macOS will ask for permission to automate Notes.app. Click "OK" to allow.
 
+### Other MCP clients
+
+The server is a standard MCP server over stdio, so any client that can launch a local stdio server can run it with the same command the hosts above use: `npx -y apple-notes-mcp`. Most clients take it in an `mcpServers` entry shaped like the Claude Desktop example. If your client cannot pass environment variables, use the [configuration file](#configuration-file-when-the-host-strips-env).
+
 ## Requirements
 
 - **macOS** - Apple Notes and AppleScript are macOS-only
@@ -158,24 +171,30 @@ On first use, macOS will ask for permission to automate Notes.app. Click "OK" to
 
 | Feature | Description |
 |---------|-------------|
-| **Create Notes** | Create notes with titles, content, and optional folder/account targeting |
+| **Create Notes** | Create notes from plaintext, HTML, or Markdown, with optional folder/account targeting (Markdown creation uses an optional Shortcut on macOS 26 or later) |
 | **Search Notes** | Find notes by title or search within note content |
 | **Query Language** | `query-notes` combines text, folder, account, tag, attachment, checklist, flag, word-count, and date conditions with AND/OR/NOT, read from the Notes database (requires Full Disk Access) |
-| **Read Notes** | Retrieve note content and metadata |
-| **Update Notes** | Modify existing notes (title and/or content) |
+| **Read Notes** | Retrieve note content as HTML, plain text, or Markdown, plus metadata that AppleScript does not expose (pinned, Quick Note, locked, Recently Deleted) |
+| **Note Structure** | Decode a note into typed paragraph blocks, list its paragraphs and links, and get a direct link to one paragraph (requires Full Disk Access) |
+| **Update Notes** | Replace, append to, or prepend to an existing note, guarded by a content hash so a note that changed since it was read is never overwritten |
 | **Delete Notes** | Remove notes (moves to Recently Deleted) |
 | **Move Notes** | Organize notes into folders (supports nested paths) |
-| **Folder Management** | Create, list, and delete folders with full hierarchical path support |
+| **Folder Management** | Create, list, rename, and delete folders with full hierarchical path support; read the folder tree with note counts and Smart Folder rules |
 | **Multi-Account** | Work with iCloud, Gmail, Exchange, or any configured account, including account IDs and default folders |
 | **Batch Operations** | Delete or move multiple notes at once |
-| **Checklist State** | Read checklist done/undone state directly from the Notes database (requires Full Disk Access) |
-| **Audio Transcripts** | Read the transcripts and summaries Notes stored for audio recordings (requires Full Disk Access) |
-| **Export** | Export all notes as JSON or get individual notes as Markdown |
-| **Attachments** | List attachments with their on-disk asset and preview paths, find a note's lead image, save or batch-export them to disk, or fetch their bytes as base64 |
-| **Notes.app UI State** | Reveal a note in Notes.app or read the current Notes.app selection |
+| **Native Tags** | List, add, remove, and replace real Notes tags (not just `#hashtag` text) |
+| **Checklists** | Read checklist done/undone state from the Notes database, and append real checklist items through a Shortcut |
+| **Tables** | Read native tables as Markdown and JSON, and append new native tables |
+| **Pinning** | Read pinned state and pin or unpin a note |
+| **Links** | Get a note's `notes://` deep link, insert web, mail, or note-to-note links, and list the links in a note or folder |
+| **Export** | Export notes as paginated JSON, or render a note or folder as Markdown (with reusable templates) or standalone HTML |
+| **Attachments** | Add files to notes (from a path or the pasteboard), list attachments with their on-disk paths, find a note's lead image, save or batch-export them, or fetch their bytes as base64 |
+| **Audio and Drawings** | Read the transcripts Notes stored for recordings, transcribe audio on-device, and decode drawings to strokes and SVG |
+| **Incremental Sync** | `list-recent-notes` pages through notes by modification time with an exact cursor |
+| **Notes.app UI State** | Reveal a note, folder, account, or attachment in Notes.app, or read the current Notes.app selection |
 | **Sync Awareness** | Detect iCloud sync in progress, warn about incomplete results |
 | **Collaboration** | Detect shared notes, warn before modifying |
-| **Diagnostics** | `health-check` plus a richer `doctor` (reachability, automation permission, accounts, Full Disk Access), sync status, and statistics |
+| **Diagnostics** | `health-check` plus a richer `doctor` (reachability, automation permission, accounts, Full Disk Access), sync status, statistics, and `get-capabilities` for the Shortcut bridges |
 
 Read/list/get tools also return **structured JSON** (`structuredContent`) alongside the text, so agents can consume results without parsing prose.
 
@@ -193,8 +212,8 @@ reading Notes' own database instead; the rest genuinely cannot be supported. See
 **[docs/APPLESCRIPT-LIMITATIONS.md](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/APPLESCRIPT-LIMITATIONS.md)**
 for the investigation and verification behind each:
 
-- **Pinned notes** — Notes has no scriptable `pinned` property via AppleScript. Pin state can now be **read** with the BETA `get-note-metadata` tool (from the NoteStore database), but it still cannot be **set** programmatically.
-- **Note-to-note links** — AppleScript exposes no link property or link element, so link *relationships* between notes cannot be read, and a link cannot be inserted into a note body. A shareable `notes://showNote?identifier=<uuid>` deep link **is** available via [`get-note-link`](#get-note-link).
+- **Pinned notes** — Notes has no scriptable `pinned` property via AppleScript. Pin state is **read** from the NoteStore database by the BETA `get-note-metadata` tool and `list-special-notes`, and **set** through the Background Operations Shortcut by [`set-note-pinned`](#set-note-pinned).
+- **Note-to-note links** — AppleScript exposes no link property or link element. Links are instead read from the NoteStore database by [`list-note-links`](#list-note-links), and inserted by [`insert-note-link`](#insert-note-link) (through a Shortcut) or [`insert-link`](#insert-link). A shareable `notes://showNote?identifier=<uuid>` deep link is available via [`get-note-link`](#get-note-link).
 
 ---
 
@@ -242,8 +261,10 @@ Two optional booleans describe a write's outcome when it is known.
 id before any retry, and never retry blindly. `committed: true` means the write
 took effect even though its verification failed; `committed: false` means
 nothing was written (for example a `revision_conflict`). An absent flag means
-unknown. Errors the MCP SDK raises itself before a tool runs, such as an
-argument that fails the input schema, carry no `structuredContent`.
+unknown. An argument that fails the input schema is rejected before the tool
+runs, with `code: "validation_error"` and `committed: false`. The exception is
+a Notes UUID or numeric key that could not be resolved to an id: it carries
+`not_found`, or `full_disk_access_missing` when the database is unreadable.
 
 ### Note Operations
 
@@ -255,15 +276,15 @@ Creates a new note in Apple Notes.
 |-----------|------|----------|-------------|
 | `title` | string | Yes | The title of the note. Automatically prepended as `<h1>` — do NOT include the title in `content` |
 | `content` | string | One of `content`/`contentPath` | The body content of the note (do not repeat the title here) |
-| `contentPath` | string | One of `content`/`contentPath` | Absolute path of a local UTF-8 file to use as the body instead of `content`. Allowed in the same places [`save-attachment`](#save-attachment) may write (home, temp, `/Volumes`); symbolic links, non-regular files, invalid UTF-8 and files over 1 MiB are refused before anything is written. A leading byte-order mark is dropped |
-| `tags` | string[] | No | Returned-only metadata — **NOT written to Notes.app**. Apple Notes tags can't be set via AppleScript, so values passed here are echoed back in the response but do not appear on the created note. Use inline `#hashtags` in `content` instead (Notes.app turns those into real tags). Refused with `format: "markdown"` |
+| `contentPath` | string | One of `content`/`contentPath` | Absolute path of a local UTF-8 file to use as the body instead of `content`. Allowed in the same places [`save-attachment`](#save-attachment) may write (home, temp, `/Volumes`), except hidden paths (any component starting with `.`, such as `~/.ssh` or a project `.env`) and `~/Library` other than iCloud Drive (`~/Library/Mobile Documents`) and cloud storage folders (`~/Library/CloudStorage`), which can hold credentials; set `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1` to allow those. Symbolic links, non-regular files, invalid UTF-8 and files over 1 MiB are refused before anything is written. A leading byte-order mark is dropped |
+| `tags` | string[] | No | Returned-only metadata — **NOT written to Notes.app**. Apple Notes tags can't be set via AppleScript, so values passed here are echoed back in the response but do not appear on the created note. Inline `#hashtags` in `content` stay searchable text and are returned as `hashtags`, but they do not become native Notes tags; add real tags afterwards with [`add-native-tags`](#add-native-tags). Refused with `format: "markdown"` |
 | `folder` | string | No | Folder to create the note in. Supports nested paths like `"Work/Clients"`. **The folder must already exist** — create it first with [`create-folder`](#create-folder). A smart folder is refused (see [`move-note`](#move-note)). Defaults to account root |
 | `account` | string | No | Account name (defaults to Notes.app's default account; matched exactly or by a *unique* prefix — an ambiguous prefix is refused). Must be an account Notes.app already has configured — see [`list-accounts`](#list-accounts) |
 | `format` | string | No | Content format: `"plaintext"` (default), `"html"`, or `"markdown"`. In all formats, the title is automatically prepended as the note's title line. In plaintext mode, newlines become `<br>`, tabs become `<br>`, and backslashes are preserved as HTML entities. `"markdown"` produces real Title/Heading/Subheading styles through a Shortcut; see [Markdown notes](#markdown-notes) |
 | `markdownRoute` | string | No | With `format: "markdown"` only: `"shortcut"` (default) or `"html"`. See [Markdown through HTML](#markdown-through-html) |
 | `timeoutSeconds` | number | No | Whole seconds, 1–120, for each Notes.app automation step this call runs; overrides `APPLE_NOTES_MCP_TIMEOUT_MS` for this call only. A timed-out write is uncertain, not failed: read the note by id before any retry. Also accepted by `get-note-content`, `update-note`, `append-to-note`, `delete-note` and `move-note` |
 
-**Example (tagged with inline hashtags):**
+**Example (with inline textual hashtags):**
 ```json
 {
   "title": "Meeting Notes",
@@ -506,8 +527,10 @@ and 64 levels of nesting. An unknown field such as `titel:x` is an error rather
 than a silent text search; quote it to search the literal text.
 
 Password-protected notes match on title and metadata only. Their bodies are
-encrypted, so body predicates never match them, and `-body:x` therefore does.
-Their snippets are always empty.
+encrypted, so a body predicate is unknown for them rather than false: neither
+`body:x` nor `-body:x` matches them, though `-body:x OR pinned` matches a
+pinned one. Notes whose body cannot be decoded are treated the same way. Their
+snippets are always empty.
 
 **Example - Open to-dos in a folder:**
 ```json
@@ -587,8 +610,9 @@ base64 images larger than `APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES` (default
 image-heavy note cannot blow the MCP message limit. `structuredContent` reports
 this as `strippedImages` (count) and `truncated` (boolean). When either is set,
 passing this body to an unguarded full-body writer would replace the real images
-with placeholder text. This server refuses update and append operations on
-attachment-bearing notes; edit them in Notes.app.
+with placeholder text. This server's `update-note` refuses attachment-bearing
+notes, and `append-to-note` routes them to native end-append with `scopeText`,
+which never rewrites the existing body; make any other edit in Notes.app.
 
 ---
 
@@ -599,6 +623,10 @@ native tags, and native table data from one exact note ID. Table output includes
 stable row and column identifiers. `tableCellsComplete` is false when Notes
 metadata cannot be decoded completely. This tool is read-only and requires Full
 Disk Access.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | Exact note ID, in any [identifier form](#identifier-forms) |
 
 ---
 
@@ -860,6 +888,13 @@ Shortcut runs. It refuses ambiguous title-and-scope matches and never retries an
 uncertain write. Install the signed workflow as described in
 [`shortcuts/README.md`](shortcuts/README.md).
 
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | Exact note ID, in any [identifier form](#identifier-forms) |
+| `expectedContentHash` | string | Yes | `contentHash` from a fresh read of the note |
+| `scopeText` | string | Yes | Distinctive phrase already in the note, 12–500 characters |
+| `tags` | string[] | Yes | 1–100 tag names to add |
+
 ---
 
 #### `get-note-plaintext`
@@ -947,6 +982,7 @@ Updates an existing note's content and/or title.
 | `format` | string | No | Content format: `"plaintext"` (default) or `"html"`. When `"html"`, content replaces the entire note body as raw HTML and `newTitle` is ignored (the first HTML element serves as the title) |
 | `allowLinkChanges` | boolean | No | Set to `true` only when intentionally changing or removing existing links |
 | `ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds` | string, string, string[] | No | Folder preconditions; see [Folder scope guards](#folder-scope-guards) |
+| `timeoutSeconds` | number | No | Per-call timeout, 1–120 seconds, as for [`create-note`](#create-note). A timed-out write is uncertain: read the note by id before any retry |
 
 Title-only updates are rejected because Apple Notes titles are not unique.
 
@@ -992,6 +1028,7 @@ Deletes a note (moves to Recently Deleted in Notes.app).
 | `id` | string | Yes | Exact CoreData note ID returned by a read or search |
 | `expectedContentHash` | string | Yes | `contentHash` from the exact note version being deleted |
 | `ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds` | string, string, string[] | No | Folder preconditions; see [Folder scope guards](#folder-scope-guards) |
+| `timeoutSeconds` | number | No | Per-call timeout, 1–120 seconds, as for [`create-note`](#create-note). A timed-out write is uncertain: read the note by id before any retry |
 | `guardNoteId` | string | No | A second note (usually a verified copy) that must still be intact; needs Full Disk Access |
 | `expectedGuardContentHash` | string | With `guardNoteId` | `contentHash` of the guard note from `get-note-content` |
 | `requireActiveNoteId` | string | No | A second note that must still exist, be unlocked, stay outside Recently Deleted, and not be a Quick Note; its content is not fingerprinted. Needs Full Disk Access |
@@ -1055,7 +1092,9 @@ A smart folder is never a destination: it only gathers notes by its rules, and N
 |-----------|------|----------|-------------|
 | `id` | string | Yes | Exact CoreData note ID returned by a read or search |
 | `folder` | string | Yes | Destination folder name or nested path (e.g., `"Work/Clients"`) |
+| `account` | string | No | Account whose `folder` is the destination (default: the default account) |
 | `ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds` | string, string, string[] | No | Folder preconditions; see [Folder scope guards](#folder-scope-guards) |
+| `timeoutSeconds` | number | No | Per-call timeout, 1–120 seconds, as for [`create-note`](#create-note). A timed-out write is uncertain: read the note by id before any retry |
 
 Title-only moves are rejected.
 
@@ -1113,7 +1152,9 @@ Appends or prepends content to an existing note without replacing it. Always rea
 | `position` | string | No | `"after"` (default) appends to the end; `"before"` inserts directly below the note's title line, so the title stays first |
 | `separator` | string | No | String placed between existing content and new content (default: two newlines → `<div><br></div>` in HTML) |
 | `format` | string | No | Format of the content being appended: `"plaintext"` (default) or `"html"` |
+| `scopeText` | string | Native-object notes only | Unique existing phrase, as for [`append-native`](#append-native) |
 | `ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds` | string, string, string[] | No | Folder preconditions; see [Folder scope guards](#folder-scope-guards) |
+| `timeoutSeconds` | number | No | Per-call timeout, 1–120 seconds, as for [`create-note`](#create-note). A timed-out write is uncertain: read the note by id before any retry |
 
 Title-only appends are rejected.
 
@@ -1318,7 +1359,7 @@ Lists notes from the NoteStore database (read-only) by stored modification time,
 - **Browsing.** Without `since`, rows come newest first. `nextSince` is then the newest row's cursor, set only when the call returned every matching note (`saturated` is `false`); otherwise it is `null`.
 - **Late edits.** A modification-date cursor can miss an edit that iCloud delivers later from another device with an older timestamp, for example after that device was offline. The row then sorts before the cursor. Run a full pass from the start now and then to catch these.
 - **Deletions.** Deleted notes are invisible unless `includeDeleted` is `true`. With it, notes in Recently Deleted and notes awaiting deletion appear, flagged, when their modification date is after the cursor. A note purged from the database leaves no row, so compare ids against a full pass to detect it.
-- **Word counts.** A word is a whitespace-separated token containing a letter or digit; `charCount` counts Unicode code points. Attachment markers are not counted. Both are `null` for locked notes and bodies that are not downloaded or cannot be decoded, and `0` for a body known to be empty.
+- **Word counts.** A word is a whitespace-separated token containing a letter or digit, except that Chinese, Japanese, Thai, Lao, Khmer and Myanmar text, which has no spaces between words, is split at word boundaries (the same count `query-notes` uses for `words:` and `wordCount`); `charCount` counts Unicode code points. Attachment markers are not counted. Both are `null` for locked notes and bodies that are not downloaded or cannot be decoded, and `0` for a body known to be empty.
 - **Previews.** With `wordCounts`, `bodyPreview` comes from the decoded body and `textDecoded` is `true`. Otherwise it is the stored snippet. Locked notes never get a preview.
 - Folderless notes (abandoned Quick Note drafts Notes.app never shows) and Recently Deleted appear only with `includeDeleted`. Notes without a stored modification date never match a `since` query.
 
@@ -1713,11 +1754,12 @@ single note.
 | `assetsDir` | string | No | Absolute directory for attachment copies. Existing files are never replaced; a taken name gets `-2`, `-3`, ... |
 | `wrap` | number | No | Hard-wrap prose at this many columns. Code, tables and headings are never wrapped |
 | `template` | string | No | Render through a template: `standard-markdown`, `obsidian`, or a saved template's name. Exclusive with `templateFile` |
-| `templateFile` | string | No | Render through the JSON template in this `.json` file (same path rules; at most 256 KiB) |
+| `templateFile` | string | No | Render through the JSON template in this `.json` file (at most 256 KiB), read under the same rules as `create-note`'s [`contentPath`](#create-note): hidden paths (such as `~/.docker` or a project `.env`) and `~/Library` other than iCloud Drive and `~/Library/CloudStorage` are refused, checked again after resolving symbolic links and letter case, unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Errors name the file, never its contents |
 
 Both paths follow the `save-attachment` rules (absolute, under the home
 directory, a temp directory, or `/Volumes`, no symlink escapes) and may not
-point inside the Notes library container. With `outputPath`, asset links are
+point inside the Notes library container. `templateFile` is a read, so it
+also follows `contentPath`'s private-location rule. With `outputPath`, asset links are
 relative to the document's directory; without it they are absolute paths.
 
 **Returns:** without `outputPath`, the Markdown itself (refused with
@@ -1824,7 +1866,7 @@ or `templateFile`.
 |-----------|------|----------|-------------|
 | `name` | string | One of three | A saved or built-in template |
 | `template` | object or string | One of three | The template as a JSON object or JSON text |
-| `templateFile` | string | One of three | Absolute path of a JSON template file (home, a temp directory, or `/Volumes`; at most 256 KiB) |
+| `templateFile` | string | One of three | Absolute path of a JSON template file (home, a temp directory, or `/Volumes`; at most 256 KiB), read under the same rules as `create-note`'s [`contentPath`](#create-note): hidden paths (such as `~/.docker` or a project `.env`) and `~/Library` other than iCloud Drive and `~/Library/CloudStorage` are refused, checked again after resolving symbolic links and letter case, unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1` |
 
 **Returns:** `valid`, and `errors` as `{path, message}` pairs such as
 `$.rules["inline.bold"].after: is required when mode is "wrap"`. An invalid
@@ -1841,7 +1883,7 @@ can use it by `template` name.
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Lowercase `a-z`, `0-9`, `-` and `_`, 1-64 characters, starting with a letter or digit. Built-in names are reserved |
 | `template` | object or string | One of `template`/`templateFile` | The template |
-| `templateFile` | string | One of `template`/`templateFile` | A JSON template file |
+| `templateFile` | string | One of `template`/`templateFile` | A JSON template file, under the same rules as `validate-markdown-template`'s |
 | `force` | boolean | No | Replace an existing template of this name (default `false`) |
 
 Saving is create-only: an existing name is refused with `[template-exists]`
@@ -1978,7 +2020,7 @@ Decodes a note's classic PencilKit drawings (`com.apple.drawing.2` and the older
 | `format` | string | No | `"json"` (default) returns strokes, `"svg"` returns a standalone SVG document per drawing, `"both"` returns both |
 | `includePoints` | boolean | No | Include per-point `x`, `y`, `width`, `opacity`, and `force` in JSON strokes (default `true`) |
 
-**Returns:** `status` (`ok`, `partial`, `error`, or `none` when the note has no classic drawing), `drawingCount`, and one entry per drawing with `attachmentId`, `identifier`, `typeUti`, `status` (`ok`, or `error` with a `code` such as `no_data`, `undecodable`, or `timeout`), `strokeCount`, `bounds`, `truncated`, `strokes` (each with `inkType`, sRGB `color` with alpha, mean `width`, `pointCount`, `bounds`, and `points`), and `svg`. Points are already in drawing coordinates. When a response would exceed `APPLE_NOTES_MCP_EXPORT_MAX_BYTES`, points are dropped and `pointsOmitted` is set. The SVG draws one path per stroke; it is a faithful outline, not a pixel-exact copy of PencilKit's ink textures.
+**Returns:** `status` (`ok`, `partial`, `error`, or `none` when the note has no classic drawing), `drawingCount`, and one entry per drawing with `attachmentId`, `identifier`, `typeUti`, `status` (`ok`, or `error` with a `code` such as `no_data`, `undecodable`, or `timeout`), `strokeCount`, `bounds`, `truncated`, `strokes` (each with `inkType`, sRGB `color` with alpha, mean `width`, `pointCount`, `bounds`, and `points`), and `svg`. Points are already in drawing coordinates. Ink removed with the pixel eraser is left out: a partly erased stroke comes back as one entry per visible piece, each marked `masked: true`, and `hiddenStrokeCount` counts strokes erased completely. `pointsTruncated: true` marks a stroke cut short by the helper's point limit. When a response would exceed `APPLE_NOTES_MCP_EXPORT_MAX_BYTES`, points are dropped and `pointsOmitted` is set, then SVG documents are dropped and `svgOmitted` is set; if it still does not fit, the call fails with an error instead. The SVG draws one path per stroke; it is a faithful outline, not a pixel-exact copy of PencilKit's ink textures.
 
 ---
 
@@ -2009,7 +2051,7 @@ Each take gets a deadline of 1.5 times its length plus a minute (at most 30 minu
 
 **Speech models:** the call never starts a download on its own. When the language's on-device model is not installed, it returns `asset_unavailable` right away. Pass `downloadAssets: true` to let macOS download it (a one-time download); if it is still downloading when the call ends, try again shortly.
 
-**Speech Recognition permission:** the server never shows the Speech Recognition prompt, because nobody may be watching an MCP server to answer it. The helper reads the current authorization first. On older macOS, the `SFSpeechRecognizer` path needs that access, and macOS attributes the grant to the app that launches the MCP server (Claude Desktop, Codex, Terminal, and so on), not to the helper. Without it the call returns `code: "permission_required"`; allow the app under System Settings > Privacy & Security > Speech Recognition. On macOS 26 and later, `SpeechAnalyzer` transcribed files without any grant in testing (authorization stayed "not determined"), so only an explicit refusal (denied or restricted) stops it.
+**Speech Recognition permission:** the server never shows the Speech Recognition prompt, because nobody may be watching an MCP server to answer it. The helper reads the current authorization first. On older macOS, the `SFSpeechRecognizer` path needs that access, and macOS attributes the grant to the app that launches the MCP server (Claude Desktop, Codex, Terminal, and so on), not to the helper. Without it the call returns `code: "permission_required"`; allow the app under System Settings > Privacy & Security > Speech Recognition. If the app has never asked for Speech Recognition access, macOS does not list it there yet, and the call returns `code: "permission_not_requested"` instead: use macOS 26 or later, or run the server from an app that already has the access. On macOS 26 and later, `SpeechAnalyzer` transcribed files without any grant in testing (authorization stayed "not determined"), so only an explicit refusal (denied or restricted) stops it.
 
 ---
 
@@ -2025,7 +2067,7 @@ success, with no read cap below the 64 MiB write limit.
 |-----------|------|----------|-------------|
 | `id` | string | Yes | Exact CoreData note ID |
 | `expectedContentHash` | string | Yes | `contentHash` from the note version being extended |
-| `path` | string | Yes | Absolute path of the local file; symbolic links are refused |
+| `path` | string | Yes | Absolute path of the local file. Read under the same rules as `create-note`'s [`contentPath`](#create-note): home, temp or `/Volumes` only; hidden paths (any component starting with `.`, such as `~/.ssh` or a project `.env`) and `~/Library` other than iCloud Drive (`~/Library/Mobile Documents`) and `~/Library/CloudStorage` are refused, checked again after resolving symbolic links and letter case, unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Symbolic links and anything but a regular file (a FIFO, a device) are refused |
 | `filename` | string | No | Name the attachment gets in Notes instead of the source file's name. One path component that keeps the source file's extension, with no slash, colon, backslash, control character, leading dot or surrounding spaces. Notes names a file attachment after the file it receives, so the server gives its private temporary copy this name |
 
 **Returns:** `attachmentId`, `bytes`, the `name` Notes reports, and the new
@@ -2056,7 +2098,7 @@ same verification as [`add-attachment`](#add-attachment).
 | `content` | string | No | Plain-text body placed above the attachment |
 | `folder` | string | No | Existing folder or nested path; create it first with [`create-folder`](#create-folder) |
 | `account` | string | No | Account name; defaults to Notes.app's default account |
-| `path` | string | Yes | Absolute path of the local file (at most 64 MiB) |
+| `path` | string | Yes | Absolute path of the local file (at most 64 MiB), under the same read rules as `add-attachment`; a refused path creates no note |
 | `filename` | string | No | Attachment name override, as in `add-attachment` |
 
 ```json
@@ -2069,9 +2111,12 @@ same verification as [`add-attachment`](#add-attachment).
 ```
 
 **Returns:** the new note's `id` with `noteCreated: true` and the
-`add-attachment` result. If the attachment step fails after the note exists,
-the error names the new note's id: attach to it with `add-attachment` instead of
-calling this tool again, which would create a second note.
+`add-attachment` result. If the attachment step fails after the note exists but
+before the file is inserted, the error names the new note's id: attach to it
+with `add-attachment` instead of calling this tool again, which would create a
+second note. If insertion started and could not be verified, the error is
+`code: "verification_failed"` with `indeterminate: true`: the file may already
+be in the note, so read it with `list-attachments` before attaching again.
 
 ---
 
@@ -2095,8 +2140,10 @@ file then goes through [`add-attachment`](#add-attachment)'s checks.
 
 **Returns:** the `add-attachment` result plus `source` (`kind`: `file` or
 `data`, the pasteboard `type`, and the default `filename`). A copied file wins
-over image data; among data types PNG is preferred, then JPEG, HEIC, GIF, TIFF,
-and PDF.
+over image data; among data types PDF is preferred (a copied PDF usually comes
+with a raster preview of itself), then PNG, JPEG, HEIC, GIF, and TIFF. Several
+copied files or several image or PDF items are refused rather than attaching
+only the first.
 
 **Paste privacy (macOS 15.4 and later):** macOS can show an alert asking
 whether to allow a paste when a process reads the general pasteboard without a
@@ -2120,6 +2167,7 @@ before 15.4 the property does not exist and the pasteboard is read as before.
 | `pasteboard_empty` | `validation_error` | Nothing is on the pasteboard |
 | `unsupported_content` | `validation_error` | No PNG, JPEG, HEIC, GIF, TIFF, PDF, or copied file (text belongs in `append-to-note`); the message and `types` list the pasteboard types found |
 | `multiple_files` | `validation_error` | More than one copied file; `count` says how many. Copy one file, or use `add-attachment` per file |
+| `multiple_items` | `validation_error` | More than one image or PDF item (not files); `count` says how many. Copy one, or save each and use `add-attachment` |
 | `too_large` | `validation_error` | More than 64 MiB |
 | `file_unreadable` | `validation_error` | The copied file is a symlink, empty, over 64 MiB, or unreadable |
 | `pasteboard_changed` | `operation_failed` | The pasteboard changed while it was being read; try again |
@@ -2191,7 +2239,7 @@ Lists the Paper drawings (`com.apple.paper`) and classic drawings (`com.apple.dr
 |-----------|------|----------|-------------|
 | `id` | string | Yes | Exact CoreData note ID |
 
-**Returns:** Per drawing: `attachmentId`, `identifier`, `uti`, `kind` (`paper` or `drawing`), `handwritingSummary` (the handwriting text Notes recognized, or `null` when it stored none), `bundlePresent` (the Paper data bundle is on disk), `fallbackImagePath` (Notes' full rendering), `previewPath` (its largest thumbnail), and `raster` `{source, format, width, height}`: the validated image `export-paper-image` would copy, or `null`.
+**Returns:** Per drawing: `attachmentId`, `identifier`, `uti`, `kind` (`paper` or `drawing`), `handwritingSummary` (the handwriting text Notes recognized, or `null` when it stored none), `bundlePresent` (the Paper data bundle is on disk), `fallbackImagePath` (Notes' full rendering), `fallbackImageStale` (true when Notes recorded a newer rendering than the one on disk, so the image may not show the latest strokes; `export-paper-image` then reports `stale: true`), `previewPath` (its largest thumbnail), and `raster` `{source, format, width, height}`: the validated image `export-paper-image` would copy, or `null`.
 
 Strokes are not decoded. Notes' Paper bundle has no public reader, so the image is Notes' own rendering.
 
@@ -2219,7 +2267,7 @@ Analyzes one local SVG file and reports whether it can be represented as editabl
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `path` | string | Yes | Absolute path of one `.svg` file: a regular file, not a symbolic link, at most 1 MiB of UTF-8, in home, temp, or `/Volumes` |
+| `path` | string | Yes | Absolute path of one `.svg` file: a regular file, not a symbolic link, at most 1 MiB of UTF-8, in home, temp, or `/Volumes`, read under the same rules as `create-note`'s [`contentPath`](#create-note): hidden paths (such as `~/.docker` or a project `.env`) and `~/Library` other than iCloud Drive and `~/Library/CloudStorage` are refused, checked again after resolving symbolic links and letter case, unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. A file whose first element is not `<svg>` is refused without quoting any of it |
 | `includeDrawing` | boolean | No | Also return the normalized drawing. Off by default because it can be large |
 
 **Returns:** `classification`, `importable`, `defaultWriteAllowed`, `requiredLosses`, `issues` (each with a `code`, the `loss` it causes or `null`, an element `location` such as `svg/g[2]/path[1]#id`, and a message), `viewport`, `counts` (elements, references, path segments, output strokes and points, and the `geometryWork`, `dashWork`, and `scanWork` budgets as `{used, max}`), `source` (`sha256`, `bytes`), `drawingBytes`, and `analysisDigest`.
@@ -2252,7 +2300,7 @@ Copies a note's attachment files into a directory without opening Notes.app.
 | `exportDir` | string | Yes | Absolute destination directory, created if missing. Same allowlist as `save-attachment` (home, temp, or `/Volumes`), and never inside the Notes data folder |
 | `firstImageOnly` | boolean | No | Export only the lead visual that `list-attachments` `firstImage` reports |
 
-**Returns:** `exportDir`, counts (`exported`, `previews`, `skipped`, `failed`), and per attachment its `attachmentId`, `identifier`, `kind`, `exportedTo`, and `exportedKind`: `"asset"` for the real file, `"preview"` when the asset never downloaded and only Notes' thumbnail was on disk, or `null` when nothing was on disk. A preview is never chosen over an available asset, and it is named `<name>-preview.<ext>` so it is not mistaken for the original. A scan gallery with no file of its own exports its pages.
+**Returns:** `exportDir`, counts (`exported`, `previews`, `fallbacks`, `skipped`, `failed`), and per attachment its `attachmentId`, `identifier`, `kind`, `exportedTo`, and `exportedKind`: `"asset"` for the real file, `"fallback"` for Notes' own full rendering of it (a drawing's PNG or a scan's PDF, named with that format's extension), `"preview"` when the asset never downloaded and only Notes' thumbnail was on disk, or `null` when nothing was on disk. `inBody: false` marks an attachment the note body no longer shows, and `stale: true` marks a rendering taken from an older generation because the one Notes recorded is missing; attachments inside a container Notes has deleted are not exported. A preview is never chosen over an available asset, and it is named `<name>-preview.<ext>` so it is not mistaken for the original. A scan gallery with no file of its own exports its pages.
 
 **⚠️ Safety:** Existing files are never replaced. A name that is taken gets `-2`, `-3`, and so on. Reads NoteStore and the Notes data folder read-only and needs Full Disk Access.
 
@@ -2356,6 +2404,15 @@ distinctive existing `scopeText` so the Shortcut and server can independently
 resolve the same note. Creating a note from Markdown is
 [`create-note`](#create-note) with `format: "markdown"`.
 
+Every tool below that edits one note takes these parameters, plus the ones
+listed under the tool itself:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | Yes | Exact note ID: x-coredata id, Notes UUID, or numeric key (see [Identifier forms](#identifier-forms)) |
+| `expectedContentHash` | string | Yes | `contentHash` (`sha256:…`) from a fresh read of the note |
+| `scopeText` | string | Yes | Distinctive phrase already in the note, 12–500 characters, that Notes search can find. Prefer plain words without punctuation, hashtags, or paths |
+
 When the Shortcut refuses a request (its Find Notes step did not return
 exactly one note with that exact title and `scopeText`) or stops with its own
 action error, and the note reads back unchanged, the tool reports the
@@ -2375,11 +2432,13 @@ and currently available, with a specific reason for each unavailable operation.
 It also reports `runtimeOS` (`platform`, `macOSVersion` from `sw_vers`,
 `darwinRelease`) and a `features` matrix, one entry per feature group:
 `applescriptCore`, `fullDiskAccessReads`, `shortcutsBridges`,
-`backgroundOperationsBridge`, `nativeTagsBridge`, `markdownNoteBridge`, and the
-placeholders `checklistToggle`, `smartFolders`, `paragraphLinks`, and
-`audioTranscription`, which need a native *write* helper this server does not
-ship (requirement `native_write_helper`). The opt-in private helper below is
-read-only, so enabling it does not change them: they stay `not_implemented`.
+`backgroundOperationsBridge`, `nativeTagsBridge`, `markdownNoteBridge`,
+`paragraphLinks` and `audioTranscription` (both database reads that need Full
+Disk Access), and the placeholders `checklistToggle` and `smartFolders`
+(creating or editing smart folders), which need a native *write* helper this
+server does not ship (requirement `native_write_helper`). The opt-in private
+helper below is read-only, so enabling it does not change them: they stay
+`not_implemented`.
 Each entry carries `available`, `osSupported`, `minimumMacOSVersion`,
 `requirements`, `missing`, `unverified`, `tools`, and a machine-readable
 `reason` that is `null` when available and otherwise the first that applies:
@@ -2420,10 +2479,19 @@ unapproved bridge is identified rather than guessed at; a timeout also says it
 may be an unanswered first-run consent prompt and names the Shortcut to run once
 in the foreground.
 
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content` | string | Yes | Content to append, up to 1,048,576 characters |
+| `format` | string | No | `"plaintext"` (default), `"html"`, or `"markdown"` |
+
 #### `create-checklist-item`
 
 Appends one real unchecked Notes checklist item and verifies its native identity
 and text.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | Yes | The item's text |
 
 #### `create-checklist-items`
 
@@ -2450,12 +2518,15 @@ the note's last checklist items in the requested order.
 }
 ```
 
-**Returns:** `items`, each with its `index`, native `id` and `text`, plus
-`orderVerified` and the new `contentHash`. The first uncertain result stops the
-call without a retry and returns `ok: false` with `landed` (the verified items),
-`stoppedAt` (the item's index, text, `outcome` of `"not-written"` or
-`"uncertain"`, and the error), and `notAttempted`. After an uncertain stop, read
-the note before retrying, and retry only the items that are not present.
+**Returns:** `items` (also as `landed`), each with its `index`, native `id` and
+`text`, plus `orderVerified` and the new `contentHash`. The first uncertain
+result stops the call without a retry and returns `ok: false` with `landed` (the
+verified items), `stoppedAt` (the item's index, text, `outcome` of
+`"not-written"` or `"uncertain"`, and the error), and `notAttempted`. Every
+`ok: false` result is an error result (`isError: true`) with a `code`; after an
+uncertain stop it has `indeterminate: true` and no `contentHash`, since the note
+may have changed. Read the note before retrying, and retry only the items that
+are not present.
 
 #### `create-table`
 
@@ -2464,15 +2535,28 @@ cell. It never substitutes a text table. Omit `rows` for an empty 2 × 2 table,
 the size Notes itself inserts from Format > Table; its four empty cells are
 verified the same way.
 
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `rows` | string[][] | No | Cell text, row by row: 1–1,000 rows of 1–100 cells, every row the same length. Omit for an empty 2 × 2 table |
+
 #### `set-note-pinned`
 
 Sets an explicit pinned state after checking both the expected current state and
 the note revision. It does not rewrite the body.
 
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `expectedPinned` | boolean | Yes | The pinned state you last read; the call is refused if it differs |
+| `pinned` | boolean | Yes | The pinned state to set |
+
 #### `remove-native-tags`
 
 Removes specified tags from one exact note while preserving unrelated tags and
 native objects. It does not delete global tag definitions.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `tags` | string[] | Yes | 1–100 tag names to remove |
 
 #### `replace-native-tag`
 
@@ -2480,10 +2564,24 @@ Adds and verifies the new tag before removing the old tag on an explicit list of
 freshly read notes. Stops on the first uncertain result. Smart Folder rules are
 not changed.
 
+Unlike the other tools in this section, it takes a list of notes instead of one
+`id`:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `notes` | object[] | Yes | 1–100 entries, each with the note's `id`, `expectedContentHash`, and `scopeText` |
+| `oldTag` | string | Yes | Tag to remove after the new one is verified |
+| `newTag` | string | Yes | Tag to add |
+
 #### `insert-note-link`
 
 Retrieves another note's real deep link and appends it with a static label while
 preserving the target note's native objects.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `linkedNoteId` | string | Yes | ID of the note to link to, in any [identifier form](#identifier-forms) |
+| `label` | string | No | Visible link text (default: the linked note's title) |
 
 ### Private helper (opt-in, unsupported Apple API)
 
@@ -3149,8 +3247,15 @@ All configuration is optional — the server works out of the box. Override beha
 | `APPLE_NOTES_MCP_RETRY_DELAY_MS` | `1000` (1 s) | Base delay before the first retry; subsequent retries back off exponentially (1s, 2s, 4s, ...). |
 | `APPLE_NOTES_MCP_ENABLE_PRIVATE` | unset | Set to `1` to allow the opt-in [private helper](#private-helper-opt-in-unsupported-apple-api). Any other value keeps it off. |
 | `APPLE_NOTES_MCP_PRIVATE_HELPER_DIR` | `~/Library/Application Support/apple-notes-mcp/private-helper` | Where `setup --native-helper` installs the helper and its checksum manifest. |
-| `APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS` | `20000` (20 s) | Per-call helper timeout. A timed-out write is indeterminate. |
+| `APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS` | `20000` (20 s) | Per-call timeout for the private helper. The helper is read-only, so a timeout changes nothing in Notes. |
 | `APPLE_NOTES_MCP_PRIVATE_STORE` | unset | Testing only: points the helper at a **copy** of `NoteStore.sqlite`. The helper refuses a path that resolves to the live store. |
+| `APPLE_NOTES_MCP_PUBLIC_HELPER_DIR` | `~/Library/Application Support/apple-notes-mcp/public-helper` | Where `setup --public-helper` installs the [public native helper](#public-native-helper) and its checksum manifest. |
+| `APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS` | `30000` (30 s) | Per-call timeout for the public native helper (`get-note-drawings`, `transcribe-note-audio`). |
+| `APPLE_NOTES_MCP_TAGS_SHORTCUT` | `Apple Notes MCP - Native Tags` | Name or UUID of the installed Native Tags bridge to run. `setup` still installs and checks the default name. |
+| `APPLE_NOTES_MCP_BACKGROUND_SHORTCUT` | `Apple Notes MCP - Background Operations v5` | Name or UUID of the installed Background Operations bridge to run. `setup` still installs and checks the default name. |
+| `APPLE_NOTES_MCP_MARKDOWN_SHORTCUT` | `Apple Notes MCP - Create Markdown Note` | Name or UUID of the installed Create Markdown Note bridge to run. `setup` still installs and checks the default name. |
+| `APPLE_NOTES_MCP_PASTEBOARD_NAME` | unset | Testing only: makes [`add-attachment-from-pasteboard`](#add-attachment-from-pasteboard) read a private named pasteboard instead of the general clipboard. |
+| `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS` | unset | Set to `1` to let `create-note` read a [`contentPath`](#create-note), [`add-attachment`](#add-attachment) and [`create-note-with-attachment`](#create-note-with-attachment) attach a `path`, [`analyze-svg`](#analyze-svg) read a `path`, and the Markdown template tools read a `templateFile`, inside a hidden directory or file (such as `~/.config`) or `~/Library` outside iCloud Drive and `~/Library/CloudStorage`. Off by default because those places hold keys, tokens and app data. |
 | `DEBUG` / `VERBOSE` | unset | Set either to enable verbose diagnostic logging to stderr. |
 
 ### Configuration file (when the host strips `env`)
@@ -3177,7 +3282,7 @@ MCP stores no secrets, but as a general rule keep only non-secret config here.
 
 ## Full Disk Access
 
-Several tools read directly from the Apple Notes SQLite database, which lives in a macOS-protected directory. Those tools require **Full Disk Access** for the process running the MCP server: `get-checklist-state`, `get-note-metadata`, `get-note-blocks`, `list-note-paragraphs`, `get-paragraph-link`, `get-note-structure`, `list-note-links`, `export-notes-markdown`, `export-notes-html`, `get-audio-transcripts`, `list-special-notes`, `list-native-tags`, `list-recent-notes`, `list-folder-tree`, `get-note-link`, the checklist annotations in `get-note-markdown`, `list-attachments` with `includePaths` or `firstImage`, `export-attachments`, `list-paper-attachments`, `export-paper-image`, and the database half of `get-sync-status`.
+Several tools read directly from the Apple Notes SQLite database, which lives in a macOS-protected directory. Those tools require **Full Disk Access** for the process running the MCP server: `query-notes`, `get-native-objects`, `get-note-tables`, `list-smart-folders`, `delete-folder-by-id`, `get-note-drawings`, `transcribe-note-audio`, `native-note-state`, `get-checklist-state`, `get-note-metadata`, `get-note-blocks`, `list-note-paragraphs`, `get-paragraph-link`, `get-note-structure`, `list-note-links`, `export-notes-markdown`, `export-notes-html`, `get-audio-transcripts`, `list-special-notes`, `list-native-tags`, `list-recent-notes`, `list-folder-tree`, `get-note-link`, the checklist annotations in `get-note-markdown`, `list-attachments` with `includePaths` or `firstImage`, `export-attachments`, `list-paper-attachments`, `export-paper-image`, and the database half of `get-sync-status`.
 
 > 📘 **For the full why-and-how walkthrough (which app to grant, verifying with `doctor`, graceful degradation), see the [Full Disk Access Setup Guide](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/FULL-DISK-ACCESS.md).** The summary below is the quick version.
 
@@ -3197,6 +3302,8 @@ Several tools read directly from the Apple Notes SQLite database, which lives in
 
 Every tool that does not read the Notes database works normally without Full Disk Access — that is the whole AppleScript surface (create, read, search, update, move, delete, folders, accounts, attachments, stats, export). The database-backed tools degrade like this:
 - `get-checklist-state` returns an error explaining that database access is needed
+- `query-notes` returns the same kind of error; use `search-notes` instead
+- `delete-folder-by-id` refuses to delete anything (it fails closed)
 - `get-note-metadata` returns the same kind of error — it has no non-database path
 - `list-special-notes` and the `list-native-tags` inventory return the same kind of error
 - `list-recent-notes` and `list-folder-tree` return the same kind of error
@@ -3224,7 +3331,7 @@ The helper never opens the Notes database and never writes under the Notes group
 
 ## Security and Privacy
 
-- **Local only** - All operations happen locally via AppleScript. No data is sent to external servers.
+- **Local only** - All operations happen locally, through AppleScript, the packaged Shortcuts, read-only reads of the Notes database, and helpers you build on your own Mac. The server makes no network requests, and `transcribe-note-audio` uses on-device speech recognition only. Whatever your MCP client does with the results is governed by that client.
 - **Permission required** - macOS will prompt for automation permission on first use.
 - **Password-protected notes** - Notes with passwords cannot be read or modified via this server.
 - **No credential storage** - The server doesn't store any passwords or authentication tokens.
@@ -3237,15 +3344,15 @@ The helper never opens the Notes database and never writes under the Notes group
 |------------|--------|
 | macOS only | Apple Notes and AppleScript are macOS-specific |
 | Batch ops run per-note | `batch-delete-notes` / `batch-move-notes` apply each note individually rather than as one bulk operation — AppleScript has no bulk equivalent to IMAP's `UID STORE`/`MOVE`. This is deliberate: it preserves per-note success/failure reporting. ([#26](https://github.com/sweetrb/apple-notes-mcp/issues/26)) |
-| Pinned notes are read-only | AppleScript exposes no `pinned` property. Pin state is readable via the BETA `get-note-metadata` tool (NoteStore database, needs Full Disk Access) but cannot be set ([#28](https://github.com/sweetrb/apple-notes-mcp/issues/28)) |
+| Pinning needs a Shortcut | AppleScript exposes no `pinned` property. Pin state is readable via the BETA `get-note-metadata` tool (NoteStore database, needs Full Disk Access), and [`set-note-pinned`](#set-note-pinned) sets it through the Background Operations Shortcut rather than AppleScript ([#28](https://github.com/sweetrb/apple-notes-mcp/issues/28)) |
 | Limited rich formatting | Use `format: "html"` on create/update for headings, lists, bold, code blocks; some complex formatting may not render |
-| Title matching | Most operations require exact title matches |
+| Exact IDs for writes | Writes take an exact note ID and a fresh `contentHash`, because Notes titles are not unique. Read tools that accept a `title` need an exact, case-sensitive match |
 | Checklist state | Requires [Full Disk Access](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/FULL-DISK-ACCESS.md) to read done/undone state from the database |
-| Checklist **creation** | Not supported. AppleScript's `body of note` setter strips `<input type="checkbox">` and ignores any checklist-styling CSS class. Apple Notes stores checklist items as a protobuf paragraph style (`style_type=103`) that AppleScript doesn't expose, and the SQLite database is read-only. See [Creating Checklists](#creating-checklists) below for the workaround. |
+| Checklist **creation** | Not possible through AppleScript: its `body of note` setter strips `<input type="checkbox">` and ignores any checklist-styling CSS class, because Notes stores checklist items as a protobuf paragraph style (`style_type=103`). The server creates real checklist items through Shortcuts instead; see [Creating Checklists](#creating-checklists). Checking or unchecking an existing item is not supported. |
 
 ### Creating Checklists
 
-**There is no programmatic way to create a true Apple Notes checklist via AppleScript** — and therefore no way via this MCP server. This is an Apple limitation, not a bug.
+**There is no programmatic way to create a true Apple Notes checklist via AppleScript.** This is an Apple limitation, not a bug. Plaintext and HTML writes therefore cannot produce checklists, so this server creates them through Apple Shortcuts instead (workaround 2 below).
 
 When a note is created or updated via AppleScript:
 
@@ -3260,7 +3367,7 @@ Apple Notes stores checklists as a paragraph style (`style_type=103`) inside a g
 **Workarounds:**
 
 1. **Create the note with bulleted list items, then convert manually in Notes.app.** Select the items and press <kbd>⇧⌘L</kbd> (or **Format → Checklist**). This converts the list in place and the resulting checklist will be readable by `get-checklist-state` and annotated by `get-note-markdown`.
-2. **Use the Apple Shortcuts app** to script the checklist creation, since Shortcuts can manipulate Notes content at a higher level than AppleScript. This server does that for you in two ways: [`create-checklist-item`](#create-checklist-item) appends one unchecked item to an existing note, and [`create-note`](#create-note) with `format: "markdown"` turns `- [ ]` / `- [x]` lines into checklist items with that done state through Notes' own Markdown importer, (see [Markdown notes](#markdown-notes)).
+2. **Use the Apple Shortcuts app** to script the checklist creation, since Shortcuts can manipulate Notes content at a higher level than AppleScript. This server does that for you in two ways: [`create-checklist-item`](#create-checklist-item) and [`create-checklist-items`](#create-checklist-items) append unchecked items to an existing note, and [`create-note`](#create-note) with `format: "markdown"` turns `- [ ]` / `- [x]` lines into checklist items with that done state through Notes' own Markdown importer (see [Markdown notes](#markdown-notes)).
 3. **Read-only checklist support is fully implemented** — once a checklist exists (created manually or by another app), `get-checklist-state` and `get-note-markdown` will read its done/undone state correctly (with Full Disk Access).
 
 If you need to *track* todos programmatically and don't strictly need them rendered as Apple Notes checklist UI, plain markdown-style `- [ ] item` / `- [x] item` lines in a `plaintext` note are a reasonable alternative — they are searchable, human-readable, and can be parsed by downstream tooling.
@@ -3391,6 +3498,12 @@ A software consulting, contracting, and development company.
 
 - Email: rob@superiortech.io
 - GitHub: [@sweetrb](https://github.com/sweetrb)
+
+### Contributors
+
+- **Oliver Ames** ([@oliverames](https://github.com/oliverames)) — the project's most prolific
+  contributor, with dozens of merged pull requests spanning features, fixes, documentation, and
+  sharp, well-reproduced bug reports.
 
 ## License
 

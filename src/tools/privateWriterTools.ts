@@ -123,7 +123,13 @@ export function writerErrorResult(error: unknown) {
   const message = `native writer (${error.code}): ${error.message}`;
   const envelope: ErrorEnvelope = {
     ...error.details,
-    code: writerEnvelopeCode(error.code, error.message),
+    // The read-only helper's mapping calls a timeout operation_failed, since
+    // its actions only read. A writer timeout during a write can leave a save
+    // behind, so it stays timeout_indeterminate.
+    code:
+      error.code === "timeout" && committed === "unknown"
+        ? "timeout_indeterminate"
+        : writerEnvelopeCode(error.code, error.message),
     helperCode: error.code,
   };
   if (committed === "unknown") {
