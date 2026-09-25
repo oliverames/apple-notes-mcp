@@ -1,5 +1,24 @@
 # Worklog
 
+## 2026-09-25 - Integration pushed; Mac handoff (cloud session) - START HERE
+
+**What changed**:
+- `origin/feat/gap-parity` (`da9dff0`, 2.9.29) was rebuilt in the cloud from pushed branches. It contains `upstream/main` `7bcb131` (2.9.28), `feat/writer-suite`, every `wgap/*` branch (through `wgap/file-read-policy` and `wgap/edit-file-policy`), `gap/upstream-bundle` (all four `gap/*` branches) and #250's `feat/native-writes-upstream`.
+- Conflicts were resolved by keeping both sides. In three places upstream #258 was folded into refactored code: `exportAssets.ts` `write()` keeps the directory-failure handling, the HTML export receipt keeps both truncation and vector drawings, and the query-notes text keeps both.
+- The CHANGELOG has one consolidated 2.9.29 section. Everything from 2.9.28 down is byte-identical to upstream's file. There are no NotesCTL or reference-tool mentions.
+- macOS CI passed on `feat/gap-parity` (fork run 36078775859), fork PR #4 and fork PR #5. Fork PR #3 is green.
+- Fork PRs: #3, #4 and #5 are out of draft. #2 was closed as superseded by #3.
+- Upstream post drafts (combined PR body, #250 close, #248, #220, #181) are in a comment on fork PR #3.
+
+**Not in the cloud build**: the Mac-only commits in the old `feat/gap-parity` worktree (`.claude/worktrees/agent-ae5d5490ebc2da511`): #84 heal wiring `32933d0`, harness fixes `d714f5d`, and release `60b4ace` (2.9.28, which now collides with upstream). The #40 permission broker was never built.
+
+**Left off at** (all on the Mac):
+- [ ] Reconcile the local worktree with `origin/feat/gap-parity`. Take the origin branch as the base, cherry-pick `32933d0` and `d714f5d` (resolve against the new code), and drop `60b4ace`. Do not force-push over origin.
+- [ ] Run the serial live tests in `apple-notes-mcp test` for the features never run live (listed in the draft PR body). Update the PR's Testing section to match.
+- [ ] Open the combined upstream PR, not as a draft. Close #250 pointing at it, post on #248 (after the rerun), #220 and #181, and check every upstream thread.
+- [ ] #248 rerun: see the 2026-09-25 entry below.
+- [ ] Sync fork `main` with upstream (Oliver, 2026-09-25): merge `upstream/main`, keep the fork-only publish guard, merge PR #3 first. Note that `main` currently tracks `origin/main` (2026-07-24 entry).
+
 ## 2026-09-24 (evening) - Upstream review from a cloud session
 
 **What changed**: Nothing in code. Read-only review of upstream state from a Linux cloud session, which cannot run live Notes tests.
