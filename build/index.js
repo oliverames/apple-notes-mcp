@@ -417,11 +417,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants11) {
+      optimizeNames(names, constants10) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants11);
+          this.rhs = optimizeExpr(this.rhs, names, constants10);
         return this;
       }
       get names() {
@@ -438,10 +438,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants11) {
+      optimizeNames(names, constants10) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants11);
+        this.rhs = optimizeExpr(this.rhs, names, constants10);
         return this;
       }
       get names() {
@@ -502,8 +502,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants11) {
-        this.code = optimizeExpr(this.code, names, constants11);
+      optimizeNames(names, constants10) {
+        this.code = optimizeExpr(this.code, names, constants10);
         return this;
       }
       get names() {
@@ -532,12 +532,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants11) {
+      optimizeNames(names, constants10) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants11))
+          if (n.optimizeNames(names, constants10))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -590,12 +590,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants11) {
+      optimizeNames(names, constants10) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants11);
-        if (!(super.optimizeNames(names, constants11) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
+        if (!(super.optimizeNames(names, constants10) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants11);
+        this.condition = optimizeExpr(this.condition, names, constants10);
         return this;
       }
       get names() {
@@ -618,10 +618,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants11) {
-        if (!super.optimizeNames(names, constants11))
+      optimizeNames(names, constants10) {
+        if (!super.optimizeNames(names, constants10))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants11);
+        this.iteration = optimizeExpr(this.iteration, names, constants10);
         return this;
       }
       get names() {
@@ -657,10 +657,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants11) {
-        if (!super.optimizeNames(names, constants11))
+      optimizeNames(names, constants10) {
+        if (!super.optimizeNames(names, constants10))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants11);
+        this.iterable = optimizeExpr(this.iterable, names, constants10);
         return this;
       }
       get names() {
@@ -702,11 +702,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants11) {
+      optimizeNames(names, constants10) {
         var _a, _b;
-        super.optimizeNames(names, constants11);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants11);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants11);
+        super.optimizeNames(names, constants10);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants10);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants10);
         return this;
       }
       get names() {
@@ -1007,7 +1007,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants11) {
+    function optimizeExpr(expr, names, constants10) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1022,14 +1022,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants11[n.str];
+        const c = constants10[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants11[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants10[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -7422,7 +7422,7 @@ var require_DOMException = __commonJS({
       "INVALID_NODE_TYPE_ERR (24): the supplied node is invalid or has an invalid ancestor for this operation",
       "DATA_CLONE_ERR (25): the object can not be cloned."
     ];
-    var constants11 = {
+    var constants10 = {
       INDEX_SIZE_ERR,
       DOMSTRING_SIZE_ERR: 2,
       // historical
@@ -7461,8 +7461,8 @@ var require_DOMException = __commonJS({
       this.name = names[code];
     }
     DOMException.prototype.__proto__ = Error.prototype;
-    for (c in constants11) {
-      v = { value: constants11[c] };
+    for (c in constants10) {
+      v = { value: constants10[c] };
       Object.defineProperty(DOMException, c, v);
       Object.defineProperty(DOMException.prototype, c, v);
     }
@@ -30351,7 +30351,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     return (payload, ctx) => fn(shape, payload, ctx);
   };
   let fastpass;
-  const isObject4 = isObject;
+  const isObject5 = isObject;
   const jit = !globalConfig.jitless;
   const allowsEval2 = allowsEval;
   const fastEnabled = jit && allowsEval2.value;
@@ -30360,7 +30360,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
     const input = payload.value;
-    if (!isObject4(input)) {
+    if (!isObject5(input)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
@@ -39088,6 +39088,10 @@ function isPermissionDenied(error2) {
   if (!error2) return false;
   return PERMISSION_DENIED_PATTERN.test(error2) || error2.includes(PERMISSION_DENIED_MESSAGE);
 }
+var QUOTED = /"[^"\n]*"|“[^”\n]*”/g;
+function stripQuoted(text2) {
+  return text2.replace(QUOTED, '""');
+}
 var ERROR_MAPPINGS = [
   // Permission errors
   {
@@ -39158,12 +39162,13 @@ function parseErrorMessage(errorOutput) {
   if (executionError) {
     coreError = executionError[1].trim();
   }
-  if (isPermissionDenied(errorOutput)) {
+  if (isPermissionDenied(stripQuoted(errorOutput))) {
     return PERMISSION_DENIED_MESSAGE;
   }
+  const unquoted = stripQuoted(coreError);
   for (const { pattern: pattern2, message } of ERROR_MAPPINGS) {
     const match = coreError.match(pattern2);
-    if (match) {
+    if (match && (match.length > 1 || pattern2.test(unquoted))) {
       let result = message;
       for (let i = 1; i < match.length; i++) {
         result = result.replace(`$${i}`, match[i] || "");
@@ -39179,7 +39184,10 @@ function parseErrorMessage(errorOutput) {
 }
 function executeAppleScript(script, options = {}) {
   const timeoutMs = options.timeoutMs ?? callTimeoutMs() ?? envPositiveNumber("APPLE_NOTES_MCP_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS;
-  const maxRetries = options.maxRetries ?? envPositiveNumber("APPLE_NOTES_MCP_MAX_RETRIES") ?? DEFAULT_MAX_RETRIES;
+  const maxRetries = Math.max(
+    1,
+    options.maxRetries ?? envPositiveNumber("APPLE_NOTES_MCP_MAX_RETRIES") ?? DEFAULT_MAX_RETRIES
+  );
   const retryDelayMs = options.retryDelayMs ?? envPositiveNumber("APPLE_NOTES_MCP_RETRY_DELAY_MS") ?? DEFAULT_RETRY_DELAY_MS;
   const maxBufferBytes = Math.min(options.maxBufferBytes ?? getMaxBuffer(), MAX_OUTPUT_BYTES);
   if (!script || !script.trim()) {
@@ -39353,7 +39361,7 @@ function bytesValue(field) {
 function stringValue(field) {
   const bytes = bytesValue(field);
   if (!bytes) return void 0;
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 }
 function embeddedMessage(field) {
   const bytes = bytesValue(field);
@@ -39588,6 +39596,256 @@ function getChecklistItems(noteId3) {
   return { items };
 }
 
+// src/utils/noteIdentifiers.ts
+import { execFileSync as execFileSync3 } from "child_process";
+import * as fs2 from "fs";
+import * as os2 from "os";
+import * as path2 from "path";
+var NOTES_DB_PATH2 = path2.join(
+  os2.homedir(),
+  "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
+);
+var UUID_PATTERN = /^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$/;
+var NUMERIC_KEY_PATTERN = /^\d{1,18}$/;
+var NOTE_ID_MESSAGE = "A canonical Apple Note ID is required (x-coredata://.../ICNote/p...), or the note's Notes UUID or numeric key";
+function identifierForm(value) {
+  if (UUID_PATTERN.test(value)) return "uuid";
+  if (NUMERIC_KEY_PATTERN.test(value)) return "key";
+  return "other";
+}
+function isAlternateIdentifier(value) {
+  return identifierForm(value) !== "other";
+}
+var IdentifierResolutionError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "IdentifierResolutionError";
+  }
+  code;
+};
+var ENTITY_LABEL = {
+  ICNote: "note",
+  ICFolder: "folder",
+  ICAccount: "account"
+};
+var NO_FDA_MESSAGE = `Resolving a Notes UUID or numeric key reads the Notes database, which needs Full Disk Access for the Node binary running this server, or the terminal that launches it (System Settings > Privacy & Security > Full Disk Access, then fully quit and relaunch it). x-coredata ids from search-notes, list-notes, or list-folders work without it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`;
+function identifierFailureIn(message) {
+  if (message.includes(NO_FDA_MESSAGE)) return "no_fda";
+  if (/\bNo (?:note|folder|account) found for (?:numeric key|identifier) /.test(message))
+    return "not_found";
+  if (message.includes("Failed to read the Notes database.") || message.includes("The Notes database has no store UUID"))
+    return "query_error";
+  return null;
+}
+function canonicalKey(value) {
+  return BigInt(value).toString();
+}
+function canonicalCoreDataId(id2) {
+  const match = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/(IC[A-Za-z]+)\/p(\d+)$/.exec(id2);
+  return match ? `x-coredata://${match[1].toUpperCase()}/${match[2]}/p${canonicalKey(match[3])}` : id2;
+}
+function assertAll(values, pattern2, label) {
+  for (const value of values) {
+    if (!pattern2.test(value)) throw new Error(`Refusing to query with an invalid ${label}`);
+  }
+}
+function entityClause(entity3) {
+  return `(SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = '${entity3}')`;
+}
+function buildResolveSql(entity3, keys, uuids) {
+  assertAll(keys, NUMERIC_KEY_PATTERN, "numeric key");
+  assertAll(uuids, UUID_PATTERN, "UUID");
+  const matches = [];
+  if (keys.length > 0) {
+    matches.push(`o.Z_PK IN (${[...new Set(keys.map(canonicalKey))].join(", ")})`);
+  }
+  if (uuids.length > 0) {
+    const variants = /* @__PURE__ */ new Set();
+    for (const uuid3 of uuids) {
+      variants.add(uuid3);
+      variants.add(uuid3.toUpperCase());
+      variants.add(uuid3.toLowerCase());
+    }
+    matches.push(`o.ZIDENTIFIER IN (${[...variants].map((v) => `'${v}'`).join(", ")})`);
+  }
+  const where = matches.length > 0 ? matches.join(" OR ") : "0";
+  return `SELECT json_object('store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'rows', (SELECT json_group_array(json_object('pk', o.Z_PK, 'identifier', o.ZIDENTIFIER)) FROM ZICCLOUDSYNCINGOBJECT o WHERE o.Z_ENT = ${entityClause(entity3)} AND (${where})));`;
+}
+function buildLookupSql(entity3, keys) {
+  assertAll(keys, NUMERIC_KEY_PATTERN, "numeric key");
+  const pks = [...new Set(keys.map(canonicalKey))];
+  const inList = pks.length > 0 ? pks.join(", ") : "NULL";
+  let fields = "'pk', o.Z_PK, 'identifier', o.ZIDENTIFIER";
+  let joins = "";
+  if (entity3 === "ICNote") {
+    fields += ", 'folderIdentifier', f.ZIDENTIFIER, 'accountIdentifier', a.ZIDENTIFIER";
+    joins = "LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = o.ZFOLDER LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = f.ZOWNER ";
+  } else if (entity3 === "ICFolder") {
+    fields += ", 'parentIdentifier', p.ZIDENTIFIER, 'accountIdentifier', a.ZIDENTIFIER";
+    joins = "LEFT JOIN ZICCLOUDSYNCINGOBJECT p ON p.Z_PK = o.ZPARENT LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = o.ZOWNER ";
+  }
+  return `SELECT json_object('store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'rows', (SELECT json_group_array(json_object(${fields})) FROM ZICCLOUDSYNCINGOBJECT o ${joins}WHERE o.Z_ENT = ${entityClause(entity3)} AND o.Z_PK IN (${inList})));`;
+}
+function runJsonQuery(sql, dbPath2) {
+  if (!fs2.existsSync(dbPath2)) throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
+  let out;
+  try {
+    out = execFileSync3("sqlite3", ["-readonly", dbPath2, sql], {
+      encoding: "utf8",
+      timeout: 5e3,
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+  } catch (error2) {
+    const detail = error2 instanceof Error ? `${error2.message} ${String(error2.stderr ?? "")}` : String(error2);
+    if (detail.includes("authorization denied") || detail.includes("unable to open database")) {
+      throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
+    }
+    console.error(`Identifier query failed: ${detail}`);
+    throw new IdentifierResolutionError("query_error", "Failed to read the Notes database.");
+  }
+  const parsed = JSON.parse(out || "{}");
+  const rows = typeof parsed.rows === "string" ? JSON.parse(parsed.rows) : parsed.rows;
+  return { store: parsed.store ?? null, rows: rows ?? [] };
+}
+function coreDataId(store, entity3, pk) {
+  return `x-coredata://${store}/${entity3}/p${pk}`;
+}
+function resolveIdentifiers(values, entity3, dbPath2 = NOTES_DB_PATH2) {
+  const resolved = /* @__PURE__ */ new Map();
+  const keys = [];
+  const uuids = [];
+  for (const value of values) {
+    const form = identifierForm(value);
+    if (form === "key") keys.push(value);
+    else if (form === "uuid") uuids.push(value);
+    else resolved.set(value, value);
+  }
+  if (keys.length === 0 && uuids.length === 0) return resolved;
+  const { store, rows } = runJsonQuery(
+    buildResolveSql(entity3, keys, uuids),
+    dbPath2
+  );
+  if (!store) {
+    throw new IdentifierResolutionError(
+      "query_error",
+      "The Notes database has no store UUID, so an x-coredata id cannot be built."
+    );
+  }
+  const byKey = new Map(rows.map((row) => [String(row.pk), row]));
+  const byUuid = new Map(
+    rows.filter((row) => row.identifier).map((row) => [String(row.identifier).toUpperCase(), row])
+  );
+  const label = ENTITY_LABEL[entity3];
+  const missing = [];
+  for (const key of keys) {
+    const row = byKey.get(canonicalKey(key));
+    if (row) resolved.set(key, coreDataId(store, entity3, row.pk));
+    else missing.push(`numeric key ${key}`);
+  }
+  for (const uuid3 of uuids) {
+    const row = byUuid.get(uuid3.toUpperCase());
+    if (row) resolved.set(uuid3, coreDataId(store, entity3, row.pk));
+    else missing.push(`identifier ${uuid3}`);
+  }
+  if (missing.length > 0) {
+    throw new IdentifierResolutionError(
+      "not_found",
+      `No ${label} found for ${missing.join(", ")}. A numeric key must belong to a ${label}, not another object type.`
+    );
+  }
+  return resolved;
+}
+var COREDATA_PARTS = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/(ICNote|ICFolder|ICAccount)\/p(\d{1,18})$/;
+function lookupStableIdentifiers(ids, entity3, dbPath2 = NOTES_DB_PATH2) {
+  const result = /* @__PURE__ */ new Map();
+  const wanted = /* @__PURE__ */ new Map();
+  for (const id2 of ids) {
+    const match = COREDATA_PARTS.exec(id2);
+    if (!match || match[2] !== entity3) continue;
+    const pk = canonicalKey(match[3]);
+    const list = wanted.get(pk) ?? [];
+    list.push({ id: id2, store: match[1] });
+    wanted.set(pk, list);
+  }
+  if (wanted.size === 0) return result;
+  let query3;
+  try {
+    query3 = runJsonQuery(buildLookupSql(entity3, [...wanted.keys()]), dbPath2);
+  } catch {
+    return result;
+  }
+  const store = query3.store?.toUpperCase();
+  for (const row of query3.rows) {
+    const fields = {};
+    for (const key of [
+      "identifier",
+      "folderIdentifier",
+      "parentIdentifier",
+      "accountIdentifier"
+    ]) {
+      const value = row[key];
+      if (typeof value === "string" && value) fields[key] = value;
+    }
+    for (const target of wanted.get(String(row.pk)) ?? []) {
+      if (target.store.toUpperCase() === store) result.set(target.id, fields);
+    }
+  }
+  return result;
+}
+function withStableIdentifiers(items, entity3, dbPath2 = NOTES_DB_PATH2) {
+  const ids = items.map((item) => item.id).filter((id2) => typeof id2 === "string");
+  if (ids.length === 0) return items;
+  const found = lookupStableIdentifiers(ids, entity3, dbPath2);
+  if (found.size === 0) return items;
+  return items.map(
+    (item) => item.id && found.has(item.id) ? { ...item, ...found.get(item.id) } : item
+  );
+}
+var defaultResolver = (values, entity3) => resolveIdentifiers(values, entity3);
+var DEFAULT_MAX_ID_LENGTH = 2e3;
+function acceptAlternateForms(pattern2) {
+  return new RegExp(
+    `${pattern2.source}|${UUID_PATTERN.source}|${NUMERIC_KEY_PATTERN.source}`,
+    pattern2.flags
+  );
+}
+function resolveInSchema(values, entity3, ctx, resolver) {
+  if (!values.some(isAlternateIdentifier)) return new Map(values.map((v) => [v, v]));
+  try {
+    return resolver(values, entity3);
+  } catch (error2) {
+    ctx.addIssue({
+      code: external_exports.ZodIssueCode.custom,
+      message: error2 instanceof Error ? error2.message : String(error2)
+    });
+    return null;
+  }
+}
+function exactIdInput(entity3, pattern2, message, options = {}) {
+  const resolver = options.resolver ?? defaultResolver;
+  return external_exports.string().max(options.maxLength ?? DEFAULT_MAX_ID_LENGTH).regex(acceptAlternateForms(pattern2), message).transform((value, ctx) => {
+    const map = resolveInSchema([value], entity3, ctx, resolver);
+    return map ? map.get(value) ?? value : external_exports.NEVER;
+  });
+}
+function exactIdArrayInput(entity3, pattern2, message, options = {}) {
+  const resolver = options.resolver ?? defaultResolver;
+  const item = external_exports.string().max(options.maxLength ?? DEFAULT_MAX_ID_LENGTH).regex(acceptAlternateForms(pattern2), message);
+  const array2 = options.maxItems === void 0 ? external_exports.array(item) : external_exports.array(item).max(options.maxItems);
+  return array2.transform((values, ctx) => {
+    const map = resolveInSchema(values, entity3, ctx, resolver);
+    return map ? values.map((value) => map.get(value) ?? value) : external_exports.NEVER;
+  });
+}
+function looseIdTransform(entity3, resolver = defaultResolver) {
+  return (value, ctx) => {
+    if (!isAlternateIdentifier(value)) return value;
+    const map = resolveInSchema([value], entity3, ctx, resolver);
+    return map ? map.get(value) ?? value : external_exports.NEVER;
+  };
+}
+
 // src/utils/errorCodes.ts
 var CodedError = class extends Error {
   envelope;
@@ -39599,6 +39857,10 @@ var CodedError = class extends Error {
 };
 var RULES = [
   { code: "timeout_indeterminate", pattern: /timed out|\bETIMEDOUT\b/i },
+  // A scope guard is checked before the write runs, so nothing was written:
+  // the note is not where it was reviewed. Its advice to read the note before
+  // retrying must not make it look like an unverified write.
+  { code: "revision_conflict", pattern: /\bScope guard failed:/ },
   {
     code: "verification_failed",
     pattern: /\buncertain\b|may have (?:been|succeeded)|\baccepted (?:the|an) \w+, but|\bnot verified\b|Do not retry automatically|before any retry|read (?:the )?(?:exact )?(?:note|ID)\b[^.]*before retr/i
@@ -39627,15 +39889,17 @@ var RULES = [
   },
   {
     code: "validation_error",
-    pattern: /\bis required\b|required\b|\bInvalid\b|\bmust\b|\bProvide\b|No (?:note IDs|reviewed notes) provided|response limit|Refusing to write|cannot be resolved|at most \d|between \d+ and \d+|supports the (?:end|default)|Use a distinctive|Use create-table|too large|equal cell counts|Folder path is empty/i
+    pattern: /\bis required\b|required\b|\bInvalid\b|\bmust\b|\bProvide\b|No (?:note IDs|reviewed notes) provided|response limit|Refusing to (?:read|write)|cannot be resolved|at most \d|between \d+ and \d+|supports the (?:end|default)|Use a distinctive|Use create-table|too large|equal cell counts|Folder path is empty/i
   }
 ];
 var NOTHING_WRITTEN = /nothing (?:was )?(?:changed|created|written)|no replacement started|No content was (?:replaced|appended)|Nothing was created/i;
 var WRITE_ACCEPTED = /\baccepted (?:the|an) \w+, but/i;
 function classifyError(message, cause) {
   if (cause instanceof CodedError) return { ...cause.envelope };
-  const text2 = cause instanceof Error && cause.message && !message.includes(cause.message) ? `${message}
-${cause.message}` : message;
+  const text2 = stripQuoted(
+    cause instanceof Error && cause.message && !message.includes(cause.message) ? `${message}
+${cause.message}` : message
+  );
   const timeoutCause = typeof cause === "object" && cause !== null && cause.code === "ETIMEDOUT";
   let code = "operation_failed";
   if (timeoutCause) code = "timeout_indeterminate";
@@ -39657,6 +39921,24 @@ function errorResult(message, cause) {
     structuredContent: classifyError(message, cause),
     isError: true
   };
+}
+function unavailableWriteEnvelope(envelope) {
+  if (envelope.code !== "notes_unavailable" || envelope.indeterminate !== void 0 || envelope.committed !== void 0)
+    return envelope;
+  return { ...envelope, indeterminate: true };
+}
+var INPUT_VALIDATION = /^(?:MCP error -?\d+: )?Input validation error:/;
+function inputValidationEnvelope(message) {
+  const failure2 = identifierFailureIn(message);
+  const code = failure2 === "no_fda" ? "full_disk_access_missing" : failure2 === "not_found" ? "not_found" : failure2 === "query_error" ? "operation_failed" : "validation_error";
+  return { code, committed: false, indeterminate: false };
+}
+function sdkToolError(message) {
+  return INPUT_VALIDATION.test(message) ? errorResult(message, new CodedError(message, inputValidationEnvelope(message))) : errorResult(message);
+}
+function installSdkErrorCodes(server2) {
+  const target = server2;
+  if (typeof target.createToolError === "function") target.createToolError = sdkToolError;
 }
 
 // src/utils/inlineImages.ts
@@ -39700,10 +39982,10 @@ function strippedImagesWarning(stripped) {
 }
 
 // src/utils/noteRichText.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
+import { execFileSync as execFileSync4 } from "node:child_process";
 import { createHash } from "node:crypto";
-import { homedir as homedir2 } from "node:os";
-import { join as join2 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { join as join3 } from "node:path";
 import { gunzipSync as gunzipSync2 } from "node:zlib";
 
 // src/utils/uniqueById.ts
@@ -39727,7 +40009,7 @@ var HTML_LOSSY_ORDER = [
   "alignment",
   "highlight"
 ];
-var dbPath = join2(homedir2(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+var dbPath = join3(homedir3(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
 var safeUrl = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
 var escapeAttribute = (text2) => text2.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 var normalized = (text2) => text2.replace(/[\s\ufffc]/gu, "");
@@ -39760,7 +40042,7 @@ function styleValue(field) {
   }
   return Buffer.from(field.value).toString("hex");
 }
-function parseRichNote(data, nativeTags = []) {
+function parseRichNote(data, nativeTags = [], options = {}) {
   const doc = decodeMessage(data);
   const wrapper = embeddedMessage(getField(doc, 2));
   const body = wrapper && embeddedMessage(getField(wrapper, 3));
@@ -39800,7 +40082,7 @@ function parseRichNote(data, nativeTags = []) {
       if (varintValue(getField(fields, 14))) lossy.add("highlight");
     }
     const url = stringValue(getField(fields, 9));
-    if (url) {
+    if (url && !(options.skipUnsafeLinks && !safeUrl(url))) {
       if (!safeUrl(url)) throw new Error("Unsupported link scheme in note");
       const previous = links.at(-1);
       if (previous?.url === url && previous.start + previous.length === position) {
@@ -39855,11 +40137,11 @@ function parseRichNote(data, nativeTags = []) {
     ...lossy.size ? { htmlLossyFormatting: HTML_LOSSY_ORDER.filter((f) => lossy.has(f)) } : {}
   };
 }
-function readRichNote(id2) {
+function readRichNote(id2, options = {}) {
   const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]+)$/i.exec(id2)?.[1];
   if (!pk) throw new Error("Invalid exact note ID");
   const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
-  const rows = execFileSync3("/usr/bin/sqlite3", ["-readonly", dbPath, sql], {
+  const rows = execFileSync4("/usr/bin/sqlite3", ["-readonly", dbPath, sql], {
     encoding: "utf8",
     timeout: 5e3,
     maxBuffer: 64 * 1024 * 1024,
@@ -39870,7 +40152,9 @@ function readRichNote(id2) {
   if (!tags || Array.isArray(tags) || typeof tags !== "object" || Object.values(tags).some((tag) => typeof tag !== "string"))
     throw new Error("Invalid native tags");
   const rich = parseRichNote(
-    gunzipSync2(Buffer.from(rows[0], "hex"), { maxOutputLength: 32 * 1024 * 1024 })
+    gunzipSync2(Buffer.from(rows[0], "hex"), { maxOutputLength: 32 * 1024 * 1024 }),
+    [],
+    options
   );
   const tagMap = tags;
   const objectData = JSON.parse(rows[2] || "[]");
@@ -40055,12 +40339,12 @@ function assertLinkedWrite(rich, content, format, allowLinkChanges = false) {
 }
 
 // src/utils/audioTranscripts.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
-import { homedir as homedir3 } from "node:os";
-import { join as join3 } from "node:path";
+import { execFileSync as execFileSync5 } from "node:child_process";
+import { homedir as homedir4 } from "node:os";
+import { join as join4 } from "node:path";
 import { gunzipSync as gunzipSync3 } from "node:zlib";
-var NOTES_DB_PATH2 = join3(
-  homedir3(),
+var NOTES_DB_PATH3 = join4(
+  homedir4(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var DEFAULT_MAX_SEGMENTS = 2e3;
@@ -40228,10 +40512,11 @@ function buildTranscriptSql(pk, available) {
   if (!/^\d+$/.test(pk)) throw new Error("Invalid primary key");
   const optional2 = (column, key, alias = "a") => available.has(column) ? `, '${key}', ${alias}.${column}` : "";
   const locked = available.has("ZISPASSWORDPROTECTED") ? "COALESCE(n.ZISPASSWORDPROTECTED, 0)" : "0";
+  const isNote = `n.Z_PK = ${pk} AND n.Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICNote')`;
   return [
     "BEGIN;",
     // Every statement yields exactly one row, so output lines stay positional.
-    `SELECT json_object('found', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = ${pk}), 'locked', (SELECT ${locked} FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = ${pk}));`,
+    `SELECT json_object('found', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT n WHERE ${isNote}), 'locked', (SELECT ${locked} FROM ZICCLOUDSYNCINGOBJECT n WHERE ${isNote}));`,
     `SELECT COALESCE((SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE = ${pk} LIMIT 1), '');`,
     "SELECT json_group_array(json_object('pk', a.Z_PK, 'identifier', a.ZIDENTIFIER, 'uti', a.ZTYPEUTI, 'data', hex(a.ZMERGEABLEDATA1)" + optional2("ZDURATION", "duration") + optional2("ZNEEDSTRANSCRIPTION", "needsTranscription") + ", 'fragments', json((SELECT json_group_array(json_object('identifier', c.ZIDENTIFIER" + optional2("ZDURATION", "duration", "c") + `)) FROM ZICCLOUDSYNCINGOBJECT c WHERE c.ZPARENTATTACHMENT = a.Z_PK)))) FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = ${pk} AND a.ZPARENTATTACHMENT IS NULL AND ${AUDIO_UTI_SQL};`,
     "COMMIT;"
@@ -40245,7 +40530,7 @@ var REQUIRED_COLUMNS = [
   "ZIDENTIFIER"
 ];
 function runSqlite(dbPath2, sql) {
-  return execFileSync4("sqlite3", ["-readonly", dbPath2, sql], {
+  return execFileSync5("sqlite3", ["-readonly", dbPath2, sql], {
     encoding: "utf8",
     timeout: 1e4,
     maxBuffer: 256 * 1024 * 1024,
@@ -40266,7 +40551,7 @@ function bodyAttachmentOrder(gzipped) {
 }
 function readAudioTranscripts(noteId3, options = {}) {
   const { store, pk } = parseNoteId(noteId3);
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH2;
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH3;
   const maxSegments = Math.min(
     Math.max(1, Math.floor(options.maxSegments ?? DEFAULT_MAX_SEGMENTS)),
     MAX_SEGMENTS_LIMIT
@@ -40598,12 +40883,12 @@ function collectNoteTables(rich, noteId3) {
 }
 
 // src/utils/smartFolders.ts
-import { execFileSync as execFileSync5 } from "child_process";
-import * as fs2 from "fs";
-import * as os2 from "os";
-import * as path2 from "path";
-var NOTES_DB_PATH3 = path2.join(
-  os2.homedir(),
+import { execFileSync as execFileSync6 } from "child_process";
+import * as fs3 from "fs";
+import * as os3 from "os";
+import * as path3 from "path";
+var NOTES_DB_PATH4 = path3.join(
+  os3.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var FDA_MESSAGE = `Full Disk Access is required to read smart folders. In System Settings > Privacy & Security > Full Disk Access, grant access to the Node binary running this server (required under Claude Desktop) or the terminal that launches it, then fully quit and relaunch it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL} \u2014 run the doctor tool to verify.`;
@@ -40948,15 +41233,15 @@ function buildSmartFolders(output) {
   );
 }
 function runSqlite2(dbPath2, sql) {
-  return execFileSync5("sqlite3", ["-readonly", dbPath2, sql], {
+  return execFileSync6("sqlite3", ["-readonly", dbPath2, sql], {
     encoding: "utf8",
     timeout: 5e3,
     maxBuffer: 16 * 1024 * 1024,
     stdio: ["pipe", "pipe", "pipe"]
   });
 }
-function readSmartFolders(dbPath2 = NOTES_DB_PATH3) {
-  if (!fs2.existsSync(dbPath2)) return { folders: null, error: "no_fda", message: FDA_MESSAGE };
+function readSmartFolders(dbPath2 = NOTES_DB_PATH4) {
+  if (!fs3.existsSync(dbPath2)) return { folders: null, error: "no_fda", message: FDA_MESSAGE };
   try {
     const columns2 = new Set(
       runSqlite2(dbPath2, "SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');").trim().split("\n")
@@ -40981,30 +41266,30 @@ function readSmartFolders(dbPath2 = NOTES_DB_PATH3) {
 }
 
 // src/utils/trashFolders.ts
-import { execFileSync as execFileSync6 } from "child_process";
-import * as fs3 from "fs";
-import * as os3 from "os";
-import * as path3 from "path";
-var NOTES_DB_PATH4 = path3.join(
-  os3.homedir(),
+import { execFileSync as execFileSync7 } from "child_process";
+import * as fs4 from "fs";
+import * as os4 from "os";
+import * as path4 from "path";
+var NOTES_DB_PATH5 = path4.join(
+  os4.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var RECENTLY_DELETED_FOLDER_NAME = "Recently Deleted";
 var CACHE_TTL_MS = 5 * 60 * 1e3;
 var cache = null;
 function query(dbPath2, sql) {
-  return execFileSync6("sqlite3", ["-readonly", dbPath2, sql], {
+  return execFileSync7("sqlite3", ["-readonly", dbPath2, sql], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
   });
 }
-function readTrashFolderIds(dbPath2 = NOTES_DB_PATH4) {
+function readTrashFolderIds(dbPath2 = NOTES_DB_PATH5) {
   if (cache && cache.dbPath === dbPath2 && Date.now() - cache.at < CACHE_TTL_MS) {
     return cache.ids;
   }
   try {
-    if (!fs3.existsSync(dbPath2)) return [];
+    if (!fs4.existsSync(dbPath2)) return [];
     const columns2 = new Set(
       query(dbPath2, "SELECT name FROM pragma_table_info('ZICCLOUDSYNCINGOBJECT');").split("\n").map((line) => line.trim()).filter(Boolean)
     );
@@ -41028,7 +41313,7 @@ function readTrashFolderIds(dbPath2 = NOTES_DB_PATH4) {
 import {
   closeSync,
   constants,
-  existsSync as existsSync4,
+  existsSync as existsSync5,
   fstatSync,
   lstatSync,
   mkdirSync,
@@ -41039,11 +41324,11 @@ import {
   rmSync,
   statSync
 } from "fs";
-import { dirname, isAbsolute, join as join6, relative, resolve, sep } from "path";
-import { homedir as homedir6, tmpdir } from "os";
+import { dirname, isAbsolute, join as join7, relative, resolve, sep } from "path";
+import { homedir as homedir7, tmpdir } from "os";
 function allowedSaveRoots() {
   return [
-    resolve(homedir6()),
+    resolve(homedir7()),
     resolve(tmpdir()),
     "/Volumes",
     "/private/var/folders",
@@ -41052,7 +41337,7 @@ function allowedSaveRoots() {
   ];
 }
 function deniedSaveRoots() {
-  return [join6(homedir6(), "Library/Group Containers/group.com.apple.notes")];
+  return [join7(homedir7(), "Library/Group Containers/group.com.apple.notes")];
 }
 function canonicalize(path10) {
   return realpathSync.native(path10);
@@ -41120,7 +41405,7 @@ function assertSafeSavePath(p, roots = allowedSaveRoots(), denied = deniedSaveRo
   if (suffix.split(sep).includes("..")) {
     throw new Error(`Refusing to write outside allowed locations (home, temp, /Volumes): "${abs}"`);
   }
-  const canonicalDest = suffix ? join6(canonicalAncestor, suffix) : canonicalAncestor;
+  const canonicalDest = suffix ? join7(canonicalAncestor, suffix) : canonicalAncestor;
   const allowed = canonicalRoots(roots);
   if (!isWithinRoots(canonicalAncestor, allowed) || !isWithinRoots(canonicalDest, allowed)) {
     throw new Error(
@@ -41184,11 +41469,39 @@ function assertReadableInRoots(p, roots = allowedSaveRoots(), label = "Content f
     );
   return abs;
 }
-function readAllowedTextFile(p, maxBytes, roots = allowedSaveRoots()) {
-  const abs = assertReadableInRoots(p, roots);
+var ALLOW_PRIVATE_CONTENT_ENV = "APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS";
+function privateContentReason(p, roots) {
+  const containing = roots.map((r) => r.endsWith(sep) ? r.slice(0, -1) : r).filter((r) => isWithinRoots(p, [r])).sort((a, b) => b.length - a.length)[0];
+  const below = containing === void 0 ? p : relative(containing, p);
+  if (below.split(sep).some((part) => part.startsWith("."))) return "a hidden file or directory";
+  const home = resolve(homedir7());
+  const libraries = [
+    join7(home, "Library"),
+    ...canonicalRoots([home]).map((h) => join7(h, "Library"))
+  ];
+  if (!isWithinRoots(p, libraries)) return null;
+  const cloudDocuments = libraries.flatMap((l) => CLOUD_DOCUMENT_DIRS.map((d) => join7(l, d)));
+  return isWithinRoots(p, cloudDocuments) ? null : "~/Library";
+}
+var CLOUD_DOCUMENT_DIRS = ["Mobile Documents", "CloudStorage"];
+function readAllowedFile(p, maxBytes, options = {}) {
+  const roots = options.roots ?? allowedSaveRoots();
+  const allowPrivate = options.allowPrivate ?? process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1";
+  const label = options.label ?? "Content file";
+  const abs = assertReadableInRoots(p, roots, label);
+  const assertNotPrivate = (candidate, candidateRoots) => {
+    if (allowPrivate) return;
+    const reason = privateContentReason(candidate, candidateRoots);
+    if (reason)
+      throw new Error(
+        `Refusing to read "${abs}": it is in ${reason}, which can hold credentials or app data. Move the file to a regular folder, or set ${ALLOW_PRIVATE_CONTENT_ENV}=1 for the server to allow it.`
+      );
+  };
+  assertNotPrivate(abs, roots);
+  assertNotPrivate(canonicalize(abs), canonicalRoots(roots));
   let descriptor;
   try {
-    descriptor = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+    descriptor = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error2) {
     if (error2.code === "ELOOP")
       throw new Error(`Refusing to read the symbolic link "${abs}".`);
@@ -41196,31 +41509,49 @@ function readAllowedTextFile(p, maxBytes, roots = allowedSaveRoots()) {
   }
   try {
     const stat = fstatSync(descriptor);
-    if (!stat.isFile()) throw new Error(`Content file is not a regular file: "${abs}"`);
-    if (stat.size === 0) throw new Error(`Content file is empty: "${abs}"`);
+    if (!stat.isFile()) throw new Error(`${label} is not a regular file: "${abs}"`);
+    let after;
+    try {
+      after = canonicalize(abs);
+    } catch {
+      throw new Error(`${label} changed while it was being opened; try again: "${abs}"`);
+    }
+    if (!isWithinRoots(after, canonicalRoots(roots)))
+      throw new Error(
+        `Refusing to read outside allowed locations (home, temp, /Volumes): "${abs}" resolves to "${after}".`
+      );
+    assertNotPrivate(after, canonicalRoots(roots));
+    const named = statSync(after);
+    if (named.dev !== stat.dev || named.ino !== stat.ino)
+      throw new Error(`${label} changed while it was being opened; try again: "${abs}"`);
+    if (stat.size === 0) throw new Error(`${label} is empty: "${abs}"`);
     if (stat.size > maxBytes)
-      throw new Error(`Content file is ${stat.size} bytes, over the ${maxBytes}-byte limit.`);
+      throw new Error(`${label} is ${stat.size} bytes, over the ${maxBytes}-byte limit.`);
     const bytes = readFileSync(descriptor);
     if (bytes.length !== stat.size)
-      throw new Error("Content file changed while it was being read; try again");
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
-    } catch {
-      throw new Error(`Content file is not valid UTF-8 text: "${abs}"`);
-    }
+      throw new Error(`${label} changed while it was being read; try again`);
+    return bytes;
   } finally {
     closeSync(descriptor);
   }
 }
+function readAllowedTextFile(p, maxBytes, roots = allowedSaveRoots(), allowPrivate = process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1") {
+  const bytes = readAllowedFile(p, maxBytes, { roots, allowPrivate });
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
+  } catch {
+    throw new Error(`Content file is not valid UTF-8 text: "${resolve(p)}"`);
+  }
+}
 function cleanupTempDir(dir) {
   try {
-    if (existsSync4(dir)) rmSync(dir, { recursive: true, force: true });
+    if (existsSync5(dir)) rmSync(dir, { recursive: true, force: true });
   } catch {
   }
 }
 
 // src/utils/paperAttachments.ts
-import { execFileSync as execFileSync8 } from "node:child_process";
+import { execFileSync as execFileSync9 } from "node:child_process";
 import {
   closeSync as closeSync3,
   constants as constants3,
@@ -41233,10 +41564,10 @@ import {
   unlinkSync as unlinkSync2,
   writeSync as writeSync2
 } from "node:fs";
-import { basename as basename2, dirname as dirname3, extname as extname2, join as join8 } from "node:path";
+import { basename as basename2, dirname as dirname3, extname as extname2, join as join9 } from "node:path";
 
 // src/utils/attachmentAssets.ts
-import { execFileSync as execFileSync7 } from "node:child_process";
+import { execFileSync as execFileSync8 } from "node:child_process";
 import {
   closeSync as closeSync2,
   constants as constants2,
@@ -41250,11 +41581,11 @@ import {
   unlinkSync,
   writeSync
 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { basename, dirname as dirname2, extname, isAbsolute as isAbsolute2, join as join7, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { basename, dirname as dirname2, extname, isAbsolute as isAbsolute2, join as join8, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 import { gunzipSync as gunzipSync5 } from "node:zlib";
-var NOTES_CONTAINER_DIR = join7(
-  homedir7(),
+var NOTES_CONTAINER_DIR = join8(
+  homedir8(),
   "Library/Group Containers/group.com.apple.notes"
 );
 var AttachmentStoreError = class extends Error {
@@ -41339,6 +41670,7 @@ function buildAttachmentRowsSql(notePk, columns2) {
     `'identifier', a.ZIDENTIFIER`,
     `'uti', ${col3("a", "ZTYPEUTI")}`,
     `'parentPk', ${parent}`,
+    `'parentDeleted', ${parent !== "NULL" && columns2.has("ZMARKEDFORDELETION") ? `(SELECT COALESCE(p.ZMARKEDFORDELETION, 0) FROM ZICCLOUDSYNCINGOBJECT p WHERE p.Z_PK = ${parent})` : "0"}`,
     `'filename', ${col3("a", "ZFILENAME")}`,
     `'mediaIdentifier', m.ZIDENTIFIER`,
     `'mediaFilename', ${col3("m", "ZFILENAME")}`,
@@ -41359,7 +41691,7 @@ function buildAttachmentRowsSql(notePk, columns2) {
 }
 function runSqlite3(dbPath2, sql) {
   try {
-    return execFileSync7("/usr/bin/sqlite3", ["-readonly", dbPath2, sql], {
+    return execFileSync8("/usr/bin/sqlite3", ["-readonly", dbPath2, sql], {
       encoding: "utf8",
       timeout: 1e4,
       maxBuffer: 128 * 1024 * 1024,
@@ -41397,6 +41729,7 @@ function parseAttachmentRows(json2) {
       identifier,
       uti: toStringOrNull(r.uti),
       parentPk: toIntOrNull(r.parentPk),
+      ...toIntOrNull(r.parentDeleted) ? { parentDeleted: true } : {},
       filename: toStringOrNull(r.filename),
       mediaIdentifier: toStringOrNull(r.mediaIdentifier),
       mediaFilename: toStringOrNull(r.mediaFilename),
@@ -41427,7 +41760,7 @@ function attachmentOrderFromNoteData(hex3) {
     return null;
   }
 }
-function readNoteAttachmentRows(noteId3, dbPath2 = join7(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
+function readNoteAttachmentRows(noteId3, dbPath2 = join8(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
   const { pk } = parseNoteId2(noteId3);
   const columnList = runSqlite3(
     dbPath2,
@@ -41488,7 +41821,7 @@ function boundedEntries(dir, limit) {
   }
 }
 function resolveAccountDir(containerDir, accountIdentifier) {
-  const accountsDir = join7(containerDir, "Accounts");
+  const accountsDir = join8(containerDir, "Accounts");
   let accountsReal;
   try {
     accountsReal = realpathSync2.native(accountsDir);
@@ -41497,14 +41830,14 @@ function resolveAccountDir(containerDir, accountIdentifier) {
   }
   const account = safeComponent(accountIdentifier);
   if (account) {
-    const dir = realInside(join7(accountsReal, account), accountsReal);
+    const dir = realInside(join8(accountsReal, account), accountsReal);
     if (dir && isDirectory(dir)) return dir;
   }
   const entries2 = (boundedEntries(accountsReal, 64) ?? []).filter(
-    (e) => isDirectory(join7(accountsReal, e))
+    (e) => isDirectory(join8(accountsReal, e))
   );
   if (entries2.length !== 1) return null;
-  return realInside(join7(accountsReal, entries2[0]), accountsReal);
+  return realInside(join8(accountsReal, entries2[0]), accountsReal);
 }
 function generationRank(name) {
   const m = /^(\d+)_/.exec(name);
@@ -41512,23 +41845,25 @@ function generationRank(name) {
 }
 function generationDirs(base, accountDir) {
   const entries2 = boundedEntries(base, MAX_GENERATION_DIRS) ?? [];
-  return entries2.map((e) => realInside(join7(base, e), accountDir)).filter((p) => p !== null && isDirectory(p)).sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
+  return entries2.map((e) => realInside(join8(base, e), accountDir)).filter((p) => p !== null && isDirectory(p)).sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
 }
-function fallbackFiles(accountDir, rootName, identifier, generation, names) {
-  const base = join7(accountDir, rootName, identifier);
+function fallbackFiles(accountDir, rootName, identifier, generation, names, onStale) {
+  const base = join8(accountDir, rootName, identifier);
   const found = [];
   const add = (candidate) => {
     const real = realInside(candidate, accountDir);
     if (real && isRegularFile(real) && !found.includes(real)) found.push(real);
   };
   const gen = safeComponent(generation);
-  if (gen) for (const name of names) add(join7(base, gen, name));
+  if (gen) for (const name of names) add(join8(base, gen, name));
+  const recorded = found.length;
   if (isDirectory(base)) {
     for (const dir of generationDirs(base, accountDir))
-      for (const name of names) add(join7(dir, name));
-    for (const name of names) add(join7(base, name));
+      for (const name of names) add(join8(dir, name));
+    for (const name of names) add(join8(base, name));
   }
-  for (const name of names) add(join7(accountDir, rootName, `${identifier}${extname(name)}`));
+  for (const name of names) add(join8(accountDir, rootName, `${identifier}${extname(name)}`));
+  if (gen && recorded === 0 && found.length > 0) onStale?.();
   return found;
 }
 function previewPixelArea(name) {
@@ -41540,7 +41875,7 @@ function previewFileInBundle(bundle, accountDir) {
   const direct = [];
   const nested = [];
   for (const entry of boundedEntries(bundle, MAX_BUNDLE_ENTRIES) ?? []) {
-    const child2 = realInside(join7(bundle, entry), accountDir);
+    const child2 = realInside(join8(bundle, entry), accountDir);
     if (!child2) continue;
     if (isRegularFile(child2)) direct.push(child2);
     else if (isDirectory(child2)) nested.push(child2);
@@ -41548,14 +41883,14 @@ function previewFileInBundle(bundle, accountDir) {
   nested.sort((a, b) => generationRank(basename(b)) - generationRank(basename(a)));
   const pick2 = (files) => files.find((f) => basename(f) === "Preview.png") ?? files.find((f) => PREVIEW_IMAGE_SUFFIXES.has(extname(f).toLowerCase())) ?? null;
   for (const dir of nested) {
-    const files = (boundedEntries(dir, MAX_BUNDLE_ENTRIES) ?? []).map((e) => realInside(join7(dir, e), accountDir)).filter((p) => p !== null && isRegularFile(p));
+    const files = (boundedEntries(dir, MAX_BUNDLE_ENTRIES) ?? []).map((e) => realInside(join8(dir, e), accountDir)).filter((p) => p !== null && isRegularFile(p));
     const chosen = pick2(files);
     if (chosen) return chosen;
   }
   return pick2(direct);
 }
 function listPreviewEntries(accountDir) {
-  return boundedEntries(join7(accountDir, "Previews"), MAX_PREVIEW_DIR_ENTRIES) ?? [];
+  return boundedEntries(join8(accountDir, "Previews"), MAX_PREVIEW_DIR_ENTRIES) ?? [];
 }
 function previewPaths(accountDir, identifier, entries2) {
   const id2 = safeComponent(identifier);
@@ -41567,14 +41902,14 @@ function previewPaths(accountDir, identifier, entries2) {
   }).sort((a, b) => previewPixelArea(b) - previewPixelArea(a) || a.localeCompare(b));
   const files = [];
   for (const name of candidates) {
-    const real = realInside(join7(accountDir, "Previews", name), accountDir);
+    const real = realInside(join8(accountDir, "Previews", name), accountDir);
     if (!real) continue;
     const file = isRegularFile(real) ? real : isDirectory(real) ? previewFileInBundle(real, accountDir) : null;
     if (file && !files.includes(file)) files.push(file);
   }
   return files;
 }
-function assetPathsFor(accountDir, row) {
+function assetPathsFor(accountDir, row, onStale) {
   const found = [];
   const add = (candidate) => {
     const real = realInside(candidate, accountDir);
@@ -41584,25 +41919,35 @@ function assetPathsFor(accountDir, row) {
   const mediaName = safeComponent(row.mediaFilename);
   const mediaGen = safeComponent(row.mediaGeneration);
   if (mediaId && mediaName) {
-    if (mediaGen) add(join7(accountDir, "Media", mediaId, mediaGen, mediaName));
-    add(join7(accountDir, "Media", mediaId, mediaName));
+    if (mediaGen) add(join8(accountDir, "Media", mediaId, mediaGen, mediaName));
+    add(join8(accountDir, "Media", mediaId, mediaName));
   }
   const id2 = safeComponent(row.identifier);
   if (!id2) return found;
   const ownName = safeComponent(row.filename);
-  if (ownName) add(join7(accountDir, "Media", id2, ownName));
-  for (const file of fallbackFiles(accountDir, "FallbackImages", id2, row.fallbackImageGeneration, [
-    "FallbackImage.png",
-    "FallbackImage.jpg"
-  ]))
+  if (ownName) add(join8(accountDir, "Media", id2, ownName));
+  for (const file of fallbackFiles(
+    accountDir,
+    "FallbackImages",
+    id2,
+    row.fallbackImageGeneration,
+    ["FallbackImage.png", "FallbackImage.jpg"],
+    onStale
+  ))
     add(file);
-  for (const file of fallbackFiles(accountDir, "FallbackPDFs", id2, row.fallbackPdfGeneration, [
-    "FallbackPDF.pdf"
-  ]))
+  for (const file of fallbackFiles(
+    accountDir,
+    "FallbackPDFs",
+    id2,
+    row.fallbackPdfGeneration,
+    ["FallbackPDF.pdf"],
+    onStale
+  ))
     add(file);
   return found;
 }
-function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINER_DIR) {
+function assembleAttachmentAssets(allRows, bodyOrder, containerDir = NOTES_CONTAINER_DIR) {
+  const rows = allRows.filter((r) => !r.parentDeleted);
   const byPk = new Map(rows.map((r) => [r.pk, r]));
   const roots = rows.filter((r) => r.parentPk === null || !byPk.has(r.parentPk));
   const bodyIndex = /* @__PURE__ */ new Map();
@@ -41625,10 +41970,11 @@ function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINE
     const accountDir = accountDirFor(row.accountIdentifier ?? parent?.accountIdentifier ?? null);
     let assetPaths = [];
     let previews = [];
+    let fallbackStale = false;
     if (accountDir) {
       if (!previewEntries.has(accountDir))
         previewEntries.set(accountDir, listPreviewEntries(accountDir));
-      assetPaths = assetPathsFor(accountDir, row);
+      assetPaths = assetPathsFor(accountDir, row, () => fallbackStale = true);
       previews = previewPaths(accountDir, row.identifier, previewEntries.get(accountDir));
     }
     const previewPath = previews[0] ?? null;
@@ -41641,6 +41987,7 @@ function assembleAttachmentAssets(rows, bodyOrder, containerDir = NOTES_CONTAINE
       filename: row.filename ?? row.mediaFilename,
       bodyIndex: parent ? null : indexOf(row),
       assetPaths,
+      ...fallbackStale ? { fallbackStale: true } : {},
       previewPath,
       paths: previewPath ? [...assetPaths, previewPath] : [...assetPaths]
     };
@@ -41681,10 +42028,10 @@ function canonicalTail(p) {
   const tail = [];
   for (; ; ) {
     try {
-      return join7(realpathSync2.native(current), ...tail);
+      return join8(realpathSync2.native(current), ...tail);
     } catch {
       const parent = dirname2(current);
-      if (parent === current) return join7(current, ...tail);
+      if (parent === current) return join8(current, ...tail);
       tail.unshift(basename(current));
       current = parent;
     }
@@ -41725,16 +42072,22 @@ function copyFileExclusive(src, dest) {
 }
 function exportFileName(record2, source, kind) {
   const ext = extname(source);
+  const id2 = safeComponent(record2.identifier) ?? "attachment";
+  if (kind === "fallback") {
+    const stored2 = safeComponent(record2.filename ? basename(record2.filename) : null);
+    const stem = stored2 && !GENERIC_FILE_NAMES.has(stored2.toLowerCase()) ? basename(stored2, extname(stored2)) : id2;
+    return `${safeComponent(stem) ?? id2}${ext}`;
+  }
   if (kind === "preview") {
     const stored2 = safeComponent(record2.filename ? basename(record2.filename) : null);
-    const stem = stored2 ? basename(stored2, extname(stored2)) : record2.identifier;
-    return `${safeComponent(stem) ?? record2.identifier}-preview${ext}`;
+    const stem = stored2 ? basename(stored2, extname(stored2)) : id2;
+    return `${safeComponent(stem) ?? id2}-preview${ext}`;
   }
   const stored = safeComponent(record2.filename ? basename(record2.filename) : null);
   if (stored && !GENERIC_FILE_NAMES.has(stored.toLowerCase())) return stored;
-  const own = basename(source);
-  if (!GENERIC_FILE_NAMES.has(own.toLowerCase())) return own;
-  return `${record2.identifier}${ext}`;
+  const own = safeComponent(basename(source));
+  if (own && !GENERIC_FILE_NAMES.has(own.toLowerCase())) return own;
+  return `${id2}${ext}`;
 }
 function collisionName(name, attempt) {
   if (attempt <= 1) return name;
@@ -41753,7 +42106,7 @@ function prepareExportDir(exportDir, containerDir = NOTES_CONTAINER_DIR) {
   }
   return abs;
 }
-function exportOneAttachment(record2, dir, source) {
+function exportOneAttachment(record2, dir, source, inBody) {
   const base = {
     pk: record2.pk,
     identifier: record2.identifier,
@@ -41761,16 +42114,24 @@ function exportOneAttachment(record2, dir, source) {
     kind: record2.kind,
     parentIdentifier: record2.parentIdentifier,
     exportedTo: null,
-    exportedKind: null
+    exportedKind: null,
+    ...inBody === false ? { inBody: false } : {}
   };
   if (!source) return base;
   const name = exportFileName(record2, source.path, source.kind);
   for (let attempt = 1; attempt <= MAX_COLLISION_SUFFIX; attempt++) {
-    const dest = join7(dir, collisionName(name, attempt));
+    const dest = join8(dir, collisionName(name, attempt));
     try {
+      if (dirname2(dest) !== resolve2(dir))
+        throw new Error(`Refusing to write outside the export directory: "${dest}"`);
       assertSafeSavePath(dest);
       copyFileExclusive(source.path, dest);
-      return { ...base, exportedTo: dest, exportedKind: source.kind };
+      return {
+        ...base,
+        exportedTo: dest,
+        exportedKind: source.kind,
+        ...source.kind === "fallback" && record2.fallbackStale ? { stale: true } : {}
+      };
     } catch (error2) {
       if (error2.code === "EEXIST") continue;
       return { ...base, error: error2 instanceof Error ? error2.message : String(error2) };
@@ -41778,20 +42139,31 @@ function exportOneAttachment(record2, dir, source) {
   }
   return { ...base, error: "Too many name collisions in the export directory" };
 }
+function isFallbackRendering(path10) {
+  return /[\\/]Fallback(?:Images|PDFs)[\\/]/.test(path10);
+}
 function exportSource(record2) {
-  if (record2.assetPaths[0]) return { path: record2.assetPaths[0], kind: "asset" };
+  const asset = record2.assetPaths[0];
+  if (asset) return { path: asset, kind: isFallbackRendering(asset) ? "fallback" : "asset" };
   if (record2.previewPath) return { path: record2.previewPath, kind: "preview" };
   return null;
 }
 function exportAttachmentAssets(assets, exportDir, options = {}) {
   const dir = prepareExportDir(exportDir, options.containerDir);
+  const inBody = (record2) => {
+    if (assets.orderSource !== "body") return void 0;
+    const root = record2.parentIdentifier === null ? record2 : assets.attachments.find(
+      (a) => a.parentIdentifier === null && a.identifier === record2.parentIdentifier
+    );
+    return root ? root.bodyIndex !== null : void 0;
+  };
   if (options.firstImageOnly) {
     const first2 = selectFirstImage(assets);
     if (!first2) return { exportDir: dir, results: [], firstImage: null };
     const record2 = assets.attachments.find((a) => a.pk === first2.pk);
     return {
       exportDir: dir,
-      results: [exportOneAttachment(record2, dir, exportSource(record2))],
+      results: [exportOneAttachment(record2, dir, exportSource(record2), inBody(record2))],
       firstImage: first2
     };
   }
@@ -41805,7 +42177,7 @@ function exportAttachmentAssets(assets, exportDir, options = {}) {
     } else if (!exportSource(record2) && assets.attachments.some((c) => c.parentIdentifier === record2.identifier)) {
       continue;
     }
-    results.push(exportOneAttachment(record2, dir, exportSource(record2)));
+    results.push(exportOneAttachment(record2, dir, exportSource(record2), inBody(record2)));
   }
   return { exportDir: dir, results };
 }
@@ -41893,7 +42265,7 @@ function buildDrawingRowsSql(notePk, columns2) {
 }
 function runSqlite4(dbPath2, sql) {
   try {
-    return execFileSync8("/usr/bin/sqlite3", ["-readonly", dbPath2, sql], {
+    return execFileSync9("/usr/bin/sqlite3", ["-readonly", dbPath2, sql], {
       encoding: "utf8",
       timeout: 1e4,
       maxBuffer: 16 * 1024 * 1024,
@@ -41933,7 +42305,7 @@ function parseDrawingRows(json2) {
   }
   return rows.sort((a, b) => a.pk - b.pk);
 }
-function readDrawingRows(noteId3, dbPath2 = join8(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
+function readDrawingRows(noteId3, dbPath2 = join9(NOTES_CONTAINER_DIR, "NoteStore.sqlite")) {
   const { pk } = parseNoteId2(noteId3);
   const columns2 = new Set(
     runSqlite4(
@@ -41974,19 +42346,29 @@ function entries(dir, limit) {
   }
 }
 var byGenerationDesc = (a, b) => generationRank(basename2(b)) - generationRank(basename2(a));
-function findFallbackImage(accountDir, identifier, generation) {
+function locateFallbackImage(accountDir, identifier, generation) {
+  const gen = safeComponent(generation);
+  const path10 = searchFallbackImage(accountDir, identifier, generation);
+  if (!path10 || !gen) return { path: path10, stale: false };
+  const id2 = safeComponent(identifier);
+  const recorded = ["FallbackImage.png", "FallbackImage.jpg"].map(
+    (n) => id2 ? realInside(join9(accountDir, "FallbackImages", id2, gen, n), accountDir) : null
+  ).filter((p) => p !== null);
+  return { path: path10, stale: !recorded.includes(path10) };
+}
+function searchFallbackImage(accountDir, identifier, generation) {
   const id2 = safeComponent(identifier);
   if (!id2) return null;
-  const base = join8(accountDir, "FallbackImages", id2);
+  const base = join9(accountDir, "FallbackImages", id2);
   const names = ["FallbackImage.png", "FallbackImage.jpg"];
   const candidates = [];
   const gen = safeComponent(generation);
-  if (gen) for (const n of names) candidates.push(join8(base, gen, n));
-  const gens = entries(base, MAX_DIR_ENTRIES).map((e) => join8(base, e)).sort(byGenerationDesc);
-  for (const g of gens) for (const n of names) candidates.push(join8(g, n));
-  for (const n of names) candidates.push(join8(base, n));
-  candidates.push(join8(accountDir, "FallbackImages", `${id2}.png`));
-  candidates.push(join8(accountDir, "FallbackImages", `${id2}.jpg`));
+  if (gen) for (const n of names) candidates.push(join9(base, gen, n));
+  const gens = entries(base, MAX_DIR_ENTRIES).map((e) => join9(base, e)).sort(byGenerationDesc);
+  for (const g of gens) for (const n of names) candidates.push(join9(g, n));
+  for (const n of names) candidates.push(join9(base, n));
+  candidates.push(join9(accountDir, "FallbackImages", `${id2}.png`));
+  candidates.push(join9(accountDir, "FallbackImages", `${id2}.jpg`));
   for (const c of candidates) {
     const real = realInside(c, accountDir);
     if (real && kindOf(real) === "file") return real;
@@ -41996,21 +42378,21 @@ function findFallbackImage(accountDir, identifier, generation) {
 function findLargestPreview(accountDir, identifier) {
   const id2 = safeComponent(identifier);
   if (!id2) return null;
-  const dir = join8(accountDir, "Previews");
+  const dir = join9(accountDir, "Previews");
   const prefix = `${id2}-`.toLowerCase();
   const names = entries(dir, MAX_PREVIEW_DIR_ENTRIES2).filter((n) => n.toLowerCase().startsWith(prefix)).filter((n) => {
     const ext = extname2(n).toLowerCase();
     return !ext || IMAGE_SUFFIXES.has(ext) || /^\.\d+$/.test(ext);
   }).sort((a, b) => previewPixelArea(b) - previewPixelArea(a) || a.localeCompare(b));
   for (const name of names) {
-    const real = realInside(join8(dir, name), accountDir);
+    const real = realInside(join9(dir, name), accountDir);
     if (!real) continue;
     const kind = kindOf(real);
     if (kind === "file") return real;
     if (kind !== "dir") continue;
-    const gens = entries(real, MAX_DIR_ENTRIES).map((e) => realInside(join8(real, e), accountDir)).filter((p) => p !== null && kindOf(p) === "dir").sort(byGenerationDesc);
+    const gens = entries(real, MAX_DIR_ENTRIES).map((e) => realInside(join9(real, e), accountDir)).filter((p) => p !== null && kindOf(p) === "dir").sort(byGenerationDesc);
     for (const g of [...gens, real]) {
-      const file = realInside(join8(g, "Preview.png"), accountDir);
+      const file = realInside(join9(g, "Preview.png"), accountDir);
       if (file && kindOf(file) === "file") return file;
     }
   }
@@ -42021,9 +42403,10 @@ function describeDrawings(rows, containerDir = NOTES_CONTAINER_DIR) {
     const accountDir = resolveAccountDir(containerDir, row.accountIdentifier);
     const kind = row.uti === "com.apple.paper" ? "paper" : "drawing";
     const id2 = safeComponent(row.identifier);
-    const fallbackImagePath = accountDir ? findFallbackImage(accountDir, row.identifier, row.fallbackImageGeneration) : null;
+    const fallback = accountDir ? locateFallbackImage(accountDir, row.identifier, row.fallbackImageGeneration) : { path: null, stale: false };
+    const fallbackImagePath = fallback.path;
     const previewPath = accountDir ? findLargestPreview(accountDir, row.identifier) : null;
-    const bundle = accountDir && id2 && kind === "paper" ? realInside(join8(accountDir, "Paper", "Bundles", `${id2}.bundle`), accountDir) : null;
+    const bundle = accountDir && id2 && kind === "paper" ? realInside(join9(accountDir, "Paper", "Bundles", `${id2}.bundle`), accountDir) : null;
     let raster = null;
     for (const [path10, source] of [
       [fallbackImagePath, "fallback"],
@@ -42043,6 +42426,7 @@ function describeDrawings(rows, containerDir = NOTES_CONTAINER_DIR) {
       handwritingSummary: row.handwritingSummary,
       bundlePresent: bundle !== null && kindOf(bundle) === "dir",
       fallbackImagePath,
+      fallbackImageStale: fallback.stale,
       previewPath,
       raster
     };
@@ -42183,18 +42567,25 @@ function idList(ids) {
 function buildScopeGuardScript(noteVar, guard, destinationVar) {
   if (!hasScopeGuard(guard)) return "";
   validateScopeGuard(guard);
-  const forbidden = guard.forbiddenAncestorFolderIds ?? [];
+  const ifFolderId = guard.ifFolderId && canonicalCoreDataId(guard.ifFolderId);
+  const ifAncestorFolderId = guard.ifAncestorFolderId && canonicalCoreDataId(guard.ifAncestorFolderId);
+  const forbidden = [...new Set((guard.forbiddenAncestorFolderIds ?? []).map(canonicalCoreDataId))];
   let script = `
       set scopeFolder to container of ${noteVar}
       if class of scopeFolder is not folder then return "${SCOPE_MARKER}:the note is not in a folder"`;
-  if (guard.ifFolderId)
+  if (forbidden.length > 0)
     script += `
-      if (id of scopeFolder) is not "${guard.ifFolderId}" then return "${SCOPE_MARKER}:the note is not in the expected folder"`;
-  if (guard.ifAncestorFolderId || forbidden.length > 0)
+      repeat with forbiddenId in ${idList(forbidden)}
+        if not (exists folder id (contents of forbiddenId)) then return "${SCOPE_MARKER}:a forbidden folder id does not match any folder"
+      end repeat`;
+  if (ifFolderId)
+    script += `
+      if (id of scopeFolder) is not "${ifFolderId}" then return "${SCOPE_MARKER}:the note is not in the expected folder"`;
+  if (ifAncestorFolderId || forbidden.length > 0)
     script += chainScript("scopeChain", "scopeFolder");
-  if (guard.ifAncestorFolderId)
+  if (ifAncestorFolderId)
     script += `
-      if scopeChain does not contain "${guard.ifAncestorFolderId}" then return "${SCOPE_MARKER}:the note is not inside the expected ancestor folder"`;
+      if scopeChain does not contain "${ifAncestorFolderId}" then return "${SCOPE_MARKER}:the note is not inside the expected ancestor folder"`;
   if (forbidden.length > 0) {
     script += `
       repeat with forbiddenId in ${idList(forbidden)}
@@ -42220,9 +42611,9 @@ function scopeConflictMessage(reason) {
 
 // src/services/appleNotesManager.ts
 var import_turndown = __toESM(require_turndown_cjs(), 1);
-import { existsSync as existsSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync2, writeFileSync } from "fs";
-import { homedir as homedir8, tmpdir as tmpdir2 } from "os";
-import { join as join9 } from "path";
+import { existsSync as existsSync6, mkdtempSync as mkdtempSync2, rmSync as rmSync2, writeFileSync } from "fs";
+import { homedir as homedir9, tmpdir as tmpdir2 } from "os";
+import { join as join10 } from "path";
 var FIELD_SEP = "";
 var RECORD_SEP = "";
 var AS_FIELD_SEP = "(character id 31)";
@@ -42444,6 +42835,11 @@ function smartFolderDestinationError(folderPath) {
     }
   );
 }
+function smartFoldersReadError(kind, message) {
+  return new CodedError(message, {
+    code: kind === "unsupported_schema" ? "unsupported" : kind === "no_fda" ? "full_disk_access_missing" : "operation_failed"
+  });
+}
 function throwIfSmartFolderDestination(error2, folderPath) {
   if (error2?.includes(SMART_FOLDER_DESTINATION)) throw smartFolderDestinationError(folderPath);
 }
@@ -42579,8 +42975,8 @@ var ExpectedBodies = class {
     if (body.length <= INLINE_EXPECTED_BODY_LIMIT) {
       return { setup: "", operand: `"${escapeHtmlForAppleScript(body)}"` };
     }
-    this.directory ??= mkdtempSync2(join9(tmpdir2(), "apple-notes-expected-body-"));
-    const file = join9(this.directory, `body-${this.files++}.html`);
+    this.directory ??= mkdtempSync2(join10(tmpdir2(), "apple-notes-expected-body-"));
+    const file = join10(this.directory, `body-${this.files++}.html`);
     writeFileSync(file, body, { encoding: "utf8", mode: 384 });
     return {
       setup: `
@@ -42626,8 +43022,8 @@ function getNoteLinkFromDB(coreDataId4) {
   const match = coreDataId4.match(/\/p(\d+)$/);
   if (!match) return null;
   const pk = parseInt(match[1], 10);
-  const dbPath2 = join9(homedir8(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
-  if (!existsSync5(dbPath2)) return null;
+  const dbPath2 = join10(homedir9(), "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite");
+  if (!existsSync6(dbPath2)) return null;
   try {
     const { DatabaseSync } = __require("node:sqlite");
     const db = new DatabaseSync(dbPath2, { readOnly: true });
@@ -43106,7 +43502,7 @@ var AppleNotesManager = class {
    * @throws Error when the note's rich data cannot be read (e.g. no Full Disk Access)
    */
   getNoteTablesById(id2) {
-    return collectNoteTables(readRichNote(id2), id2);
+    return collectNoteTables(readRichNote(id2, { skipUnsafeLinks: true }), id2);
   }
   /**
    * Retrieves detailed metadata for a note by title.
@@ -43239,6 +43635,7 @@ var AppleNotesManager = class {
         return `
       if not (exists note id "${safeGuardId}") then ${inactive("missing")}
       set ${ref} to note id "${safeGuardId}"
+      if (id of ${ref}) is (id of noteRef) then ${inactive("the note being deleted")}
       if password protected of ${ref} then ${inactive("locked")}
       set ${folderVar} to missing value
       try
@@ -43261,9 +43658,12 @@ var AppleNotesManager = class {
         if currentBody is not ${expected.operand} and currentBody is not ${expected.operand} & linefeed then return "SAFETY_CONFLICT"
         delete noteRef
       end considering
+      set __stillThere to missing value
       try
-        if (id of notes of originalFolder) contains "${safeId}" then return "SAFETY_NOT_DELETED"
+        set __stillThere to (id of notes of originalFolder) contains "${safeId}"
       end try
+      if __stillThere is missing value then return "SAFETY_DELETE_UNVERIFIED"
+      if __stillThere then return "SAFETY_NOT_DELETED"
       return "SAFETY_DELETED"
     `);
       result = executeMutationAppleScript(script);
@@ -43286,6 +43686,7 @@ var AppleNotesManager = class {
     if (status === "SAFETY_IN_RECENTLY_DELETED") return { status: "in-recently-deleted" };
     if (status === "SAFETY_CONTAINER_UNKNOWN") return { status: "container-unknown" };
     if (status === "SAFETY_NOT_DELETED") return { status: "not-deleted" };
+    if (status === "SAFETY_DELETE_UNVERIFIED") return { status: "unverified" };
     return status === "SAFETY_DELETED" ? { status: "deleted" } : { status: "failed" };
   }
   /**
@@ -43433,7 +43834,8 @@ var AppleNotesManager = class {
    */
   listSmartFolders(options = {}) {
     const result = readSmartFolders();
-    if (!result.folders) throw new Error(result.message || "Failed to read smart folders.");
+    if (!result.folders)
+      throw smartFoldersReadError(result.error, result.message || "Failed to read smart folders.");
     if (!options.includeMatchingNotes) return result.folders;
     const limit = options.limit ?? 50;
     return result.folders.map((folder) => {
@@ -44821,7 +45223,7 @@ var AppleNotesManager = class {
     if (parts[0] !== "OK") {
       return { success: false, error: parts[1]?.trim() || "attachment not found" };
     }
-    if (!existsSync5(abs) || fileSize(abs) === 0) {
+    if (!existsSync6(abs) || fileSize(abs) === 0) {
       return { success: false, error: `Notes reported success but no file was written to ${abs}` };
     }
     return {
@@ -45329,15 +45731,15 @@ var AppleNotesManager = class {
 };
 
 // src/utils/syncDetection.ts
-import { execFileSync as execFileSync9 } from "child_process";
-import * as fs4 from "fs";
-import * as path4 from "path";
-import * as os4 from "os";
-var NOTES_DB_PATH5 = path4.join(
-  os4.homedir(),
+import { execFileSync as execFileSync10 } from "child_process";
+import * as fs5 from "fs";
+import * as path5 from "path";
+import * as os5 from "os";
+var NOTES_DB_PATH6 = path5.join(
+  os5.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
-var WAL_PATH = `${NOTES_DB_PATH5}-wal`;
+var WAL_PATH = `${NOTES_DB_PATH6}-wal`;
 var RECENT_ACTIVITY_THRESHOLD_SECONDS = 5;
 var SYNC_STATUS_CACHE_TTL_MS = 2e3;
 var cachedSyncStatus = null;
@@ -45353,14 +45755,14 @@ function getSyncStatus(useCache = true) {
     recentActivity: false
   };
   try {
-    if (!fs4.existsSync(NOTES_DB_PATH5)) {
+    if (!fs5.existsSync(NOTES_DB_PATH6)) {
       status.error = "Notes database not found";
       cachedSyncStatus = status;
       cacheTimestamp = Date.now();
       return status;
     }
-    if (fs4.existsSync(WAL_PATH)) {
-      const walStats = fs4.statSync(WAL_PATH);
+    if (fs5.existsSync(WAL_PATH)) {
+      const walStats = fs5.statSync(WAL_PATH);
       const secondsAgo = (Date.now() - walStats.mtimeMs) / 1e3;
       status.secondsSinceLastChange = Math.round(secondsAgo);
       status.recentActivity = secondsAgo < RECENT_ACTIVITY_THRESHOLD_SECONDS;
@@ -45374,9 +45776,9 @@ function getSyncStatus(useCache = true) {
         WHERE object.ZCLOUDSTATE = state.Z_PK
       );
     `;
-    const result = execFileSync9(
+    const result = execFileSync10(
       "sqlite3",
-      ["-readonly", NOTES_DB_PATH5, query3.replace(/\n/g, " ")],
+      ["-readonly", NOTES_DB_PATH6, query3.replace(/\n/g, " ")],
       {
         encoding: "utf8",
         timeout: 5e3,
@@ -45433,12 +45835,12 @@ function withSyncAwarenessSync(operation, fn) {
 }
 
 // src/utils/noteMetadata.ts
-import { execFileSync as execFileSync10 } from "child_process";
-import * as fs5 from "fs";
-import * as path5 from "path";
-import * as os5 from "os";
-var NOTES_DB_PATH6 = path5.join(
-  os5.homedir(),
+import { execFileSync as execFileSync11 } from "child_process";
+import * as fs6 from "fs";
+import * as path6 from "path";
+import * as os6 from "os";
+var NOTES_DB_PATH7 = path6.join(
+  os6.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var FDA_MESSAGE2 = `Full Disk Access is required to read note metadata. In System Settings > Privacy & Security > Full Disk Access, grant access to the Node binary running this server (required under Claude Desktop) or the terminal that launches it, then fully quit and relaunch it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL} \u2014 run the doctor tool to verify.`;
@@ -45454,7 +45856,7 @@ var COLUMN_MAP = [
   { key: "smartFolderQuery", column: "ZSMARTFOLDERQUERYJSON", type: "text" }
 ];
 function runSqlite5(query3) {
-  return execFileSync10("sqlite3", ["-readonly", NOTES_DB_PATH6, query3], {
+  return execFileSync11("sqlite3", ["-readonly", NOTES_DB_PATH7, query3], {
     encoding: "utf8",
     timeout: 5e3,
     stdio: ["pipe", "pipe", "pipe"]
@@ -45479,7 +45881,7 @@ function getNoteMetadata(noteId3) {
     };
   }
   const pk = pkMatch[1];
-  if (!fs5.existsSync(NOTES_DB_PATH6)) {
+  if (!fs6.existsSync(NOTES_DB_PATH7)) {
     return { metadata: null, error: "no_fda", message: FDA_MESSAGE2 };
   }
   try {
@@ -45525,12 +45927,12 @@ function getNoteMetadata(noteId3) {
 import { gunzipSync as gunzipSync6 } from "zlib";
 
 // src/utils/noteStoreSql.ts
-import { execFileSync as execFileSync11 } from "child_process";
-import * as fs6 from "fs";
-import * as os6 from "os";
-import * as path6 from "path";
-var NOTES_DB_PATH7 = path6.join(
-  os6.homedir(),
+import { execFileSync as execFileSync12 } from "child_process";
+import * as fs7 from "fs";
+import * as os7 from "os";
+import * as path7 from "path";
+var NOTES_DB_PATH8 = path7.join(
+  os7.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
 var CORE_DATA_EPOCH_MS = Date.UTC(2001, 0, 1);
@@ -45568,7 +45970,7 @@ function renderValue(value) {
   return `ieee754_from_blob(x'${doubleToHex(double)}')`;
 }
 function runReadOnlySql(dbPath2, sql, params = {}) {
-  if (!fs6.existsSync(dbPath2)) throw new NoteStoreError(STORE_FDA_MESSAGE, "no_fda");
+  if (!fs7.existsSync(dbPath2)) throw new NoteStoreError(STORE_FDA_MESSAGE, "no_fda");
   const args = ["-readonly"];
   const names = Object.keys(params);
   if (names.length) args.push("-cmd", ".parameter init");
@@ -45580,7 +45982,7 @@ function runReadOnlySql(dbPath2, sql, params = {}) {
   }
   args.push(dbPath2, sql);
   try {
-    return execFileSync11("sqlite3", args, {
+    return execFileSync12("sqlite3", args, {
       encoding: "utf8",
       timeout: 3e4,
       maxBuffer: 512 * 1024 * 1024,
@@ -45773,7 +46175,7 @@ function buildSpecialNotesSql(columns2, kind, scoped) {
   ].join(" ");
 }
 function listSpecialNotes(options) {
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH8;
   const limit = Math.min(
     Math.max(1, Math.trunc(options.limit ?? SPECIAL_LIMIT.DEFAULT)),
     SPECIAL_LIMIT.MAX
@@ -45829,7 +46231,7 @@ function toSpecialRow(row, uuid3, paths, accountNames, kind) {
   return note;
 }
 var EXACT_NOTE_ID = /^x-coredata:\/\/([0-9A-F-]+)\/ICNote\/p(\d+)$/i;
-function quickNoteFlag(noteId3, dbPath2 = NOTES_DB_PATH7) {
+function quickNoteFlag(noteId3, dbPath2 = NOTES_DB_PATH8) {
   const match = EXACT_NOTE_ID.exec(noteId3);
   if (!match) throw new NoteStoreError(`Not an exact note id: ${noteId3}`, "invalid_input");
   const columns2 = readColumns(dbPath2);
@@ -45881,7 +46283,7 @@ function referencedObjects(hex3) {
   }
 }
 function nativeTagInventory(options = {}) {
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH8;
   const columns2 = readColumns(dbPath2);
   const context = readStoreContext(dbPath2, columns2);
   const scope2 = options.account ? resolveAccountName(context.accounts, options.account) : void 0;
@@ -45943,15 +46345,27 @@ function assembleInventory(rows, accounts, scope2) {
 }
 
 // src/utils/noteBlocks.ts
-import { execFileSync as execFileSync12 } from "node:child_process";
-import { existsSync as existsSync9 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { join as join13 } from "node:path";
+import { execFileSync as execFileSync13 } from "node:child_process";
+import { existsSync as existsSync10 } from "node:fs";
+import { homedir as homedir13 } from "node:os";
+import { join as join14 } from "node:path";
 import { gunzipSync as gunzipSync7 } from "node:zlib";
-var NoteBlocksError = class extends Error {
+var NOTE_BLOCKS_ERROR_CODES = {
+  "invalid-id": "validation_error",
+  "no-full-disk-access": "full_disk_access_missing",
+  "not-found": "not_found",
+  "no-body": "operation_failed",
+  encrypted: "unsupported",
+  "decompress-failed": "unsupported",
+  "malformed-protobuf": "unsupported",
+  "unsupported-structure": "unsupported",
+  "invalid-runs": "unsupported",
+  "query-failed": "operation_failed"
+};
+var NoteBlocksError = class extends CodedError {
   code;
   constructor(code, message) {
-    super(message);
+    super(message, { code: NOTE_BLOCKS_ERROR_CODES[code] });
     this.name = "NoteBlocksError";
     this.code = code;
   }
@@ -45982,7 +46396,7 @@ var HIGHLIGHTS = {
 var KNOWN_RUN_FIELDS = /* @__PURE__ */ new Set([1, 2, 3, 5, 6, 7, 8, 9, 10, 12, 14]);
 var KNOWN_PARAGRAPH_FIELDS = /* @__PURE__ */ new Set([1, 2, 4, 5, 8, 9]);
 var isSafeLink = (url) => /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) && !Array.from(url).some((char) => char.charCodeAt(0) < 32);
-var utf8 = new TextDecoder();
+var utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
 var first = (fields, n) => fields.find((f) => f.fieldNumber === n);
 var varintOf = (fields, n) => {
   const f = first(fields, n);
@@ -46131,7 +46545,8 @@ function decodeNoteBlocks(data) {
     const end = newline === -1 ? text2.length : newline;
     while (runIndex < runs.length - 1 && runs[runIndex].start + runs[runIndex].length <= paragraphStart)
       runIndex++;
-    const attrs = runs[runIndex]?.paragraph ?? DEFAULT_PARAGRAPH;
+    const covering = runs[runIndex];
+    const attrs = !covering ? DEFAULT_PARAGRAPH : covering.paragraph.styleType === 103 && checklistRunLineStart(text2, covering.start, covering.length) > paragraphStart ? DEFAULT_PARAGRAPH : covering.paragraph;
     const style = attrs.styleType === null ? "body" : STYLE_NAMES[attrs.styleType] ?? "unknown";
     const alignment = ALIGNMENTS[attrs.alignmentValue] ?? "unknown";
     const block = {
@@ -46289,23 +46704,23 @@ function pageNoteBlocks(doc, { offset = 0, limit = 500, maxBytes = blocksMaxResp
     undecodedFields: doc.undecodedFields
   };
 }
-var NOTES_DB_PATH8 = join13(
-  homedir12(),
+var NOTES_DB_PATH9 = join14(
+  homedir13(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
-function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH8 } = {}) {
+function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH9 } = {}) {
   const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]{1,18})$/i.exec(id2)?.[1];
   if (!pk)
     throw new NoteBlocksError(
       "invalid-id",
       `Invalid note ID: expected x-coredata://<store>/ICNote/p<number>`
     );
-  if (!existsSync9(dbPath2))
+  if (!existsSync10(dbPath2))
     throw new NoteBlocksError("no-full-disk-access", "The Notes database is not readable");
   const sql = "SELECT json_object('exists', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = @pk AND Z_ENT = (SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = 'ICNote')), 'data', (SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE = @pk), 'encrypted', (SELECT ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA WHERE ZNOTE = @pk));";
   let output;
   try {
-    output = execFileSync12(
+    output = execFileSync13(
       "/usr/bin/sqlite3",
       ["-readonly", "-cmd", ".parameter init", "-cmd", `.parameter set @pk ${pk}`, dbPath2, sql],
       {
@@ -46336,6 +46751,25 @@ function readNoteBlocks(id2, { dbPath: dbPath2 = NOTES_DB_PATH8 } = {}) {
   if (!row.data || !/^[0-9a-f]+$/i.test(row.data))
     throw new NoteBlocksError("no-body", "No body data is stored for this note");
   return decodeCompressedNoteBlocks(Buffer.from(row.data, "hex"));
+}
+
+// src/utils/wordCount.ts
+var UNSPACED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+var segmenter;
+function countWords(text2) {
+  let count2 = 0;
+  for (const run of text2.replace(/￼/gu, " ").split(/\s+/u)) {
+    if (!/[\p{L}\p{N}]/u.test(run)) continue;
+    if (!UNSPACED_SCRIPT.test(run)) {
+      count2++;
+      continue;
+    }
+    segmenter ??= new Intl.Segmenter(void 0, { granularity: "word" });
+    let words = 0;
+    for (const segment of segmenter.segment(run)) if (segment.isWordLike) words++;
+    count2 += Math.max(1, words);
+  }
+  return count2;
 }
 
 // src/utils/noteRecentList.ts
@@ -46392,9 +46826,7 @@ function parseSince(input) {
 }
 function textStats(text2) {
   const visible2 = text2.replace(OBJECT_REPLACEMENT, "");
-  let wordCount2 = 0;
-  for (const token of visible2.split(/\s+/u)) if (/[\p{L}\p{N}]/u.test(token)) wordCount2++;
-  return { wordCount: wordCount2, charCount: [...visible2].length };
+  return { wordCount: countWords(visible2), charCount: [...visible2].length };
 }
 function previewText(text2) {
   const flat = text2.replace(OBJECT_REPLACEMENT, " ").replace(/\s+/gu, " ").trim();
@@ -46452,7 +46884,7 @@ function resolveFolderPath(folders, paths, input, accountPk) {
   );
 }
 function listRecentNotes(options = {}) {
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH8;
   const limit = Math.min(
     Math.max(1, Math.trunc(options.limit ?? RECENT_LIMIT.DEFAULT)),
     RECENT_LIMIT.MAX
@@ -46534,7 +46966,7 @@ function compareNodes(a, b) {
   return KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name);
 }
 function folderTree(options = {}) {
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH8;
   const columns2 = readColumns(dbPath2);
   const context = readStoreContext(dbPath2, columns2);
   const scope2 = options.account ? resolveAccountName(context.accounts, options.account) : void 0;
@@ -46609,244 +47041,6 @@ function assembleFolderTree(context, counts, includeDeleted, scope2) {
 }
 function countNodes(nodes) {
   return nodes.reduce((sum, node) => sum + 1 + countNodes(node.children), 0);
-}
-
-// src/utils/noteIdentifiers.ts
-import { execFileSync as execFileSync13 } from "child_process";
-import * as fs7 from "fs";
-import * as os7 from "os";
-import * as path7 from "path";
-var NOTES_DB_PATH9 = path7.join(
-  os7.homedir(),
-  "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
-);
-var UUID_PATTERN = /^[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}$/;
-var NUMERIC_KEY_PATTERN = /^\d{1,18}$/;
-var NOTE_ID_MESSAGE = "A canonical Apple Note ID is required (x-coredata://.../ICNote/p...), or the note's Notes UUID or numeric key";
-function identifierForm(value) {
-  if (UUID_PATTERN.test(value)) return "uuid";
-  if (NUMERIC_KEY_PATTERN.test(value)) return "key";
-  return "other";
-}
-function isAlternateIdentifier(value) {
-  return identifierForm(value) !== "other";
-}
-var IdentifierResolutionError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.code = code;
-    this.name = "IdentifierResolutionError";
-  }
-  code;
-};
-var ENTITY_LABEL = {
-  ICNote: "note",
-  ICFolder: "folder",
-  ICAccount: "account"
-};
-var NO_FDA_MESSAGE = `Resolving a Notes UUID or numeric key reads the Notes database, which needs Full Disk Access for the Node binary running this server, or the terminal that launches it (System Settings > Privacy & Security > Full Disk Access, then fully quit and relaunch it). x-coredata ids from search-notes, list-notes, or list-folders work without it. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`;
-function canonicalKey(value) {
-  return BigInt(value).toString();
-}
-function assertAll(values, pattern2, label) {
-  for (const value of values) {
-    if (!pattern2.test(value)) throw new Error(`Refusing to query with an invalid ${label}`);
-  }
-}
-function entityClause(entity3) {
-  return `(SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME = '${entity3}')`;
-}
-function buildResolveSql(entity3, keys, uuids) {
-  assertAll(keys, NUMERIC_KEY_PATTERN, "numeric key");
-  assertAll(uuids, UUID_PATTERN, "UUID");
-  const matches = [];
-  if (keys.length > 0) {
-    matches.push(`o.Z_PK IN (${[...new Set(keys.map(canonicalKey))].join(", ")})`);
-  }
-  if (uuids.length > 0) {
-    const variants = /* @__PURE__ */ new Set();
-    for (const uuid3 of uuids) {
-      variants.add(uuid3);
-      variants.add(uuid3.toUpperCase());
-      variants.add(uuid3.toLowerCase());
-    }
-    matches.push(`o.ZIDENTIFIER IN (${[...variants].map((v) => `'${v}'`).join(", ")})`);
-  }
-  const where = matches.length > 0 ? matches.join(" OR ") : "0";
-  return `SELECT json_object('store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'rows', (SELECT json_group_array(json_object('pk', o.Z_PK, 'identifier', o.ZIDENTIFIER)) FROM ZICCLOUDSYNCINGOBJECT o WHERE o.Z_ENT = ${entityClause(entity3)} AND (${where})));`;
-}
-function buildLookupSql(entity3, keys) {
-  assertAll(keys, NUMERIC_KEY_PATTERN, "numeric key");
-  const pks = [...new Set(keys.map(canonicalKey))];
-  const inList = pks.length > 0 ? pks.join(", ") : "NULL";
-  let fields = "'pk', o.Z_PK, 'identifier', o.ZIDENTIFIER";
-  let joins = "";
-  if (entity3 === "ICNote") {
-    fields += ", 'folderIdentifier', f.ZIDENTIFIER, 'accountIdentifier', a.ZIDENTIFIER";
-    joins = "LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = o.ZFOLDER LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = f.ZOWNER ";
-  } else if (entity3 === "ICFolder") {
-    fields += ", 'parentIdentifier', p.ZIDENTIFIER, 'accountIdentifier', a.ZIDENTIFIER";
-    joins = "LEFT JOIN ZICCLOUDSYNCINGOBJECT p ON p.Z_PK = o.ZPARENT LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = o.ZOWNER ";
-  }
-  return `SELECT json_object('store', (SELECT Z_UUID FROM Z_METADATA LIMIT 1), 'rows', (SELECT json_group_array(json_object(${fields})) FROM ZICCLOUDSYNCINGOBJECT o ${joins}WHERE o.Z_ENT = ${entityClause(entity3)} AND o.Z_PK IN (${inList})));`;
-}
-function runJsonQuery(sql, dbPath2) {
-  if (!fs7.existsSync(dbPath2)) throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
-  let out;
-  try {
-    out = execFileSync13("sqlite3", ["-readonly", dbPath2, sql], {
-      encoding: "utf8",
-      timeout: 5e3,
-      stdio: ["pipe", "pipe", "pipe"]
-    }).trim();
-  } catch (error2) {
-    const detail = error2 instanceof Error ? `${error2.message} ${String(error2.stderr ?? "")}` : String(error2);
-    if (detail.includes("authorization denied") || detail.includes("unable to open database")) {
-      throw new IdentifierResolutionError("no_fda", NO_FDA_MESSAGE);
-    }
-    console.error(`Identifier query failed: ${detail}`);
-    throw new IdentifierResolutionError("query_error", "Failed to read the Notes database.");
-  }
-  const parsed = JSON.parse(out || "{}");
-  const rows = typeof parsed.rows === "string" ? JSON.parse(parsed.rows) : parsed.rows;
-  return { store: parsed.store ?? null, rows: rows ?? [] };
-}
-function coreDataId(store, entity3, pk) {
-  return `x-coredata://${store}/${entity3}/p${pk}`;
-}
-function resolveIdentifiers(values, entity3, dbPath2 = NOTES_DB_PATH9) {
-  const resolved = /* @__PURE__ */ new Map();
-  const keys = [];
-  const uuids = [];
-  for (const value of values) {
-    const form = identifierForm(value);
-    if (form === "key") keys.push(value);
-    else if (form === "uuid") uuids.push(value);
-    else resolved.set(value, value);
-  }
-  if (keys.length === 0 && uuids.length === 0) return resolved;
-  const { store, rows } = runJsonQuery(
-    buildResolveSql(entity3, keys, uuids),
-    dbPath2
-  );
-  if (!store) {
-    throw new IdentifierResolutionError(
-      "query_error",
-      "The Notes database has no store UUID, so an x-coredata id cannot be built."
-    );
-  }
-  const byKey = new Map(rows.map((row) => [String(row.pk), row]));
-  const byUuid = new Map(
-    rows.filter((row) => row.identifier).map((row) => [String(row.identifier).toUpperCase(), row])
-  );
-  const label = ENTITY_LABEL[entity3];
-  const missing = [];
-  for (const key of keys) {
-    const row = byKey.get(canonicalKey(key));
-    if (row) resolved.set(key, coreDataId(store, entity3, row.pk));
-    else missing.push(`numeric key ${key}`);
-  }
-  for (const uuid3 of uuids) {
-    const row = byUuid.get(uuid3.toUpperCase());
-    if (row) resolved.set(uuid3, coreDataId(store, entity3, row.pk));
-    else missing.push(`identifier ${uuid3}`);
-  }
-  if (missing.length > 0) {
-    throw new IdentifierResolutionError(
-      "not_found",
-      `No ${label} found for ${missing.join(", ")}. A numeric key must belong to a ${label}, not another object type.`
-    );
-  }
-  return resolved;
-}
-var COREDATA_PARTS = /^x-coredata:\/\/([0-9A-Fa-f-]+)\/(ICNote|ICFolder|ICAccount)\/p(\d{1,18})$/;
-function lookupStableIdentifiers(ids, entity3, dbPath2 = NOTES_DB_PATH9) {
-  const result = /* @__PURE__ */ new Map();
-  const wanted = /* @__PURE__ */ new Map();
-  for (const id2 of ids) {
-    const match = COREDATA_PARTS.exec(id2);
-    if (!match || match[2] !== entity3) continue;
-    const pk = canonicalKey(match[3]);
-    const list = wanted.get(pk) ?? [];
-    list.push({ id: id2, store: match[1] });
-    wanted.set(pk, list);
-  }
-  if (wanted.size === 0) return result;
-  let query3;
-  try {
-    query3 = runJsonQuery(buildLookupSql(entity3, [...wanted.keys()]), dbPath2);
-  } catch {
-    return result;
-  }
-  const store = query3.store?.toUpperCase();
-  for (const row of query3.rows) {
-    const fields = {};
-    for (const key of [
-      "identifier",
-      "folderIdentifier",
-      "parentIdentifier",
-      "accountIdentifier"
-    ]) {
-      const value = row[key];
-      if (typeof value === "string" && value) fields[key] = value;
-    }
-    for (const target of wanted.get(String(row.pk)) ?? []) {
-      if (target.store.toUpperCase() === store) result.set(target.id, fields);
-    }
-  }
-  return result;
-}
-function withStableIdentifiers(items, entity3, dbPath2 = NOTES_DB_PATH9) {
-  const ids = items.map((item) => item.id).filter((id2) => typeof id2 === "string");
-  if (ids.length === 0) return items;
-  const found = lookupStableIdentifiers(ids, entity3, dbPath2);
-  if (found.size === 0) return items;
-  return items.map(
-    (item) => item.id && found.has(item.id) ? { ...item, ...found.get(item.id) } : item
-  );
-}
-var defaultResolver = (values, entity3) => resolveIdentifiers(values, entity3);
-var DEFAULT_MAX_ID_LENGTH = 2e3;
-function acceptAlternateForms(pattern2) {
-  return new RegExp(
-    `${pattern2.source}|${UUID_PATTERN.source}|${NUMERIC_KEY_PATTERN.source}`,
-    pattern2.flags
-  );
-}
-function resolveInSchema(values, entity3, ctx, resolver) {
-  if (!values.some(isAlternateIdentifier)) return new Map(values.map((v) => [v, v]));
-  try {
-    return resolver(values, entity3);
-  } catch (error2) {
-    ctx.addIssue({
-      code: external_exports.ZodIssueCode.custom,
-      message: error2 instanceof Error ? error2.message : String(error2)
-    });
-    return null;
-  }
-}
-function exactIdInput(entity3, pattern2, message, options = {}) {
-  const resolver = options.resolver ?? defaultResolver;
-  return external_exports.string().max(options.maxLength ?? DEFAULT_MAX_ID_LENGTH).regex(acceptAlternateForms(pattern2), message).transform((value, ctx) => {
-    const map = resolveInSchema([value], entity3, ctx, resolver);
-    return map ? map.get(value) ?? value : external_exports.NEVER;
-  });
-}
-function exactIdArrayInput(entity3, pattern2, message, options = {}) {
-  const resolver = options.resolver ?? defaultResolver;
-  const item = external_exports.string().max(options.maxLength ?? DEFAULT_MAX_ID_LENGTH).regex(acceptAlternateForms(pattern2), message);
-  const array2 = options.maxItems === void 0 ? external_exports.array(item) : external_exports.array(item).max(options.maxItems);
-  return array2.transform((values, ctx) => {
-    const map = resolveInSchema(values, entity3, ctx, resolver);
-    return map ? values.map((value) => map.get(value) ?? value) : external_exports.NEVER;
-  });
-}
-function looseIdTransform(entity3, resolver = defaultResolver) {
-  return (value, ctx) => {
-    if (!isAlternateIdentifier(value)) return value;
-    const map = resolveInSchema([value], entity3, ctx, resolver);
-    return map ? map.get(value) ?? value : external_exports.NEVER;
-  };
 }
 
 // src/utils/contentWarnings.ts
@@ -47254,6 +47448,10 @@ var Parser = class {
 function parseNoteQuery(input) {
   return new Parser(tokenize(input), input.length).parse();
 }
+function noteBodyText(text2) {
+  const firstBreak = text2.indexOf("\n");
+  return firstBreak === -1 ? "" : text2.slice(firstBreak + 1);
+}
 function normalizeForMatch(text2) {
   return text2.normalize("NFC").replace(/[\ufffc\u00a0]/gu, " ").toLowerCase();
 }
@@ -47328,20 +47526,36 @@ function cheapFirst(children) {
   }
   return ordered;
 }
-function evaluateNoteQuery(node, note) {
+function evaluateNoteQueryTruth(node, note) {
   switch (node.type) {
-    case "and":
-      return cheapFirst(node.children).every((child2) => evaluateNoteQuery(child2, note));
-    case "or":
-      return cheapFirst(node.children).some((child2) => evaluateNoteQuery(child2, note));
-    case "not":
-      return !evaluateNoteQuery(node.child, note);
+    case "and": {
+      let unknown2 = false;
+      for (const child2 of cheapFirst(node.children)) {
+        const value = evaluateNoteQueryTruth(child2, note);
+        if (value === false) return false;
+        if (value === null) unknown2 = true;
+      }
+      return unknown2 ? null : true;
+    }
+    case "or": {
+      let unknown2 = false;
+      for (const child2 of cheapFirst(node.children)) {
+        const value = evaluateNoteQueryTruth(child2, note);
+        if (value === true) return true;
+        if (value === null) unknown2 = true;
+      }
+      return unknown2 ? null : false;
+    }
+    case "not": {
+      const value = evaluateNoteQueryTruth(node.child, note);
+      return value === null ? null : !value;
+    }
     case "text": {
       const needle = normalizeForMatch(node.value);
       if (node.field === "title") return note.titleLower.includes(needle);
       if (node.field === "any" && note.titleLower.includes(needle)) return true;
       const content = note.content();
-      if (!content) return false;
+      if (!content) return null;
       return (node.field === "body" ? content.bodyLower : content.textLower).includes(needle);
     }
     case "folder":
@@ -47354,20 +47568,26 @@ function evaluateNoteQuery(node, note) {
       return compareDate(node.field === "created" ? note.created : note.modified, node);
     case "tag": {
       const content = note.content();
-      return Boolean(content?.tags.includes(normalizeForMatch(node.value)));
+      return content ? content.tags.includes(normalizeForMatch(node.value)) : null;
     }
-    case "has":
-      return Boolean(note.content()?.facets.has(node.facet));
+    case "has": {
+      const content = note.content();
+      return content ? content.facets.has(node.facet) : null;
+    }
     case "checklist": {
       const content = note.content();
-      if (!content || content.checklist.total === 0) return false;
+      if (!content) return null;
+      if (content.checklist.total === 0) return false;
       return node.state === "open" ? content.checklist.open > 0 : content.checklist.open === 0;
     }
     case "words": {
       const content = note.content();
-      return content ? compare(content.words, node.op, node.value) : false;
+      return content ? compare(content.words, node.op, node.value) : null;
     }
   }
+}
+function evaluateNoteQuery(node, note) {
+  return evaluateNoteQueryTruth(node, note) === true;
 }
 function positiveTextPredicates(node, negated = false) {
   switch (node.type) {
@@ -47391,7 +47611,7 @@ function matchLocations(predicates, title, text2) {
   const firstBreak = text2 === null ? -1 : text2.indexOf("\n");
   const titleLower = normalizeForMatch(title);
   const firstLineLower = text2 === null ? "" : normalizeForMatch(firstBreak === -1 ? text2 : text2.slice(0, firstBreak));
-  const bodyLower = text2 === null || firstBreak === -1 ? "" : normalizeForMatch(text2.slice(firstBreak + 1));
+  const bodyLower = text2 === null ? "" : normalizeForMatch(noteBodyText(text2));
   let inTitle = false;
   let inBody = false;
   for (const predicate of predicates) {
@@ -47502,13 +47722,6 @@ function decodeBodyHex(hex3) {
   } catch {
     return null;
   }
-}
-function countWords(text2) {
-  let count2 = 0;
-  for (const word of text2.replace(/\ufffc/gu, " ").split(/\s+/u)) {
-    if (/[\p{L}\p{N}]/u.test(word)) count2++;
-  }
-  return count2;
 }
 var REQUIRED_COLUMNS3 = ["Z_PK", "Z_ENT", "ZTITLE1", "ZFOLDER", "ZMODIFICATIONDATE1"];
 function col2(available, alias, name) {
@@ -47754,7 +47967,6 @@ function runNoteQuery(ast, options = {}) {
         const body2 = decode2();
         if (!body2) return content = null;
         const text2 = body2.text;
-        const firstBreak = text2.indexOf("\n");
         const tags = /* @__PURE__ */ new Set();
         for (const [id2, alt] of row.tags ?? []) {
           if (id2 && alt && body2.objectIds.has(id2))
@@ -47764,7 +47976,7 @@ function runNoteQuery(ast, options = {}) {
         if (tags.size) facets.add("tag");
         content = {
           textLower: normalizeForMatch(text2),
-          bodyLower: normalizeForMatch(firstBreak === -1 ? "" : text2.slice(firstBreak + 1)),
+          bodyLower: normalizeForMatch(noteBodyText(text2)),
           words: countWords(text2),
           facets,
           checklist: body2.checklist,
@@ -48257,13 +48469,16 @@ var LEGACY_ENTITIES = {
   gt: ">",
   amp: "&"
 };
+function codePointText(value) {
+  return Number.isSafeInteger(value) && value <= 1114111 ? String.fromCodePoint(value) : "\uFFFD";
+}
 function comparableVisibleText(html) {
   return html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ").replace(
     /&(?:(nbsp|quot|lt|gt|amp);?|apos;|#(\d+);|#x([0-9a-f]+);)/gi,
     (_match, legacy, dec, hex3) => {
       if (legacy) return LEGACY_ENTITIES[legacy.toLowerCase()];
-      if (dec) return String.fromCodePoint(Number(dec));
-      if (hex3) return String.fromCodePoint(Number.parseInt(hex3, 16));
+      if (dec) return codePointText(Number(dec));
+      if (hex3) return codePointText(Number.parseInt(hex3, 16));
       return "'";
     }
   ).replace(/\s+/g, " ").trim();
@@ -48531,7 +48746,15 @@ function mutateBackground(request, operation, data, verify, deps) {
     transportError = error2 ?? {};
     transportMessage = describeTransportFailure(error2);
   }
-  const after = deps.read(request.id);
+  let after;
+  try {
+    after = deps.read(request.id);
+  } catch (error2) {
+    throw new CodedError(
+      `Operation outcome uncertain; read exact note before any retry: readback failed: ${error2 instanceof Error ? error2.message : String(error2)}${transportMessage ? "; " + transportMessage : ""}`,
+      { code: "verification_failed", indeterminate: true }
+    );
+  }
   try {
     verify(before, after);
   } catch (error2) {
@@ -48680,15 +48903,26 @@ function createMarkdownNote(manager, request, run = runBackgroundShortcut) {
   const segments = (path10) => JSON.stringify(splitFolderPath(path10).map((part) => part.toLocaleLowerCase()));
   if (request.folder) {
     const wanted = segments(request.folder);
-    const accounts = manager.listAccounts().filter((account) => account.defaultFolder);
-    if (!accounts.some(
-      (account) => manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
-    ))
+    const accounts = manager.listAccounts().filter(
+      (account) => account.defaultFolder && manager.listFolders(account.name).some((folder) => segments(folder.name) === wanted)
+    );
+    if (!accounts.length)
       throw new Error(
         `Folder "${request.folder}" does not exist; create it with create-folder first. Nothing was created`
       );
-    for (const account of accounts)
-      manager.assertNotSmartFolderDestination(request.folder, account.name);
+    let smartRefusal;
+    const ordinary = accounts.filter((account) => {
+      try {
+        manager.assertNotSmartFolderDestination(request.folder, account.name);
+        return true;
+      } catch (error2) {
+        if (!(error2 instanceof CodedError && error2.envelope.reason === "smart_folder_destination"))
+          throw error2;
+        smartRefusal ??= error2;
+        return false;
+      }
+    });
+    if (!ordinary.length) throw smartRefusal;
   }
   const defaultFolderNotes = () => new Map(
     manager.listAccounts().flatMap(
@@ -48797,14 +49031,27 @@ var FEATURES = [
   },
   {
     name: "fullDiskAccessReads",
-    description: "Read-only reads of the Notes database: query-notes, checklist state, note metadata, note links, native objects, native tags, and sync detail",
+    description: "Read-only reads of the Notes database: queries, checklist state, metadata, links, note structure, tables, native objects, tags, smart folders, special and recent notes, folder tree, Paper and attachment exports, Markdown and HTML exports, and sync detail",
     tools: [
       "query-notes",
       "get-checklist-state",
       "get-note-metadata",
       "get-note-link",
       "get-native-objects",
+      "get-note-blocks",
+      "get-note-structure",
+      "get-note-tables",
+      "list-note-links",
       "list-native-tags",
+      "list-smart-folders",
+      "list-special-notes",
+      "list-recent-notes",
+      "list-folder-tree",
+      "list-paper-attachments",
+      "export-paper-image",
+      "export-attachments",
+      "export-notes-markdown",
+      "export-notes-html",
       "get-note-markdown (checklist annotations)",
       "get-sync-status (pending uploads)"
     ],
@@ -48865,7 +49112,8 @@ var FEATURES = [
   // Placeholders for features that need a native WRITE helper, which this
   // server does not ship. The opt-in private helper is read-only (write
   // support was deliberately deferred), so enabling or installing it changes
-  // nothing here: these always report `not_implemented`.
+  // nothing here: these always report `not_implemented`. Reading smart folders
+  // is available through list-smart-folders (fullDiskAccessReads).
   {
     name: "checklistToggle",
     description: "Check or uncheck an existing checklist item in place",
@@ -48889,17 +49137,17 @@ var FEATURES = [
   },
   {
     name: "paragraphLinks",
-    description: "Link to a specific paragraph or heading inside a note",
-    tools: [],
+    description: "List a note's paragraphs and return a link that opens Notes at one paragraph or heading, read from the Notes database",
+    tools: ["list-note-paragraphs", "get-paragraph-link"],
     minimumMacOSVersion: null,
-    requirements: [{ kind: "native_write_helper" }]
+    requirements: [{ kind: "full_disk_access" }]
   },
   {
     name: "audioTranscription",
-    description: "Transcribe audio recordings attached to a note",
-    tools: [],
+    description: "Read the transcripts Notes stored for a note's audio recordings, or transcribe them on this Mac (transcribe-note-audio also needs the public helper built with setup --public-helper)",
+    tools: ["get-audio-transcripts", "transcribe-note-audio"],
     minimumMacOSVersion: null,
-    requirements: [{ kind: "native_write_helper" }]
+    requirements: [{ kind: "full_disk_access" }]
   },
   {
     name: "markdownTemplateLibrary",
@@ -49371,7 +49619,63 @@ function withJsonSchema2020_12(transport2) {
 
 // src/utils/shutdown.ts
 var SHUTDOWN_DRAIN_TIMEOUT_MS = 2e3;
-function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS) {
+var SHUTDOWN_IN_FLIGHT_TIMEOUT_MS = 3e4;
+var InFlightRequests = class {
+  open = /* @__PURE__ */ new Set();
+  waiters = [];
+  get count() {
+    return this.open.size;
+  }
+  received(id2) {
+    this.open.add(id2);
+  }
+  /** A response was sent, or the client cancelled the request (no response follows). */
+  settled(id2) {
+    if (!this.open.delete(id2) || this.open.size > 0) return;
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const waiter of waiters) waiter();
+  }
+  onIdle(listener) {
+    if (this.open.size === 0) listener();
+    else this.waiters.push(listener);
+  }
+};
+var isObject2 = (value) => typeof value === "object" && value !== null;
+var isId = (value) => typeof value === "string" || typeof value === "number";
+function trackRequests(transport2, requests) {
+  if (typeof transport2.send !== "function") return transport2;
+  let handler;
+  Object.defineProperty(transport2, "onmessage", {
+    configurable: true,
+    enumerable: true,
+    get: () => handler,
+    set: (next) => {
+      handler = next ? (message, extra) => {
+        const m = message;
+        if (typeof m.method === "string") {
+          if (isId(m.id)) requests.received(m.id);
+          else if (m.method === "notifications/cancelled" && isObject2(m.params)) {
+            const id2 = m.params.requestId;
+            if (isId(id2)) requests.settled(id2);
+          }
+        }
+        next(message, extra);
+      } : next;
+    }
+  });
+  const send = transport2.send.bind(transport2);
+  transport2.send = async (message, options) => {
+    try {
+      return await send(message, options);
+    } finally {
+      const m = message;
+      if (typeof m.method !== "string" && isId(m.id)) requests.settled(m.id);
+    }
+  };
+  return transport2;
+}
+function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS, pending, inFlightTimeoutMs = SHUTDOWN_IN_FLIGHT_TIMEOUT_MS) {
   let shuttingDown = false;
   let exited = false;
   const exitOnce = () => {
@@ -49388,8 +49692,11 @@ function createShutdown(stream, exit, timeoutMs = SHUTDOWN_DRAIN_TIMEOUT_MS) {
   return () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    timer = setTimeout(exitOnce, timeoutMs);
-    setImmediate(exitWhenDrained);
+    const busy = (pending?.count ?? 0) > 0;
+    timer = setTimeout(exitOnce, busy ? Math.max(timeoutMs, inFlightTimeoutMs) : timeoutMs);
+    setImmediate(
+      () => pending ? pending.onIdle(() => setImmediate(exitWhenDrained)) : exitWhenDrained()
+    );
   };
 }
 
@@ -49570,7 +49877,7 @@ function resolveNote(dbPath2, columns2, selector) {
 function noteBodySql(columns2) {
   return `SELECT json_object('isNote', n.Z_ENT = ${entity("ICNote")}, 'identifier', ${col(columns2, "n", "ZIDENTIFIER")}, 'data', (SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK), 'encrypted', (SELECT d.ZCRYPTOINITIALIZATIONVECTOR IS NOT NULL FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK), 'locked', ${col(columns2, "n", "ZISPASSWORDPROTECTED")}) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk;`;
 }
-function readNoteParagraphs(selector, { dbPath: dbPath2 = NOTES_DB_PATH7 } = {}) {
+function readNoteParagraphs(selector, { dbPath: dbPath2 = NOTES_DB_PATH8 } = {}) {
   checkNoteSelector(selector);
   const columns2 = readColumns(dbPath2);
   const { pk, id: id2 } = resolveNote(dbPath2, columns2, selector);
@@ -49737,7 +50044,7 @@ function lastViewedOf(raw, columnPresent = true, now = Date.now()) {
   return { lastViewed: new Date(ms).toISOString(), lastViewedStatus: "viewed" };
 }
 var visible = (text2) => text2.replace(/\ufffc/g, "");
-var wordCount = (text2) => visible(text2).split(/\s+/u).filter((word) => word !== "").length;
+var wordCount = (text2) => countWords(text2);
 var charCount = (text2) => Array.from(visible(text2)).length;
 function noteStructureSql(columns2) {
   const c = (alias, name) => col(columns2, alias, name);
@@ -49799,7 +50106,7 @@ function describeNoteStructure(s) {
   if (s.isShared) parts.push("shared");
   return `Note structure: ${parts.join("; ")}.`;
 }
-function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH7, includeText = true, maxTextBytes = 4 * 1024 * 1024 } = {}) {
+function readNoteStructure(id2, { dbPath: dbPath2 = NOTES_DB_PATH8, includeText = true, maxTextBytes = 4 * 1024 * 1024 } = {}) {
   const { pk } = parseNoteId2(id2);
   const columns2 = readColumns(dbPath2);
   const rows = parseJsonLines(
@@ -50025,7 +50332,7 @@ function inventorySql(columns2) {
       ORDER BY d.ZNOTE LIMIT ${BODY_BATCH};`
   };
 }
-function decodeBodies(dbPath2, sql, params) {
+function decodeBodies(dbPath2, sql, params, notes) {
   const docs = /* @__PURE__ */ new Map();
   let after = 0;
   for (; ; ) {
@@ -50034,7 +50341,7 @@ function decodeBodies(dbPath2, sql, params) {
     );
     for (const row of rows) {
       after = Math.max(after, row.note);
-      if (row.encrypted || !row.data) continue;
+      if (row.encrypted || !row.data || !notes.has(row.note)) continue;
       try {
         docs.set(row.note, decodeCompressedNoteBlocks(Buffer.from(row.data, "hex")));
       } catch {
@@ -50045,7 +50352,7 @@ function decodeBodies(dbPath2, sql, params) {
 }
 var KIND_ORDER2 = { inline: 0, card: 1, note: 2, section: 3 };
 function listNoteLinks(options = {}) {
-  const { dbPath: dbPath2 = NOTES_DB_PATH7, offset = 0, limit = 200, maxBytes = 4 * 1024 * 1024 } = options;
+  const { dbPath: dbPath2 = NOTES_DB_PATH8, offset = 0, limit = 200, maxBytes = 4 * 1024 * 1024 } = options;
   if (options.id && (options.account || options.folder))
     throw new NoteStoreError("Pass either id or account/folder, not both.", "invalid_input");
   const notePk = options.id ? parseNoteId2(options.id).pk : 0;
@@ -50082,7 +50389,7 @@ function listNoteLinks(options = {}) {
   if (options.id && !notes.length)
     throw new NoteStoreError(`No note found for ID "${options.id}".`, "invalid_input");
   const includeInline = options.includeInline ?? Boolean(options.id);
-  const docs = includeInline ? decodeBodies(dbPath2, sql.bodies, params) : /* @__PURE__ */ new Map();
+  const docs = includeInline ? decodeBodies(dbPath2, sql.bodies, params, new Set(notes.map((note) => note.pk))) : /* @__PURE__ */ new Map();
   const noteById = new Map(notes.map((note) => [note.pk, note]));
   const accountById = new Map(context.accounts.map((account) => [account.pk, account]));
   const folderById = new Map(context.folders.map((folder) => [folder.pk, folder]));
@@ -50267,8 +50574,9 @@ function insertLink(request, deps) {
   try {
     readback = verifyLinkReadback(before, deps.readLinks(request.id), insertion, request.url);
   } catch (error2) {
-    throw new Error(
-      `The text was written, but link verification failed: ${error2 instanceof Error ? error2.message : String(error2)}. Do not retry automatically.`
+    throw new CodedError(
+      `The text was written, but link verification failed: ${error2 instanceof Error ? error2.message : String(error2)}. Do not retry automatically.`,
+      { code: "verification_failed", committed: true, indeterminate: true }
     );
   }
   return {
@@ -50396,7 +50704,14 @@ var AssetLocator = class {
           ["FallbackImage.png", "FallbackImage.jpg"]
         );
         if (fallback)
-          return { primary: { path: fallback, name: `${source.kind}.png`, role: "fallback" } };
+          return {
+            primary: {
+              path: fallback.path,
+              name: `${source.kind}.png`,
+              role: "fallback",
+              ...fallback.stale ? { stale: true } : {}
+            }
+          };
         return preview ? { primary: preview } : {};
       }
       case "scan": {
@@ -50404,7 +50719,14 @@ var AssetLocator = class {
           "FallbackPDF.pdf"
         ]);
         return {
-          ...pdf ? { primary: { path: pdf, name: "scan.pdf", role: "fallback" } } : {},
+          ...pdf ? {
+            primary: {
+              path: pdf.path,
+              name: "scan.pdf",
+              role: "fallback",
+              ...pdf.stale ? { stale: true } : {}
+            }
+          } : {},
           ...preview ? { preview } : {}
         };
       }
@@ -50433,7 +50755,11 @@ var AssetLocator = class {
     }
     return void 0;
   }
-  /** <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation. */
+  /**
+   * <dir>/<id>/<generation>/<name>, <dir>/<id>/<name>, then any generation.
+   * `stale` is set when a generation was recorded but the file came from
+   * somewhere else.
+   */
   fallback(account, dir, id2, generation, names) {
     const base = join19(account, dir, id2);
     const gen = safeComponent2(generation);
@@ -50445,7 +50771,7 @@ var AssetLocator = class {
     for (const g of generations)
       for (const name of names) {
         const path10 = confine(g ? join19(base, g, name) : join19(base, name), account);
-        if (path10 && isFile(path10)) return path10;
+        if (path10 && isFile(path10)) return { path: path10, stale: Boolean(gen) && g !== gen };
       }
     return void 0;
   }
@@ -50602,6 +50928,9 @@ function readHead(fd) {
   const n = readSync3(fd, head, 0, 16, 0);
   return head.subarray(0, n);
 }
+function directoryFailure(dir, error2) {
+  return `Could not create the assets directory ${dir}: ${error2 instanceof Error ? error2.message : String(error2)}`;
+}
 var SidecarWriter = class {
   constructor(dir, linkBase) {
     this.dir = dir;
@@ -50612,9 +50941,16 @@ var SidecarWriter = class {
   placed = /* @__PURE__ */ new Map();
   created = false;
   count = 0;
+  /**
+   * Set when the directory could not be created. Every later asset fails the
+   * same way without another attempt; the export checks this and fails
+   * instead of reporting each asset as unavailable.
+   */
+  directoryError;
   place(asset) {
     const done = this.placed.get(asset.path);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     let source;
     try {
       source = openSource(asset.path);
@@ -50624,8 +50960,13 @@ var SidecarWriter = class {
     try {
       const mime = sniffMime(readHead(source.fd), asset.name);
       if (!this.created) {
-        assertExportPath(this.dir);
-        mkdirSync4(this.dir, { recursive: true });
+        try {
+          assertExportPath(this.dir);
+          mkdirSync4(this.dir, { recursive: true });
+        } catch (error2) {
+          this.directoryError = directoryFailure(this.dir, error2);
+          return { error: this.directoryError };
+        }
         this.created = true;
       }
       const name = safeAssetName(asset.name, mime);
@@ -50778,7 +51119,10 @@ function titleBlockIndex(note) {
   return first2.text.trim() === note.title.trim() && first2.style !== "monospaced" ? first2.index : -1;
 }
 function place(ctx, asset) {
-  return asset && ctx.writer ? ctx.writer.place(asset) : void 0;
+  const placed = asset && ctx.writer ? ctx.writer.place(asset) : void 0;
+  if (asset?.stale && placed && "url" in placed)
+    ctx.stats.staleRenderings = (ctx.stats.staleRenderings ?? 0) + 1;
+  return placed;
 }
 function planAttachment(attachment, ctx) {
   ctx.stats.attachments++;
@@ -50944,6 +51288,7 @@ function inlinePlanHtml(plan) {
   }
 }
 function blockPlanHtml(plan) {
+  if (!isHtmlBlockPlan(plan)) return `<p>${inlinePlanHtml(plan)}</p>`;
   switch (plan.type) {
     case "table":
       return tableHtml(plan.rows);
@@ -51811,7 +52156,7 @@ function child(path10, key) {
   if (key.length > MAX_QUOTED_TOKEN) key = `${key.slice(0, MAX_QUOTED_TOKEN - 3)}...`;
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? `${path10}.${key}` : `${path10}[${JSON.stringify(key)}]`;
 }
-var isObject2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var isObject3 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var describe = (value) => value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 var describeVersion = (value) => typeof value === "number" && Number.isFinite(value) ? String(value) : describe(value);
 var listed = (values) => values.map((v) => JSON.stringify(v)).join(", ");
@@ -51892,7 +52237,7 @@ var RULE_FIELDS = {
   omit: []
 };
 function validateRule(c, rule, path10) {
-  if (!isObject2(rule)) {
+  if (!isObject3(rule)) {
     c.add(path10, `must be an object, not ${describe(rule)}`);
     return;
   }
@@ -51939,7 +52284,7 @@ function validateInlineOrder(c, value, path10) {
   if (missing.length) c.add(path10, `must list every inline format; missing ${listed(missing)}`);
 }
 function validateOptions(c, value, path10) {
-  if (!isObject2(value)) {
+  if (!isObject3(value)) {
     c.add(path10, `must be an object, not ${describe(value)}`);
     return;
   }
@@ -51960,7 +52305,7 @@ function validateOptions(c, value, path10) {
 }
 function templateErrors(input) {
   const c = new Collector();
-  if (!isObject2(input)) {
+  if (!isObject3(input)) {
     c.add("$", `a template must be a JSON object, not ${describe(input)}`);
     return c.errors;
   }
@@ -51995,7 +52340,7 @@ function templateErrors(input) {
         c.oneOf(value, path10, BUILTIN_TEMPLATE_NAMES);
         break;
       case "assets":
-        if (!isObject2(value)) {
+        if (!isObject3(value)) {
           c.add(path10, `must be an object, not ${describe(value)}`);
           break;
         }
@@ -52011,7 +52356,7 @@ function templateErrors(input) {
         validateInlineOrder(c, value, path10);
         break;
       case "rules":
-        if (!isObject2(value)) {
+        if (!isObject3(value)) {
           c.add(path10, `must be an object keyed by rule id, not ${describe(value)}`);
           break;
         }
@@ -52590,21 +52935,23 @@ function renderNotesWithTemplate(notes, ctx, options) {
 }
 
 // src/utils/templateAssets.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash2, randomBytes } from "node:crypto";
 import {
   closeSync as closeSync5,
   constants as constants5,
   fstatSync as fstatSync5,
+  linkSync,
   lstatSync as lstatSync4,
   mkdirSync as mkdirSync5,
   openSync as openSync5,
   readSync as readSync4,
+  unlinkSync as unlinkSync3,
   writeSync as writeSync4
 } from "node:fs";
 import { extname as extname4, isAbsolute as isAbsolute3, join as join21, relative as relative4, resolve as resolve4, sep as sep4 } from "node:path";
 var CHUNK = 1024 * 1024;
 function openRegular(path10) {
-  const fd = openSync5(path10, constants5.O_RDONLY | constants5.O_NOFOLLOW);
+  const fd = openSync5(path10, constants5.O_RDONLY | constants5.O_NOFOLLOW | constants5.O_NONBLOCK);
   if (!fstatSync5(fd).isFile()) {
     closeSync5(fd);
     throw new Error("not a regular file");
@@ -52639,16 +52986,26 @@ var HashedSidecarWriter = class {
   /** Absolute paths of files written or reused. */
   files = [];
   count = 0;
+  /** Set when the directory could not be created; see SidecarWriter.directoryError. */
+  directoryError;
+  /** Creates the directory once; returns an error message when it cannot. */
   prepare() {
-    if (this.ready) return;
-    assertExportPath(this.dir);
-    mkdirSync5(this.dir, { recursive: true });
-    if (!lstatSync4(this.dir).isDirectory()) throw new Error("assets directory is not a directory");
+    if (this.ready) return void 0;
+    try {
+      assertExportPath(this.dir);
+      mkdirSync5(this.dir, { recursive: true });
+      if (!lstatSync4(this.dir).isDirectory())
+        throw new Error("assets directory is not a directory");
+    } catch (error2) {
+      return this.directoryError = directoryFailure(this.dir, error2);
+    }
     this.ready = true;
+    return void 0;
   }
   place(asset) {
     const done = this.placed.get(asset.path);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     let source;
     try {
       source = openRegular(asset.path);
@@ -52658,7 +53015,8 @@ var HashedSidecarWriter = class {
     try {
       const { hash, head } = digest(source);
       const mime = sniffMime(head, asset.name);
-      this.prepare();
+      const directoryError = this.prepare();
+      if (directoryError) return { error: directoryError };
       const name = safeAssetName(asset.name, mime);
       const ext = extname4(name);
       const target = join21(
@@ -52690,26 +53048,56 @@ var HashedSidecarWriter = class {
       closeSync5(source);
     }
   }
+  /**
+   * Copy to a private temporary name, then hard-link it into place, so the
+   * hashed name only ever holds complete content: an interrupted copy can't
+   * leave a truncated file that later exports would report as name-taken.
+   * Where the volume has no hard links, copy straight to the hashed name and
+   * remove it if the copy fails.
+   */
   copy(source, target) {
-    const out = openSync5(
-      target,
-      constants5.O_WRONLY | constants5.O_CREAT | constants5.O_EXCL | constants5.O_NOFOLLOW,
-      420
-    );
+    const temp = join21(this.dir, `.asset-${randomBytes(6).toString("hex")}.tmp`);
+    writeNew(source, temp);
     try {
-      const chunk = Buffer.alloc(CHUNK);
-      for (let position = 0; ; ) {
-        const n = readSync4(source, chunk, 0, chunk.length, position);
-        if (n <= 0) break;
-        let written = 0;
-        while (written < n) written += writeSync4(out, chunk, written, n - written);
-        position += n;
-      }
+      linkSync(temp, target);
+      return;
+    } catch (error2) {
+      const code = error2.code;
+      if (code !== "ENOTSUP" && code !== "EPERM" && code !== "EXDEV") throw error2;
     } finally {
-      closeSync5(out);
+      try {
+        unlinkSync3(temp);
+      } catch {
+      }
     }
+    writeNew(source, target);
   }
 };
+function writeNew(source, target) {
+  const out = openSync5(
+    target,
+    constants5.O_WRONLY | constants5.O_CREAT | constants5.O_EXCL | constants5.O_NOFOLLOW,
+    420
+  );
+  try {
+    const chunk = Buffer.alloc(CHUNK);
+    for (let position = 0; ; ) {
+      const n = readSync4(source, chunk, 0, chunk.length, position);
+      if (n <= 0) break;
+      let written = 0;
+      while (written < n) written += writeSync4(out, chunk, written, n - written);
+      position += n;
+    }
+  } catch (error2) {
+    closeSync5(out);
+    try {
+      unlinkSync3(target);
+    } catch {
+    }
+    throw error2;
+  }
+  closeSync5(out);
+}
 var ReferenceWriter = class {
   constructor(linkBase) {
     this.linkBase = linkBase;
@@ -52757,33 +53145,9 @@ function templateAssetsDir(directory, outputDir, values) {
   return dir;
 }
 function readTemplateFile(path10) {
-  const abs = assertExportPath(path10);
-  if (extname4(abs).toLowerCase() !== ".json")
-    throw new Error(`Template file must have a .json extension: ${abs}`);
-  let fd;
-  try {
-    fd = openRegular(abs);
-  } catch (error2) {
-    const code = error2.code;
-    throw new Error(
-      code === "ENOENT" ? `Template file not found: ${abs}` : code === "ELOOP" ? `Refusing to read the symbolic link ${abs}` : `Template file is not a readable regular file: ${abs}`
-    );
-  }
-  try {
-    const size = fstatSync5(fd).size;
-    if (size > MAX_TEMPLATE_BYTES)
-      throw new Error(`Template file is ${size} bytes; the limit is ${MAX_TEMPLATE_BYTES}`);
-    const data = Buffer.alloc(size);
-    let read = 0;
-    while (read < size) {
-      const n = readSync4(fd, data, read, size - read, read);
-      if (n <= 0) break;
-      read += n;
-    }
-    return data.subarray(0, read).toString("utf8");
-  } finally {
-    closeSync5(fd);
-  }
+  if (extname4(path10).toLowerCase() !== ".json")
+    throw new Error(`Template file must have a .json extension: ${path10}`);
+  return readAllowedFile(path10, MAX_TEMPLATE_BYTES, { label: "Template file" }).toString("utf8");
 }
 
 // src/services/notesExport.ts
@@ -52858,10 +53222,11 @@ function validPath(path10, what) {
 function selectNotes(request, deps) {
   if (!!request.id === !!request.folder)
     throw new NotesExportError("invalid-request", "Provide exactly one of 'id' or 'folder'.");
-  if (request.id) return [request.id];
+  if (request.id) return { ids: [request.id], truncated: false };
   const limit = Math.min(request.limit ?? DEFAULT_FOLDER_EXPORT_LIMIT, MAX_FOLDER_EXPORT_LIMIT);
   try {
-    return deps.listNoteRefs(request.account, request.folder, void 0, limit).map((ref) => ref.id);
+    const ids = deps.listNoteRefs(request.account, request.folder, void 0, limit + 1).map((ref) => ref.id);
+    return { ids: ids.slice(0, limit), truncated: ids.length > limit };
   } catch (error2) {
     throw new NotesExportError(
       "folder-unavailable",
@@ -52893,9 +53258,13 @@ function openOutput(output) {
     throw error2;
   }
 }
-function renderInto(fd, render) {
+function renderInto(fd, render, writers = []) {
   try {
-    return render();
+    const document = render();
+    const directoryError = writers.find((writer) => writer.directoryError)?.directoryError;
+    if (directoryError)
+      throw new NotesExportError("invalid-path", `${directoryError}. Nothing was exported.`);
+    return document;
   } catch (error2) {
     if (fd !== void 0) writeAllAndClose(fd, "");
     throw error2;
@@ -52912,10 +53281,15 @@ function exportNotesMarkdown(request, deps) {
       "invalid-request",
       `assetsDir has no effect: template "${chosen.info.name}" sets assets.mode to "${chosen.template.assets.mode}".`
     );
-  const ids = selectNotes(request, deps);
+  const { ids, truncated } = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
-  if (chosen)
-    return exportWithTemplate(request, deps, chosen, notes, skipped, { output, assetsDir });
+  if (chosen) {
+    const receipt2 = exportWithTemplate(request, deps, chosen, notes, skipped, {
+      output,
+      assetsDir
+    });
+    return truncated ? { ...receipt2, truncated } : receipt2;
+  }
   const fd = output ? openOutput(output) : void 0;
   const writer = assetsDir ? new SidecarWriter(assetsDir, output ? dirname6(output) : void 0) : void 0;
   const ctx = {
@@ -52924,12 +53298,14 @@ function exportNotesMarkdown(request, deps) {
   };
   const markdown = renderInto(
     fd,
-    () => renderNotesMarkdown(notes, ctx, { wrap: request.wrap ?? 0 })
+    () => renderNotesMarkdown(notes, ctx, { wrap: request.wrap ?? 0 }),
+    writer ? [writer] : []
   );
   const bytes = Buffer.byteLength(markdown);
   const receipt = {
     format: "markdown",
     count: notes.length,
+    ...truncated ? { truncated } : {},
     bytes,
     stats: ctx.stats,
     skipped,
@@ -52965,7 +53341,7 @@ function exportNotesHtml(request, deps) {
   const assetsDir = embed ? void 0 : validPath(request.assetsDir ?? defaultSidecarDir(output), "assetsDir");
   if (assetsDir === output)
     throw new NotesExportError("invalid-path", "outputPath and assetsDir must differ.");
-  const ids = selectNotes(request, deps);
+  const { ids, truncated } = selectNotes(request, deps);
   const { notes, skipped } = loadNotes(ids, !!request.id, deps.readNote);
   const fd = openOutput(output);
   const writer = assetsDir ? new SidecarWriter(assetsDir, dirname6(output)) : new DataUrlWriter();
@@ -52975,11 +53351,16 @@ function exportNotesHtml(request, deps) {
     locator: deps.locator ?? new AssetLocator()
   };
   const title = request.id ? notes[0]?.title || "Note" : request.folder;
-  const html = renderInto(fd, () => renderNotesHtml(notes, ctx, { title }));
+  const html = renderInto(
+    fd,
+    () => renderNotesHtml(notes, ctx, { title }),
+    writer instanceof SidecarWriter ? [writer] : []
+  );
   const bytes = writeAllAndClose(fd, html);
   return {
     format: "html",
     count: notes.length,
+    ...truncated ? { truncated } : {},
     bytes,
     output,
     stats: ctx.stats,
@@ -53061,7 +53442,7 @@ function exportWithTemplate(request, deps, chosen, notes, skipped, { output, ass
     });
     warnings = result.warnings;
     return result.markdown;
-  });
+  }, [...writers.values()]);
   const bytes = Buffer.byteLength(markdown);
   const used = [...writers.values()].filter((writer) => writer.count > 0);
   const files = used.flatMap((writer) => writer.files);
@@ -53102,7 +53483,6 @@ import {
   fstatSync as fstatSync7,
   mkdtempSync as mkdtempSync6,
   openSync as openSync7,
-  readFileSync as readFileSync4,
   readSync as readSync5,
   rmSync as rmSync6,
   writeFileSync as writeFileSync5
@@ -53128,12 +53508,12 @@ import { basename as basename5, extname as extname6, join as join23 } from "node
 var PASTEBOARD_NAME_ENV = "APPLE_NOTES_MCP_PASTEBOARD_NAME";
 var MAX_PASTEBOARD_BYTES = 64 * 1024 * 1024;
 var PASTEBOARD_DATA_TYPES = [
+  { type: "com.adobe.pdf", ext: "pdf", label: "document" },
   { type: "public.png", ext: "png", label: "image" },
   { type: "public.jpeg", ext: "jpg", label: "image" },
   { type: "public.heic", ext: "heic", label: "image" },
   { type: "com.compuserve.gif", ext: "gif", label: "image" },
-  { type: "public.tiff", ext: "tiff", label: "image" },
-  { type: "com.adobe.pdf", ext: "pdf", label: "document" }
+  { type: "public.tiff", ext: "tiff", label: "image" }
 ];
 var PASTEBOARD_ACCESS_BEHAVIORS = {
   0: "default",
@@ -53160,15 +53540,26 @@ function run(argv) {
   var items = pb.pasteboardItems;
   var itemCount = items && !items.isNil() ? Number(items.count) : 0;
   var fileUrls = [];
+  var dataItems = 0;
   for (var k = 0; k < itemCount; k++) {
     var item = items.objectAtIndex(k);
     var itemTypes = ObjC.deepUnwrap(item.types) || [];
-    if (itemTypes.indexOf("public.file-url") < 0) continue;
+    if (itemTypes.indexOf("public.file-url") < 0) {
+      for (var j = 0; j < prefs.length; j++) {
+        if (itemTypes.indexOf(prefs[j][0]) >= 0) {
+          dataItems++;
+          break;
+        }
+      }
+      continue;
+    }
     var value = ObjC.unwrap(item.stringForType("public.file-url"));
     if (value) fileUrls.push(value);
   }
   if (fileUrls.length > 1)
     return JSON.stringify({ status: "error", code: "multiple_files", count: fileUrls.length });
+  if (fileUrls.length === 0 && dataItems > 1)
+    return JSON.stringify({ status: "error", code: "multiple_items", count: dataItems });
   if (fileUrls.length === 1) {
     var url = $.NSURL.URLWithString(fileUrls[0]);
     if (url && !url.isNil() && url.isFileURL) {
@@ -53199,6 +53590,7 @@ var ENVELOPE_CODES = {
   pasteboard_changed: "operation_failed",
   unsupported_content: "validation_error",
   multiple_files: "validation_error",
+  multiple_items: "validation_error",
   too_large: "validation_error",
   write_failed: "operation_failed",
   file_unreadable: "validation_error"
@@ -53225,6 +53617,7 @@ var MESSAGES = {
   pasteboard_changed: "The pasteboard changed while it was being read. Try again.",
   unsupported_content: `The pasteboard holds no supported content: copy ${SUPPORTED}. Text belongs in append-to-note, not in an attachment.`,
   multiple_files: "The pasteboard holds more than one copied file. Copy exactly one file, or attach each file with add-attachment.",
+  multiple_items: "The pasteboard holds more than one image or PDF. Copy exactly one, or save each and attach it with add-attachment.",
   too_large: "The pasteboard contents exceed the 64 MiB attachment limit.",
   write_failed: "Could not write the pasteboard contents to a temporary file.",
   file_unreadable: "The copied file could not be read as a regular file of at most 64 MiB."
@@ -53236,13 +53629,10 @@ function replyError(code, reply) {
     const message = accessBehavior === "alwaysDeny" ? "macOS is set to deny pasteboard access to the app that runs this server, so nothing was read. Change it to allow in System Settings, then try again." : MESSAGES.pasteboard_access_denied;
     return new PasteboardError(code, message, { accessBehavior });
   }
-  if (code === "multiple_files") {
+  if (code === "multiple_files" || code === "multiple_items") {
     const count2 = typeof reply.count === "number" ? reply.count : void 0;
-    return new PasteboardError(
-      code,
-      count2 ? `The pasteboard holds ${count2} copied files. Copy exactly one file, or attach each file with add-attachment.` : MESSAGES[code],
-      count2 ? { count: count2 } : {}
-    );
+    const counted = code === "multiple_files" ? `The pasteboard holds ${count2} copied files. Copy exactly one file, or attach each file with add-attachment.` : `The pasteboard holds ${count2} images or PDFs. Copy exactly one, or save each and attach it with add-attachment.`;
+    return new PasteboardError(code, count2 ? counted : MESSAGES[code], count2 ? { count: count2 } : {});
   }
   if (code === "unsupported_content" && Array.isArray(reply.types)) {
     const types = reply.types.filter((t) => typeof t === "string").slice(0, 20);
@@ -53276,7 +53666,7 @@ function pasteboardFilename(requested, frozenFilename) {
 function readRegularFile(path10) {
   let descriptor;
   try {
-    descriptor = openSync6(path10, constants6.O_RDONLY | constants6.O_NOFOLLOW);
+    descriptor = openSync6(path10, constants6.O_RDONLY | constants6.O_NOFOLLOW | constants6.O_NONBLOCK);
   } catch {
     throw new PasteboardError("file_unreadable", MESSAGES.file_unreadable);
   }
@@ -53382,17 +53772,14 @@ function assertExistingContentPreserved(before, after) {
 }
 function localAttachment(path10) {
   if (!isAbsolute4(path10)) throw new Error("An absolute local file path is required");
-  const descriptor = openSync7(path10, constants7.O_RDONLY | constants7.O_NOFOLLOW);
   try {
-    const stat = fstatSync7(descriptor);
-    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_ADD_ATTACHMENT_BYTES)
-      throw new Error("Attachment must be a nonempty regular file of at most 64 MiB");
-    const bytes = readFileSync4(descriptor);
-    if (bytes.length !== stat.size)
-      throw new Error("Attachment changed while it was being read; try again");
-    return bytes;
-  } finally {
-    closeSync7(descriptor);
+    return readAllowedFile(path10, MAX_ADD_ATTACHMENT_BYTES, { label: "Attachment" });
+  } catch (error2) {
+    throw new CodedError(error2 instanceof Error ? error2.message : String(error2), {
+      code: "validation_error",
+      committed: false,
+      indeterminate: false
+    });
   }
 }
 var MAX_ADD_ATTACHMENT_BYTES = 64 * 1024 * 1024;
@@ -53458,7 +53845,10 @@ function registerDirectOperations(server2, manager) {
     {
       id: folderId,
       expectedName: external_exports.string().max(1e3),
-      expectedParentId: external_exports.string().max(2e3),
+      // Same forms as id, so list-folders' parentIdentifier (a folder UUID)
+      // works; a top-level folder's parent is its account, passed as the
+      // account's x-coredata id.
+      expectedParentId: folderId,
       newName: external_exports.string().min(1).max(1e3)
     },
     (args) => ({
@@ -53467,20 +53857,22 @@ function registerDirectOperations(server2, manager) {
     })
   );
   const attachmentInput = {
-    path: external_exports.string().min(1).max(4096).describe("Absolute path of the local file to attach"),
+    path: external_exports.string().min(1).max(4096).describe(
+      "Absolute path of the local regular file to attach, in home, temp or /Volumes; hidden paths and ~/Library (except iCloud Drive and CloudStorage) are refused"
+    ),
     filename: external_exports.string().min(1).max(255).optional().describe(
       "Name the attachment gets in Notes instead of the source file's name. One path component with the source file's extension; no slash, colon, or control characters, and no leading dot."
     )
   };
   tool(
     "add-attachment",
-    "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, attachment name, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes. On macOS 27 Notes' AppleScript does not list PDF attachments; with Full Disk Access the new attachment is verified through the read-only NoteStore database instead (verifiedBy: database), otherwise the outcome is reported as uncertain.",
+    "Use when: adding one local file to an exact note without replacing its body.\nReturns: the new attachment id, byte count, attachment name, and post-write content hash after exact byte verification.\nDo not use when: reading or exporting an existing attachment.\nSafety: reads only a regular file in home, temp or /Volumes, refusing hidden paths (~/.ssh, .env) and ~/Library outside iCloud Drive and CloudStorage unless the server sets APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1; requires a fresh rich revision, copies at most 64 MiB through a private temporary file, never retries insertion, and verifies existing content plus fetched bytes. On macOS 27 Notes' AppleScript does not list PDF attachments; with Full Disk Access the new attachment is verified through the read-only NoteStore database instead (verifiedBy: database), otherwise the outcome is reported as uncertain.",
     { id: noteId, expectedContentHash: revision, ...attachmentInput },
     (args) => attachFile(manager, args)
   );
   tool(
     "create-note-with-attachment",
-    "Use when: creating a new note that holds one local file, in one call.\nReturns: the new note id plus the add-attachment result (attachment id, bytes, name, content hash).\nDo not use when: the note already exists (add-attachment).\nSafety: checks the file and filename before creating anything, creates the note through Notes.app like create-note, then attaches with the same byte verification as add-attachment. If the attachment step fails after the note exists, the error names the new note's id; attach to it with add-attachment instead of creating another note.",
+    "Use when: creating a new note that holds one local file, in one call.\nReturns: the new note id plus the add-attachment result (attachment id, bytes, name, content hash).\nDo not use when: the note already exists (add-attachment).\nSafety: checks the file and filename before creating anything, with the same read scope as add-attachment (home, temp or /Volumes; no hidden paths or ~/Library outside iCloud Drive and CloudStorage), creates the note through Notes.app like create-note, then attaches with the same byte verification as add-attachment. If the attachment step fails before the file is inserted, the error names the new note's id; attach to it with add-attachment instead of creating another note. If insertion started but could not be verified, the outcome is uncertain: read the note with list-attachments before attaching again.",
     {
       title: external_exports.string().min(1).max(2e3).refine((s) => !/[\r\n\0]/u.test(s), "One-line title"),
       content: external_exports.string().min(1).max(1024 * 1024).optional().describe("Optional plain-text body placed above the attachment"),
@@ -53506,26 +53898,45 @@ function registerDirectOperations(server2, manager) {
           `Failed to create note "${args.title}". Check that the folder and account exist (list-folders, list-accounts); nothing was attached`
         );
       const handOff = `Note ${note.id} was created; attach to it with add-attachment instead of creating another note`;
+      const createdError = (message, cause) => new CodedError(message, {
+        code: classifyError(message, cause).code,
+        committed: true,
+        indeterminate: false
+      });
       let snapshot;
       try {
         snapshot = readSnapshot(manager, note.id);
       } catch (error2) {
-        throw new Error(`${handOff}. The new note could not be read back: ${String(error2)}`);
+        const message = `${handOff}. The new note could not be read back: ${String(error2)}`;
+        throw createdError(message, error2);
       }
+      const progress = { insertionStarted: false };
       try {
         return {
-          ...attachFile(manager, {
-            id: note.id,
-            expectedContentHash: snapshot.hash,
-            path: args.path,
-            filename: name
-          }),
+          ...attachFile(
+            manager,
+            {
+              id: note.id,
+              expectedContentHash: snapshot.hash,
+              path: args.path,
+              filename: name
+            },
+            void 0,
+            progress
+          ),
           title: args.title,
           folder: args.folder,
           noteCreated: true
         };
       } catch (error2) {
-        throw new Error(`${handOff}. ${error2 instanceof Error ? error2.message : String(error2)}`);
+        const detail = error2 instanceof Error ? error2.message : String(error2);
+        if (!progress.insertionStarted) throw createdError(`${handOff}. ${detail}`, error2);
+        const message = `Note ${note.id} was created, but the attachment outcome is uncertain: ${detail}. Read the note (list-attachments) before attaching again, and do not create another note`;
+        throw new CodedError(message, {
+          code: "verification_failed",
+          committed: true,
+          indeterminate: true
+        });
       }
     }
   );
@@ -53632,7 +54043,7 @@ function storedInsertion(manager, id2, before, bytes, returnedId) {
     );
   return { attachmentId, name: row.filename };
 }
-function attachFile(manager, args, checked) {
+function attachFile(manager, args, checked, progress = { insertionStarted: false }) {
   const { id: id2, expectedContentHash, path: path10 } = args;
   const name = attachmentName(path10, args.filename);
   const before = checked ?? readSnapshot(manager, id2);
@@ -53647,6 +54058,7 @@ function attachFile(manager, args, checked) {
     if (readSnapshot(manager, id2).hash !== before.hash) throw new Error("Note revision changed");
     let returnedId;
     let transportUncertain = false;
+    progress.insertionStarted = true;
     try {
       returnedId = manager.addAttachmentById(id2, before.body, temporaryFile);
     } catch {
@@ -53839,7 +54251,9 @@ function readFolderStoreFacts(pk, dbPath2 = NOTE_STORE_PATH) {
 
 // src/tools/folderDelete.ts
 var folderIdSchema = external_exports.string().max(2e3).transform(looseIdTransform("ICFolder"));
-var accountIdSchema = external_exports.string().max(2e3).regex(/^x-coredata:\/\/[0-9a-f-]+\/ICAccount\/p\d+$/i, "An exact account ID is required");
+var accountIdSchema = external_exports.string().max(2e3).transform(looseIdTransform("ICAccount")).pipe(
+  external_exports.string().regex(/^x-coredata:\/\/[0-9a-f-]+\/ICAccount\/p\d+$/i, "An exact account ID is required")
+);
 var revisionSchema = external_exports.string().regex(/^sha256:[a-f0-9]{64}$/);
 var defaultDeps = {
   readStore: (pk) => readFolderStoreFacts(pk),
@@ -53974,15 +54388,27 @@ function runFolderDelete(manager, args, deps = defaultDeps) {
     throw uncertain(
       `The delete outcome is uncertain (${outcome.reason}); read folder ${args.id} before retrying`
     );
-  if (manager.folderExistsById(args.id))
+  let stillExists;
+  try {
+    stillExists = manager.folderExistsById(args.id);
+  } catch (error2) {
+    throw uncertain(
+      `The delete outcome is uncertain: Notes.app accepted the delete, but the readback failed (${error2 instanceof Error ? error2.message : String(error2)}); read folder ${args.id} before retrying`
+    );
+  }
+  if (stillExists)
     throw uncertain(
       `The delete outcome is uncertain: Notes.app still resolves folder ${args.id}; read it before retrying`
     );
   let storeTombstoned = false;
   for (let attempt = 0; attempt < 5 && !storeTombstoned; attempt++) {
     if (attempt > 0) deps.sleep(200);
-    const after = deps.readStore(coreDataPk(args.id));
-    storeTombstoned = !after || after.markedForDeletion;
+    try {
+      const after = deps.readStore(coreDataPk(args.id));
+      storeTombstoned = !after || after.markedForDeletion;
+    } catch {
+      break;
+    }
   }
   return {
     ...base,
@@ -54031,19 +54457,19 @@ function registerFolderDelete(server2, manager, deps = defaultDeps) {
 }
 
 // src/services/templateStore.ts
-import { randomBytes } from "node:crypto";
+import { randomBytes as randomBytes2 } from "node:crypto";
 import {
   closeSync as closeSync8,
   constants as constants8,
   fstatSync as fstatSync8,
-  linkSync,
+  linkSync as linkSync2,
   lstatSync as lstatSync5,
   mkdirSync as mkdirSync7,
   openSync as openSync8,
   readdirSync as readdirSync4,
   readSync as readSync6,
   renameSync,
-  unlinkSync as unlinkSync3,
+  unlinkSync as unlinkSync4,
   writeSync as writeSync5
 } from "node:fs";
 import { homedir as homedir19 } from "node:os";
@@ -54106,14 +54532,26 @@ var TemplateStore = class {
   file(name) {
     return join26(this.dir, `${name}.json`);
   }
-  /** Read a saved template's text, refusing symlinks and non-regular files. */
+  /**
+   * Read a saved template's text, refusing symlinks and non-regular files.
+   * O_NONBLOCK keeps a FIFO from blocking the event loop (it is then refused as
+   * not a regular file); it does not affect reading a regular file. Only a
+   * symlink (ELOOP) is reported as unsafe-path; other open failures, such as
+   * EACCES, are rethrown as they are.
+   */
   readText(path10) {
     let fd;
     try {
-      fd = openSync8(path10, constants8.O_RDONLY | constants8.O_NOFOLLOW);
+      fd = openSync8(path10, constants8.O_RDONLY | constants8.O_NOFOLLOW | constants8.O_NONBLOCK);
     } catch (error2) {
-      if (error2.code === "ENOENT") return void 0;
-      throw new TemplateStoreError("unsafe-path", `Refusing to read ${path10}: not a regular file.`);
+      const errno = error2.code;
+      if (errno === "ENOENT") return void 0;
+      if (errno === "ELOOP")
+        throw new TemplateStoreError(
+          "unsafe-path",
+          `Refusing to read ${path10}: it is a symbolic link.`
+        );
+      throw error2;
     }
     try {
       const stat = fstatSync8(fd);
@@ -54218,7 +54656,7 @@ var TemplateStore = class {
         "template-exists",
         `A template named "${name}" already exists. Pass force: true to replace it.`
       );
-    const temp = join26(this.dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
+    const temp = join26(this.dir, `.${name}.${randomBytes2(6).toString("hex")}.tmp`);
     const fd = openSync8(
       temp,
       constants8.O_WRONLY | constants8.O_CREAT | constants8.O_EXCL | constants8.O_NOFOLLOW,
@@ -54228,14 +54666,20 @@ var TemplateStore = class {
       const data = Buffer.from(body, "utf8");
       let written = 0;
       while (written < data.length) written += writeSync5(fd, data, written);
-    } finally {
+    } catch (error2) {
       closeSync8(fd);
+      try {
+        unlinkSync4(temp);
+      } catch {
+      }
+      throw error2;
     }
+    closeSync8(fd);
     try {
       if (force) renameSync(temp, path10);
       else {
         try {
-          linkSync(temp, path10);
+          linkSync2(temp, path10);
         } catch (error2) {
           if (error2.code === "EEXIST")
             throw new TemplateStoreError(
@@ -54247,7 +54691,7 @@ var TemplateStore = class {
       }
     } finally {
       try {
-        unlinkSync3(temp);
+        unlinkSync4(temp);
       } catch {
       }
     }
@@ -54270,7 +54714,7 @@ var TemplateStore = class {
         "unsafe-path",
         `Refusing to delete ${path10}: not a regular file.`
       );
-    unlinkSync3(path10);
+    unlinkSync4(path10);
     return { path: path10 };
   }
 };
@@ -54295,7 +54739,7 @@ function failure(action, error2) {
 var nameInput = external_exports.string().min(1).max(64).describe("Template name: a built-in (standard-markdown, obsidian) or a saved template's name");
 var templateInput = external_exports.union([external_exports.record(external_exports.unknown()), external_exports.string().max(MAX_TEMPLATE_BYTES)]).optional().describe("The template itself, as a JSON object or JSON text (schemaVersion 1)");
 var templateFileInput = external_exports.string().min(1).max(4096).optional().describe(
-  "Absolute path of a JSON template file ending in .json (home, a temp dir, or /Volumes; symlinks refused; at most 256 KiB)"
+  "Absolute path of a JSON template file ending in .json (home, a temp dir, or /Volumes; hidden paths and ~/Library outside iCloud Drive and CloudStorage refused unless the server sets APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1; symlinks refused; at most 256 KiB)"
 );
 function sourceText(args) {
   if (args.template === void 0 === (args.templateFile === void 0))
@@ -54365,7 +54809,7 @@ function registerMarkdownTemplates(server2, store = () => new TemplateStore()) {
   server2.registerTool(
     "validate-markdown-template",
     {
-      description: 'Use when: checking a template before saving it or exporting with it.\nReturns: valid true, or valid false with every problem as {path, message}, where path is a JSON path such as $.rules["inline.bold"].after.\nDo not use when: you want to store it (save-markdown-template validates too).\nSafety: read-only. Pass exactly one of name (a saved or built-in template), template (JSON object or text) or templateFile.',
+      description: 'Use when: checking a template before saving it or exporting with it.\nReturns: valid true, or valid false with every problem as {path, message}, where path is a JSON path such as $.rules["inline.bold"].after.\nDo not use when: you want to store it (save-markdown-template validates too).\nSafety: read-only. Pass exactly one of name (a saved or built-in template), template (JSON object or text) or templateFile. templateFile reads only a regular .json file in home, temp or /Volumes, refusing hidden paths (~/.docker, .env) and ~/Library outside iCloud Drive and CloudStorage unless the server sets APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1; errors never quote the file.',
       inputSchema: validateInput,
       outputSchema: loose,
       annotations: { readOnlyHint: true }
@@ -54406,7 +54850,7 @@ function registerMarkdownTemplates(server2, store = () => new TemplateStore()) {
   server2.registerTool(
     "save-markdown-template",
     {
-      description: "Use when: storing a template so export-notes-markdown can use it by name.\nReturns: name, path, bytes and whether an existing template was replaced.\nDo not use when: exporting once (pass templateFile to export-notes-markdown instead).\nSafety: writes one file in the template library only (APPLE_NOTES_MCP_TEMPLATE_DIR, default ~/Library/Application Support/apple-notes-mcp/templates, mode 0600). Validates first; an invalid template is refused with every JSON path. Create-only: an existing name is refused with [template-exists] unless force is true. Built-in names are reserved.",
+      description: "Use when: storing a template so export-notes-markdown can use it by name.\nReturns: name, path, bytes and whether an existing template was replaced.\nDo not use when: exporting once (pass templateFile to export-notes-markdown instead).\nSafety: writes one file in the template library only (APPLE_NOTES_MCP_TEMPLATE_DIR, default ~/Library/Application Support/apple-notes-mcp/templates, mode 0600). Validates first; an invalid template is refused with every JSON path. Create-only: an existing name is refused with [template-exists] unless force is true. Built-in names are reserved. templateFile follows the same read scope as validate-markdown-template.",
       inputSchema: saveInput,
       outputSchema: loose,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
@@ -54449,7 +54893,6 @@ function registerMarkdownTemplates(server2, store = () => new TemplateStore()) {
 
 // src/utils/svgAnalyzer.ts
 import { createHash as createHash5 } from "node:crypto";
-import { closeSync as closeSync9, constants as constants9, fstatSync as fstatSync9, openSync as openSync9, readSync as readSync7 } from "node:fs";
 
 // src/utils/svgColor.ts
 var NAMED = {
@@ -54656,7 +55099,7 @@ function parseColor(value) {
 }
 function parsePaint(value) {
   const v = value.trim();
-  if (v === "none") return { kind: "none" };
+  if (/^none$/i.test(v)) return { kind: "none" };
   if (/^currentcolor$/i.test(v)) return { kind: "current" };
   const url = /^url\(\s*['"]?([^'")]*)['"]?\s*\)/i.exec(v);
   if (url) return { kind: "url", target: url[1].trim() };
@@ -55031,8 +55474,9 @@ function distanceToChord(p, a, b) {
   if (len === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
   return Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / len;
 }
-function flattenCubic(p0, c1, c2, p3, tolerance, out, depth = 0) {
+function flattenCubic(p0, c1, c2, p3, tolerance, out, depth = 0, charge) {
   if (depth >= 16 || Math.max(distanceToChord(c1, p0, p3), distanceToChord(c2, p0, p3)) <= tolerance) {
+    charge?.();
     out.push(p3);
     return;
   }
@@ -55043,31 +55487,47 @@ function flattenCubic(p0, c1, c2, p3, tolerance, out, depth = 0) {
   const d = mid(a, b);
   const e = mid(b, c);
   const m = mid(d, e);
-  flattenCubic(p0, a, d, m, tolerance, out, depth + 1);
-  flattenCubic(m, e, c, p3, tolerance, out, depth + 1);
+  flattenCubic(p0, a, d, m, tolerance, out, depth + 1, charge);
+  flattenCubic(m, e, c, p3, tolerance, out, depth + 1, charge);
 }
-function flattenSubpath(sub4, m, tolerance) {
+function flattenSubpath(sub4, m, tolerance, charge) {
+  charge?.();
   const points = [apply(m, sub4.start)];
   let pen = sub4.start;
   for (const seg of sub4.segments) {
-    if (seg.kind === "L") points.push(apply(m, seg.to));
-    else
+    if (seg.kind === "L") {
+      charge?.();
+      points.push(apply(m, seg.to));
+    } else
       flattenCubic(
         apply(m, pen),
         apply(m, seg.c1),
         apply(m, seg.c2),
         apply(m, seg.to),
         tolerance,
-        points
+        points,
+        0,
+        charge
       );
     pen = seg.to;
   }
   if (sub4.closed) {
     const first2 = points[0];
     const last = points[points.length - 1];
-    if (last[0] !== first2[0] || last[1] !== first2[1]) points.push(first2);
+    if (last[0] !== first2[0] || last[1] !== first2[1]) {
+      charge?.();
+      points.push(first2);
+    }
   }
   return points;
+}
+function subpathControlPoints(sub4, m) {
+  const out = [apply(m, sub4.start)];
+  for (const seg of sub4.segments) {
+    if (seg.kind === "C") out.push(apply(m, seg.c1), apply(m, seg.c2));
+    out.push(apply(m, seg.to));
+  }
+  return out;
 }
 function clipSegment(a, b, r) {
   const dx = b[0] - a[0];
@@ -55248,6 +55708,13 @@ var SvgError = class extends Error {
   code;
   location;
 };
+function lookupNamespace(scope2, prefix) {
+  for (let s = scope2; s; s = s.parent) {
+    const ns = s.own?.get(prefix);
+    if (ns !== void 0) return ns;
+  }
+  return void 0;
+}
 var NAME_START = /[A-Za-z_À-￿]/;
 var NAME_CHAR = /[A-Za-z0-9_.\-:·À-￿]/;
 var PREDEFINED = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
@@ -55268,7 +55735,7 @@ function decodeEntities(raw, line) {
     if (body in PREDEFINED) return PREDEFINED[body];
     throw new SvgError(
       "svg_unsafe",
-      `Named entity "&${body.slice(0, 40)};" on line ${line}: only the five XML entities are allowed`
+      `A named entity on line ${line} is not allowed: only the five XML entities are`
     );
   });
 }
@@ -55276,6 +55743,9 @@ function parseXml(source, limits) {
   let pos = 0;
   let line = 1;
   let elementCount = 0;
+  let namespaceDeclarations = 0;
+  const maxAttributes = limits.maxAttributes ?? 1024;
+  const maxNamespaceDeclarations = limits.maxNamespaceDeclarations ?? 1024;
   const stack = [];
   let root = null;
   const fail = (message) => {
@@ -55336,7 +55806,10 @@ function parseXml(source, limits) {
     if (!NAME_START.test(source[i] ?? "")) fail("Invalid tag");
     while (i < source.length && NAME_CHAR.test(source[i])) i++;
     const name = source.slice(pos + 1, i);
+    if (!root && !stack.length && name.slice(name.indexOf(":") + 1) !== "svg")
+      fail("The root element is not <svg>");
     const rawAttributes = [];
+    const attributeNames = /* @__PURE__ */ new Set();
     let selfClosing = false;
     for (; ; ) {
       const ws = i;
@@ -55366,8 +55839,13 @@ function parseXml(source, limits) {
       if (close < 0) fail("Unterminated attribute value");
       const rawValue = source.slice(i + 1, close);
       if (rawValue.includes("<")) fail("'<' in an attribute value");
-      if (rawAttributes.some((a) => a.name === attrName))
-        fail(`Duplicate attribute ${attrName.slice(0, 40)}`);
+      if (attributeNames.has(attrName)) fail(`Duplicate attribute ${attrName.slice(0, 40)}`);
+      attributeNames.add(attrName);
+      if (attributeNames.size > maxAttributes)
+        throw new SvgError(
+          "svg_complexity_limit",
+          `An element has more than ${maxAttributes} attributes (line ${line})`
+        );
       rawAttributes.push({
         name: attrName,
         value: decodeEntities(rawValue.replace(/[\t\n\r]/g, " "), line)
@@ -55384,19 +55862,30 @@ function parseXml(source, limits) {
       );
     if (stack.length + 1 > limits.maxDepth)
       throw new SvgError("svg_complexity_limit", `Elements nest deeper than ${limits.maxDepth}`);
-    const parentScope = stack.length ? stack[stack.length - 1].scope : /* @__PURE__ */ new Map();
-    const scope2 = new Map(parentScope);
+    const parentScope = stack.length ? stack[stack.length - 1].scope : null;
+    let own = null;
     for (const a of rawAttributes) {
-      if (a.name === "xmlns") scope2.set("", a.value);
-      else if (a.name.startsWith("xmlns:")) scope2.set(a.name.slice(6), a.value);
+      const prefix = a.name === "xmlns" ? "" : a.name.startsWith("xmlns:") ? a.name.slice(6) : null;
+      if (prefix === null) continue;
+      if (++namespaceDeclarations > maxNamespaceDeclarations)
+        throw new SvgError(
+          "svg_complexity_limit",
+          `The document declares more than ${maxNamespaceDeclarations} namespaces`
+        );
+      (own ??= /* @__PURE__ */ new Map()).set(prefix, a.value);
     }
+    const scope2 = own ? { own, parent: parentScope } : parentScope ?? { own: null, parent: null };
     const resolve9 = (qualified, isAttribute) => {
       const colon = qualified.indexOf(":");
-      if (colon < 0) return { local: qualified, ns: isAttribute ? null : scope2.get("") ?? null };
+      if (colon < 0)
+        return {
+          local: qualified,
+          ns: isAttribute ? null : lookupNamespace(scope2, "") ?? null
+        };
       const prefix = qualified.slice(0, colon);
       const local = qualified.slice(colon + 1);
       if (prefix === "xml") return { local, ns: XML_NS };
-      const ns = scope2.get(prefix);
+      const ns = lookupNamespace(scope2, prefix);
       if (ns === void 0) fail(`Undeclared namespace prefix "${prefix.slice(0, 40)}"`);
       return { local, ns };
     };
@@ -55424,6 +55913,8 @@ var SVG_ANALYZER_VERSION = "apple-notes-mcp/svg-analyzer@1";
 var SVG_LIMITS = {
   maxSourceBytes: 1048576,
   maxSourceElements: 16384,
+  maxAttributesPerElement: 1024,
+  maxNamespaceDeclarations: 1024,
   maxExpandedElements: 16384,
   maxReferenceExpansions: 8192,
   maxDepth: 64,
@@ -55595,7 +56086,7 @@ function attr(el, local) {
   return el.attributes.find((a) => a.local === local && a.ns === null)?.value;
 }
 function href(el) {
-  return el.attributes.find((a) => a.local === "href" && (a.ns === null || a.ns === XLINK_NS))?.value ?? void 0;
+  return el.attributes.find((a) => a.local === "href" && a.ns === null)?.value ?? el.attributes.find((a) => a.local === "href" && a.ns === XLINK_NS)?.value;
 }
 function parseStyleAttribute(value) {
   const out = [];
@@ -55611,7 +56102,24 @@ function parseStyleAttribute(value) {
 function hasText(el) {
   return el.text.trim().length > 0 || el.children.some(hasText);
 }
-var ACTIVE_SCHEME = /^\s*(?:javascript|vbscript|data)\s*:/i;
+var ACTIVE_SCHEME = /^(?:javascript|vbscript|data)\s*:/i;
+function urlAsParsed(value) {
+  return value.replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
+}
+function unescapeCss(value) {
+  if (!value.includes("\\")) return value;
+  return value.replace(
+    /\\(?:([0-9A-Fa-f]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/g,
+    (_m, hex3, newline, other) => {
+      if (hex3 !== void 0) {
+        const code = Number.parseInt(hex3, 16);
+        return code === 0 || code > 1114111 || code >= 55296 && code <= 57343 ? "\uFFFD" : String.fromCodePoint(code);
+      }
+      if (newline !== void 0) return "";
+      return other;
+    }
+  );
+}
 function assertInert(el, location) {
   if (UNSAFE_ELEMENTS.has(el.local))
     throw new SvgError(
@@ -55628,7 +56136,7 @@ function assertInert(el, location) {
       );
     const value = a.value;
     if (a.local === "href" && (a.ns === null || a.ns === XLINK_NS)) {
-      const target = value.trim();
+      const target = urlAsParsed(value);
       if (el.local === "a") {
         if (ACTIVE_SCHEME.test(target))
           throw new SvgError("svg_unsafe", "Link uses an active URL scheme", location);
@@ -55641,10 +56149,11 @@ function assertInert(el, location) {
         );
       }
     }
-    for (const m of value.matchAll(/url\(\s*['"]?([^'")]*)/gi))
-      if (!m[1].trim().startsWith("#"))
+    const css = unescapeCss(value);
+    for (const m of css.matchAll(/url\(\s*['"]?([^'")]*)/gi))
+      if (!urlAsParsed(m[1]).startsWith("#"))
         throw new SvgError("svg_unsafe", "url() references must be local (#id)", location);
-    if (a.local === "style" && /@import|expression\s*\(|javascript\s*:/i.test(value))
+    if (a.local === "style" && /@import|expression\s*\(|javascript\s*:/i.test(urlAsParsed(css)))
       throw new SvgError("svg_unsafe", "Active content in a style attribute", location);
   }
   const counts = /* @__PURE__ */ new Map();
@@ -55726,7 +56235,8 @@ var Analyzer = class {
     if (styleAttr) declarations.push(...parseStyleAttribute(styleAttr));
     const diag = Math.hypot(ctx.viewport[0], ctx.viewport[1]) / Math.SQRT2;
     for (const [name, value] of declarations) {
-      if (value === "inherit") continue;
+      const keyword = value.toLowerCase();
+      if (keyword === "inherit") continue;
       const invalid9 = () => this.issue(
         "invalid_value",
         null,
@@ -55765,23 +56275,23 @@ var Analyzer = class {
           break;
         }
         case "fill-rule":
-          if (value === "evenodd" || value === "nonzero") style.evenOdd = value === "evenodd";
+          if (keyword === "evenodd" || keyword === "nonzero") style.evenOdd = keyword === "evenodd";
           else invalid9();
           break;
         case "visibility":
-          style.visible = value === "visible";
+          style.visible = keyword === "visible";
           break;
         case "display":
-          if (value === "none") display = false;
+          display = keyword !== "none";
           break;
         case "stroke-linecap":
-          style.linecap = value;
+          style.linecap = keyword;
           break;
         case "stroke-linejoin":
-          style.linejoin = value;
+          style.linejoin = keyword;
           break;
         case "stroke-dasharray": {
-          if (value === "none") {
+          if (keyword === "none") {
             style.dasharray = null;
             break;
           }
@@ -55802,7 +56312,7 @@ var Analyzer = class {
         case "overflow":
           break;
         case "mix-blend-mode":
-          if (value !== "normal")
+          if (keyword !== "normal")
             this.issue(
               "blend_mode_ignored",
               "paint-approximation",
@@ -55811,7 +56321,7 @@ var Analyzer = class {
             );
           break;
         case "paint-order":
-          if (value !== "normal" && !/^fill(\s+stroke)?(\s+markers)?$/.test(value))
+          if (keyword !== "normal" && !/^fill(\s+stroke)?(\s+markers)?$/.test(keyword))
             this.issue(
               "paint_order_ignored",
               "paint-approximation",
@@ -55821,7 +56331,7 @@ var Analyzer = class {
           break;
         default:
           if (DROPPED_MODIFIERS.has(name)) {
-            if (value !== "none")
+            if (keyword !== "none")
               this.issue(
                 "modifier_dropped",
                 "drop-content",
@@ -55843,7 +56353,7 @@ var Analyzer = class {
   propertyValue(el, name) {
     const styleAttr = attr(el, "style");
     const fromStyle = styleAttr ? parseStyleAttribute(styleAttr).filter(([n]) => n === name).pop() : void 0;
-    return fromStyle ? fromStyle[1] : attr(el, name);
+    return (fromStyle ? fromStyle[1] : attr(el, name))?.trim().toLowerCase();
   }
   run() {
     const root = this.root;
@@ -56243,9 +56753,7 @@ var Analyzer = class {
     if (!geometry || !ctx.style.visible) return;
     const { style } = ctx;
     const polylines = geometry.subpaths.filter((s) => s.segments.length > 0).map((s) => {
-      const pts = flattenSubpath(s, ctx.matrix, TOLERANCE);
-      this.charge("geometryWork", pts.length);
-      if (pts.some(
+      if (subpathControlPoints(s, ctx.matrix).some(
         (p) => !(Math.abs(p[0]) <= SVG_LIMITS.maxCoordinate && Math.abs(p[1]) <= SVG_LIMITS.maxCoordinate)
       ))
         throw new SvgError(
@@ -56253,7 +56761,7 @@ var Analyzer = class {
           "Geometry is not finite or exceeds the coordinate limit",
           ctx.location
         );
-      return pts;
+      return flattenSubpath(s, ctx.matrix, TOLERANCE, () => this.charge("geometryWork", 1));
     });
     if (!polylines.length) return;
     const fill = this.paintColor(style.fill, style);
@@ -56409,56 +56917,20 @@ function analyzeSvgBuffer(source) {
   if (text2.charCodeAt(0) === 65279) text2 = text2.slice(1);
   const root = parseXml(text2, {
     maxElements: SVG_LIMITS.maxSourceElements,
-    maxDepth: SVG_LIMITS.maxDepth
+    maxDepth: SVG_LIMITS.maxDepth,
+    maxAttributes: SVG_LIMITS.maxAttributesPerElement,
+    maxNamespaceDeclarations: SVG_LIMITS.maxNamespaceDeclarations
   });
   const analyzer = new Analyzer(root);
   const viewport = analyzer.run();
   return analysisFor(source, analyzer, viewport);
 }
-function readSvgSource(path10) {
-  let fd;
-  try {
-    fd = openSync9(path10, constants9.O_RDONLY | constants9.O_NOFOLLOW | constants9.O_NONBLOCK);
-  } catch (error2) {
-    if (error2.code === "ELOOP")
-      throw new SvgError("svg_file_invalid", "The SVG path is a symbolic link");
-    throw new SvgError("svg_file_invalid", "The SVG file does not exist or cannot be read");
-  }
-  try {
-    const info = fstatSync9(fd);
-    if (!info.isFile())
-      throw new SvgError("svg_file_invalid", "The SVG path is not a regular file");
-    if (info.size > SVG_LIMITS.maxSourceBytes)
-      throw new SvgError(
-        "svg_file_invalid",
-        `The SVG is larger than ${SVG_LIMITS.maxSourceBytes} bytes`
-      );
-    const buffer = Buffer.alloc(SVG_LIMITS.maxSourceBytes + 1);
-    let total = 0;
-    for (; ; ) {
-      const n = readSync7(fd, buffer, total, buffer.length - total, null);
-      if (n === 0) break;
-      total += n;
-      if (total > SVG_LIMITS.maxSourceBytes)
-        throw new SvgError(
-          "svg_file_invalid",
-          `The SVG is larger than ${SVG_LIMITS.maxSourceBytes} bytes`
-        );
-    }
-    return buffer.subarray(0, total);
-  } finally {
-    closeSync9(fd);
-  }
-}
-function analyzeSvgFile(path10) {
-  return analyzeSvgBuffer(readSvgSource(path10));
-}
 
 // src/tools/svgAnalysis.ts
 function runSvgAnalysis(args, roots = allowedSaveRoots()) {
-  let abs;
+  let source;
   try {
-    abs = assertReadableInRoots(args.path, roots, "SVG file");
+    source = readAllowedFile(args.path, SVG_LIMITS.maxSourceBytes, { roots, label: "SVG file" });
   } catch (error2) {
     throw new CodedError(error2.message, {
       code: "validation_error",
@@ -56466,7 +56938,7 @@ function runSvgAnalysis(args, roots = allowedSaveRoots()) {
     });
   }
   try {
-    const result = analyzeSvgFile(abs);
+    const result = analyzeSvgBuffer(source);
     return {
       ...result.analysis,
       ...args.includeDrawing ? { drawing: result.drawing } : {}
@@ -56484,7 +56956,7 @@ function runSvgAnalysis(args, roots = allowedSaveRoots()) {
 function registerSvgAnalysis(server2) {
   const inputSchema = {
     path: external_exports.string().min(1).max(4096).describe(
-      `Absolute path of one .svg file (home, temp, or /Volumes; not a symbolic link; at most ${SVG_LIMITS.maxSourceBytes} bytes of UTF-8)`
+      `Absolute path of one .svg file (home, temp, or /Volumes; not a hidden path or ~/Library outside iCloud Drive and CloudStorage; not a symbolic link; at most ${SVG_LIMITS.maxSourceBytes} bytes of UTF-8)`
     ),
     includeDrawing: external_exports.boolean().optional().describe(
       "Also return the normalized drawing (strokes with sRGB color, width and points). Off by default: it can be large."
@@ -56493,7 +56965,7 @@ function registerSvgAnalysis(server2) {
   server2.registerTool(
     "analyze-svg",
     {
-      description: "Use when: checking whether an SVG file can be represented as editable monoline strokes, and what that conversion would approximate or drop.\nReturns: classification (safe, lossy, unsupported), importable, defaultWriteAllowed, requiredLosses (geometry-approximation, paint-approximation, drop-content), issues with element locations, counts and work budgets, the source SHA-256, and analysisDigest, a SHA-256 over the canonical analysis and normalized drawing. includeDrawing adds the drawing.\nDo not use when: you want to attach the SVG file itself to a note (add-attachment).\nSafety: read-only and local. Opens no Notes data and makes no network request. Scripts, event handlers, style elements, animation, DOCTYPE/entities and external resources are refused with svgCode svg_unsafe; malformed files with svg_invalid; oversized work with svg_complexity_limit.",
+      description: "Use when: checking whether an SVG file can be represented as editable monoline strokes, and what that conversion would approximate or drop.\nReturns: classification (safe, lossy, unsupported), importable, defaultWriteAllowed, requiredLosses (geometry-approximation, paint-approximation, drop-content), issues with element locations, counts and work budgets, the source SHA-256, and analysisDigest, a SHA-256 over the canonical analysis and normalized drawing. includeDrawing adds the drawing.\nDo not use when: you want to attach the SVG file itself to a note (add-attachment).\nSafety: read-only and local. Opens no Notes data and makes no network request. Reads only a regular file in home, temp or /Volumes, refusing hidden paths (~/.ssh, .env) and ~/Library outside iCloud Drive and CloudStorage unless the server sets APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1; a file whose root element is not <svg> is refused without quoting it. Scripts, event handlers, style elements, animation, DOCTYPE/entities and external resources are refused with svgCode svg_unsafe; malformed files with svg_invalid; oversized work with svg_complexity_limit.",
       inputSchema,
       outputSchema: external_exports.object({ classification: external_exports.string().optional() }).passthrough(),
       annotations: { readOnlyHint: true, openWorldHint: false }
@@ -56651,20 +57123,26 @@ function appendChecklistItems(args, deps, readRich) {
   const landed = [];
   let contentHash = args.expectedContentHash;
   for (const [index, text2] of args.items.entries()) {
-    let wrote = false;
+    let attempted = false;
+    const tracked = {
+      ...deps,
+      run: (input) => {
+        attempted = true;
+        deps.run(input);
+      }
+    };
     try {
       const result = mutateBackground(
         { ...args, expectedContentHash: contentHash },
         "create-checklist-item",
         { text: text2 },
         (before, after) => {
-          wrote = true;
           assertPreserved(before, after, { append: true });
           const added = after.checklist.slice(before.checklist.length);
           if (added.length !== 1 || added[0].text !== text2 || added[0].done)
             throw new Error("Native checklist item not verified");
         },
-        deps
+        tracked
       );
       const items = byPosition(readRich(args.id).checklistItems);
       const fresh = items.filter(
@@ -56680,20 +57158,33 @@ function appendChecklistItems(args, deps, readRich) {
       landed.push({ index, id: fresh[0].id, text: text2 });
       contentHash = result.contentHash;
     } catch (error2) {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      const uncertain2 = attempted && !(error2 instanceof CodedError && error2.envelope.committed === false);
+      const classified = classifyError(message, error2).code;
+      const envelope = uncertain2 ? {
+        code: classified === "timeout_indeterminate" ? classified : "verification_failed",
+        indeterminate: true
+      } : {
+        code: classified,
+        indeterminate: false,
+        // Earlier items did land, so only an empty batch wrote nothing.
+        ...landed.length === 0 ? { committed: false } : {}
+      };
       return {
         ok: false,
+        ...envelope,
         id: args.id,
         landed,
         stoppedAt: {
           index,
           text: text2,
-          // A bridge refusal or failure with an unchanged readback is
-          // reported as not written even though verification ran (#248).
-          outcome: wrote && !(error2 instanceof CodedError && error2.envelope.committed === false) ? "uncertain" : "not-written",
-          error: error2 instanceof Error ? error2.message : String(error2)
+          outcome: uncertain2 ? "uncertain" : "not-written",
+          error: message
         },
         notAttempted: args.items.slice(index + 1),
-        contentHash,
+        // After an uncertain run the note may have changed, so the last
+        // verified revision would be stale; read the note for a fresh one.
+        ...uncertain2 ? {} : { contentHash },
         message: `Stopped at item ${index + 1} of ${args.items.length}; ${landed.length} item(s) landed and were verified. Read the exact note before retrying, and retry only items that are not present.`
       };
     }
@@ -56703,13 +57194,22 @@ function appendChecklistItems(args, deps, readRich) {
   const orderVerified = tail.length === landed.length && tail.every((item, i) => item.id === landed[i].id && item.text === landed[i].text);
   return {
     ok: orderVerified,
+    ...orderVerified ? {} : { code: "verification_failed", committed: true },
     id: args.id,
     contentHash,
     items: landed,
+    landed,
     orderVerified,
     ...orderVerified ? {} : {
       message: "Every item landed and was verified, but they are not the note's last checklist items in the requested order. Read the note before editing it further."
     }
+  };
+}
+function nativeToolResult(result) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(result) }],
+    structuredContent: result,
+    ...result.ok === false && typeof result.code === "string" ? { isError: true } : {}
   };
 }
 function registerNativeOperations(server2, manager) {
@@ -56724,11 +57224,7 @@ function registerNativeOperations(server2, manager) {
       },
       (async (args) => {
         try {
-          const result = handler(args);
-          return {
-            content: [{ type: "text", text: JSON.stringify(result) }],
-            structuredContent: result
-          };
+          return nativeToolResult(handler(args));
         } catch (error2) {
           return errorResult(error2 instanceof Error ? error2.message : "Operation failed", error2);
         }
@@ -57113,7 +57609,7 @@ import {
   existsSync as existsSync14,
   mkdirSync as mkdirSync8,
   mkdtempSync as mkdtempSync7,
-  readFileSync as readFileSync5,
+  readFileSync as readFileSync4,
   renameSync as renameSync2,
   rmSync as rmSync7,
   writeFileSync as writeFileSync6
@@ -57150,7 +57646,7 @@ function packageRoot(fromDir = dirname8(fileURLToPath2(import.meta.url))) {
     const candidate = join27(dir, "package.json");
     if (existsSync14(candidate)) {
       try {
-        if (JSON.parse(readFileSync5(candidate, "utf8")).name === "apple-notes-mcp")
+        if (JSON.parse(readFileSync4(candidate, "utf8")).name === "apple-notes-mcp")
           return dir;
       } catch {
       }
@@ -57166,7 +57662,7 @@ function defaultPublicHelperDeps(overrides = {}) {
     platform: process.platform,
     sourcePath: join27(packageRoot(), PUBLIC_HELPER_SOURCE),
     exists: existsSync14,
-    readFile: (path10) => readFileSync5(path10),
+    readFile: (path10) => readFileSync4(path10),
     spawn: spawnSync3,
     spawnAsync: spawn,
     ...overrides
@@ -57576,7 +58072,7 @@ function parseNoteObjectId(noteId3) {
     );
   return { store: match[1], pk: Number(match[2]) };
 }
-function queryNoteScoped(sql, pk, dbPath2 = NOTES_DB_PATH7) {
+function queryNoteScoped(sql, pk, dbPath2 = NOTES_DB_PATH8) {
   return runReadOnlySql(dbPath2, sql, { pk: { int: pk } }).split("\n");
 }
 var NOTE_STATE_SQL = `SELECT json_object('found', (SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk AND n.Z_ENT = ${entity("ICNote")}), 'locked', (SELECT COALESCE(n.ZISPASSWORDPROTECTED, 0) FROM ZICCLOUDSYNCINGOBJECT n WHERE n.Z_PK = @pk));`;
@@ -57605,7 +58101,7 @@ function drawingRowsSql(columns2, dataColumn) {
     `SELECT json_group_array(json_object('pk', a.Z_PK, 'identifier', a.ZIDENTIFIER, 'uti', a.ZTYPEUTI, 'data', hex(a.${dataColumn}))) FROM (SELECT * FROM ZICCLOUDSYNCINGOBJECT a WHERE a.ZNOTE = @pk AND a.ZTYPEUTI IN ('com.apple.drawing.2', 'com.apple.drawing') AND ${notTombstonedSql(columns2, "a")} ORDER BY a.Z_PK) a;`
   ].join("\n");
 }
-function readDrawingRows2(noteId3, dbPath2 = NOTES_DB_PATH7) {
+function readDrawingRows2(noteId3, dbPath2 = NOTES_DB_PATH8) {
   const { store, pk } = parseNoteObjectId(noteId3);
   const columns2 = readColumns(dbPath2);
   const dataColumn = columns2.has("ZMERGEABLEDATA1") ? "ZMERGEABLEDATA1" : columns2.has("ZMERGEABLEDATA") ? "ZMERGEABLEDATA" : null;
@@ -57705,14 +58201,17 @@ var strokeSchema = external_exports.object({
       force: external_exports.number()
     })
   ).optional(),
-  transformApplied: external_exports.boolean().optional()
+  transformApplied: external_exports.boolean().optional(),
+  masked: external_exports.boolean().optional(),
+  pointsTruncated: external_exports.boolean().optional()
 }).strip();
 var decodedDrawingSchema = external_exports.object({
   status: external_exports.literal("ok"),
   strokeCount: external_exports.number().int(),
   strokes: external_exports.array(strokeSchema),
   truncated: external_exports.boolean(),
-  bounds
+  bounds,
+  hiddenStrokeCount: external_exports.number().int().optional()
 });
 function decodeRow(row, format, includePoints, deps) {
   const base = {
@@ -57745,7 +58244,8 @@ function decodeRow(row, format, includePoints, deps) {
     status: "ok",
     strokeCount: decoded.strokeCount,
     bounds: decoded.bounds,
-    truncated: decoded.truncated
+    truncated: decoded.truncated,
+    ...decoded.hiddenStrokeCount ? { hiddenStrokeCount: decoded.hiddenStrokeCount } : {}
   };
   if (format !== "json") result.svg = drawingToSvg(strokes, decoded.bounds);
   if (format !== "svg")
@@ -57770,6 +58270,28 @@ function getNoteDrawings(noteId3, options = {}) {
     drawings
   };
 }
+function fitNoteDrawings(result, maxBytes, measure = (r) => Buffer.byteLength(JSON.stringify(r))) {
+  let next = result;
+  let pointsOmitted = false;
+  let svgOmitted = false;
+  if (measure(next) > maxBytes && next.drawings.some((d) => d.strokes?.some((s) => s.points))) {
+    next = {
+      ...next,
+      drawings: next.drawings.map(
+        (d) => d.strokes ? { ...d, strokes: d.strokes.map(({ points: _points, ...rest }) => rest) } : d
+      )
+    };
+    pointsOmitted = true;
+  }
+  if (measure(next) > maxBytes && next.drawings.some((d) => d.svg !== void 0)) {
+    next = {
+      ...next,
+      drawings: next.drawings.map(({ svg: _svg, ...rest }) => rest)
+    };
+    svgOmitted = true;
+  }
+  return { result: next, pointsOmitted, svgOmitted, oversized: measure(next) > maxBytes };
+}
 function formatNoteDrawings(result) {
   if (result.drawingCount === 0) return `No classic PencilKit drawings in note ${result.id}.`;
   const lines = [
@@ -57777,7 +58299,7 @@ function formatNoteDrawings(result) {
   ];
   for (const d of result.drawings)
     lines.push(
-      d.status === "ok" ? `- ${d.attachmentId}: ${d.strokeCount} stroke${d.strokeCount === 1 ? "" : "s"}${d.truncated ? " (truncated)" : ""}` : `- ${d.attachmentId}: error ${d.code}: ${d.message}`
+      d.status === "ok" ? `- ${d.attachmentId}: ${d.strokeCount} stroke${d.strokeCount === 1 ? "" : "s"}${d.hiddenStrokeCount ? ` (${d.hiddenStrokeCount} fully erased)` : ""}${d.truncated ? " (truncated)" : ""}` : `- ${d.attachmentId}: error ${d.code}: ${d.message}`
     );
   return lines.join("\n");
 }
@@ -57840,7 +58362,7 @@ function isFile2(path10) {
 var positive = (value) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 function readAudioAssets(noteId3, options = {}) {
   const { store, pk } = parseNoteId2(noteId3);
-  const dbPath2 = options.dbPath ?? NOTES_DB_PATH7;
+  const dbPath2 = options.dbPath ?? NOTES_DB_PATH8;
   const columns2 = readColumns(dbPath2);
   const missing = ["ZMEDIA", "ZPARENTATTACHMENT", "ZFILENAME"].filter((c) => !columns2.has(c));
   if (missing.length)
@@ -57877,9 +58399,6 @@ function readAudioAssets(noteId3, options = {}) {
     };
   });
 }
-function countWords2(text2) {
-  return text2.split(/\s+/u).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
-}
 
 // src/services/noteTranscription.ts
 var DEFAULT_TRANSCRIPTION_LOCALE = "en-US";
@@ -57894,6 +58413,7 @@ var BUDGET_MARGIN_MS = 1e4;
 var MIN_TAKE_SECONDS = 5;
 var CALL_WIDE_CODES = /* @__PURE__ */ new Set([
   "permission_required",
+  "permission_not_requested",
   "asset_unavailable",
   "unsupported_locale",
   "speech_unavailable"
@@ -57972,7 +58492,7 @@ async function transcribeTake(take, ctx) {
       status: complete ? "ok" : text2 ? "partial" : "indeterminate",
       ...complete ? {} : { code: "incomplete", message: stopReason ?? "stopped early" },
       ...durationSeconds !== void 0 ? { durationSeconds } : {},
-      wordCount: countWords2(text2),
+      wordCount: countWords(text2),
       ...engine ? { engine } : {}
     },
     text: text2
@@ -57999,7 +58519,7 @@ async function transcribeRecording(asset, includeText, ctx) {
     status,
     ...status !== "ok" && firstProblem?.code ? { code: firstProblem.code, message: firstProblem.message } : {},
     ...asset.durationSeconds !== null ? { durationSeconds: Math.round(asset.durationSeconds) } : {},
-    wordCount: countWords2(transcript),
+    wordCount: countWords(transcript),
     ...includeText ? { transcript } : {},
     takes: outcomes.map((o) => o.take)
   };
@@ -58054,24 +58574,29 @@ async function transcribeNoteAudio(noteId3, options = {}) {
 }
 function fitTranscriptions(result, maxBytes, measure = (r) => Buffer.byteLength(JSON.stringify(r))) {
   if (measure(result) <= maxBytes) return result;
+  const shorten = (share) => ({
+    ...result,
+    recordings: result.recordings.map(
+      (r) => r.transcript ? {
+        ...r,
+        transcript: r.transcript.slice(0, Math.floor(r.transcript.length * share)),
+        transcriptTruncated: true
+      } : r
+    )
+  });
   let next = result;
   for (let share = 0.5; measure(next) > maxBytes && share > 1e-4; share /= 2) {
-    next = {
-      ...result,
-      recordings: result.recordings.map(
-        (r) => r.transcript ? {
-          ...r,
-          transcript: r.transcript.slice(0, Math.floor(r.transcript.length * share)),
-          transcriptTruncated: true
-        } : r
-      )
-    };
+    next = shorten(share);
   }
+  if (measure(next) > maxBytes) next = { ...shorten(0), responseOversized: true };
   return next;
 }
 function formatTranscription(result) {
   if (result.recordingCount === 0) return `No audio attachments in note ${result.id}.`;
   const lines = [
+    ...result.responseOversized ? [
+      "The transcripts were dropped: even without them the response exceeds APPLE_NOTES_MCP_EXPORT_MAX_BYTES. Transcribe one recording at a time with attachmentId."
+    ] : [],
     `${result.recordingCount} audio attachment${result.recordingCount === 1 ? "" : "s"} in note ${result.id} (${result.status}, locale ${result.locale}):`
   ];
   result.recordings.forEach((r, i) => {
@@ -58106,7 +58631,7 @@ import { join as join30 } from "node:path";
 // src/services/privateHelper.ts
 import { spawnSync as spawnSync4 } from "node:child_process";
 import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync15, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync15, readFileSync as readFileSync5 } from "node:fs";
 import { homedir as homedir21 } from "node:os";
 import { dirname as dirname9, join as join29, resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -58139,7 +58664,7 @@ function packageRoot2(fromDir = dirname9(fileURLToPath3(import.meta.url))) {
     const candidate = join29(dir, "package.json");
     if (existsSync15(candidate)) {
       try {
-        const pkg = JSON.parse(readFileSync6(candidate, "utf8"));
+        const pkg = JSON.parse(readFileSync5(candidate, "utf8"));
         if (pkg.name === "apple-notes-mcp") return dir;
       } catch {
       }
@@ -58155,7 +58680,7 @@ function defaultDeps2(overrides = {}) {
     platform: process.platform,
     sourcePath: join29(packageRoot2(), HELPER_SOURCE_RELATIVE),
     exists: existsSync15,
-    readFile: (path10) => readFileSync6(path10),
+    readFile: (path10) => readFileSync5(path10),
     spawn: spawnSync4,
     ...overrides
   };
@@ -58218,6 +58743,10 @@ function inspectInstallation(deps = defaultDeps2()) {
       "The helper binary does not match the checksum recorded when it was built. Run `apple-notes-mcp setup --native-helper` to rebuild it."
     );
   return { ...base, ready: true, reason: null, detail: null };
+}
+function helperTimeoutMs(env) {
+  const value = Number.parseInt(env[TIMEOUT_ENV] || "", 10);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS3;
 }
 var PrivateHelperError = class extends Error {
   constructor(code, message, details = {}) {
@@ -58301,7 +58830,7 @@ function callPrivateHelper(action, fields = {}, deps = defaultDeps2(), options =
       throw new PrivateHelperError(install.reason || "helper_not_installed", install.detail || "");
     binaryPath = install.binaryPath;
   }
-  const timeout = Number.parseInt(deps.env[TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS3;
+  const timeout = helperTimeoutMs(deps.env);
   const result = deps.spawn(binaryPath, [], {
     input: JSON.stringify({ protocol: PRIVATE_HELPER_PROTOCOL, action, ...fields }),
     encoding: "utf8",
@@ -58311,12 +58840,22 @@ function callPrivateHelper(action, fields = {}, deps = defaultDeps2(), options =
     env: deps.env
   });
   const errno = result.error?.code;
-  if (errno === "ETIMEDOUT" || result.signal && result.status === null)
+  if (errno === "ETIMEDOUT")
     throw new PrivateHelperError("timeout", `The helper did not answer within ${timeout} ms.`);
+  if (errno === "ENOBUFS")
+    throw new PrivateHelperError(
+      "invalid_response",
+      `The helper's output exceeded ${MAX_OUTPUT_BYTES3} bytes and was cut off.`
+    );
   if (result.error)
     throw new PrivateHelperError(
       "helper_unreachable",
       `Could not run the helper: ${result.error.message}`
+    );
+  if (result.signal)
+    throw new PrivateHelperError(
+      "helper_crashed",
+      `The helper was terminated by ${result.signal} before it answered.`
     );
   const stdout = String(result.stdout ?? "").trim();
   let parsed;
@@ -58641,7 +59180,8 @@ function envelopeCode(helperCode, message) {
     case "not_found":
       return "not_found";
     case "timeout":
-      return "timeout_indeterminate";
+    case "helper_crashed":
+      return "operation_failed";
     case "invalid_request":
     case "invalid_json":
     case "input_too_large":
@@ -59930,7 +60470,10 @@ function writerErrorResult(error2) {
   const message = `native writer (${error2.code}): ${error2.message}`;
   const envelope = {
     ...error2.details,
-    code: writerEnvelopeCode(error2.code, error2.message),
+    // The read-only helper's mapping calls a timeout operation_failed, since
+    // its actions only read. A writer timeout during a write can leave a save
+    // behind, so it stays timeout_indeterminate.
+    code: error2.code === "timeout" && committed === "unknown" ? "timeout_indeterminate" : writerEnvelopeCode(error2.code, error2.message),
     helperCode: error2.code
   };
   if (committed === "unknown") {
@@ -60098,7 +60641,7 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
 import { basename as basename8 } from "node:path";
 
 // src/services/privateCompose.ts
-import { closeSync as closeSync10, constants as constants10, fstatSync as fstatSync10, openSync as openSync10 } from "node:fs";
+import { closeSync as closeSync9, constants as constants9, fstatSync as fstatSync9, openSync as openSync9 } from "node:fs";
 import { basename as basename7, extname as extname8, isAbsolute as isAbsolute6 } from "node:path";
 var HIGHLIGHTS2 = ["purple", "pink", "orange", "mint", "blue"];
 var MAX_INDENT = 8;
@@ -60111,7 +60654,7 @@ var MAX_COMPOSE_ATTACHMENTS = 20;
 var MAX_COMPOSE_FILE_BYTES = 64 * 1024 * 1024;
 var MAX_COMPOSE_FILE_TOTAL = 128 * 1024 * 1024;
 var LINK_SCHEMES2 = /* @__PURE__ */ new Set(["http:", "https:", "mailto:", "tel:", "notes:", "applenotes:"]);
-var isObject3 = (entry) => "kind" in entry;
+var isObject4 = (entry) => "kind" in entry;
 var MAX_TABLE_ROWS = 1e3;
 var MAX_TABLE_COLUMNS = 100;
 var MAX_TABLE_CELLS = 1e4;
@@ -60235,17 +60778,17 @@ function composeFileSize(path10, where = "file") {
     throw invalid3(`${where}: path must be an absolute path`);
   let descriptor;
   try {
-    descriptor = openSync10(path10, constants10.O_RDONLY | constants10.O_NOFOLLOW);
+    descriptor = openSync9(path10, constants9.O_RDONLY | constants9.O_NOFOLLOW);
   } catch {
     throw invalid3(`${where}: cannot open ${path10} (missing, unreadable, or a symbolic link)`);
   }
   try {
-    const stat = fstatSync10(descriptor);
+    const stat = fstatSync9(descriptor);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_COMPOSE_FILE_BYTES)
       throw invalid3(`${where}: must be a nonempty regular file of at most 64 MiB`);
     return stat.size;
   } finally {
-    closeSync10(descriptor);
+    closeSync9(descriptor);
   }
 }
 function wireRun(run, where) {
@@ -60382,9 +60925,9 @@ function paragraph(style, runs, indent, where, checked) {
 function noteLinkUrl(identifier) {
   return `notes://showNote?identifier=${identifier.toUpperCase()}`;
 }
-var isBlank = (entry) => !!entry && !isObject3(entry) && entry.runs.length === 0;
+var isBlank = (entry) => !!entry && !isObject4(entry) && entry.runs.length === 0;
 function entryUTF16(entry) {
-  if (!isObject3(entry)) return entry.runs.reduce((n, r) => n + r.text.length, 0) + 1;
+  if (!isObject4(entry)) return entry.runs.reduce((n, r) => n + r.text.length, 0) + 1;
   if (entry.kind === "table")
     return 2 + entry.rows.reduce((n, row) => n + row.reduce((m, cell) => m + cell.length, 0), 0);
   return 2;
@@ -60399,18 +60942,18 @@ function finalizeParagraphs(paragraphs) {
     throw invalid3(
       `The composed content (text and table cells) exceeds ${MAX_COMPOSE_UTF16} UTF-16 code units`
     );
-  const runs = paragraphs.reduce((n, p) => n + (isObject3(p) ? 0 : p.runs.length), 0);
+  const runs = paragraphs.reduce((n, p) => n + (isObject4(p) ? 0 : p.runs.length), 0);
   if (runs > MAX_COMPOSE_RUNS)
     throw invalid3(`The composed content has more than ${MAX_COMPOSE_RUNS} runs`);
   const attachments = paragraphs.filter(
-    (p) => isObject3(p) && (p.kind === "file" || p.kind === "url")
+    (p) => isObject4(p) && (p.kind === "file" || p.kind === "url")
   );
   if (attachments.length > MAX_COMPOSE_ATTACHMENTS)
     throw invalid3(
       `A compose may hold at most ${MAX_COMPOSE_ATTACHMENTS} file and link-card blocks`
     );
   const bytes = attachments.reduce(
-    (n, p) => n + (isObject3(p) && p.kind === "file" ? composeFileSize(p.path) : 0),
+    (n, p) => n + (isObject4(p) && p.kind === "file" ? composeFileSize(p.path) : 0),
     0
   );
   if (bytes > MAX_COMPOSE_FILE_TOTAL)
@@ -60430,7 +60973,7 @@ function assertWriterRequestSize(fields) {
 function notesLinkTargets(paragraphs) {
   const out = [];
   for (const p of paragraphs) {
-    if (isObject3(p)) continue;
+    if (isObject4(p)) continue;
     for (const run of p.runs) {
       if (!run.link || !/^(?:apple)?notes:/i.test(run.link)) continue;
       out.push({ link: run.link, target: parseNotesShowUrl(run.link)?.targetNote ?? null });
@@ -60826,7 +61369,7 @@ function compareShapes(where, actual, want, label) {
   return mismatches;
 }
 function entryText(entry) {
-  return isObject3(entry) ? "\uFFFC" : entry.runs.map((run) => run.text).join("");
+  return isObject4(entry) ? "\uFFFC" : entry.runs.map((run) => run.text).join("");
 }
 function verifyAgainstRequest(paragraphs, result) {
   const mismatches = [];
@@ -60839,7 +61382,7 @@ function verifyAgainstRequest(paragraphs, result) {
   paragraphs.forEach((entry, i) => {
     const where = `paragraph ${i}`;
     let want;
-    if (isObject3(entry)) {
+    if (isObject4(entry)) {
       const object3 = objects[next++];
       if (!object3 || object3.kind !== entry.kind) {
         mismatches.push(`${where}: no created ${entry.kind} object`);
@@ -61106,7 +61649,7 @@ function createAndCompose(args, paragraphs, runtime) {
     ifRevision: PLACEHOLDER_REVISION
   });
   const features = privateWriterCapabilities(deps).features;
-  const kinds = new Set(paragraphs.filter(isObject3).map((p) => p.kind));
+  const kinds = new Set(paragraphs.filter(isObject4).map((p) => p.kind));
   const needed = [features.composeNote];
   if (kinds.has("divider") || kinds.has("table")) needed.push(features.composeObjects);
   if (kinds.has("file") || kinds.has("url")) needed.push(features.composeAttachments);
@@ -61199,7 +61742,7 @@ function runComposeNote(args, runtime) {
         mode: "create",
         paragraphs: paragraphs.length,
         plan: paragraphs.map(
-          (p) => isObject3(p) ? {
+          (p) => isObject4(p) ? {
             kind: p.kind,
             ...p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {},
             ...p.kind === "file" ? { path: p.path, filename: p.filename ?? basename8(p.path) } : {},
@@ -62974,15 +63517,18 @@ function prepareDrawing(args, roots) {
     );
   try {
     if (args.svgPath !== void 0) {
-      let path10;
+      let source;
       try {
-        path10 = assertReadableInRoots(args.svgPath, roots, "SVG file");
+        source = readAllowedFile(args.svgPath, SVG_LIMITS.maxSourceBytes, {
+          roots,
+          label: "SVG file"
+        });
       } catch (error2) {
         throw new PrivateWriteError("svg_file_invalid", error2.message, false, {
           svgCode: "svg_file_invalid"
         });
       }
-      const analyzed = analyzeSvgFile(path10);
+      const analyzed = analyzeSvgBuffer(source);
       const drawing = drawingFromSvg(
         authorizeSvgDrawing(analyzed, {
           ifSvgAnalysis: args.ifSvgAnalysis,
@@ -63030,7 +63576,7 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
       ),
       drawing: drawingSchema.optional().describe("Strokes and shapes to draw; pass this or svgPath, not both"),
       svgPath: external_exports.string().min(1).max(4096).optional().describe(
-        "Absolute path of an SVG file (home, temp, or /Volumes) to convert with the analyze-svg analyzer"
+        "Absolute path of an SVG file to convert with the analyze-svg analyzer, read under analyze-svg's rules (home, temp, or /Volumes; not a hidden path or ~/Library outside iCloud Drive and CloudStorage; not a symbolic link)"
       ),
       ifSvgAnalysis: external_exports.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("The analysisDigest from analyze-svg; required when the SVG needs any loss"),
       allowSvgLosses: external_exports.array(external_exports.enum(SVG_LOSSES)).max(3).optional().describe("Exactly the requiredLosses analyze-svg reported for this digest"),
@@ -63096,6 +63642,7 @@ var server = new McpServer({
   version: version2,
   description: "MCP server for managing Apple Notes - create, search, update, and organize notes"
 });
+installSdkErrorCodes(server);
 var notesManager = new AppleNotesManager();
 registerDirectOperations(server, notesManager);
 registerFolderDelete(server, notesManager);
@@ -63120,6 +63667,9 @@ function successResponse(message, structured) {
 }
 function errorResponse(message, cause) {
   return errorResult(message, cause);
+}
+function notFoundResponse(message) {
+  return errorResult(message, new CodedError(message, { code: "not_found" }));
 }
 function withErrorHandling(handler, errorPrefix) {
   return async (params) => {
@@ -63248,6 +63798,9 @@ function bodyReadFailureMessage(id2, title, error2) {
   return describeBodyReadFailure(title, error2, attachments);
 }
 var NOT_DELETED_MESSAGE = "Notes.app accepted the delete, but the note is still in its original folder, so it was not moved to Recently Deleted. Nothing was deleted; read the note again before retrying.";
+function deleteUnverifiedMessage(title, id2) {
+  return `Notes.app accepted the delete for note "${title}", but its original folder could not be re-read to confirm the note left it. The outcome is uncertain; read exact ID ${id2} before retrying.`;
+}
 function containerUnknownMessage(title) {
   return `Could not read which folder note "${title}" is in, so it may already be in Recently Deleted, where deleting it would remove it permanently. Nothing was deleted. Retry in a moment; if it keeps failing, quit and reopen Notes.app, then retry.`;
 }
@@ -63275,10 +63828,11 @@ function prepareDeleteGuards(args) {
   if (guardNoteId === void 0 !== (expectedGuardContentHash === void 0)) {
     return { error: "Pass guardNoteId and expectedGuardContentHash together." };
   }
-  if (guardNoteId === id2 || requireActiveNoteId === id2) {
+  const same = (a, b) => a !== void 0 && b !== void 0 && canonicalCoreDataId(a) === canonicalCoreDataId(b);
+  if (same(guardNoteId, id2) || same(requireActiveNoteId, id2)) {
     return { error: "A guard note must be a different note from the one being deleted." };
   }
-  if (guardNoteId !== void 0 && guardNoteId === requireActiveNoteId) {
+  if (same(guardNoteId, requireActiveNoteId)) {
     return { error: "requireActiveNoteId repeats guardNoteId; pass only guardNoteId." };
   }
   const prepared = { guards: [], labels: [] };
@@ -63318,11 +63872,31 @@ var folderNameSchema = {
 };
 function registerTool(name, config2, cb) {
   const { outputSchema, ...rest } = config2;
+  const callback = NOTES_WRITE_TOOLS.has(name) ? (async (...args) => writeToolResult(
+    await cb(...args)
+  )) : cb;
   return server.registerTool(
     name,
     outputSchema ? { ...rest, outputSchema: external_exports.object(outputSchema).passthrough() } : rest,
-    cb
+    callback
   );
+}
+var NOTES_WRITE_TOOLS = /* @__PURE__ */ new Set([
+  "create-note",
+  "update-note",
+  "append-to-note",
+  "insert-link",
+  "delete-note",
+  "move-note",
+  "create-folder",
+  "delete-folder",
+  "batch-delete-notes",
+  "batch-move-notes"
+]);
+function writeToolResult(result) {
+  const envelope = result.structuredContent;
+  if (!result.isError || !envelope) return result;
+  return { ...result, structuredContent: unavailableWriteEnvelope(envelope) };
 }
 registerTool(
   "create-note",
@@ -63334,7 +63908,7 @@ registerTool(
         'Note body; required unless contentPath is given (pass exactly one). In plaintext and HTML, AppleScript cannot create true Apple Notes checklists \u2014 `<input type="checkbox">`, checklist CSS classes, and markdown `- [ ]` lines do not render as checkable items; create a plain `<ul>` or `- ` list and convert it in Notes.app with \u21E7\u2318L. With format "markdown" (markdownRoute "shortcut"), `- [ ]`/`- [x]` lines, `>` block quotes, ``` fenced code, `---` dividers and `inline code` (which Notes renders as a highlight, not monospace) become native styles (see create-note-markdown-blocks in get-capabilities).'
       ),
       contentPath: external_exports.string().min(1).max(MAX.SAVE_PATH).optional().describe(
-        `Absolute path of a local UTF-8 file to use as the body instead of content (pass exactly one). The same locations save-attachment may write to are allowed (home, temp, /Volumes); symbolic links and non-regular files are refused. Limit ${MAX_CONTENT_FILE_BYTES} bytes.`
+        `Absolute path of a local UTF-8 file to use as the body instead of content (pass exactly one). The same locations save-attachment may write to are allowed (home, temp, /Volumes), except hidden paths (such as ~/.ssh or ~/.config) and ~/Library (iCloud Drive and ~/Library/CloudStorage are allowed); symbolic links and non-regular files are refused. Limit ${MAX_CONTENT_FILE_BYTES} bytes.`
       ),
       format: external_exports.enum(["plaintext", "html", "markdown"]).optional().default("plaintext").describe(
         "Content format: 'plaintext' (default), 'html' for rich formatting, or 'markdown'. Markdown whose first line is exactly `# <title>` (same case and spacing) has that line and one blank line after it removed, since the title is supplied separately."
@@ -63605,7 +64179,7 @@ ${noteList}${truncationNote}${scanNote}${wordCountNote}${syncNote}`,
 registerTool(
   "query-notes",
   {
-    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates never match them.',
+    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.',
     inputSchema: {
       query: external_exports.string().min(1, "A query expression is required").max(MAX.QUERY).describe(
         'Boolean query expression, e.g. `folder:"Work Projects" has:checklist -checklist:done`'
@@ -63658,7 +64232,7 @@ registerTool(
     }
     if (result.unreadable > 0) {
       notes.push(
-        `\u26A0\uFE0F ${result.unreadable} note bodies could not be decoded, so body predicates did not match them.`
+        `\u26A0\uFE0F ${result.unreadable} note bodies could not be decoded, so body predicates (including negated ones) did not match them.`
       );
     }
     const footer = notes.length ? `
@@ -63683,7 +64257,7 @@ ${lines}${footer}`,
 registerTool(
   "get-note-content",
   {
-    description: "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, nativeTags, restored links, richContentComplete/writable, and strippedImages/truncated when the body was capped. Read the warning when writable is false.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. Mutations refuse attachment-bearing notes; edit those in Notes.app. Notes.app returns images inside the body as base64, so a note with a very large image can time out; the error then names the cause, and a larger timeoutSeconds gives the read more time.",
+    description: "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, nativeTags, restored links, richContentComplete/writable, and strippedImages/truncated when the body was capped. Read the warning when writable is false.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. For an attachment-bearing note, update-note refuses a full-body replacement; append-to-note with scopeText appends natively at the end and leaves attachments in place; add-attachment adds a file; move-note and delete-note work as usual. Make any other edit in Notes.app. Notes.app returns images inside the body as base64, so a note with a very large image can time out; the error then names the cause, and a larger timeoutSeconds gives the read more time.",
     inputSchema: {
       id: looseNoteId(external_exports.string()).optional().describe(`Note ID (preferred - more reliable than title): ${NOTE_ID_FORMS}`),
       title: external_exports.string().max(MAX.TITLE).optional().describe("Note title (use id instead when available)"),
@@ -63716,7 +64290,7 @@ registerTool(
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
       if (!note2) {
-        return errorResponse(`Note with ID "${id2}" not found`);
+        return notFoundResponse(`Note with ID "${id2}" not found`);
       }
       if (note2.passwordProtected) {
         return errorResponse(
@@ -63758,7 +64332,7 @@ registerTool(
     }
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(`Note "${title}" not found`);
+      return notFoundResponse(`Note "${title}" not found`);
     }
     if (note.passwordProtected) {
       return errorResponse(
@@ -63816,7 +64390,7 @@ registerTool(
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
       if (!note2) {
-        return errorResponse(`Note with ID "${id2}" not found`);
+        return notFoundResponse(`Note with ID "${id2}" not found`);
       }
       if (note2.passwordProtected) {
         return errorResponse(
@@ -63834,7 +64408,7 @@ registerTool(
     }
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(`Note "${title}" not found`);
+      return notFoundResponse(`Note "${title}" not found`);
     }
     if (note.passwordProtected) {
       return errorResponse(
@@ -63870,7 +64444,7 @@ registerTool(
   withErrorHandling(({ id: id2 }) => {
     const note = notesManager.getNoteById(id2);
     if (!note) {
-      return errorResponse(`Note with ID "${id2}" not found`);
+      return notFoundResponse(`Note with ID "${id2}" not found`);
     }
     const metadata = {
       id: note.id,
@@ -63903,7 +64477,7 @@ registerTool(
   withErrorHandling(({ title, account }) => {
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(`Note "${title}" not found`);
+      return notFoundResponse(`Note "${title}" not found`);
     }
     const metadata = {
       id: note.id,
@@ -63960,7 +64534,7 @@ registerTool(
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
       if (!note2) {
-        return errorResponse(`Note with ID "${id2}" not found`);
+        return notFoundResponse(`Note with ID "${id2}" not found`);
       }
       if (note2.passwordProtected) {
         return errorResponse(
@@ -63980,7 +64554,7 @@ registerTool(
     }
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(
+      return notFoundResponse(
         `Note "${title}" not found. Use search-notes to find notes, then use the note's ID for reliable operations.`
       );
     }
@@ -64058,10 +64632,10 @@ registerTool(
   },
   withErrorHandling(({ id: id2 }) => {
     const note = notesManager.getNoteById(id2);
-    if (!note) return errorResponse(`Note with ID "${id2}" not found`);
+    if (!note) return notFoundResponse(`Note with ID "${id2}" not found`);
     const body = notesManager.getNoteContentById(id2);
     if (!body) return errorResponse(`Failed to read content of note "${note.title}"`);
-    const rich = readRichNote(id2);
+    const rich = readRichNote(id2, { skipUnsafeLinks: true });
     const tables = (rich.objectData || []).filter((object3) => object3.type?.includes("table")).map((object3) => {
       try {
         return {
@@ -64164,7 +64738,10 @@ registerTool(
     } catch (error2) {
       if (!(error2 instanceof NoteBlocksError)) throw error2;
       const hint = error2.code === "no-full-disk-access" ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}` : "";
-      return errorResponse(`Error reading note blocks [${error2.code}]: ${error2.message}${hint}`);
+      return errorResponse(
+        `Error reading note blocks [${error2.code}]: ${error2.message}${hint}`,
+        error2
+      );
     }
     const { summary } = page;
     const styles = Object.entries(summary.styles).map(([style, count2]) => `${style} ${count2}`).join(", ");
@@ -64725,7 +65302,10 @@ registerTool(
             },
             (r) => route = r
           );
-          if (response.isError) throw new Error(response.content[0].text);
+          if (response.isError) {
+            const envelope = response.structuredContent;
+            throw envelope?.code ? new CodedError(response.content[0].text, envelope) : new Error(response.content[0].text);
+          }
           return { route, contentHash: String(response.structuredContent?.contentHash ?? "") };
         }
       }
@@ -64817,6 +65397,13 @@ registerTool(
       if (result.status === "not-deleted") {
         return errorResponse(NOT_DELETED_MESSAGE);
       }
+      if (result.status === "unverified") {
+        const message = deleteUnverifiedMessage(snapshot.note.title, id2);
+        return errorResponse(
+          message,
+          new CodedError(message, { code: "verification_failed", indeterminate: true })
+        );
+      }
       if (result.status !== "deleted") {
         return errorResponse(
           `The delete result for note "${snapshot.note.title}" is uncertain. Inspect exact ID ${id2} before retrying.`
@@ -64861,7 +65448,7 @@ registerTool(
   withErrorHandling(({ id: id2, folder, account, ...scopeArgs }) => {
     const note = notesManager.getNoteById(id2);
     if (!note) {
-      return errorResponse(`Note with ID "${id2}" not found`);
+      return notFoundResponse(`Note with ID "${id2}" not found`);
     }
     const success = notesManager.moveNoteById(id2, folder, account, scopeFrom(scopeArgs));
     if (!success) {
@@ -65392,7 +65979,7 @@ registerTool(
     if (id2) {
       const note2 = notesManager.getNoteById(id2);
       if (!note2) {
-        return errorResponse(`Note with ID "${id2}" not found`);
+        return notFoundResponse(`Note with ID "${id2}" not found`);
       }
       const attachments2 = notesManager.listAttachmentsById(id2);
       if (attachments2.length === 0) {
@@ -65445,7 +66032,7 @@ ${attachmentList2}`,
     }
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(
+      return notFoundResponse(
         `Note "${title}" not found. Use search-notes to find notes, then use the note's ID for reliable operations.`
       );
     }
@@ -65503,6 +66090,8 @@ registerTool(
       }
       if (result.status === "not-deleted")
         return { id: id2, success: false, error: NOT_DELETED_MESSAGE };
+      if (result.status === "unverified")
+        return { id: id2, success: false, error: deleteUnverifiedMessage(snapshot.note.title, id2) };
       return { id: id2, success: false, error: "Delete result uncertain; inspect this exact ID" };
     });
     const succeeded = results.filter((r) => r.success).length;
@@ -65656,6 +66245,7 @@ registerTool(
       height: external_exports.number().optional(),
       bytes: external_exports.number().optional(),
       source: external_exports.enum(["fallback", "preview"]).optional(),
+      stale: external_exports.boolean().optional(),
       attachmentId: external_exports.string().optional(),
       identifier: external_exports.string().optional(),
       kind: external_exports.enum(["paper", "drawing"]).optional(),
@@ -65664,8 +66254,9 @@ registerTool(
   },
   withErrorHandling(({ noteId: noteId3, savePath, attachmentId }) => {
     const r = notesManager.exportPaperImageById(noteId3, savePath, attachmentId);
+    const stale = r.source === "fallback" && r.drawing.fallbackImageStale;
     return successResponse(
-      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}`,
+      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}` + (stale ? ". This is an older rendering: the one Notes recorded is not on disk, so it may not show the latest strokes." : ""),
       {
         savedPath: r.savedPath,
         format: r.format,
@@ -65673,6 +66264,7 @@ registerTool(
         height: r.height,
         bytes: r.bytes,
         source: r.source,
+        ...stale ? { stale } : {},
         attachmentId: attachmentCoreDataId(noteId3, r.drawing.pk),
         identifier: r.drawing.identifier,
         kind: r.drawing.kind,
@@ -65685,7 +66277,7 @@ registerTool(
   "export-attachments",
   {
     description: `Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.
-Returns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "preview" when the asset never downloaded and only Notes' rendered thumbnail was available, or null when nothing was on disk.
+Returns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "fallback" for Notes' own full rendering of it (a drawing's PNG or a scan's PDF, named with that format's extension), "preview" when the asset never downloaded and only Notes' rendered thumbnail was available, or null when nothing was on disk; inBody: false marks an attachment no longer shown in the note body.
 Do not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).
 Safety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.`,
     inputSchema: {
@@ -65697,6 +66289,7 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
       exportDir: external_exports.string().optional(),
       exported: external_exports.number().optional(),
       previews: external_exports.number().optional(),
+      fallbacks: external_exports.number().optional(),
       skipped: external_exports.number().optional(),
       failed: external_exports.number().optional(),
       results: external_exports.array(external_exports.object({}).passthrough()).optional(),
@@ -65711,12 +66304,14 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
     }));
     const exported = results.filter((x) => x.exportedKind !== null).length;
     const previews = results.filter((x) => x.exportedKind === "preview").length;
+    const fallbacks = results.filter((x) => x.exportedKind === "fallback").length;
     const failed = results.filter((x) => x.error).length;
     const skipped = results.length - exported - failed;
     const structured = {
       exportDir: r.exportDir,
       exported,
       previews,
+      fallbacks,
       skipped,
       failed,
       results
@@ -65730,10 +66325,12 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
         );
       }
     }
-    return successResponse(
-      `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${skipped} with nothing on disk, ${failed} failed).`,
-      structured
-    );
+    const summary = `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${fallbacks} Notes rendering(s), ${skipped} with nothing on disk, ${failed} failed).`;
+    if (exported === 0 && failed > 0) {
+      const error2 = errorResponse(summary, new CodedError(summary, { code: "operation_failed" }));
+      return { ...error2, structuredContent: { ...structured, ...error2.structuredContent } };
+    }
+    return successResponse(summary, structured);
   }, "Error exporting attachments")
 );
 registerTool(
@@ -65883,7 +66480,7 @@ registerTool(
     if (id2) {
       const markdown2 = notesManager.getNoteMarkdownById(id2);
       if (!markdown2) {
-        return errorResponse(`Note with ID "${id2}" not found or has no content`);
+        return notFoundResponse(`Note with ID "${id2}" not found or has no content`);
       }
       return successResponse(markdown2, { markdown: markdown2 });
     }
@@ -65892,7 +66489,7 @@ registerTool(
     }
     const markdown = notesManager.getNoteMarkdown(title, account);
     if (!markdown) {
-      return errorResponse(
+      return notFoundResponse(
         `Note "${title}" not found or has no content. Use search-notes to find notes, then use the note's ID for reliable operations.`
       );
     }
@@ -65909,12 +66506,13 @@ var exportStatsSchema = external_exports.object({
   unavailable: external_exports.number(),
   tables: external_exports.number(),
   unreadableTables: external_exports.number(),
-  unreferenced: external_exports.number()
+  unreferenced: external_exports.number(),
+  staleRenderings: external_exports.number().optional()
 });
 registerTool(
   "export-notes-markdown",
   {
-    description: "Use when: exporting one note (by exact id) or a folder's notes as one Markdown document rendered from the decoded note body: headings, bulleted/dashed/numbered lists with indent, checklists with state, block quotes, monospaced blocks, bold/italic/strikethrough/underline/highlight, links, tables, and attachments in body order.\nReturns: the Markdown inline (capped by APPLE_NOTES_MCP_EXPORT_MAX_BYTES), or with outputPath a receipt {format, count, bytes, output}; plus attachment counts and skipped notes (for example password-protected ones).\nDo not use when: you need the legacy HTML-converted Markdown of one note (get-note-markdown) or a restorable backup (export-notes-json). A folder document separates notes with '---' and is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is create-only (an existing file is refused with [output_exists]); assetsDir copies attachment files without replacing existing ones (collisions get -2, -3 suffixes). Without assetsDir, attachments render as labeled placeholders.\nTemplates: pass template ('standard-markdown' reproduces the default output; 'obsidian' adds YAML front matter and copies attachments beside outputPath) or templateFile (a JSON template) to control how every block, inline style, attachment, per-note header/footer and separator renders. Templated receipts add template, warnings (e.g. missing_asset) and assetFiles; an invalid template is refused with [invalid-template] and every problem's JSON path.",
+    description: "Use when: exporting one note (by exact id) or a folder's notes as one Markdown document rendered from the decoded note body: headings, bulleted/dashed/numbered lists with indent, checklists with state, block quotes, monospaced blocks, bold/italic/strikethrough/underline/highlight, links, tables, and attachments in body order.\nReturns: the Markdown inline (capped by APPLE_NOTES_MCP_EXPORT_MAX_BYTES), or with outputPath a receipt {format, count, bytes, output}; plus attachment counts and skipped notes (for example password-protected ones).\nDo not use when: you need the legacy HTML-converted Markdown of one note (get-note-markdown) or a restorable backup (export-notes-json). A folder document separates notes with '---' and is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is create-only (an existing file is refused with [output_exists]); assetsDir copies attachment files without replacing existing ones (collisions get -2, -3 suffixes). Without assetsDir, attachments render as labeled placeholders.\nTemplates: pass template ('standard-markdown' reproduces the default output; 'obsidian' adds YAML front matter and copies attachments beside outputPath) or templateFile (a JSON template; hidden paths and ~/Library outside iCloud Drive and CloudStorage are refused unless the server sets APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1) to control how every block, inline style, attachment, per-note header/footer and separator renders. Templated receipts add template, warnings (e.g. missing_asset) and assetFiles; an invalid template is refused with [invalid-template] and every problem's JSON path.",
     inputSchema: {
       id: noteIdInput.optional(),
       folder: external_exports.string().min(1).max(MAX.FOLDER).optional().describe("Folder path to export instead of one note (nested paths use '/')"),
@@ -65929,12 +66527,13 @@ registerTool(
         `Render through this template: built-in ${BUILTIN_TEMPLATE_NAMES.map((n) => `'${n}'`).join(" or ")}, or a saved template's name (list-markdown-templates). Exclusive with templateFile`
       ),
       templateFile: exportPathInput(
-        "JSON template file (.json) to render through (exclusive with template; at most 256 KiB)"
+        "JSON template file (.json) to render through (exclusive with template; at most 256 KiB; hidden paths and ~/Library outside iCloud Drive and CloudStorage refused unless APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1)"
       )
     },
     outputSchema: {
       format: external_exports.string().optional(),
       count: external_exports.number().optional(),
+      truncated: external_exports.boolean().optional(),
       bytes: external_exports.number().optional(),
       markdown: external_exports.string().optional(),
       output: external_exports.string().optional(),
@@ -65967,10 +66566,13 @@ registerTool(
           `Error exporting Markdown [${error2.code}]: the template is invalid:
 ` + error2.details.map((detail) => `${detail.path}: ${detail.message}`).join("\n")
         );
-      return errorResponse(`Error exporting Markdown [${error2.code}]: ${error2.message}${hint}`);
+      return errorResponse(
+        `Error exporting Markdown [${error2.code}]: ${error2.message}${hint}`,
+        error2
+      );
     }
     const warned = receipt.warnings?.length ? `; ${receipt.warnings.length + (receipt.warningsOmitted ?? 0)} warning(s)` : "";
-    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + warned;
+    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + warned + (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     if (receipt.output)
       return successResponse(
         `Wrote ${receipt.count} note(s) as Markdown (${receipt.bytes} bytes) to ${receipt.output}` + (receipt.assets ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}` : "") + `${skipped}.`,
@@ -66001,6 +66603,7 @@ registerTool(
     outputSchema: {
       format: external_exports.string().optional(),
       count: external_exports.number().optional(),
+      truncated: external_exports.boolean().optional(),
       bytes: external_exports.number().optional(),
       output: external_exports.string().optional(),
       assets: external_exports.object({ dir: external_exports.string(), files: external_exports.number() }).optional(),
@@ -66020,10 +66623,10 @@ registerTool(
     } catch (error2) {
       if (!(error2 instanceof NotesExportError || error2 instanceof NoteBlocksError)) throw error2;
       const hint = error2.code === "no-full-disk-access" ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}` : "";
-      return errorResponse(`Error exporting HTML [${error2.code}]: ${error2.message}${hint}`);
+      return errorResponse(`Error exporting HTML [${error2.code}]: ${error2.message}${hint}`, error2);
     }
     const assets = receipt.assets ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}` : `; embedded ${receipt.embedded ?? 0} asset(s)`;
-    const skipped = receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "";
+    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     return successResponse(
       `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
       { ...receipt }
@@ -66048,7 +66651,7 @@ registerTool(
   withErrorHandling(({ id: id2 }) => {
     const note = notesManager.getNoteById(id2);
     if (!note) {
-      return errorResponse(`Note with ID "${id2}" not found`);
+      return notFoundResponse(`Note with ID "${id2}" not found`);
     }
     if (note.passwordProtected) {
       return errorResponse(
@@ -66206,27 +66809,32 @@ registerTool(
       drawingCount: external_exports.number().optional(),
       status: external_exports.string().optional(),
       drawings: external_exports.array(external_exports.object({}).passthrough()).optional(),
-      pointsOmitted: external_exports.boolean().optional()
+      pointsOmitted: external_exports.boolean().optional(),
+      svgOmitted: external_exports.boolean().optional()
     }
   },
   withErrorHandling(({ id: id2, format, includePoints }) => {
-    let result = getNoteDrawings(id2, { format, includePoints });
-    let pointsOmitted = false;
-    if (Buffer.byteLength(JSON.stringify(result)) > exportMaxResponseBytes() && includePoints !== false && format !== "svg") {
-      result = getNoteDrawings(id2, { format, includePoints: false });
-      pointsOmitted = true;
-    }
-    const text2 = formatNoteDrawings(result) + (pointsOmitted ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "");
+    const limit = exportMaxResponseBytes();
+    const { result, pointsOmitted, svgOmitted, oversized } = fitNoteDrawings(
+      getNoteDrawings(id2, { format, includePoints }),
+      limit
+    );
+    if (oversized)
+      return errorResponse(
+        `The drawings in note "${id2}" are too large to return even without stroke points and SVG (limit ${limit} bytes, APPLE_NOTES_MCP_EXPORT_MAX_BYTES).`
+      );
+    const text2 = formatNoteDrawings(result) + (pointsOmitted ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "") + (svgOmitted ? "\nSVG documents were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)." : "");
     return successResponse(text2, {
       ...result,
-      ...pointsOmitted ? { pointsOmitted } : {}
+      ...pointsOmitted ? { pointsOmitted } : {},
+      ...svgOmitted ? { svgOmitted } : {}
     });
   }, "Error reading drawings")
 );
 registerTool(
   "transcribe-note-audio",
   {
-    description: "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
+    description: "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition; permission_not_requested (before macOS 26) means the host app has never asked for that access, so it is not listed there yet. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
     inputSchema: {
       id: noteIdInput,
       locale: external_exports.string().max(35).optional().describe('BCP-47 language of the speech, e.g. "en-US" (default), "it-IT", "fr-FR"'),
@@ -66244,11 +66852,13 @@ registerTool(
       locale: external_exports.string().optional(),
       status: external_exports.string().optional(),
       recordingCount: external_exports.number().optional(),
-      recordings: external_exports.array(external_exports.object({}).passthrough()).optional()
+      recordings: external_exports.array(external_exports.object({}).passthrough()).optional(),
+      responseOversized: external_exports.boolean().optional()
     }
   },
   withAsyncErrorHandling(async (params, signal) => {
     const { id: id2, locale, attachmentId, includeText, downloadAssets, maxSeconds } = params;
+    const toResponse = (r) => successResponse(formatTranscription(r), r);
     const result = fitTranscriptions(
       await transcribeNoteAudio(id2, {
         locale,
@@ -66258,12 +66868,10 @@ registerTool(
         maxSeconds,
         signal
       }),
-      exportMaxResponseBytes()
+      exportMaxResponseBytes(),
+      (r) => Buffer.byteLength(JSON.stringify(toResponse(r)))
     );
-    return successResponse(
-      formatTranscription(result),
-      result
-    );
+    return toResponse(result);
   }, "Error transcribing audio")
 );
 registerTool(
@@ -66378,13 +66986,14 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error("[unhandledRejection]", reason);
 });
-var shutdown = createShutdown(process.stdout, () => process.exit(0));
+var inFlight = new InFlightRequests();
+var shutdown = createShutdown(process.stdout, () => process.exit(0), void 0, inFlight);
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, shutdown);
 }
 process.stdin.on("end", shutdown);
 process.stdin.on("close", shutdown);
-var transport = withJsonSchema2020_12(new StdioServerTransport());
+var transport = trackRequests(withJsonSchema2020_12(new StdioServerTransport()), inFlight);
 await server.connect(transport);
 /*! Bundled license information:
 

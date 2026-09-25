@@ -10,20 +10,23 @@
  *
  * @module utils/templateAssets
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   constants,
   fstatSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readSync,
+  unlinkSync,
   writeSync,
 } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   assertExportPath,
+  directoryFailure,
   encodePathUrl,
   safeAssetName,
   sniffMime,
@@ -36,12 +39,17 @@ import {
   MAX_TEMPLATE_BYTES,
   type PlaceholderValues,
 } from "./markdownTemplate.js";
+import { readAllowedFile } from "./attachmentFs.js";
 
 const CHUNK = 1024 * 1024;
 
-/** Open a regular file without following a final symlink. */
+/**
+ * Open a regular file without following a final symlink. O_NONBLOCK keeps a
+ * FIFO from blocking the event loop (it is then refused as not a regular
+ * file); it does not affect reading a regular file.
+ */
 function openRegular(path: string): number {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   if (!fstatSync(fd).isFile()) {
     closeSync(fd);
     throw new Error("not a regular file");
@@ -81,23 +89,33 @@ export class HashedSidecarWriter implements AssetWriter {
   /** Absolute paths of files written or reused. */
   readonly files: string[] = [];
   count = 0;
+  /** Set when the directory could not be created; see SidecarWriter.directoryError. */
+  directoryError?: string;
 
   constructor(
     readonly dir: string,
     private readonly linkBase?: string
   ) {}
 
-  private prepare() {
-    if (this.ready) return;
-    assertExportPath(this.dir);
-    mkdirSync(this.dir, { recursive: true });
-    if (!lstatSync(this.dir).isDirectory()) throw new Error("assets directory is not a directory");
+  /** Creates the directory once; returns an error message when it cannot. */
+  private prepare(): string | undefined {
+    if (this.ready) return undefined;
+    try {
+      assertExportPath(this.dir);
+      mkdirSync(this.dir, { recursive: true });
+      if (!lstatSync(this.dir).isDirectory())
+        throw new Error("assets directory is not a directory");
+    } catch (error) {
+      return (this.directoryError = directoryFailure(this.dir, error));
+    }
     this.ready = true;
+    return undefined;
   }
 
   place(asset: ResolvedAsset): PlacedAsset {
     const done = this.placed.get(asset.path);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     let source: number;
     try {
       source = openRegular(asset.path);
@@ -107,7 +125,8 @@ export class HashedSidecarWriter implements AssetWriter {
     try {
       const { hash, head } = digest(source);
       const mime = sniffMime(head, asset.name);
-      this.prepare();
+      const directoryError = this.prepare();
+      if (directoryError) return { error: directoryError };
       const name = safeAssetName(asset.name, mime);
       const ext = extname(name);
       const target = join(
@@ -140,25 +159,59 @@ export class HashedSidecarWriter implements AssetWriter {
     }
   }
 
+  /**
+   * Copy to a private temporary name, then hard-link it into place, so the
+   * hashed name only ever holds complete content: an interrupted copy can't
+   * leave a truncated file that later exports would report as name-taken.
+   * Where the volume has no hard links, copy straight to the hashed name and
+   * remove it if the copy fails.
+   */
   private copy(source: number, target: string) {
-    const out = openSync(
-      target,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      0o644
-    );
+    const temp = join(this.dir, `.asset-${randomBytes(6).toString("hex")}.tmp`);
+    writeNew(source, temp);
     try {
-      const chunk = Buffer.alloc(CHUNK);
-      for (let position = 0; ;) {
-        const n = readSync(source, chunk, 0, chunk.length, position);
-        if (n <= 0) break;
-        let written = 0;
-        while (written < n) written += writeSync(out, chunk, written, n - written);
-        position += n;
-      }
+      linkSync(temp, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOTSUP" && code !== "EPERM" && code !== "EXDEV") throw error;
     } finally {
-      closeSync(out);
+      try {
+        unlinkSync(temp);
+      } catch {
+        /* already gone */
+      }
     }
+    writeNew(source, target);
   }
+}
+
+/** Create `target` (never replacing anything) with `source`'s content; remove it on failure. */
+function writeNew(source: number, target: string) {
+  const out = openSync(
+    target,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o644
+  );
+  try {
+    const chunk = Buffer.alloc(CHUNK);
+    for (let position = 0; ;) {
+      const n = readSync(source, chunk, 0, chunk.length, position);
+      if (n <= 0) break;
+      let written = 0;
+      while (written < n) written += writeSync(out, chunk, written, n - written);
+      position += n;
+    }
+  } catch (error) {
+    closeSync(out);
+    try {
+      unlinkSync(target);
+    } catch {
+      /* already gone */
+    }
+    throw error;
+  }
+  closeSync(out);
 }
 
 /** Links to the original files in place. Copies nothing. */
@@ -225,40 +278,18 @@ export function templateAssetsDir(
 }
 
 /**
- * Read a template file from an allowed location (home, a temp directory, or
- * /Volumes; never inside the Notes library). Refuses a name without a .json
- * extension, symlinks, non-regular files, and files over the template size limit.
+ * Read a template file under the same policy as `create-note`'s `contentPath`
+ * and `add-attachment`'s `path` ({@link readAllowedFile}): a regular file in
+ * home, a temp directory, or /Volumes, with hidden paths (`~/.docker`,
+ * `~/.config`, a project `.env`) and `~/Library` outside iCloud Drive and
+ * `~/Library/CloudStorage` refused unless the server sets
+ * `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. The name must end in .json,
+ * checked before anything is opened. Symlinks, non-regular files (a FIFO is
+ * opened non-blocking and refused), empty files and files over the template
+ * size limit are refused. Errors name the path, never the file's contents.
  */
 export function readTemplateFile(path: string): string {
-  const abs = assertExportPath(path);
-  if (extname(abs).toLowerCase() !== ".json")
-    throw new Error(`Template file must have a .json extension: ${abs}`);
-  let fd: number;
-  try {
-    fd = openRegular(abs);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    throw new Error(
-      code === "ENOENT"
-        ? `Template file not found: ${abs}`
-        : code === "ELOOP"
-          ? `Refusing to read the symbolic link ${abs}`
-          : `Template file is not a readable regular file: ${abs}`
-    );
-  }
-  try {
-    const size = fstatSync(fd).size;
-    if (size > MAX_TEMPLATE_BYTES)
-      throw new Error(`Template file is ${size} bytes; the limit is ${MAX_TEMPLATE_BYTES}`);
-    const data = Buffer.alloc(size);
-    let read = 0;
-    while (read < size) {
-      const n = readSync(fd, data, read, size - read, read);
-      if (n <= 0) break;
-      read += n;
-    }
-    return data.subarray(0, read).toString("utf8");
-  } finally {
-    closeSync(fd);
-  }
+  if (extname(path).toLowerCase() !== ".json")
+    throw new Error(`Template file must have a .json extension: ${path}`);
+  return readAllowedFile(path, MAX_TEMPLATE_BYTES, { label: "Template file" }).toString("utf8");
 }

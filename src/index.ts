@@ -44,9 +44,15 @@ import {
   SPECIAL_LIMIT,
 } from "@/utils/noteListings.js";
 import { NoteStoreError } from "@/utils/noteStoreSql.js";
-import type { DeleteGuardNote, FolderTreeNode, SpecialNoteKind } from "@/types.js";
+import type {
+  DeleteGuardNote,
+  FolderTreeNode,
+  NoteTranscriptionResult,
+  SpecialNoteKind,
+} from "@/types.js";
 import { folderTree, listRecentNotes, RECENT_LIMIT } from "@/utils/noteRecentList.js";
 import {
+  canonicalCoreDataId,
   exactIdArrayInput,
   exactIdInput,
   lookupStableIdentifiers,
@@ -84,8 +90,14 @@ import { FULL_DISK_ACCESS_GUIDE_URL } from "@/utils/docsUrls.js";
 import { loadFileConfig } from "@/services/fileConfig.js";
 import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
 import { withJsonSchema2020_12 } from "@/utils/jsonSchemaDialect.js";
-import { errorResult } from "@/utils/errorCodes.js";
-import { createShutdown } from "@/utils/shutdown.js";
+import {
+  CodedError,
+  errorResult,
+  installSdkErrorCodes,
+  unavailableWriteEnvelope,
+  type ErrorEnvelope,
+} from "@/utils/errorCodes.js";
+import { createShutdown, InFlightRequests, trackRequests } from "@/utils/shutdown.js";
 import { comparableVisibleText } from "@/utils/noteRevision.js";
 import { CALL_TIMEOUT_SECONDS, runWithCallTimeout } from "@/utils/callTimeout.js";
 import { readAllowedTextFile } from "@/utils/attachmentFs.js";
@@ -160,7 +172,7 @@ import {
 } from "@/services/backgroundNotes.js";
 import { formatShortcutSetup, setupShortcuts } from "@/setupShortcuts.js";
 import { buildPublicHelper, formatPublicHelperBuild } from "@/services/publicHelper.js";
-import { formatNoteDrawings, getNoteDrawings } from "@/services/noteDrawings.js";
+import { fitNoteDrawings, formatNoteDrawings, getNoteDrawings } from "@/services/noteDrawings.js";
 import {
   fitTranscriptions,
   formatTranscription,
@@ -223,6 +235,9 @@ const server = new McpServer({
   version,
   description: "MCP server for managing Apple Notes - create, search, update, and organize notes",
 });
+// Input-schema rejections, including a Notes UUID or numeric key that could
+// not be resolved, get a code like every other failed call.
+installSdkErrorCodes(server);
 
 /**
  * Singleton instance of the Apple Notes manager.
@@ -277,6 +292,14 @@ function successResponse(message: string, structured?: Record<string, unknown>):
  */
 function errorResponse(message: string, cause?: unknown): ToolResponse {
   return errorResult(message, cause);
+}
+
+/**
+ * A `not_found` error response. The message interpolates a caller-supplied
+ * title or id, so the code is set here rather than inferred from the text.
+ */
+function notFoundResponse(message: string): ToolResponse {
+  return errorResult(message, new CodedError(message, { code: "not_found" }));
 }
 
 /**
@@ -543,6 +566,14 @@ const NOT_DELETED_MESSAGE =
   "Notes.app accepted the delete, but the note is still in its original folder, so it was not moved to Recently Deleted. Nothing was deleted; read the note again before retrying.";
 
 /**
+ * Notes.app accepted a delete event, but the note's original folder could not
+ * be re-read, so whether the note left it is unknown.
+ */
+function deleteUnverifiedMessage(title: string, id: string): string {
+  return `Notes.app accepted the delete for note "${title}", but its original folder could not be re-read to confirm the note left it. The outcome is uncertain; read exact ID ${id} before retrying.`;
+}
+
+/**
  * Notes.app could not report the note's folder, so whether it is in Recently
  * Deleted (where a delete is permanent) cannot be ruled out (#198).
  */
@@ -606,10 +637,15 @@ function prepareDeleteGuards(args: DeleteGuardArgs): PreparedDeleteGuards | { er
   if ((guardNoteId === undefined) !== (expectedGuardContentHash === undefined)) {
     return { error: "Pass guardNoteId and expectedGuardContentHash together." };
   }
-  if (guardNoteId === id || requireActiveNoteId === id) {
+  // Compare canonical spellings: Notes resolves a lower-case store UUID to the
+  // same note, so a raw string comparison could let the target guard itself.
+  // The delete script also refuses a guard whose live id is the target's.
+  const same = (a?: string, b?: string) =>
+    a !== undefined && b !== undefined && canonicalCoreDataId(a) === canonicalCoreDataId(b);
+  if (same(guardNoteId, id) || same(requireActiveNoteId, id)) {
     return { error: "A guard note must be a different note from the one being deleted." };
   }
-  if (guardNoteId !== undefined && guardNoteId === requireActiveNoteId) {
+  if (same(guardNoteId, requireActiveNoteId)) {
     return { error: "requireActiveNoteId repeats guardNoteId; pass only guardNoteId." };
   }
 
@@ -701,11 +737,42 @@ function registerTool<
   cb: ToolCallback<InputArgs>
 ): RegisteredTool {
   const { outputSchema, ...rest } = config;
+  const callback = NOTES_WRITE_TOOLS.has(name)
+    ? ((async (...args: Parameters<ToolCallback<InputArgs>>) =>
+        writeToolResult(
+          await (cb as (...a: typeof args) => Promise<ToolResponse>)(...args)
+        )) as unknown as ToolCallback<InputArgs>)
+    : cb;
   return server.registerTool(
     name,
     outputSchema ? { ...rest, outputSchema: z.object(outputSchema).passthrough() } : rest,
-    cb
+    callback
   );
+}
+
+/** Tools registered here that change notes or folders through Notes.app. */
+const NOTES_WRITE_TOOLS = new Set([
+  "create-note",
+  "update-note",
+  "append-to-note",
+  "insert-link",
+  "delete-note",
+  "move-note",
+  "create-folder",
+  "delete-folder",
+  "batch-delete-notes",
+  "batch-move-notes",
+]);
+
+/**
+ * A write that fails because Notes.app stopped answering (lost connection, not
+ * responding) may already have landed, so its outcome is indeterminate unless
+ * the error says otherwise.
+ */
+function writeToolResult(result: ToolResponse): ToolResponse {
+  const envelope = result.structuredContent as ErrorEnvelope | undefined;
+  if (!result.isError || !envelope) return result;
+  return { ...result, structuredContent: unavailableWriteEnvelope(envelope) };
 }
 
 registerTool(
@@ -729,7 +796,7 @@ registerTool(
         .max(MAX.SAVE_PATH)
         .optional()
         .describe(
-          `Absolute path of a local UTF-8 file to use as the body instead of content (pass exactly one). The same locations save-attachment may write to are allowed (home, temp, /Volumes); symbolic links and non-regular files are refused. Limit ${MAX_CONTENT_FILE_BYTES} bytes.`
+          `Absolute path of a local UTF-8 file to use as the body instead of content (pass exactly one). The same locations save-attachment may write to are allowed (home, temp, /Volumes), except hidden paths (such as ~/.ssh or ~/.config) and ~/Library (iCloud Drive and ~/Library/CloudStorage are allowed); symbolic links and non-regular files are refused. Limit ${MAX_CONTENT_FILE_BYTES} bytes.`
         ),
       format: z
         .enum(["plaintext", "html", "markdown"])
@@ -1098,7 +1165,7 @@ registerTool(
       'Syntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\n' +
       "Returns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\n" +
       "Do not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\n" +
-      "Safety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates never match them.",
+      "Safety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.",
     inputSchema: {
       query: z
         .string()
@@ -1178,7 +1245,7 @@ registerTool(
     }
     if (result.unreadable > 0) {
       notes.push(
-        `⚠️ ${result.unreadable} note bodies could not be decoded, so body predicates did not match them.`
+        `⚠️ ${result.unreadable} note bodies could not be decoded, so body predicates (including negated ones) did not match them.`
       );
     }
     const footer = notes.length ? `\n\n${notes.join("\n")}` : "";
@@ -1206,7 +1273,7 @@ registerTool(
   "get-note-content",
   {
     description:
-      "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, nativeTags, restored links, richContentComplete/writable, and strippedImages/truncated when the body was capped. Read the warning when writable is false.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. Mutations refuse attachment-bearing notes; edit those in Notes.app. Notes.app returns images inside the body as base64, so a note with a very large image can time out; the error then names the cause, and a larger timeoutSeconds gives the read more time.",
+      "Use when: reading the full body text of one known note, by id (preferred) or title.\nReturns: the exact note id, content, contentHash revision token, parsed hashtags, nativeTags, restored links, richContentComplete/writable, and strippedImages/truncated when the body was capped. Read the warning when writable is false.\nDo not use when: you only need metadata (get-note-details) or Markdown with checklist state (get-note-markdown).\nNote: password-protected notes must be unlocked in Notes.app first.\nSafety: inline images larger than APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES (default 256 KB) are replaced with '[inline image omitted: ...]' text placeholders, so the returned body is lossy whenever truncated is true. For an attachment-bearing note, update-note refuses a full-body replacement; append-to-note with scopeText appends natively at the end and leaves attachments in place; add-attachment adds a file; move-note and delete-note work as usual. Make any other edit in Notes.app. Notes.app returns images inside the body as base64, so a note with a very large image can time out; the error then names the cause, and a larger timeoutSeconds gives the read more time.",
     inputSchema: {
       id: looseNoteId(z.string())
         .optional()
@@ -1253,7 +1320,7 @@ registerTool(
       // Check for password protection first for better error message
       const note = notesManager.getNoteById(id);
       if (!note) {
-        return errorResponse(`Note with ID "${id}" not found`);
+        return notFoundResponse(`Note with ID "${id}" not found`);
       }
       if (note.passwordProtected) {
         return errorResponse(
@@ -1301,7 +1368,7 @@ registerTool(
     // Check for password protection first for better error message
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(`Note "${title}" not found`);
+      return notFoundResponse(`Note "${title}" not found`);
     }
     if (note.passwordProtected) {
       return errorResponse(
@@ -1376,7 +1443,7 @@ registerTool(
     if (id) {
       const note = notesManager.getNoteById(id);
       if (!note) {
-        return errorResponse(`Note with ID "${id}" not found`);
+        return notFoundResponse(`Note with ID "${id}" not found`);
       }
       if (note.passwordProtected) {
         return errorResponse(
@@ -1397,7 +1464,7 @@ registerTool(
 
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(`Note "${title}" not found`);
+      return notFoundResponse(`Note "${title}" not found`);
     }
     if (note.passwordProtected) {
       return errorResponse(
@@ -1440,7 +1507,7 @@ registerTool(
     const note = notesManager.getNoteById(id);
 
     if (!note) {
-      return errorResponse(`Note with ID "${id}" not found`);
+      return notFoundResponse(`Note with ID "${id}" not found`);
     }
 
     // Return structured metadata as JSON
@@ -1481,7 +1548,7 @@ registerTool(
     const note = notesManager.getNoteDetails(title, account);
 
     if (!note) {
-      return errorResponse(`Note "${title}" not found`);
+      return notFoundResponse(`Note "${title}" not found`);
     }
 
     // Return structured metadata as JSON
@@ -1562,7 +1629,7 @@ registerTool(
     if (id) {
       const note = notesManager.getNoteById(id);
       if (!note) {
-        return errorResponse(`Note with ID "${id}" not found`);
+        return notFoundResponse(`Note with ID "${id}" not found`);
       }
       if (note.passwordProtected) {
         return errorResponse(
@@ -1584,7 +1651,7 @@ registerTool(
 
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(
+      return notFoundResponse(
         `Note "${title}" not found. Use search-notes to find notes, then use the note's ID for reliable operations.`
       );
     }
@@ -1680,10 +1747,12 @@ registerTool(
   },
   withErrorHandling(({ id }) => {
     const note = notesManager.getNoteById(id);
-    if (!note) return errorResponse(`Note with ID "${id}" not found`);
+    if (!note) return notFoundResponse(`Note with ID "${id}" not found`);
     const body = notesManager.getNoteContentById(id);
     if (!body) return errorResponse(`Failed to read content of note "${note.title}"`);
-    const rich = readRichNote(id);
+    // Read-only, so a tel: or sms: link must not hide the native objects; the
+    // revision (and so contentHash) does not depend on which links are kept.
+    const rich = readRichNote(id, { skipUnsafeLinks: true });
     const tables: Array<Record<string, unknown>> = (rich.objectData || [])
       .filter((object) => object.type?.includes("table"))
       .map((object) => {
@@ -1813,7 +1882,10 @@ registerTool(
         error.code === "no-full-disk-access"
           ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}`
           : "";
-      return errorResponse(`Error reading note blocks [${error.code}]: ${error.message}${hint}`);
+      return errorResponse(
+        `Error reading note blocks [${error.code}]: ${error.message}${hint}`,
+        error
+      );
     }
     const { summary } = page;
     const styles = Object.entries(summary.styles)
@@ -2644,7 +2716,14 @@ registerTool(
             },
             (r) => (route = r)
           );
-          if (response.isError) throw new Error(response.content[0].text);
+          if (response.isError) {
+            // Keep the append's own envelope (committed, indeterminate) rather
+            // than re-deriving it from the text.
+            const envelope = response.structuredContent as ErrorEnvelope | undefined;
+            throw envelope?.code
+              ? new CodedError(response.content[0].text, envelope)
+              : new Error(response.content[0].text);
+          }
           return { route, contentHash: String(response.structuredContent?.contentHash ?? "") };
         },
       }
@@ -2752,6 +2831,13 @@ registerTool(
       if (result.status === "not-deleted") {
         return errorResponse(NOT_DELETED_MESSAGE);
       }
+      if (result.status === "unverified") {
+        const message = deleteUnverifiedMessage(snapshot.note.title, id);
+        return errorResponse(
+          message,
+          new CodedError(message, { code: "verification_failed", indeterminate: true })
+        );
+      }
       if (result.status !== "deleted") {
         return errorResponse(
           `The delete result for note "${snapshot.note.title}" is uncertain. Inspect exact ID ${id} before retrying.`
@@ -2807,7 +2893,7 @@ registerTool(
   withErrorHandling(({ id, folder, account, ...scopeArgs }) => {
     const note = notesManager.getNoteById(id);
     if (!note) {
-      return errorResponse(`Note with ID "${id}" not found`);
+      return notFoundResponse(`Note with ID "${id}" not found`);
     }
     const success = notesManager.moveNoteById(id, folder, account, scopeFrom(scopeArgs));
     if (!success) {
@@ -3512,7 +3598,7 @@ registerTool(
     if (id) {
       const note = notesManager.getNoteById(id);
       if (!note) {
-        return errorResponse(`Note with ID "${id}" not found`);
+        return notFoundResponse(`Note with ID "${id}" not found`);
       }
       const attachments = notesManager.listAttachmentsById(id);
       if (attachments.length === 0) {
@@ -3567,7 +3653,7 @@ registerTool(
 
     const note = notesManager.getNoteDetails(title, account);
     if (!note) {
-      return errorResponse(
+      return notFoundResponse(
         `Note "${title}" not found. Use search-notes to find notes, then use the note's ID for reliable operations.`
       );
     }
@@ -3636,6 +3722,8 @@ registerTool(
       }
       if (result.status === "not-deleted")
         return { id, success: false, error: NOT_DELETED_MESSAGE };
+      if (result.status === "unverified")
+        return { id, success: false, error: deleteUnverifiedMessage(snapshot.note.title, id) };
       return { id, success: false, error: "Delete result uncertain; inspect this exact ID" };
     });
     const succeeded = results.filter((r) => r.success).length;
@@ -3841,6 +3929,7 @@ registerTool(
       height: z.number().optional(),
       bytes: z.number().optional(),
       source: z.enum(["fallback", "preview"]).optional(),
+      stale: z.boolean().optional(),
       attachmentId: z.string().optional(),
       identifier: z.string().optional(),
       kind: z.enum(["paper", "drawing"]).optional(),
@@ -3849,8 +3938,12 @@ registerTool(
   },
   withErrorHandling(({ noteId, savePath, attachmentId }) => {
     const r = notesManager.exportPaperImageById(noteId, savePath, attachmentId);
+    const stale = r.source === "fallback" && r.drawing.fallbackImageStale;
     return successResponse(
-      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}`,
+      `Saved ${r.format.toUpperCase()} ${r.width}x${r.height} (${r.bytes} bytes, ${r.source === "fallback" ? "Notes' full rendering" : "largest preview"}) to ${r.savedPath}` +
+        (stale
+          ? ". This is an older rendering: the one Notes recorded is not on disk, so it may not show the latest strokes."
+          : ""),
       {
         savedPath: r.savedPath,
         format: r.format,
@@ -3858,6 +3951,7 @@ registerTool(
         height: r.height,
         bytes: r.bytes,
         source: r.source,
+        ...(stale ? { stale } : {}),
         attachmentId: attachmentCoreDataId(noteId, r.drawing.pk),
         identifier: r.drawing.identifier,
         kind: r.drawing.kind,
@@ -3873,7 +3967,7 @@ registerTool(
   "export-attachments",
   {
     description:
-      'Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.\nReturns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "preview" when the asset never downloaded and only Notes\' rendered thumbnail was available, or null when nothing was on disk.\nDo not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).\nSafety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.',
+      'Use when: copying every file attachment of one note (or only its lead visual) into a directory on disk.\nReturns: per attachment its id, kind, exportedTo, and exportedKind: "asset" for the real file, "fallback" for Notes\' own full rendering of it (a drawing\'s PNG or a scan\'s PDF, named with that format\'s extension), "preview" when the asset never downloaded and only Notes\' rendered thumbnail was available, or null when nothing was on disk; inBody: false marks an attachment no longer shown in the note body.\nDo not use when: exporting one attachment to an exact path (save-attachment) or reading bytes inline (fetch-attachment).\nSafety: writes files; exportDir must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Existing files are never replaced: name collisions get -2, -3, ... suffixes. Reads NoteStore and the Notes data folder read-only; requires Full Disk Access. Notes.app is not opened.',
     inputSchema: {
       noteId: noteIdInput,
       exportDir: z
@@ -3890,6 +3984,7 @@ registerTool(
       exportDir: z.string().optional(),
       exported: z.number().optional(),
       previews: z.number().optional(),
+      fallbacks: z.number().optional(),
       skipped: z.number().optional(),
       failed: z.number().optional(),
       results: z.array(z.object({}).passthrough()).optional(),
@@ -3904,12 +3999,14 @@ registerTool(
     }));
     const exported = results.filter((x) => x.exportedKind !== null).length;
     const previews = results.filter((x) => x.exportedKind === "preview").length;
+    const fallbacks = results.filter((x) => x.exportedKind === "fallback").length;
     const failed = results.filter((x) => x.error).length;
     const skipped = results.length - exported - failed;
     const structured: Record<string, unknown> = {
       exportDir: r.exportDir,
       exported,
       previews,
+      fallbacks,
       skipped,
       failed,
       results,
@@ -3923,10 +4020,14 @@ registerTool(
         );
       }
     }
-    return successResponse(
-      `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${skipped} with nothing on disk, ${failed} failed).`,
-      structured
-    );
+    const summary = `Exported ${exported} file(s) to ${r.exportDir} (${previews} preview-only, ${fallbacks} Notes rendering(s), ${skipped} with nothing on disk, ${failed} failed).`;
+    // Every copy that was attempted failed: that is a failed call, not a success
+    // with nothing in it. The per-attachment errors stay in `results`.
+    if (exported === 0 && failed > 0) {
+      const error = errorResponse(summary, new CodedError(summary, { code: "operation_failed" }));
+      return { ...error, structuredContent: { ...structured, ...error.structuredContent } };
+    }
+    return successResponse(summary, structured);
   }, "Error exporting attachments")
 );
 
@@ -4144,7 +4245,7 @@ registerTool(
     if (id) {
       const markdown = notesManager.getNoteMarkdownById(id);
       if (!markdown) {
-        return errorResponse(`Note with ID "${id}" not found or has no content`);
+        return notFoundResponse(`Note with ID "${id}" not found or has no content`);
       }
       return successResponse(markdown, { markdown });
     }
@@ -4156,7 +4257,7 @@ registerTool(
 
     const markdown = notesManager.getNoteMarkdown(title, account);
     if (!markdown) {
-      return errorResponse(
+      return notFoundResponse(
         `Note "${title}" not found or has no content. Use search-notes to find notes, then use the note's ID for reliable operations.`
       );
     }
@@ -4185,13 +4286,14 @@ const exportStatsSchema = z.object({
   tables: z.number(),
   unreadableTables: z.number(),
   unreferenced: z.number(),
+  staleRenderings: z.number().optional(),
 });
 
 registerTool(
   "export-notes-markdown",
   {
     description:
-      "Use when: exporting one note (by exact id) or a folder's notes as one Markdown document rendered from the decoded note body: headings, bulleted/dashed/numbered lists with indent, checklists with state, block quotes, monospaced blocks, bold/italic/strikethrough/underline/highlight, links, tables, and attachments in body order.\nReturns: the Markdown inline (capped by APPLE_NOTES_MCP_EXPORT_MAX_BYTES), or with outputPath a receipt {format, count, bytes, output}; plus attachment counts and skipped notes (for example password-protected ones).\nDo not use when: you need the legacy HTML-converted Markdown of one note (get-note-markdown) or a restorable backup (export-notes-json). A folder document separates notes with '---' and is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is create-only (an existing file is refused with [output_exists]); assetsDir copies attachment files without replacing existing ones (collisions get -2, -3 suffixes). Without assetsDir, attachments render as labeled placeholders.\nTemplates: pass template ('standard-markdown' reproduces the default output; 'obsidian' adds YAML front matter and copies attachments beside outputPath) or templateFile (a JSON template) to control how every block, inline style, attachment, per-note header/footer and separator renders. Templated receipts add template, warnings (e.g. missing_asset) and assetFiles; an invalid template is refused with [invalid-template] and every problem's JSON path.",
+      "Use when: exporting one note (by exact id) or a folder's notes as one Markdown document rendered from the decoded note body: headings, bulleted/dashed/numbered lists with indent, checklists with state, block quotes, monospaced blocks, bold/italic/strikethrough/underline/highlight, links, tables, and attachments in body order.\nReturns: the Markdown inline (capped by APPLE_NOTES_MCP_EXPORT_MAX_BYTES), or with outputPath a receipt {format, count, bytes, output}; plus attachment counts and skipped notes (for example password-protected ones).\nDo not use when: you need the legacy HTML-converted Markdown of one note (get-note-markdown) or a restorable backup (export-notes-json). A folder document separates notes with '---' and is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is create-only (an existing file is refused with [output_exists]); assetsDir copies attachment files without replacing existing ones (collisions get -2, -3 suffixes). Without assetsDir, attachments render as labeled placeholders.\nTemplates: pass template ('standard-markdown' reproduces the default output; 'obsidian' adds YAML front matter and copies attachments beside outputPath) or templateFile (a JSON template; hidden paths and ~/Library outside iCloud Drive and CloudStorage are refused unless the server sets APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1) to control how every block, inline style, attachment, per-note header/footer and separator renders. Templated receipts add template, warnings (e.g. missing_asset) and assetFiles; an invalid template is refused with [invalid-template] and every problem's JSON path.",
     inputSchema: {
       id: noteIdInput.optional(),
       folder: z
@@ -4232,12 +4334,13 @@ registerTool(
           `Render through this template: built-in ${BUILTIN_TEMPLATE_NAMES.map((n) => `'${n}'`).join(" or ")}, or a saved template's name (list-markdown-templates). Exclusive with templateFile`
         ),
       templateFile: exportPathInput(
-        "JSON template file (.json) to render through (exclusive with template; at most 256 KiB)"
+        "JSON template file (.json) to render through (exclusive with template; at most 256 KiB; hidden paths and ~/Library outside iCloud Drive and CloudStorage refused unless APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1)"
       ),
     },
     outputSchema: {
       format: z.string().optional(),
       count: z.number().optional(),
+      truncated: z.boolean().optional(),
       bytes: z.number().optional(),
       markdown: z.string().optional(),
       output: z.string().optional(),
@@ -4277,12 +4380,18 @@ registerTool(
           `Error exporting Markdown [${error.code}]: the template is invalid:\n` +
             error.details.map((detail) => `${detail.path}: ${detail.message}`).join("\n")
         );
-      return errorResponse(`Error exporting Markdown [${error.code}]: ${error.message}${hint}`);
+      return errorResponse(
+        `Error exporting Markdown [${error.code}]: ${error.message}${hint}`,
+        error
+      );
     }
     const warned = receipt.warnings?.length
       ? `; ${receipt.warnings.length + (receipt.warningsOmitted ?? 0)} warning(s)`
       : "";
-    const skipped = (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") + warned;
+    const skipped =
+      (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") +
+      warned +
+      (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     if (receipt.output)
       return successResponse(
         `Wrote ${receipt.count} note(s) as Markdown (${receipt.bytes} bytes) to ${receipt.output}` +
@@ -4343,6 +4452,7 @@ registerTool(
     outputSchema: {
       format: z.string().optional(),
       count: z.number().optional(),
+      truncated: z.boolean().optional(),
       bytes: z.number().optional(),
       output: z.string().optional(),
       assets: z.object({ dir: z.string(), files: z.number() }).optional(),
@@ -4366,12 +4476,14 @@ registerTool(
         error.code === "no-full-disk-access"
           ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}`
           : "";
-      return errorResponse(`Error exporting HTML [${error.code}]: ${error.message}${hint}`);
+      return errorResponse(`Error exporting HTML [${error.code}]: ${error.message}${hint}`, error);
     }
     const assets = receipt.assets
       ? `; copied ${receipt.assets.files} asset file(s) to ${receipt.assets.dir}`
       : `; embedded ${receipt.embedded ?? 0} asset(s)`;
-    const skipped = receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "";
+    const skipped =
+      (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") +
+      (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
     return successResponse(
       `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
       { ...receipt }
@@ -4401,7 +4513,7 @@ registerTool(
     // Verify the note exists and is accessible
     const note = notesManager.getNoteById(id);
     if (!note) {
-      return errorResponse(`Note with ID "${id}" not found`);
+      return notFoundResponse(`Note with ID "${id}" not found`);
     }
     if (note.passwordProtected) {
       return errorResponse(
@@ -4616,29 +4728,34 @@ registerTool(
       status: z.string().optional(),
       drawings: z.array(z.object({}).passthrough()).optional(),
       pointsOmitted: z.boolean().optional(),
+      svgOmitted: z.boolean().optional(),
     },
   },
   withErrorHandling(({ id, format, includePoints }) => {
-    let result = getNoteDrawings(id, { format, includePoints });
-    let pointsOmitted = false;
-    // Stroke points dominate the payload. Past the response budget, drop them
-    // (SVG and stroke summaries stay) rather than fail the whole read.
-    if (
-      Buffer.byteLength(JSON.stringify(result)) > exportMaxResponseBytes() &&
-      includePoints !== false &&
-      format !== "svg"
-    ) {
-      result = getNoteDrawings(id, { format, includePoints: false });
-      pointsOmitted = true;
-    }
+    // Past the response budget, drop stroke points and then SVG documents from
+    // the decoded result (no second helper run), and fail rather than send a
+    // response that is still too large.
+    const limit = exportMaxResponseBytes();
+    const { result, pointsOmitted, svgOmitted, oversized } = fitNoteDrawings(
+      getNoteDrawings(id, { format, includePoints }),
+      limit
+    );
+    if (oversized)
+      return errorResponse(
+        `The drawings in note "${id}" are too large to return even without stroke points and SVG (limit ${limit} bytes, APPLE_NOTES_MCP_EXPORT_MAX_BYTES).`
+      );
     const text =
       formatNoteDrawings(result) +
       (pointsOmitted
         ? "\nStroke points were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)."
+        : "") +
+      (svgOmitted
+        ? "\nSVG documents were omitted to stay under the response size limit (APPLE_NOTES_MCP_EXPORT_MAX_BYTES)."
         : "");
     return successResponse(text, {
       ...result,
       ...(pointsOmitted ? { pointsOmitted } : {}),
+      ...(svgOmitted ? { svgOmitted } : {}),
     } as unknown as Record<string, unknown>);
   }, "Error reading drawings")
 );
@@ -4649,7 +4766,7 @@ registerTool(
   "transcribe-note-audio",
   {
     description:
-      "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
+      "Use when: you need the words spoken in a note's voice recordings or audio attachments, transcribed now on this Mac, by note id.\nReturns: per audio attachment a status (ok / partial / error / indeterminate), duration, word count, per-take results, and the transcript; overall status ok / partial / error / indeterminate / none.\nDo not use when: you only need the audio file (save-attachment) or a note has no audio.\nNote: read-only; recognition runs entirely on-device (never sent to a server). Needs Full Disk Access and the public native helper built once with `apple-notes-mcp setup --public-helper`. Long recordings take time: pass attachmentId to transcribe one at a time. An indeterminate result means the helper timed out; retrying may succeed. Never prompts: code permission_required means the user must allow the host app under System Settings > Privacy & Security > Speech Recognition; permission_not_requested (before macOS 26) means the host app has never asked for that access, so it is not listed there yet. asset_unavailable can mean the language's speech model is not installed; pass downloadAssets: true only if the user agrees to the download.",
     inputSchema: {
       id: noteIdInput,
       locale: z
@@ -4688,10 +4805,15 @@ registerTool(
       status: z.string().optional(),
       recordingCount: z.number().optional(),
       recordings: z.array(z.object({}).passthrough()).optional(),
+      responseOversized: z.boolean().optional(),
     },
   },
   withAsyncErrorHandling(async (params, signal) => {
     const { id, locale, attachmentId, includeText, downloadAssets, maxSeconds } = params;
+    const toResponse = (r: NoteTranscriptionResult): ToolResponse =>
+      successResponse(formatTranscription(r), r as unknown as Record<string, unknown>);
+    // Measure the whole response: the transcripts appear in the text summary
+    // and again in structuredContent.
     const result = fitTranscriptions(
       await transcribeNoteAudio(id, {
         locale,
@@ -4701,12 +4823,10 @@ registerTool(
         maxSeconds,
         signal,
       }),
-      exportMaxResponseBytes()
+      exportMaxResponseBytes(),
+      (r) => Buffer.byteLength(JSON.stringify(toResponse(r)))
     );
-    return successResponse(
-      formatTranscription(result),
-      result as unknown as Record<string, unknown>
-    );
+    return toResponse(result);
   }, "Error transcribing audio")
 );
 
@@ -4889,7 +5009,10 @@ process.on("unhandledRejection", (reason) => {
 // lingering as an orphan. Idempotent so multiple triggers don't double-exit.
 // Pending stdout is drained first (bounded), so a response larger than the pipe
 // buffer isn't truncated when the client closes stdin right after a request.
-const shutdown = createShutdown(process.stdout, () => process.exit(0));
+// Requests still being handled (an asynchronous tool) are answered first, so
+// their responses are not lost when stdin closes (#186).
+const inFlight = new InFlightRequests();
+const shutdown = createShutdown(process.stdout, () => process.exit(0), undefined, inFlight);
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, shutdown);
 }
@@ -4899,5 +5022,5 @@ process.stdin.on("close", shutdown);
 // Wrapped so every tools/list payload declares JSON Schema 2020-12: the SDK
 // stamps draft-07 on every emitted inputSchema/outputSchema, which current MCP
 // clients reject outright. See @/utils/jsonSchemaDialect.js.
-const transport = withJsonSchema2020_12(new StdioServerTransport());
+const transport = trackRequests(withJsonSchema2020_12(new StdioServerTransport()), inFlight);
 await server.connect(transport);

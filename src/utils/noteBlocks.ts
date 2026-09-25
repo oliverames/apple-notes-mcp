@@ -36,6 +36,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { CodedError, type ErrorCode } from "./errorCodes.js";
 import {
   decodeWireFields,
   fixed32Float,
@@ -43,6 +44,7 @@ import {
   signedVarint,
   type WireField,
 } from "./protobuf.js";
+import { checklistRunLineStart } from "./checklistRuns.js";
 
 /** Paragraph style names. `unknown` carries the raw number in `styleType`. */
 export type BlockStyle =
@@ -188,10 +190,29 @@ export type NoteBlocksErrorCode =
   | "invalid-runs"
   | "query-failed";
 
-export class NoteBlocksError extends Error {
+/**
+ * The shared error code for each reader failure. Decoding failures are
+ * `unsupported`: the stored body is in a form this reader cannot decode, and
+ * retrying will not change that.
+ */
+export const NOTE_BLOCKS_ERROR_CODES: Record<NoteBlocksErrorCode, ErrorCode> = {
+  "invalid-id": "validation_error",
+  "no-full-disk-access": "full_disk_access_missing",
+  "not-found": "not_found",
+  "no-body": "operation_failed",
+  encrypted: "unsupported",
+  "decompress-failed": "unsupported",
+  "malformed-protobuf": "unsupported",
+  "unsupported-structure": "unsupported",
+  "invalid-runs": "unsupported",
+  "query-failed": "operation_failed",
+};
+
+/** A reader failure. Its envelope carries the shared code for its reader code. */
+export class NoteBlocksError extends CodedError {
   readonly code: NoteBlocksErrorCode;
   constructor(code: NoteBlocksErrorCode, message: string) {
-    super(message);
+    super(message, { code: NOTE_BLOCKS_ERROR_CODES[code] });
     this.name = "NoteBlocksError";
     this.code = code;
   }
@@ -229,7 +250,9 @@ export const isSafeLink = (url: string): boolean =>
   /^(?:https?:\/\/|notes:\/\/|applenotes:|mailto:)/i.test(url) &&
   !Array.from(url).some((char) => char.charCodeAt(0) < 32);
 
-const utf8 = new TextDecoder();
+// ignoreBOM keeps a leading U+FEFF in the text, so its length still matches
+// the attribute runs (Notes counts it as a character).
+const utf8 = new TextDecoder("utf-8", { ignoreBOM: true });
 const first = (fields: WireField[], n: number) => fields.find((f) => f.fieldNumber === n);
 const varintOf = (fields: WireField[], n: number): number | undefined => {
   const f = first(fields, n);
@@ -418,8 +441,18 @@ export function decodeNoteBlocks(data: Uint8Array): NoteBlocksDocument {
       runIndex++;
     // Paragraph attributes come from the run covering the paragraph's first
     // character (the newline itself for an empty paragraph). In the verified
-    // library every run of a paragraph carried the same visual style.
-    const attrs = runs[runIndex]?.paragraph ?? DEFAULT_PARAGRAPH;
+    // library every run of a paragraph carried the same visual style. A
+    // checklist run that starts on an empty paragraph's newline belongs to the
+    // next line (the macOS 27.2 "\nItem" layout, see checklistRunLineStart);
+    // Notes renders the empty paragraph as plain body text, so it must not
+    // become a second block with the same checklist item.
+    const covering = runs[runIndex];
+    const attrs = !covering
+      ? DEFAULT_PARAGRAPH
+      : covering.paragraph.styleType === 103 &&
+          checklistRunLineStart(text, covering.start, covering.length) > paragraphStart
+        ? DEFAULT_PARAGRAPH
+        : covering.paragraph;
     const style: BlockStyle =
       attrs.styleType === null ? "body" : (STYLE_NAMES[attrs.styleType] ?? "unknown");
     const alignment = ALIGNMENTS[attrs.alignmentValue] ?? "unknown";

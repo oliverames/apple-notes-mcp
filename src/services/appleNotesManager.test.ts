@@ -1669,6 +1669,25 @@ describe("AppleNotesManager", () => {
       );
     });
 
+    // #195: a failed placement re-read is not evidence the note left its folder.
+    it("reports an unverified delete when the placement re-read fails", () => {
+      mockExecuteAppleScript.mockReturnValue({
+        success: true,
+        output: "SAFETY_DELETE_UNVERIFIED",
+      });
+      expect(manager.deleteNoteByIdIfUnchanged(id, "<div>Reviewed body</div>")).toEqual({
+        status: "unverified",
+      });
+      const script = String(mockExecuteAppleScript.mock.calls[0]?.[0]);
+      const recheck = script.slice(script.indexOf("delete noteRef"));
+      expect(recheck).toMatch(
+        /if __stillThere is missing value then return "SAFETY_DELETE_UNVERIFIED"/
+      );
+      expect(recheck.indexOf("SAFETY_DELETE_UNVERIFIED")).toBeLessThan(
+        recheck.indexOf('return "SAFETY_DELETED"')
+      );
+    });
+
     it("generates a delete script that AppleScript compiles", () => {
       mockExecuteAppleScript.mockReturnValue({ success: true, output: "SAFETY_DELETED" });
       manager.deleteNoteByIdIfUnchanged(id, '<div>Body with "quotes" and \\ slash</div>');
@@ -2154,6 +2173,8 @@ describe("AppleNotesManager", () => {
         '(name of __guardFolder0) is "Recently Deleted"',
         'return "SAFETY_GUARD_INACTIVE:0:in Recently Deleted"',
         'return "SAFETY_GUARD_CONFLICT:0"',
+        // The target cannot guard its own delete, however its id was spelled (#214).
+        'if (id of __guardRef0) is (id of noteRef) then return "SAFETY_GUARD_INACTIVE:0:the note being deleted"',
         `exists note id "${other}"`,
         'return "SAFETY_GUARD_INACTIVE:1:in Recently Deleted"',
       ]) {

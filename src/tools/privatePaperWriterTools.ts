@@ -24,7 +24,7 @@ import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { MAX_NUDGE_WAIT_SECONDS } from "../services/privateSyncNudge.js";
 import { PAPER_FORMATS, addPaper } from "../services/privatePaperWriter.js";
 import { PrivateWriteError } from "../services/privateWriter.js";
-import { assertReadableInRoots } from "../utils/attachmentFs.js";
+import { readAllowedFile } from "../utils/attachmentFs.js";
 import {
   AUTHOR_INKS,
   PaperAuthoringError,
@@ -34,7 +34,7 @@ import {
   type AuthorDrawing,
   type DrawingInput,
 } from "../utils/paperAuthoring.js";
-import { SVG_LOSSES, SvgError, analyzeSvgFile } from "../utils/svgAnalyzer.js";
+import { SVG_LIMITS, SVG_LOSSES, SvgError, analyzeSvgBuffer } from "../utils/svgAnalyzer.js";
 import {
   coreDataId,
   defaultWriterToolDeps,
@@ -207,15 +207,19 @@ export function prepareDrawing(
     );
   try {
     if (args.svgPath !== undefined) {
-      let path: string;
+      // Same read policy as analyze-svg's path (see readAllowedFile).
+      let source: Buffer;
       try {
-        path = assertReadableInRoots(args.svgPath, roots, "SVG file");
+        source = readAllowedFile(args.svgPath, SVG_LIMITS.maxSourceBytes, {
+          roots,
+          label: "SVG file",
+        });
       } catch (error) {
         throw new PrivateWriteError("svg_file_invalid", (error as Error).message, false, {
           svgCode: "svg_file_invalid",
         });
       }
-      const analyzed = analyzeSvgFile(path);
+      const analyzed = analyzeSvgBuffer(source);
       const drawing = drawingFromSvg(
         authorizeSvgDrawing(analyzed, {
           ifSvgAnalysis: args.ifSvgAnalysis,
@@ -278,7 +282,7 @@ export function registerPrivatePaperWriterTools(
         .max(4096)
         .optional()
         .describe(
-          "Absolute path of an SVG file (home, temp, or /Volumes) to convert with the analyze-svg analyzer"
+          "Absolute path of an SVG file to convert with the analyze-svg analyzer, read under analyze-svg's rules (home, temp, or /Volumes; not a hidden path or ~/Library outside iCloud Drive and CloudStorage; not a symbolic link)"
         ),
       ifSvgAnalysis: z
         .string()

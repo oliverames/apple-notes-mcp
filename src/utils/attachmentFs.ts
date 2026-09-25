@@ -322,30 +322,103 @@ export function assertReadableInRoots(
 }
 
 /**
- * Read a local UTF-8 text file that a tool takes as a content source (for
- * example `create-note`'s `contentPath`).
+ * Setting this to `1` lets {@link readAllowedFile} (content files and
+ * attachments) read hidden paths and `~/Library` too. Off by default: those hold credentials and app data.
+ */
+export const ALLOW_PRIVATE_CONTENT_ENV = "APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS";
+
+/**
+ * Why `p` is a private location a content read should not reach, or null.
+ *
+ * Private means a hidden component below the containing root (`~/.ssh`,
+ * `~/.aws`, `~/.config/gh/hosts.yml`, a project's `.env`) or anything under
+ * `~/Library` (keychains, cookies, app containers) except iCloud Drive
+ * (`~/Library/Mobile Documents`) and cloud storage folders
+ * (`~/Library/CloudStorage`). It narrows the
+ * `save-attachment` roots (home, temp, /Volumes) to places a user keeps
+ * documents. `roots` must be in the same spelling as `p` (both literal, or
+ * both canonical).
+ */
+export function privateContentReason(p: string, roots: string[]): string | null {
+  const containing = roots
+    .map((r) => (r.endsWith(sep) ? r.slice(0, -1) : r))
+    .filter((r) => isWithinRoots(p, [r]))
+    .sort((a, b) => b.length - a.length)[0];
+  const below = containing === undefined ? p : relative(containing, p);
+  if (below.split(sep).some((part) => part.startsWith("."))) return "a hidden file or directory";
+  const home = resolve(homedir());
+  const libraries = [
+    join(home, "Library"),
+    ...canonicalRoots([home]).map((h) => join(h, "Library")),
+  ];
+  if (!isWithinRoots(p, libraries)) return null;
+  // iCloud Drive and File Provider cloud folders (Dropbox, Google Drive,
+  // OneDrive, ...) live under ~/Library but hold the user's documents.
+  const cloudDocuments = libraries.flatMap((l) => CLOUD_DOCUMENT_DIRS.map((d) => join(l, d)));
+  return isWithinRoots(p, cloudDocuments) ? null : "~/Library";
+}
+
+/** Folders under `~/Library` that hold user documents, not app data. */
+const CLOUD_DOCUMENT_DIRS = ["Mobile Documents", "CloudStorage"];
+
+/** Options for {@link readAllowedFile}. */
+export interface AllowedReadOptions {
+  /** Roots the read must stay inside; defaults to the `save-attachment` roots. */
+  roots?: string[];
+  /** Allow hidden paths and `~/Library`; defaults to {@link ALLOW_PRIVATE_CONTENT_ENV}. */
+  allowPrivate?: boolean;
+  /** How the file is named in errors, such as "Content file" or "Attachment". */
+  label?: string;
+}
+
+/**
+ * Read a local file that a tool takes from its caller (`create-note`'s
+ * `contentPath`, `add-attachment`'s `path`).
  *
  * The same roots that bound `save-attachment` bound this read, so a caller can
- * source content only from home, temp, or /Volumes, never from system or other
- * users' locations. The path must be absolute and its canonical form must stay
- * inside a root; the final component may not be a symbolic link, and the file
- * is opened with O_NOFOLLOW and checked as a regular file through its
- * descriptor, so a swap between the check and the read cannot redirect it. The
- * size is checked before reading and the bytes must decode as strict UTF-8.
+ * read only from home, temp, or /Volumes, never from system or other users'
+ * locations. Within them, hidden paths and `~/Library` are refused (see
+ * {@link privateContentReason}) unless `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`,
+ * so a prompt cannot pull `~/.ssh/id_ed25519` into a synced note. The path must
+ * be absolute, and the private rule is checked on both the literal path and
+ * its canonical form, so a case variant (`~/library/Keychains`) or an alias
+ * through `/Volumes` is caught after realpath.
  *
- * @throws on any path, type, size, or encoding violation
+ * The file is opened with O_NOFOLLOW, which refuses a symbolic link in the
+ * final component only, and O_NONBLOCK, so a FIFO cannot block the event loop;
+ * the descriptor must then be a regular file.
+ * A directory component swapped for a symlink between the check and the open
+ * is caught afterwards: the path is canonicalized again, checked again, and
+ * must name the same file (device and inode) as the open descriptor. That
+ * narrows the race to a writer who can swap directories several times within
+ * one call; it cannot see through a hard link, which no path check can.
+ * The size is checked before reading, and an empty file is refused.
+ *
+ * @throws on any path, type, or size violation
  */
-export function readAllowedTextFile(
+export function readAllowedFile(
   p: string,
   maxBytes: number,
-  roots: string[] = allowedSaveRoots()
-): string {
-  const abs = assertReadableInRoots(p, roots);
-  // O_NOFOLLOW refuses a symbolic link at open time (ELOOP), so there is no
-  // separate path check that a swap could slip between.
+  options: AllowedReadOptions = {}
+): Buffer {
+  const roots = options.roots ?? allowedSaveRoots();
+  const allowPrivate = options.allowPrivate ?? process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1";
+  const label = options.label ?? "Content file";
+  const abs = assertReadableInRoots(p, roots, label);
+  const assertNotPrivate = (candidate: string, candidateRoots: string[]) => {
+    if (allowPrivate) return;
+    const reason = privateContentReason(candidate, candidateRoots);
+    if (reason)
+      throw new Error(
+        `Refusing to read "${abs}": it is in ${reason}, which can hold credentials or app data. ` +
+          `Move the file to a regular folder, or set ${ALLOW_PRIVATE_CONTENT_ENV}=1 for the server to allow it.`
+      );
+  };
+  assertNotPrivate(abs, roots);
+  assertNotPrivate(canonicalize(abs), canonicalRoots(roots));
   let descriptor: number;
   try {
-    descriptor = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
+    descriptor = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ELOOP")
       throw new Error(`Refusing to read the symbolic link "${abs}".`);
@@ -353,20 +426,53 @@ export function readAllowedTextFile(
   }
   try {
     const stat = fstatSync(descriptor);
-    if (!stat.isFile()) throw new Error(`Content file is not a regular file: "${abs}"`);
-    if (stat.size === 0) throw new Error(`Content file is empty: "${abs}"`);
+    if (!stat.isFile()) throw new Error(`${label} is not a regular file: "${abs}"`);
+    // Re-resolve after the open: the descriptor must be the file the checked
+    // path names now, and that path must still be allowed.
+    let after: string;
+    try {
+      after = canonicalize(abs);
+    } catch {
+      throw new Error(`${label} changed while it was being opened; try again: "${abs}"`);
+    }
+    if (!isWithinRoots(after, canonicalRoots(roots)))
+      throw new Error(
+        `Refusing to read outside allowed locations (home, temp, /Volumes): "${abs}" resolves to "${after}".`
+      );
+    assertNotPrivate(after, canonicalRoots(roots));
+    const named = statSync(after);
+    if (named.dev !== stat.dev || named.ino !== stat.ino)
+      throw new Error(`${label} changed while it was being opened; try again: "${abs}"`);
+    if (stat.size === 0) throw new Error(`${label} is empty: "${abs}"`);
     if (stat.size > maxBytes)
-      throw new Error(`Content file is ${stat.size} bytes, over the ${maxBytes}-byte limit.`);
+      throw new Error(`${label} is ${stat.size} bytes, over the ${maxBytes}-byte limit.`);
     const bytes = readFileSync(descriptor);
     if (bytes.length !== stat.size)
-      throw new Error("Content file changed while it was being read; try again");
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
-    } catch {
-      throw new Error(`Content file is not valid UTF-8 text: "${abs}"`);
-    }
+      throw new Error(`${label} changed while it was being read; try again`);
+    return bytes;
   } finally {
     closeSync(descriptor);
+  }
+}
+
+/**
+ * Read a local UTF-8 text file that a tool takes as a content source (for
+ * example `create-note`'s `contentPath`), under the {@link readAllowedFile}
+ * policy. The bytes must decode as strict UTF-8; a leading BOM is dropped.
+ *
+ * @throws on any path, type, size, or encoding violation
+ */
+export function readAllowedTextFile(
+  p: string,
+  maxBytes: number,
+  roots: string[] = allowedSaveRoots(),
+  allowPrivate = process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1"
+): string {
+  const bytes = readAllowedFile(p, maxBytes, { roots, allowPrivate });
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
+  } catch {
+    throw new Error(`Content file is not valid UTF-8 text: "${resolve(p)}"`);
   }
 }
 

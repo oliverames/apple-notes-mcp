@@ -93,7 +93,7 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 - `create-note` returns the new note's ID for subsequent operations
 - **`create-note`'s `folder` must already exist.** It does not create the folder — call `create-folder` first (it is idempotent, so calling it unconditionally is fine). Passing a folder Notes doesn't have fails with a generic "check that Notes.app is configured and accessible" message, which is misleading: Notes.app is fine, the folder isn't there. The same applies to a misspelled `account`.
 - **To add to a note, use `append-to-note`, not `update-note`.** `update-note` replaces the whole body; `append-to-note` takes `content` plus `position` (`"after"` default / `"before"` to insert directly below the title line), `separator`, and `format`, does the read-and-concatenate itself, and always round-trips the body as HTML so existing rich formatting survives.
-- **Body from a file:** `create-note` takes `contentPath` (an absolute path to a UTF-8 file of at most 1 MiB in home, temp, or `/Volumes`) instead of `content`. Pass exactly one of the two.
+- **Body from a file:** `create-note` takes `contentPath` (an absolute path to a UTF-8 file of at most 1 MiB in home, temp, or `/Volumes`; hidden paths such as `~/.ssh` or `~/.config` and anything in `~/Library` other than iCloud Drive (`~/Library/Mobile Documents`) and `~/Library/CloudStorage` are refused unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`) instead of `content`. Pass exactly one of the two.
 - **Markdown title line:** with `format: "markdown"`, a first line that is exactly `# <title>` is removed (plus one blank line), since `title` is supplied separately. A different first heading is kept.
 - **`markdownRoute: "html"`** imports Markdown through AppleScript HTML instead of the Shortcut: any account, tags allowed, no real Heading styles. Task items (`- [ ]`, `- [x]`) become list rows starting with a visible ☐ / ☑ character. Those are text, not checkable checklist items; tell the user so. Block quotes, fenced code and inline code are refused on this route, and a `---` line stays literal text; only the Shortcut route imports these natively.
 - **`timeoutSeconds`** (1–120) on `create-note`, `update-note`, `append-to-note`, `delete-note`, and `move-note` sets the timeout of each Notes.app automation step for that call. A timed-out write is uncertain: read the note by id before retrying.
@@ -115,7 +115,7 @@ delete-note id="x-coredata://ABC/ICNote/p123"
 
 **You cannot create an Apple Notes checklist (the interactive ☐ / ☑ items) via this MCP server.** This is an Apple Notes limitation, not a server bug.
 
-The exception is the Background Operations Shortcut bridge: when `get-capabilities` reports `create-checklist-item` available, `create-checklist-item` appends one real unchecked item and `create-checklist-items` appends several in order (1–20, one bridge run of a few seconds each; a client-side timeout does not stop the server, so read the note before any retry). If `create-checklist-items` returns `ok: false`, only the items in `landed` are verified; read the note before retrying, and retry only items that are not present.
+The exception is the Background Operations Shortcut bridge: when `get-capabilities` reports `create-checklist-item` available, `create-checklist-item` appends one real unchecked item and `create-checklist-items` appends several in order (1–20, one bridge run of a few seconds each; a client-side timeout does not stop the server, so read the note before any retry). If `create-checklist-items` returns `ok: false` (an error result with a `code`), only the items in `landed` are verified; read the note before retrying, and retry only items that are not present.
 
 When you send checklist HTML or markdown to `create-note` or `update-note`:
 
@@ -178,6 +178,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - `update-note`, `append-to-note`, `delete-note`, and `move-note` accept optional `ifFolderId`, `ifAncestorFolderId`, and `forbiddenAncestorFolderIds` (exact folder ids from `list-folders`).
 - Use them when a write should only happen while the note is still where you reviewed it, or must never touch a protected subtree (for `move-note`, the destination is checked against the forbidden list too).
 - They are re-checked inside the write's own AppleScript. A failure reads `Scope guard failed: …` and nothing is changed; re-read the note before retrying.
+- A forbidden id that matches no folder fails the guard (`a forbidden folder id does not match any folder`) rather than being ignored; take ids from `list-folders`.
 
 ### list-smart-folders
 - Read-only; reads the NoteStore database, so it needs Full Disk Access
@@ -202,9 +203,9 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`; `checklist:open|done`; `pinned`, `locked`, `shared`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
 - Scans the 500 most recently modified notes by default (`scanLimit` up to 5000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
 - Excludes Recently Deleted and folderless notes unless `includeDeleted: true`
-- Locked notes match on title and metadata only; body predicates never match them
+- Locked notes match on title and metadata only; body predicates never match them, negated or not (`-body:x` does not match a locked or undecodable note)
 - Each hit has `matchedIn` (where the positive text terms occur: `title`, `body`, or both) when the query has a text term and the body is readable; a `title:` term only counts toward the title and a `body:` term only toward the body. An empty list means the note matched through a non-text branch (`pinned OR x`)
-- `includeWordCount: true` adds `wordCount`, the same count `words:` filters on (null = locked or unreadable). A metadata-only query reads just the returned notes' bodies in one extra query
+- `includeWordCount: true` adds `wordCount`, the same count `words:` filters on (null = locked or unreadable). Chinese, Japanese and Thai text is counted by word boundaries, not by spaces. A metadata-only query reads just the returned notes' bodies in one extra query
 - Result ids chain directly into `get-note-content` and every other id-based tool
 
 ### list-notes
@@ -245,15 +246,16 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Prefer using `id` parameter to avoid issues with duplicate titles
 
 ### add-attachment / create-note-with-attachment
+- `path` follows the same read scope as `create-note`'s `contentPath`: a regular file in home, temp, or `/Volumes`; hidden paths (`~/.ssh`, `~/.config`, a project `.env`) and `~/Library` other than iCloud Drive and `~/Library/CloudStorage` are refused unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Do not try to work around a refusal by copying the file; ask the user.
 - `filename` sets the name the attachment shows in Notes. It must keep the source file's extension and be a single path component.
 - macOS 27: Notes' AppleScript never lists PDF attachments. When AppleScript shows no new attachment, the tool verifies through the read-only NoteStore rows (needs Full Disk Access) and returns `verifiedBy: "database"`; without FDA a PDF attach reports "outcome uncertain", and the PDF was probably created, so read the note before retrying.
-- `create-note-with-attachment` creates the note, then attaches. If the attach step fails, the error names the new note's id: call `add-attachment` on that id rather than repeating the tool, which would create a second note.
+- `create-note-with-attachment` creates the note, then attaches. If the attach step fails before the file is inserted, the error names the new note's id: call `add-attachment` on that id rather than repeating the tool, which would create a second note. If the error says the attachment outcome is uncertain (`indeterminate: true`), the file may already be attached: run `list-attachments` on that id before attaching again.
 
 ### add-attachment-from-pasteboard
 - Use when the user says "attach what I copied" or "put this screenshot in the note". Same `id`, `expectedContentHash`, and `filename` as `add-attachment`; a `filename` without an extension gets the pasted type's extension.
 - It reads the pasteboard once, freezes the bytes into a private temporary file, and never writes to the pasteboard. A copied file wins over image data; text-only contents are refused (use `append-to-note` for text).
 - `source` in the result says what was attached (`kind`, pasteboard `type`, default `filename`). An "unreachable" error means the MCP host is not running in the user's GUI session.
-- The note and revision are checked before the pasteboard is read. Errors carry `pasteboardCode`. `pasteboard_access_denied` (macOS 15.4+ paste privacy): nothing was read because macOS would show its paste alert; ask the user before retrying with `allowPasteAlert: true`, which makes macOS show the alert. `alwaysDeny` cannot be overridden. `multiple_files`: several copied files are refused; use `add-attachment` per file.
+- The note and revision are checked before the pasteboard is read. Errors carry `pasteboardCode`. `pasteboard_access_denied` (macOS 15.4+ paste privacy): nothing was read because macOS would show its paste alert; ask the user before retrying with `allowPasteAlert: true`, which makes macOS show the alert. `alwaysDeny` cannot be overridden. `multiple_files`: several copied files are refused; use `add-attachment` per file. `multiple_items`: several copied images or PDFs are refused the same way. When a copy offers a PDF and a raster preview of it, the PDF is attached.
 - A pasted PDF is inserted but reported as "insertion outcome uncertain" on macOS 27 (issue #236: AppleScript does not list PDF attachments, so neither this tool nor `add-attachment` can verify them). Read the note with `list-attachments includePaths` or in Notes.app before any retry; never retry blindly.
 
 ### create-table
@@ -325,16 +327,17 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### get-capabilities / doctor feature matrix
 - Both return `runtimeOS` and a `features` object keyed by feature group (`applescriptCore`, `fullDiskAccessReads`, `backgroundOperationsBridge`, `nativeTagsBridge`, `markdownNoteBridge`, ...). Check a feature's `available` before relying on it, and branch on its machine `reason` (`full_disk_access_missing`, `shortcut_not_installed`, `requires_macos_26`, `not_implemented`, ...) rather than on prose.
 - `unverified: ["notes_automation"]` means the probe did not contact Notes.app, not that Automation is denied. Run `doctor` to confirm it.
-- Placeholder features (`checklistToggle`, `smartFolders`, `paragraphLinks`, `audioTranscription`) always report `not_implemented`; do not attempt them through other tools.
+- Placeholder features (`checklistToggle`, and `smartFolders` for creating or editing smart folders) always report `not_implemented`; do not attempt them through other tools. `paragraphLinks` and `audioTranscription` are real features gated on Full Disk Access.
 
 ### export-notes-markdown
-- Exactly one of `id` (exact note ID) or `folder` (path, optional `account`, `limit` default 100)
+- Exactly one of `id` (exact note ID) or `folder` (path, optional `account`, `limit` default 100). `truncated: true` means the folder holds more notes than `limit`
+- An `assetsDir` (or template assets directory) that cannot be created fails the export with `[invalid-path]` instead of marking every attachment unavailable
 - Renders from the decoded body, so checklist state, tables and attachment positions are exact; `get-note-markdown` is unchanged
 - A folder document joins notes with `---`. It is a presentation format: never split it back into notes or use it as a backup
 - `outputPath` is create-only; `[output_exists]` means choose a new path, never delete the old file on the user's behalf
 - Pass `assetsDir` to copy attachment files; without it attachments are placeholders like `\[Image: name\]`
 - Password-protected notes are listed in `skipped`; Full Disk Access is required
-- `template` (`standard-markdown`, `obsidian`) or `templateFile` (JSON, exclusive) renders through a Markdown template; the schema is in docs/markdown-templates.md. `standard-markdown` output equals the default export
+- `template` (`standard-markdown`, `obsidian`) or `templateFile` (JSON, exclusive; same private-location refusal as `contentPath`) renders through a Markdown template; the schema is in docs/markdown-templates.md. `standard-markdown` output equals the default export
 - `[invalid-template]` lists one `$.json.path: problem` per line: fix those fields, do not guess a new template
 - Templated `warnings` (for example `missing_asset`, `assets_dir_required`) do not fail the export; report them
 
@@ -361,6 +364,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 
 ### analyze-svg
 - Standalone, read-only analysis of one local SVG file (absolute path in home, temp, or `/Volumes`; at most 1 MiB). It opens no Notes data.
+- `path` follows `contentPath`'s read scope: hidden paths and `~/Library` other than iCloud Drive and `~/Library/CloudStorage` are refused unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Do not copy the file elsewhere to get around a refusal; ask the user.
 - Branch on `classification` and `requiredLosses`, not on the issue text. `safe` needs no approximation; `lossy` needs `geometry-approximation` or `paint-approximation`; `unsupported` drops visible content or has nothing drawable (`importable: false`).
 - Refusals are errors with `svgCode` (`svg_unsafe`, `svg_invalid`, `svg_reference_invalid`, `svg_complexity_limit`, `svg_geometry_invalid`, `svg_file_invalid`). An unsafe file cannot be analyzed with any option; do not try to strip parts of it on the user's behalf.
 - `includeDrawing: true` returns the normalized strokes; leave it off unless you need them, since it can be large.
@@ -368,7 +372,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### Attachment paths, first image, and batch export
 - `list-attachments` with `includePaths: true` (needs the note `id` and Full Disk Access) adds `assetPaths` (the attachment's own files), `previewPath` (Notes' largest rendered thumbnail, always an image file), and `paths`. Use `assetPaths` when you need the original; a `previewPath` alone means the asset has not downloaded.
 - `list-attachments` with `firstImage: true` returns only the lead visual in body order: the first image even when `path` is `null`, else the first scan or drawing, else `null`.
-- `export-attachments` copies files into `exportDir` (same allowlist as `save-attachment`, never the Notes data folder). Check `exportedKind`: `"preview"` means you got a thumbnail, not the original. It never overwrites; collisions become `-2`, `-3`.
+- `export-attachments` copies files into `exportDir` (same allowlist as `save-attachment`, never the Notes data folder). Check `exportedKind`: `"preview"` means you got a thumbnail, not the original, and `"fallback"` means Notes' own rendering (a drawing's PNG, a scan's PDF). `inBody: false` marks an attachment the body no longer shows. `stale: true` on a fallback (and `fallbackStale` in `list-attachments` paths, `stats.staleRenderings` in Markdown/HTML exports) means the rendering Notes recorded is missing and an older one was used. It never overwrites; collisions become `-2`, `-3`.
 - Do not hand raw Notes paths to a browser or another tool. Export first.
 
 ### get-note-link
@@ -385,14 +389,16 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Decodes `com.apple.drawing.2` / `com.apple.drawing` attachments into strokes (`inkType`, sRGB `color`, `width`, `points`) and/or SVG (`format: "json" | "svg" | "both"`). Modern Paper sketches (`com.apple.paper`) are not decoded.
 - Needs Full Disk Access and the public native helper, built once by the user with `apple-notes-mcp setup --public-helper`. An error mentioning `setup --public-helper` means it is not built or is stale after an upgrade; tell the user to run that command rather than retrying.
 - Overall `status` is `none` when the note has no classic drawing. A per-drawing `status: "error"` carries a `code` (`no_data`, `undecodable`, `timeout`, ...) and does not fail the call.
-- For large drawings pass `includePoints: false` or `format: "svg"`; the server also drops points itself (`pointsOmitted`) past the response size limit.
+- For large drawings pass `includePoints: false` or `format: "svg"`; the server also drops points (`pointsOmitted`) and then SVG (`svgOmitted`) itself past the response size limit, and fails if even that is too large.
+- Pixel-erased ink is not returned: `masked: true` marks a visible piece of a partly erased stroke (one stroke can give several), and `hiddenStrokeCount` counts fully erased strokes.
 
 ### transcribe-note-audio (on-device transcription)
 - Transcribes a note's voice recordings and audio attachments on this Mac with the Speech framework (never a server). Same prerequisites as `get-note-drawings`: Full Disk Access and `apple-notes-mcp setup --public-helper`.
 - Pass `locale` (BCP-47, default `en-US`) when the speech is not US English. Transcribe long recordings one at a time with `attachmentId`; clients may stop waiting after a fixed time.
 - Per-recording `status`: `ok`, `partial` (some text; `code: "incomplete"` or a failed take), `error` (with `code`), or `indeterminate` (the helper timed out; the outcome is unknown, so a retry may work). Overall `none` means the note has no audio.
 - `asset_unavailable` can mean the audio file has not downloaded from iCloud, or that the language's on-device speech model is not installed. The server never downloads a model on its own: ask the user before retrying with `downloadAssets: true`.
-- The server never shows a permission prompt. `permission_required` means the app hosting this server lacks Speech Recognition access; tell the user to allow it under System Settings > Privacy & Security > Speech Recognition rather than retrying.
+- The server never shows a permission prompt. `permission_required` means the app hosting this server lacks Speech Recognition access; tell the user to allow it under System Settings > Privacy & Security > Speech Recognition rather than retrying. `permission_not_requested` (before macOS 26 only) means the host app has never asked for that access, so it is not in that list yet; the user needs macOS 26 or a host app that already has the access.
+- `responseOversized: true` means the transcripts were dropped to fit the response size limit; transcribe one recording at a time with `attachmentId`.
 - `maxSeconds` (30 to 3600, default 900) caps the whole call; takes not started in time report `time_limit`, so transcribe the rest by `attachmentId`. Cancelling the request stops the helper.
 - Use `includeText: false` when only statuses and word counts are needed.
 
@@ -448,7 +454,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 | "iCloud sync in progress" | Wait and retry - results may be incomplete |
 | "No checklist items found" | Note has no checklists, or Full Disk Access not granted |
 
-Every error result (`isError: true`) also carries `structuredContent.code`: `not_found`, `ambiguous`, `permission_denied`, `full_disk_access_missing`, `shortcut_not_installed`, `timeout_indeterminate`, `verification_failed`, `revision_conflict`, `validation_error`, `unsupported`, `notes_unavailable`, or `operation_failed`. Prefer it over matching message text. When `indeterminate` is `true`, the write may or may not have happened: read the note by exact id before any retry. `committed: false` means nothing was written, so re-reading and retrying is safe. Input-schema rejections raised by the MCP SDK itself carry no code.
+Every error result (`isError: true`) also carries `structuredContent.code`: `not_found`, `ambiguous`, `permission_denied`, `full_disk_access_missing`, `shortcut_not_installed`, `timeout_indeterminate`, `verification_failed`, `revision_conflict`, `validation_error`, `unsupported`, `notes_unavailable`, or `operation_failed`. Prefer it over matching message text. When `indeterminate` is `true`, the write may or may not have happened: read the note by exact id before any retry. `committed: false` means nothing was written, so re-reading and retrying is safe. Input-schema rejections carry `validation_error` with `committed: false`; a Notes UUID or numeric key that could not be resolved carries `not_found` or `full_disk_access_missing` instead.
 
 ## Recurring macOS permission prompts → offer the official-Node fix
 

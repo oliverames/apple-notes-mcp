@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- `native-add-paper`'s `svgPath` reads the file through `readAllowedFile`,
+  under the same policy as `analyze-svg`'s `path` (#260), in place of the
+  removed `analyzeSvgFile`.
+- A writer timeout during a write reports `timeout_indeterminate` again. It
+  had fallen through to the read-only helper's mapping, which #257 changed to
+  `operation_failed` because the helper's actions only read.
+
 ### Added
 
 - `compose-note` takes local files (`{"type":"file","path":…}`, with
@@ -37,7 +46,7 @@
 - Compose refuses a note with no body at all instead of writing into its
   title position.
 
-## [2.9.21] - 2026-09-24
+## [2.9.29] - 2026-09-25
 
 ### Added
 
@@ -261,6 +270,337 @@
 - The probe checks the folder fields `read_sync_state` reads, and a copy of
   the store (`APPLE_NOTES_MCP_PRIVATE_STORE`) still needs
   `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`.
+
+## [2.9.28] - 2026-09-24
+
+### Security
+
+- `analyze-svg`'s `path` and the Markdown template tools' `templateFile`
+  (`export-notes-markdown`, `validate-markdown-template`,
+  `save-markdown-template`) are now read under the same policy as
+  `create-note`'s `contentPath` and the attachment tools, through the shared
+  `readAllowedFile` helper. That means a regular file in home, temp or
+  `/Volumes`. Hidden paths and `~/Library` outside iCloud Drive and
+  `~/Library/CloudStorage` are refused, and so are hidden entries inside those
+  two. The check runs on the literal path, again after realpath and again
+  after open. The file is opened with `O_NONBLOCK` and must be a regular,
+  non-empty file. `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1` covers both.
+  Before, both paths were bounded only by those roots, so a prompt could point
+  `templateFile` at `~/.docker/config.json` or another credential JSON.
+- Refusals and parse errors from both tools no longer quote the file.
+  `analyze-svg` refuses a file whose first element is not `<svg>` before any
+  error can name one of its tags or attributes, and a disallowed named entity
+  is no longer echoed. Template JSON errors already reported only line and
+  column.
+
+### Fixed
+
+- A scope-guard refusal (`Scope guard failed: …`) is now `revision_conflict`
+  with `committed: false`. Before, its "read the note's current folder … before
+  retrying" advice matched the unverified-write rule, so it came back as
+  `verification_failed` with `indeterminate: true`, although the guard runs
+  before anything is written.
+- A read refused by that policy ("Refusing to read …") is `validation_error`
+  rather than `operation_failed`, as a refused write already was.
+
+## [2.9.27] - 2026-09-24
+
+Data-correctness fixes across reads, counts, guards and exports, contributed by
+@oliverames in #258.
+
+### Fixed
+
+- `get-note-blocks` no longer reports the empty line before a checklist item
+  appended on macOS 27.2 as a second checklist block with the same item id
+  (#192). That item's run starts on the preceding newline; the empty line now
+  follows the same first-non-newline rule the checklist readers use. Note text
+  that starts with U+FEFF is no longer cut by one character when decoded, which
+  made every run length overflow and failed the read with `invalid-runs`.
+- `query-notes`: a body predicate on a locked or undecodable note is now
+  unknown rather than false, so its negation (`-body:x`, `-has:attachment`,
+  `NOT tag:y`) no longer matches that note either (#182). A definite metadata
+  branch still decides, so `-body:x OR pinned` matches a pinned locked note.
+- `get-note-tables` reads the tables of a note that also holds a `tel:` or
+  `sms:` link (#193). It used the strict rich-text read that write guards need,
+  which refuses those schemes; tables never feed a rewrite, so that read now
+  leaves such links out instead.
+- `rename-folder` `expectedParentId` and `delete-folder-by-id`
+  `expectedAccountId` accept a Notes UUID or numeric key, like the other folder
+  and account inputs (#190), so `list-folders`' `parentIdentifier` works there.
+- `transcribe-note-audio` (#231): a speech-model download with
+  `downloadAssets: true` now counts against the take's deadline, so the helper
+  answers before the server stops waiting and a long download no longer turns
+  a take into `indeterminate`. The response is fitted to the size limit
+  measuring both copies of the transcript (text and structured content), and
+  `responseOversized: true` says when the transcripts had to be dropped. Before
+  macOS 26, Speech Recognition access that was never requested now returns
+  `permission_not_requested` instead of advice to allow an app that System
+  Settings does not list yet.
+- `get-note-drawings` (#230): ink removed with the pixel eraser no longer comes
+  back; a partly erased stroke is returned as its visible pieces
+  (`masked: true`) and `hiddenStrokeCount` counts fully erased strokes. A
+  drawing with no strokes no longer fails with `encode_failed` (its bounds are
+  zeros), and the helper exits non-zero whenever it writes that fallback error.
+  A stroke cut by the point limit now reports the points returned and
+  `pointsTruncated: true`. Past the response limit, points and then SVG are
+  dropped from the decoded result (`svgOmitted`) without running the helper
+  again, and a result that still does not fit is an error.
+- `list-note-links` no longer fails with a TypeError, or reports a negative
+  `notesWithoutBody`, when a note enters the scope between its note read and
+  its body reads (#217).
+- Folder scope guards: a `forbiddenAncestorFolderIds` entry that matches no
+  folder now fails the guard instead of passing every write, and scope ids are
+  compared in the spelling Notes returns, so a zero-padded key cannot slip
+  past (#215). `delete-note` compares a guard note with the target in
+  canonical form and the delete script refuses a guard whose live id is the
+  target's, so no spelling of the same note can guard its own delete (#214).
+- `export-notes-markdown` and `export-notes-html` (#209, #210): a folder export
+  cut at `limit` now says so with `truncated: true`. An assets directory that
+  cannot be created fails the export with `[invalid-path]` instead of marking
+  every attachment unavailable in a successful export. An unreferenced file or
+  PDF with no preview image no longer throws a TypeError in HTML export.
+- Verification no longer throws on a numeric reference past U+10FFFF
+  (`&#1114112;`, `&#x110000;`), which turned a committed write into an error;
+  such a reference decodes to U+FFFD as in HTML (#211).
+- Attachments (#202, #203): `list-paper-attachments` sets
+  `fallbackImageStale` and `export-paper-image` sets `stale` when Notes'
+  recorded rendering is missing and an older one was used. `export-attachments`
+  reports Notes' own renderings (a drawing's PNG, a scan's PDF) as
+  `exportedKind: "fallback"` with that format's extension instead of an
+  `"asset"` under the stored filename, marks attachments the body no longer
+  shows with `inBody: false`, and no longer exports the children of a container
+  Notes has deleted.
+- When stdin closes while a request is still being handled (for example
+  `transcribe-note-audio`), the server now answers it before exiting, waiting
+  up to 30 seconds, instead of exiting as soon as stdout drains (#186).
+- Word counts (`wordCount`, `words:`, `list-recent-notes` `wordCounts`, and
+  transcription word counts) split Chinese, Japanese, Thai, Lao, Khmer and
+  Myanmar text at word boundaries instead of counting each unspaced run as one
+  word (#244). `body:` and `matchedIn` now share one definition of the body.
+- `create-note` with Markdown no longer refuses a valid folder because another
+  account has a smart folder with the same path (#245). It refuses only when
+  the path is a smart folder in every account that has it; the move still
+  refuses a smart folder in the account the note landed in.
+- `add-attachment-from-pasteboard` refuses several copied images or PDFs
+  (`multiple_items`) instead of attaching only the first, and takes the PDF
+  when a copy offers both a PDF and a raster preview of it (#238).
+- `get-native-objects` reads a note that also holds a `tel:` or `sms:` link,
+  using the same read-only path as `get-note-tables` (#193); it used the strict
+  read that write guards need and failed on those links.
+- `get-note-structure` counts words with the shared word count, so its
+  `wordCount` equals the `words:` filter and the other tools' counts: a run of
+  punctuation is no longer a word, and unspaced scripts are split (#244).
+- Markdown and HTML exports, `export-attachments` and `list-attachments` paths
+  flag a Notes rendering taken from an older generation because the recorded
+  one is missing (`stats.staleRenderings`, `stale: true`, `fallbackStale`),
+  as `list-paper-attachments` already does (#203).
+
+## [2.9.26] - 2026-09-24
+
+### Security
+
+- `add-attachment` and `create-note-with-attachment` now read their `path`
+  under the same scope `create-note`'s `contentPath` got in 2.9.24: a regular
+  file in home, temp or `/Volumes`, with hidden paths (`~/.ssh`, `~/.config`, a
+  project `.env`) and `~/Library` outside iCloud Drive and
+  `~/Library/CloudStorage` refused, checked on the literal path and again after
+  realpath, so a symlinked directory, a letter-case variant (`~/library`) or a
+  `/Volumes` alias cannot slip past. Before, both tools opened any absolute
+  path, so a prompt could attach `~/.ssh/id_ed25519` to a note that syncs to
+  iCloud (the same class as #195), and a FIFO blocked the server on open; the
+  file is now opened with `O_NONBLOCK` and must be a regular file.
+  `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1` covers both tools as well as
+  `contentPath`. A refused read is `validation_error` with `committed: false`
+  (or `committed: true` once `create-note-with-attachment` has created its
+  note). Both paths now share one helper, `readAllowedFile` in
+  `src/utils/attachmentFs.ts`. Found while reviewing @oliverames's #256.
+
+## [2.9.25] - 2026-09-24
+
+### Fixed
+
+- Error codes no longer depend on words inside a note title. Classification
+  matched the whole message, and messages quote the title, so a missing note
+  titled "Meeting timed out" came back as `timeout_indeterminate` with
+  `indeterminate: true`, and one titled "Draft uncertain" as
+  `verification_failed`. Double-quoted text is now removed before the rules
+  run, the note-not-found responses in `src/index.ts` set `not_found`
+  directly, and the AppleScript error mapping no longer reads a title such as
+  "Lost connection plan" or "Access denied log" as a dropped connection or a
+  permission refusal (#185).
+- A Notes UUID or numeric key that cannot be resolved now keeps its code.
+  Resolution runs in the input schema, so the MCP SDK reported the failure as
+  a validation error with no `structuredContent`. Every input-schema rejection
+  now carries `code: "validation_error"` and `committed: false`, and an
+  unresolved identifier carries `not_found` or `full_disk_access_missing`
+  (#190).
+- A write tool (`create-note`, `update-note`, `append-to-note`, `insert-link`,
+  `delete-note`, `move-note`, `create-folder`, `delete-folder`,
+  `batch-delete-notes`, `batch-move-notes`) that fails with
+  `notes_unavailable`, such as "Lost connection to Notes.app", now reports
+  `indeterminate: true`, since the write may have landed (#185).
+- `get-capabilities` reported `paragraphLinks` and `audioTranscription` as
+  `not_implemented` although `list-note-paragraphs`, `get-paragraph-link`,
+  `get-audio-transcripts` and `transcribe-note-audio` ship. Both are now
+  database reads gated on Full Disk Access, and `fullDiskAccessReads` lists
+  every tool that requires Full Disk Access. A test checks that each tool the
+  matrix names is registered (#184).
+- `create-checklist-items` reported an item as `not-written` when the readback
+  after a bridge run threw, although the item may have landed, so a retry
+  could duplicate it. Any failure after the run starts is now `uncertain`, and
+  a readback that throws inside the shared background write path is
+  `verification_failed` with `indeterminate: true`. An `ok: false` result is
+  now an error result with a `code`, always includes `landed`, and omits
+  `contentHash` after an uncertain item (#201).
+- `delete-folder-by-id` could report a plain error with no outcome after
+  Notes.app accepted the delete, when the existence readback or the store
+  tombstone read threw. The first is now `verification_failed` with
+  `indeterminate: true`, and the second leaves `storeTombstoned: false` (#219).
+- `delete-note` reported a note as deleted when the re-read of its original
+  folder failed. That case is now `verification_failed` with
+  `indeterminate: true`, and `batch-delete-notes` lists it as uncertain (#195).
+- `export-attachments` returned success when every copy failed. It now returns
+  an error with `code: "operation_failed"` when nothing was exported and at
+  least one copy failed; the per-attachment results are kept (#202).
+- `create-note-with-attachment` told the caller to attach with
+  `add-attachment` after any attach failure, including one where the file may
+  already be in the note. That hand-off is now used only for failures before
+  insertion; after insertion the error is `verification_failed` with
+  `indeterminate: true` and asks for a read first (#196). Every failure after
+  the note is created carries `committed: true`, so a pre-insertion revision
+  conflict no longer reads as `committed: false` and invites a retry that
+  would create a second note.
+- `insert-link` now reports "The text was written, but link verification
+  failed" with `committed: true`, and keeps the append step's own error code
+  when that step fails (#212).
+- The private helper client no longer calls a crash or an oversized response a
+  timeout. Only `ETIMEDOUT` is a timeout; a helper ended by a signal reports
+  `helper_crashed` with the signal's name, and output past the buffer limit is
+  `invalid_response`. A helper timeout is `operation_failed` rather than
+  `timeout_indeterminate`, since every helper action is a read. A zero or
+  negative `APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS` falls back to the
+  default instead of failing with `ERR_OUT_OF_RANGE` (#204).
+- `get-note-blocks` and the Markdown and HTML exports map note reader
+  failures by their own code: undecodable data (`invalid-runs`,
+  `malformed-protobuf`, `decompress-failed`) is `unsupported` rather than
+  `validation_error`, and `no-body` and `query-failed` are `operation_failed`
+  (#192). `list-smart-folders` on a database without the smart folder columns
+  is `unsupported` (#191).
+- `get-audio-transcripts` treated a folder or attachment key as a note with no
+  audio. The note lookup now requires an `ICNote` row, so such an id is
+  `not_found` (#194).
+- `executeAppleScript` with `maxRetries: 0` threw "Cannot read properties of
+  null". Zero now means one attempt.
+
+## [2.9.24] - 2026-09-24
+
+### Fixed
+
+- `analyze-svg` no longer builds a whole flattened subpath before charging it
+  to the geometry budget. A single cubic can flatten to 65,536 points, so a
+  1 MiB path of short cubics under a large `transform` could exhaust the Node
+  heap before `svg_complexity_limit` was raised. Points are now charged as they
+  are emitted, and the coordinate limit is checked on each subpath's control
+  points before flattening (a flattened curve stays inside them), so such a
+  file is refused with `svg_geometry_invalid` without subdividing anything.
+- `analyze-svg` resolves CSS escapes before looking for `url(` and `@import`,
+  so `u\72 l(https://…)` is refused like `url(https://…)`, and removes ASCII
+  tab, newline and carriage return from an `href` before the scheme check, as
+  a browser's URL parser does, so `java&#9;script:` is refused.
+- `analyze-svg` now follows the cascade and CSS keyword rules browsers use:
+  a later `display` declaration can show content an earlier `display="none"`
+  hid, keywords such as `NONE` (including `fill` and `stroke`), `EvenOdd` and
+  `Round` match case-insensitively,
+  and a plain `href` wins over `xlink:href`, as in SVG 2.
+- The SVG reader checks duplicate attributes with a set instead of a scan per
+  attribute (a 1 MiB element took tens of seconds), links each element's
+  namespace scope to its parent instead of copying it, and caps an element at
+  1,024 attributes and a document at 1,024 namespace declarations.
+- Reading a template (`templateFile`, the saved template library), a hashed
+  export asset, or a copied file for `add-attachment-from-pasteboard` opens the
+  file with `O_NONBLOCK`, so a FIFO at that path is refused as not a regular
+  file instead of blocking the server's event loop.
+- `save-markdown-template` removes its temporary file when writing it fails,
+  and reports a template it cannot open for a reason other than a symbolic link
+  (for example `EACCES`) as that error instead of `unsafe-path`.
+- A templated Markdown export copies an asset to a temporary name and links it
+  into place, so an interrupted copy no longer leaves a truncated file under
+  the content-hashed name that every later export reported as `name-taken`.
+- `create-note`'s `contentPath` refuses hidden paths (any component starting
+  with `.`, such as `~/.ssh`, `~/.aws` or `~/.config/gh/hosts.yml`) and
+  `~/Library`, which hold keys, tokens and app data, unless the server sets
+  `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1` (#195). iCloud Drive
+  (`~/Library/Mobile Documents`) and cloud storage folders
+  (`~/Library/CloudStorage`: Dropbox, Google Drive, OneDrive) stay readable,
+  since they hold documents. It also opens the
+  file with `O_NONBLOCK` and, after opening, resolves the path again and
+  requires it to name the same file as the open descriptor, since
+  `O_NOFOLLOW` only guards the last path component.
+- `export-attachments` passes a stored attachment identifier through the same
+  one-component check as file names, with a constant fallback, and refuses any
+  destination whose directory is not the export directory.
+
+## [2.9.23] - 2026-09-24
+
+### Documentation
+
+- The README's Author section now has a Contributors list crediting
+  Oliver Ames (@oliverames) for his many merged pull requests and bug reports.
+
+## [2.9.22] - 2026-09-24
+
+### Documentation
+
+- The README's opening paragraph now says what the server does and which
+  clients it is documented for, and a short Contents list links the main
+  sections. A new "Other MCP clients" note gives the stdio command any client
+  can run.
+- The Features table now covers native tags, checklist and table creation,
+  pinning, links, paragraph structure, Markdown and HTML export with templates,
+  adding attachments, audio and drawings, and incremental sync.
+- Stale limitations are corrected: pin state can be set with `set-note-pinned`,
+  links can be inserted with `insert-link` and `insert-note-link`, checklist
+  items can be created through Shortcuts, and writes take exact IDs rather than
+  titles.
+- The native background tools (`append-native`, `create-checklist-item`,
+  `create-table`, `set-note-pinned`, `remove-native-tags`,
+  `replace-native-tag`, `insert-note-link`), `add-native-tags` and
+  `get-native-objects` now have parameter tables. `move-note` documents
+  `account`, `append-to-note` documents `scopeText`, and `update-note`,
+  `append-to-note`, `delete-note` and `move-note` document `timeoutSeconds`.
+- The environment variable table adds `APPLE_NOTES_MCP_PUBLIC_HELPER_DIR`,
+  `APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS`, the three Shortcut name
+  overrides, and `APPLE_NOTES_MCP_PASTEBOARD_NAME`, and no longer describes a
+  private-helper timeout as an uncertain write.
+- The Full Disk Access list adds `query-notes`, `get-native-objects`,
+  `get-note-tables`, `list-smart-folders`, `delete-folder-by-id`,
+  `get-note-drawings`, `transcribe-note-audio` and `native-note-state`.
+- `package.json` has a fuller description (mirrored to the GitHub repository
+  description) and more search keywords.
+- `docs/APPLESCRIPT-LIMITATIONS.md` no longer says pin state cannot be set or
+  links cannot be inserted: its pinned-notes and note-to-note-links conclusions
+  now keep the AppleScript finding and name `set-note-pinned`,
+  `list-note-links`, `insert-link` and `insert-note-link` as the routes the
+  server uses instead.
+- Thanks to @oliverames for auditing the README against the live tool list and
+  input schemas (#254).
+
+## [2.9.21] - 2026-09-24
+
+### Documentation
+
+- `get-note-content`'s tool description no longer says every mutation refuses
+  attachment-bearing notes. It now states each route: `update-note` refuses a
+  full-body replacement, `append-to-note` with `scopeText` appends natively at
+  the end and keeps the attachments, `add-attachment` adds a file, and
+  `move-note` / `delete-note` work as usual. The README's lossy-body warning
+  gets the same correction.
+- The README and `docs/APPLESCRIPT-LIMITATIONS.md` no longer claim that typed
+  `#hashtags` become real Notes tags. Text written through AppleScript stays
+  plain text; `get-note-content` reports it as textual `hashtags`, and native
+  tags are written with `add-native-tags`. This matches the `get-note-content`
+  and `list-native-tags` sections. Thanks to @oliverames for spotting both in
+  #252.
 
 ## [2.9.20] - 2026-09-24
 

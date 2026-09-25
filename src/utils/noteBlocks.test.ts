@@ -8,11 +8,35 @@ import { gzipSync } from "node:zlib";
 import {
   decodeCompressedNoteBlocks,
   decodeNoteBlocks,
+  NOTE_BLOCKS_ERROR_CODES,
   NoteBlocksError,
   pageNoteBlocks,
   blocksMaxResponseBytes,
 } from "./noteBlocks.js";
 import { parseRichNote } from "./noteRichText.js";
+import { ERROR_CODES, classifyError } from "./errorCodes.js";
+
+// #192: reader failures carry their code explicitly, not by matching words.
+describe("NoteBlocksError codes", () => {
+  it("maps every reader code into the shared vocabulary", () => {
+    for (const code of Object.values(NOTE_BLOCKS_ERROR_CODES))
+      expect(Object.keys(ERROR_CODES)).toContain(code);
+  });
+
+  it.each([
+    ["invalid-runs", "Invalid Notes attribute run", "unsupported"],
+    ["malformed-protobuf", "invalid wire type 7", "unsupported"],
+    ["decompress-failed", "Failed to decompress note data: incorrect header check", "unsupported"],
+    ["no-body", "No body data is stored for this note", "operation_failed"],
+    ["query-failed", "Failed to query the Notes database", "operation_failed"],
+    ["not-found", 'No note found for ID "x"', "not_found"],
+  ] as const)("classifies [%s] as its own code", (code, message, expected) => {
+    const error = new NoteBlocksError(code, message);
+    expect(classifyError(`Error reading note blocks [${code}]: ${message}`, error).code).toBe(
+      expected
+    );
+  });
+});
 
 const varint = (value: number | bigint): number[] => {
   let v = BigInt.asUintN(64, BigInt(value));
@@ -199,6 +223,32 @@ describe("decodeNoteBlocks", () => {
     expect(decoded.blocks[0].runs).toEqual([{ start: 0, length: 2, text: "ab", bold: true }]);
     expect(decoded.blocks[1].runs).toEqual([]);
     expect(decoded.blocks[2].runs).toEqual([{ start: 4, length: 2, text: "cd" }]);
+  });
+
+  it("does not give a newline-led checklist run's item to the empty paragraph before it", () => {
+    // macOS 27.2 appends a checklist item as a run that starts on the previous
+    // line's newline ("\nItem"); here that newline ends an empty paragraph.
+    const item = para(n(1, 103), b(5, Buffer.concat([b(1, uuid(7)), n(2, 0)])));
+    const decoded = decodeNoteBlocks(doc("Title\n\nItem", [run(6), run(5, item)]));
+    expect(decoded.blocks.map((block) => [block.text, block.style])).toEqual([
+      ["Title", "body"],
+      ["", "body"],
+      ["Item", "checklist"],
+    ]);
+    expect(decoded.blocks[1].checklist).toBeUndefined();
+    expect(decoded.blocks[2].checklist).toEqual({ id: "07".repeat(16), done: false });
+    expect(decoded.summary.checklist).toEqual({ total: 1, done: 0 });
+  });
+
+  it("keeps a leading U+FEFF so run lengths still match the text", () => {
+    const decoded = decodeNoteBlocks(doc("\ufeffab", [run(1), run(2, n(5, 1))]));
+    expect(decoded.textLength).toBe(3);
+    expect(decoded.text).toBe("\ufeffab");
+    expect(decoded.blocks[0].runs.map((r) => [r.text, r.bold ?? false])).toEqual([
+      ["\ufeff", false],
+      ["ab", true],
+    ]);
+    expect(parseRichNote(doc("\ufeffab", [run(1), run(2, n(5, 1))])).text).toBe("\ufeffab");
   });
 
   it("counts UTF-16 code units the way Notes does", () => {
