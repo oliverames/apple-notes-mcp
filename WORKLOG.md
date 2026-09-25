@@ -1,6 +1,34 @@
 # Worklog
 
-## 2026-09-25 - Integration pushed; Mac handoff (cloud session) - START HERE
+## 2026-09-25 - Upstream submission, live tests, fork and clone sync (Mac) - START HERE
+
+**What changed**:
+- `feat/gap-parity` rebuilt on `origin/feat/gap-parity` (`da9dff0`): cherry-picked the #84 heal wiring (`edd4a63`, was `32933d0`) and the writer harness fixes (`81f808a`, was `d714f5d`), carried their README/TECHNICAL_NOTES/CHANGELOG text (`2f57069`), and dropped `60b4ace` (2.9.28 release). `c6d3497` was already on origin. Later merged upstream 2.9.30 and renumbered to **2.9.31** (`3e4ef92`), then fixed a CodeQL test finding (`65029da`). No force-push.
+- Upstream: opened **sweetrb/apple-notes-mcp#262** (combined writer + #181 roadmap, not draft, Testing section rewritten to what ran). Closed #250 pointing at it. Posted on #248 (rerun result), #220 (npx-chain suggestion) and #181 (status).
+- #248 root cause found: the bridge's Find Notes step matches `scopeText` against Body, which leaves out the title line. Fix **#261** (`textBelowTitle` pre-check) merged by sweetrb with a follow-up making it `validation_error`; shipped 2.9.30. sweetrb closed #248. sweetrb also shipped #263 (2.9.30 CI timing fix; 2.9.29 never published).
+- Fork: merged PR #3; closed #4 and #5 (carried by #262); merged upstream/main twice (2.9.28, then 2.9.30) into fork main with merge commits. Kept the fork-only publish guard and the removal of the two marketplace manifests. **Restored upstream's CLAUDE.md** (Oliver, 2026-09-25) because upstream's docs tests read it. Publish workflow skipped on every run.
+- Local clone: `main` tracks `origin/main` and contains `upstream/main` (`a1ff4a9`). Removed 66 worktrees (all clean). Deleted 105 remote and 167 local branches that were merged, merged upstream, inside gap-parity, or v1 writer branches replaced by -v2 ports (Oliver approved the list).
+
+**Live tests (macOS 27.2, 26B5091g, serial, `apple-notes-mcp test`, disposable notes deleted afterwards; writer built into the session scratchpad)**:
+- Passed: compose create with file + link-card blocks, compose append with PDF + card (stale refusal, frozen attachments proven), writer scope guards (all three refusal reasons, `scope_folder_not_found`, passing pair), native-edit `append_to_paragraph`, `replace_checklist`, attachment replace with a file (SHA-256 verified), file-policy refusals of `~/.zshrc` in compose and edit, `native-read-paper` on a writer-authored drawing (strokes only; revision unchanged), `native-repair-purge-flag` scan/plan/apply-refusal (dry run only; no flagged note exists), `setup --permissions`, `templates edit` (token 401, Host 421, Origin refusals, preview, create-only save 0600, forced replace).
+- Not run live: typed-shape decode (needs a Notes-drawn shape), purge-flag apply, `--tailnet`, `remint` through the writer, `anchors serve`, `setup --permissions-window`, HTML drawing export, `query-notes` additions.
+
+**Decisions made**:
+- #261 claimed 2.9.29 and merged first, so #262 moved to 2.9.31 above main's 2.9.30.
+- Kept 9 remote branches whose upstream PRs closed unmerged (#70, #72-74, #86, #95, #102, #241, fork #2) and `feat/paper-vector-decode` (no PR, not in gap-parity, content unverified).
+- PR descriptions carry no Claude Code footer (harness rule); comments do.
+
+**Left off at**:
+- [ ] #262: auto-fix monitor is on. Watch the CodeQL rerun on `65029da` and sweetrb's review.
+- [ ] #220: waiting on the reporter to try launching without npx.
+- [ ] Unverified: `list-attachments` reported `contentType` as a `cid:` string for writer-added attachments on the compose test note. Check whether AppleScript-added attachments do the same before filing upstream.
+- [ ] Fork Dependabot security-update runs for js-yaml and qs failed on `434c2bd` (not investigated).
+- [ ] A detached worktree from another session remains at `/private/tmp/claude-501/-Users-oliverames/b7151a52-.../scratchpad/sync-wt/feat-markdown-templates` with 14 uncommitted changes. Not ours to discard.
+- [ ] Live-test the items listed as not run live when a flagged note or Notes-drawn shape is available.
+
+**Verification**: gap-parity: lint, typecheck, format check, `test:coverage` 3219 passed with none skipped, bundle matches; fork CI green on `2f57069`; upstream CI on #262 green except CodeQL (fixed in `65029da`, rerun pending). #261: 2531 tests, live refusal confirmed. Fork main: 2531 tests pass, CI and CodeQL green on the final merge, npm publish skipped. Clean `pnpm install --frozen-lockfile` plus build leaves `git status` clean.
+
+## 2026-09-25 - Integration pushed; Mac handoff (cloud session)
 
 **What changed**:
 - `origin/feat/gap-parity` (`da9dff0`, 2.9.29) was rebuilt in the cloud from pushed branches. It contains `upstream/main` `7bcb131` (2.9.28), `feat/writer-suite`, every `wgap/*` branch (through `wgap/file-read-policy` and `wgap/edit-file-policy`), `gap/upstream-bundle` (all four `gap/*` branches) and #250's `feat/native-writes-upstream`.
