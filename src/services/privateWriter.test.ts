@@ -1151,7 +1151,7 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
   });
 
   it("lists file replacement as its own gated feature", () => {
-    expect(WRITER_FEATURES.at(-1)).toMatchObject({
+    expect(WRITER_FEATURES.find((row) => row.key === "editReplaceFile")).toMatchObject({
       key: "editReplaceFile",
       probeKey: "editReplaceFile",
       liveValidated: false,

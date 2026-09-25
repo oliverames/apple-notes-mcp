@@ -23,6 +23,7 @@ const WITHOUT_GUARDS = [
   "native-checklist-state",
   "native-read-tables",
   "native-read-smart-folder",
+  "native-read-paper",
 ];
 
 describe("writer tool scope guards", () => {
