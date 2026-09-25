@@ -77,7 +77,8 @@ describe("AnchorRegistry", () => {
 
   it("treats a missing file as empty and creates 0700/0600 on first write", () => {
     expect(registry.load()).toEqual([]);
-    expect(existsSync(path)).toBe(false);
+    // Loading must not create the file. A failed read checks that without a separate exists-check.
+    expect(() => readFileSync(path)).toThrow(/ENOENT/);
     const [{ anchor, created }] = registry.record([candidate()]);
     expect(created).toBe(true);
     expect(anchor.anchorId).toMatch(/^pa_[0-9a-f]{24}$/);
