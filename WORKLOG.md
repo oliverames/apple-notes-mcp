@@ -16,6 +16,24 @@
 - `wgap/compose` `composeFileSize()` (`src/services/privateCompose.ts`) accepts any absolute path with only O_NOFOLLOW, and the writer then reads that file into the note. That is the #195 class sweetrb just closed in #259; it also lacks O_NONBLOCK, so a FIFO can block. Route compose attachments and paper `svgPath` (`assertReadableInRoots` in `privatePaperWriterTools.ts`) through `readAllowedFile()` or its policy check after the merge.
 - Fork PR oliverames/apple-notes-mcp#2 is obsolete once fork main syncs with upstream (its CI fix is a port of upstream #152). Fork `main` is still at 2.7.1.
 
+## 2026-09-25 - File-read policy fixes for the writer branches (cloud session)
+
+**What changed**:
+- `wgap/file-read-policy` = `wgap/compose` + upstream main `7bcb131`, as 2.9.29. The merge commit `9386722` adapts the paper writer to #260: `analyzeSvgFile` is gone, and `svgPath` now reads through `readAllowedFile`. It also keeps writer timeouts as `timeout_indeterminate`, because #257 made the read-only helper map a timeout to `operation_failed` and the writer fell through to that mapping. Fix `307102a` routes `compose-note` file blocks through a new `assertAllowedFile()` in `attachmentFs.ts`, which shares `readAllowedFile()`'s checks without reading the file.
+- `wgap/edit-file-policy` = `wgap/edit` + the same upstream merge (`10c06ca`) with byte-identical shared files. Fix `dbeaa63` routes `native-edit-note` replacement files (#78) through `assertAllowedFile()` as well.
+- Not changed: the #84 anchor registry and #39 permissions window in `gap/upstream-bundle` read server-owned paths, not caller paths. The paper `svgPath` copies on `wgap/objects` and `wgap/guards-sync` are the same shared code that the two merges fix.
+
+**Decisions made**:
+- One fix branch per writer branch, with no compose/edit merge here. Their conflicts (`apple-notes-private-writer.m`, `privateWriter.ts`) were already resolved in the Mac-only `feat/gap-parity`, and a second, different resolution would only conflict again.
+- The per-file-block check stays a check. The writer still opens the path itself, so a local process that swaps the file between the check and the writer's open is not covered. That threat is outside the prompt-injection case #259 closed.
+
+**Left off at**:
+- [ ] On the Mac, in the `feat/gap-parity` worktree, merge `wgap/file-read-policy` and `wgap/edit-file-policy`. The top of CHANGELOG will conflict. Renumber the release to 2.9.29 or higher (upstream has 2.9.28), then run the gate and push `feat/gap-parity`.
+- [ ] #248 test on the Mac: the bridge Shortcut filters Find Notes by `Name contains title AND Body contains scopeText` (`scripts/build-native-operations-shortcut.py`, `select()`). The 2026-09-24 repro used the title as `scopeText` on a note whose body was "x". If the Shortcuts "Body" property leaves out the title line, the filter can never match, which fits three identical refusals better than search lag. Repeat the repro with a `scopeText` of 12 or more characters taken from below the title. If that works, the server pre-check (`mutateBackground`, `before.rich.text.includes(scopeText)`) should refuse a `scopeText` found only in the title line, and the #251 refusal message should say so. Report the result on #248.
+- [ ] #220 suggestion for the reporter (untested): launch without `npx`, using `command` = absolute Node path and `args` = the absolute `build/index.js`, then grant that Node binary. That tells us whether the `npx` launch chain is what defeats the Node grant. This session's GitHub access cannot comment on sweetrb/apple-notes-mcp.
+
+**Verification**: Linux cloud session, so no live Notes tests. On both branches: `tsc --noEmit`, eslint and the prettier check pass, the rebuilt bundle matches the committed one, and the full vitest run has no failures beyond the 44 that fail on unmodified upstream main in this Linux container (osascript, `/private/tmp`, case-insensitive paths). The new refusal tests (hidden directory, FIFO) run and pass here.
+
 ## 2026-09-23 - Upstream parity push; paused for machine downtime
 
 **What changed**: About 30 of our PRs merged upstream today (#182-#233 range, plus #204 as read-only). This session also opened #241, then closed it because sweetrb fixed #236 himself in #240. It synced #234, #235 and #238 with main and pushed them (2211, 2222 and 2165 tests passing), and replied to and resolved the CodeQL thread on #235.
