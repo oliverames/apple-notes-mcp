@@ -5,9 +5,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -79,8 +82,14 @@ describe("AnchorRegistry", () => {
     expect(created).toBe(true);
     expect(anchor.anchorId).toMatch(/^pa_[0-9a-f]{24}$/);
     expect(statSync(join(dir, "support")).mode & 0o777).toBe(0o700);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ version: 1, anchors: [anchor] });
+    // One descriptor for the mode check and the read, so both see the same file.
+    const fd = openSync(path, "r");
+    try {
+      expect(fstatSync(fd).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(fd, "utf8"))).toEqual({ version: 1, anchors: [anchor] });
+    } finally {
+      closeSync(fd);
+    }
     // No temporary or lock file is left behind.
     expect(readdirSync(join(dir, "support"))).toEqual(["paragraph-anchors.json"]);
   });
