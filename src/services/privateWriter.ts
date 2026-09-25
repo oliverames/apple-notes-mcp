@@ -28,7 +28,6 @@
  *
  * @module services/privateWriter
  */
-import { lstatSync } from "node:fs";
 import { extname, join } from "node:path";
 import { z } from "zod";
 import {
@@ -49,7 +48,7 @@ import {
   type PrivateUnavailableReason,
 } from "./privateHelper.js";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
-import { allowedSaveRoots, assertReadableInRoots } from "../utils/attachmentFs.js";
+import { assertAllowedFile } from "../utils/attachmentFs.js";
 
 export type { PrivateHelperDeps };
 
@@ -1130,21 +1129,19 @@ export interface EditNoteRequest {
 export const planDigestToken = z.string().regex(/^p2:[a-f0-9]{64}$/);
 
 /**
- * Checks each replacement file before the writer runs: an absolute path
- * inside home, temp, or /Volumes (the add-attachment roots) to a non-empty
- * regular file of at most 64 MiB whose final component is not a link, and a
- * display name that is one path component keeping the file's extension. The
- * writer repeats the file checks itself when it opens the file.
+ * Checks each replacement file before the writer runs, under add-attachment's
+ * policy (see assertAllowedFile: a non-empty regular file of at most 64 MiB in
+ * home, temp or /Volumes, not a symbolic link or a FIFO, and not a hidden
+ * path or ~/Library outside iCloud Drive and CloudStorage unless
+ * APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1), and a display name that is
+ * one path component keeping the file's extension. The writer repeats the
+ * file checks itself when it opens the file.
  */
 function assertReplacementFiles(operations: EditOperation[]): void {
   for (const operation of operations) {
     if (operation.op !== "replace" || !("file" in operation.replacement)) continue;
     const { file, filename } = operation.replacement;
-    const path = assertReadableInRoots(file, allowedSaveRoots(), "Replacement file");
-    const link = lstatSync(path);
-    if (link.isSymbolicLink()) throw new Error("Replacement file must not be a symbolic link");
-    if (!link.isFile() || link.size === 0 || link.size > MAX_REPLACEMENT_FILE_BYTES)
-      throw new Error("Replacement file must be a non-empty regular file of at most 64 MiB");
+    assertAllowedFile(file, MAX_REPLACEMENT_FILE_BYTES, { label: "Replacement file" });
     if (filename === undefined) continue;
     if (
       filename !== filename.trim() ||

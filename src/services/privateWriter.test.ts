@@ -4,6 +4,7 @@
  * gating, and committed/indeterminate paths without NotesShared or the store.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1093,9 +1094,17 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
     expect(refused({ file: "/etc/hosts" }).message).toMatch(/outside allowed locations/);
     expect(refused({ file: join(root, "missing.png") }).message).toMatch(/does not exist/);
     writeFileSync(join(root, "empty.png"), "");
-    expect(refused({ file: join(root, "empty.png") }).message).toMatch(/non-empty regular file/);
+    expect(refused({ file: join(root, "empty.png") }).message).toMatch(/is empty/);
     symlinkSync(image, join(root, "link.png"));
     expect(refused({ file: join(root, "link.png") }).message).toMatch(/symbolic link|resolves/);
+    // add-attachment's policy: no hidden paths and no FIFOs.
+    mkdirSync(join(root, ".ssh"));
+    writeFileSync(join(root, ".ssh", "id.png"), "secret");
+    expect(refused({ file: join(root, ".ssh", "id.png") }).message).toMatch(
+      /hidden file or directory/
+    );
+    execFileSync("mkfifo", [join(root, "pipe.png")]);
+    expect(refused({ file: join(root, "pipe.png") }).message).toMatch(/not a regular file/);
     expect(refused({ file: image, filename: "chart.pdf" }).message).toMatch(/extension/);
     expect(refused({ file: image, filename: "a/b.png" }).message).toMatch(/one path component/);
   });

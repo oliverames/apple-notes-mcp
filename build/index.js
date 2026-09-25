@@ -41485,6 +41485,23 @@ function privateContentReason(p, roots) {
 }
 var CLOUD_DOCUMENT_DIRS = ["Mobile Documents", "CloudStorage"];
 function readAllowedFile(p, maxBytes, options = {}) {
+  const label = options.label ?? "Content file";
+  const { descriptor, size } = openAllowedFile(p, maxBytes, options);
+  try {
+    const bytes = readFileSync(descriptor);
+    if (bytes.length !== size)
+      throw new Error(`${label} changed while it was being read; try again`);
+    return bytes;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+function assertAllowedFile(p, maxBytes, options = {}) {
+  const { descriptor, size } = openAllowedFile(p, maxBytes, options);
+  closeSync(descriptor);
+  return size;
+}
+function openAllowedFile(p, maxBytes, options) {
   const roots = options.roots ?? allowedSaveRoots();
   const allowPrivate = options.allowPrivate ?? process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1";
   const label = options.label ?? "Content file";
@@ -41527,12 +41544,10 @@ function readAllowedFile(p, maxBytes, options = {}) {
     if (stat.size === 0) throw new Error(`${label} is empty: "${abs}"`);
     if (stat.size > maxBytes)
       throw new Error(`${label} is ${stat.size} bytes, over the ${maxBytes}-byte limit.`);
-    const bytes = readFileSync(descriptor);
-    if (bytes.length !== stat.size)
-      throw new Error(`${label} changed while it was being read; try again`);
-    return bytes;
-  } finally {
+    return { descriptor, size: stat.size };
+  } catch (error2) {
     closeSync(descriptor);
+    throw error2;
   }
 }
 function readAllowedTextFile(p, maxBytes, roots = allowedSaveRoots(), allowPrivate = process.env[ALLOW_PRIVATE_CONTENT_ENV] === "1") {
@@ -59280,7 +59295,6 @@ import {
 import { join as join32 } from "node:path";
 
 // src/services/privateWriter.ts
-import { lstatSync as lstatSync6 } from "node:fs";
 import { extname as extname8, join as join31 } from "node:path";
 var PRIVATE_WRITER_PROTOCOL = 1;
 var WRITES_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
@@ -59949,11 +59963,7 @@ function assertReplacementFiles(operations) {
   for (const operation of operations) {
     if (operation.op !== "replace" || !("file" in operation.replacement)) continue;
     const { file, filename } = operation.replacement;
-    const path10 = assertReadableInRoots(file, allowedSaveRoots(), "Replacement file");
-    const link = lstatSync6(path10);
-    if (link.isSymbolicLink()) throw new Error("Replacement file must not be a symbolic link");
-    if (!link.isFile() || link.size === 0 || link.size > MAX_REPLACEMENT_FILE_BYTES)
-      throw new Error("Replacement file must be a non-empty regular file of at most 64 MiB");
+    assertAllowedFile(file, MAX_REPLACEMENT_FILE_BYTES, { label: "Replacement file" });
     if (filename === void 0) continue;
     if (filename !== filename.trim() || filename.startsWith(".") || Buffer.byteLength(filename, "utf8") > 255 || /[/:\\\p{Cc}]/u.test(filename))
       throw new Error(
