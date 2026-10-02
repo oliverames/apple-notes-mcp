@@ -1,5 +1,25 @@
 # Worklog
 
+## 2026-10-02 - Fork version guard permits published upstream syncs
+
+**Problem**: Fork PR #6 correctly raised 2.9.30 to upstream's already-published 2.9.34, but `version-guard.yml` rejected that version's npm registry entry. This fork cannot publish because `publish.yml` requires the exact upstream repository.
+
+**Change**: Scope only the registry-collision rejection to `sweetrb/apple-notes-mcp`, matching the existing publishing guard. Require `GITHUB_REPOSITORY` and fail closed when it is absent or empty. Forks still enforce version increases, shipped-byte/runtime-dependency bumps, existing release headings, the new release heading, and an empty Unreleased marker. Version 2.9.34, all runtime/build bytes, and publishing safeguards remain unchanged.
+
+**Validation**: Added a workflow step running 14 dependency-free Node fixtures against disposable Git repositories and a stub npm command. Publisher collision/refusal, valid fork sync, exact repository matching, missing identity, missing bumps, downgrade, history/heading/Unreleased failures, and the docs-only exception all passed. The fixtures perform no registry/network or Notes operations. Independent review found no defects. No repeat of the previously passing 2,548 runtime tests was needed for this workflow-only fix. This follow-up commit is held locally for parent review before push; no default branch, tag, or release was changed.
+
+## 2026-10-02 - Local fork sync proposal to upstream 2.9.34 (pending review)
+
+**Scope**: In a new isolated clone, branch `chore/sync-upstream-2.9.34` starts at verified fork main `57318b454ec47aaa592545cb6eb33c8af2a6f4d9` and integrates only verified upstream main `70fbf3accb8b302186f580218ea419cf17928c23`. This is a local merge proposal, not a default-branch update. It contains no writer or split-feature branch merge, new release, tag, publishing, or deployment.
+
+**Dependency outcome**: Upstream's already-merged #267 supplies `fast-uri >=3.1.7 <4` and `ip-address >=10.5.1 <11`; #269 supplies brace-expansion 1.1.21/5.0.12 floors. The existing upstream lockfile resolves fast-uri 3.1.8 and ip-address 10.7.2. Version stays at the original published upstream 2.9.34, and the seven-day dependency soak is unchanged. No duplicate dependency patch or lockfile re-resolution was made.
+
+**Fork preservation**: Kept the exact-repository publishing guard, both removed root marketplace catalogs, README marketplace explanation, version/sync-script adjustments, and prior worklog. The only merge conflicts were the expected modify/delete conflicts for `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json`; both remain deleted. All runtime source, native source, dependencies, and the rebuilt bundle match upstream byte-for-byte. Existing original checkouts/worktrees and default refs were untouched.
+
+**Validation**: 2,548 tests passed in 119 files with coverage (91.74% statements, 86.12% branches, 93.00% functions, 92.27% lines); ESLint, TypeScript, Prettier, manifest versions, skill sync, and diff checks passed. Rebuilding produced the exact upstream bundle, which also initialized standalone as 2.9.34 without node_modules. The initial sandboxed test run hit macOS compiler/XPC and disposable fixture-path restrictions; the full suite passed with the needed test facilities available. No live integration or copy-store harness ran, and no Notes tool was invoked. Node 26.10.0 and a physical copy of the already-validated node_modules were used; the source and target lockfile hashes match, and no module symlinks escape the new clone. Repository-pinned Node 24.17.0/pnpm 11.9.0 CI remains a follow-up validation limit.
+
+**Review next**: Parent review is required before any push or PR. Fork default main and its dependency-alert state remain unchanged by this local proposal. Any later default-branch merge requires separate authorization.
+
 ## 2026-10-02 - #262 split per sweetrb's review; PDF follow-up; branch cleanup (Mac) - START HERE
 
 **What changed**:
