@@ -5,7 +5,7 @@
  * @module services/templateEditorCli
  */
 import { readExportNote, readExportNoteMeta } from "../utils/noteExportData.js";
-import { findTailnetAddress } from "../utils/tailnetAddress.js";
+import { findTailnetAddress } from "../utils/localServer.js";
 import {
   DEFAULT_EDITOR_IDLE_MS,
   startTemplateEditor,
@@ -26,7 +26,8 @@ template library (create-only unless you tick "replace").
   --note ID            Also preview one real note (x-coredata://.../ICNote/pN), read-only
   --tailnet            Listen on this Mac's Tailscale address instead of 127.0.0.1,
                        so other devices on your tailnet can open the editor.
-                       Anyone on the tailnet who has the printed URL can save templates.
+                       Anyone on the tailnet who has the printed URL can read and save
+                       templates, and with --note can read the full body of that note.
 
 Every request needs the per-run token in the printed URL. Press Ctrl-C to stop.
 `;
@@ -89,6 +90,25 @@ const editorSignals = (stop: () => void) => {
   };
 };
 
+/**
+ * The warning printed after a `--tailnet` start. It always says that anyone on
+ * the tailnet with the URL can read and save templates, and that `--note`
+ * would expose the whole note body to them; with `--note` it says that this
+ * run does.
+ */
+export function tailnetWarning(host: string, withNote: boolean): string {
+  const lines = [
+    `Listening on the tailnet address ${host}. Any device on your tailnet that has this URL ` +
+      "can read and save templates. Keep the URL private.",
+    withNote
+      ? "--note is set: the full body of that note is shown in the preview, so anyone with " +
+        "this URL can read the entire note. Stop the editor when you are done."
+      : "--note exposes the full note body to anyone with this URL, so do not combine it " +
+        "with --tailnet unless you want that.",
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
 /** Run `templates ...`. Resolves with the process exit code once the editor stops. */
 export async function runTemplatesCommand(
   argv: string[],
@@ -142,11 +162,7 @@ export async function runTemplatesCommand(
   }
 
   out(`Template editor: ${handle.url}\n`);
-  if (args.tailnet)
-    err(
-      `Listening on the tailnet address ${handle.host}. Any device on your tailnet that has ` +
-        "this URL can read and save templates. Keep the URL private.\n"
-    );
+  if (args.tailnet) err(tailnetWarning(handle.host, args.noteId !== undefined));
   err(
     args.idleMinutes > 0
       ? `Press Ctrl-C to stop. Stops by itself after ${args.idleMinutes} idle minute(s).\n`

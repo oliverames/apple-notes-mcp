@@ -32,7 +32,8 @@ This MCP server:
 - Listens on no network port, except the optional template editor
   (`apple-notes-mcp templates edit`), which you start yourself. It binds
   127.0.0.1 (or, with `--tailnet`, your Tailscale address), requires a
-  per-run token, and stops on Ctrl-C or when idle. See
+  per-run token, and stops on Ctrl-C or when idle. With `--tailnet`, `--note`
+  exposes the full note body to anyone who has the URL. See
   [docs/markdown-templates.md](docs/markdown-templates.md#what-the-editor-exposes)
 
 The server requires macOS automation permissions to function. These permissions are managed by macOS and can be revoked at any time in System Settings > Privacy & Security > Automation.

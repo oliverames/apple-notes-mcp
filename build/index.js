@@ -59369,7 +59369,8 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
   );
 }
 
-// src/utils/tailnetAddress.ts
+// src/utils/localServer.ts
+import { randomBytes as randomBytes3, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
 function isTailnetIPv4(address) {
   const match = /^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
@@ -59387,9 +59388,33 @@ function findTailnetAddress(interfaces = networkInterfaces()) {
   }
   return candidates.find((c) => c.interface.startsWith("utun")) ?? candidates[0];
 }
+function newServerToken() {
+  return randomBytes3(32).toString("hex");
+}
+function bearerToken(req) {
+  const auth = req.headers.authorization;
+  return auth?.startsWith("Bearer ") ? auth.slice(7) : void 0;
+}
+function tokenMatches(given, token) {
+  if (!given) return false;
+  const a = Buffer.from(given, "utf8");
+  const b = Buffer.from(token, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function hostAuthority(host, port) {
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
+function crossOriginRefusal(req, origin, requireOrigin = false) {
+  const site = req.headers["sec-fetch-site"];
+  if (site && site !== "same-origin" && site !== "none") return "cross-site";
+  const requestOrigin = req.headers.origin;
+  if (requestOrigin !== void 0 && requestOrigin !== origin) return "foreign-origin";
+  if (requireOrigin && requestOrigin !== origin) return "missing-origin";
+  return void 0;
+}
 
 // src/services/templateEditor.ts
-import { randomBytes as randomBytes2, timingSafeEqual } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 import { createServer } from "node:http";
 
 // src/utils/templateSamples.ts
@@ -59715,17 +59740,14 @@ var EditorHttpError = class extends Error {
   code;
   errors;
 };
-var editorTokenMatches = (given, token) => {
-  if (!given) return false;
-  const a = Buffer.from(given);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
-};
 function editorPresentedToken(req, url) {
-  const auth = req.headers.authorization;
-  if (auth?.startsWith("Bearer ")) return auth.slice(7).trim();
-  return url.searchParams.get("token") ?? void 0;
+  return bearerToken(req)?.trim() ?? url.searchParams.get("token") ?? void 0;
 }
+var CROSS_ORIGIN_MESSAGE = {
+  "cross-site": "Cross-site requests are refused.",
+  "foreign-origin": "Cross-origin requests are refused.",
+  "missing-origin": "POST requires the editor's own Origin."
+};
 async function readEditorJson(req) {
   const type = req.headers["content-type"] ?? "";
   if (!/^application\/json(?:\s*;|$)/i.test(type))
@@ -59758,7 +59780,7 @@ async function startTemplateEditor(options = {}) {
   const host = options.host ?? "127.0.0.1";
   const idleMs = options.idleMs ?? DEFAULT_EDITOR_IDLE_MS;
   const store = options.store ?? new TemplateStore();
-  const token = options.token ?? randomBytes2(32).toString("hex");
+  const token = options.token ?? newServerToken();
   const samples = templateSamples();
   const initialName = options.name ?? "standard-markdown";
   const initial = isBuiltinTemplate(initialName) ? builtinTemplate(initialName) : store.get(initialName);
@@ -59862,21 +59884,15 @@ async function startTemplateEditor(options = {}) {
     if (req.headers.host !== hostHeader)
       throw new EditorHttpError(421, "wrong-host", "Unexpected Host header.");
     const url = new URL(req.url ?? "/", origin);
-    if (!editorTokenMatches(editorPresentedToken(req, url), token))
+    if (!tokenMatches(editorPresentedToken(req, url), token))
       throw new EditorHttpError(401, "unauthorized", "Missing or wrong token.");
-    const site = req.headers["sec-fetch-site"];
-    if (site && site !== "same-origin" && site !== "none")
-      throw new EditorHttpError(403, "cross-origin", "Cross-site requests are refused.");
-    const requestOrigin = req.headers.origin;
-    if (requestOrigin !== void 0 && requestOrigin !== origin)
-      throw new EditorHttpError(403, "cross-origin", "Cross-origin requests are refused.");
-    if (req.method === "POST" && requestOrigin !== origin)
-      throw new EditorHttpError(403, "cross-origin", "POST requires the editor's own Origin.");
+    const refusal = crossOriginRefusal(req, origin, req.method === "POST");
+    if (refusal) throw new EditorHttpError(403, "cross-origin", CROSS_ORIGIN_MESSAGE[refusal]);
     touch();
     const route = `${req.method} ${url.pathname}`;
     switch (route) {
       case "GET /": {
-        const nonce = randomBytes2(16).toString("base64");
+        const nonce = randomBytes4(16).toString("base64");
         return send(res, 200, "text/html; charset=utf-8", templateEditorPage(nonce), {
           "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
         });
@@ -59952,7 +59968,7 @@ async function startTemplateEditor(options = {}) {
     });
   });
   const port = server2.address().port;
-  const authority = host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+  const authority = hostAuthority(host, port);
   origin = `http://${authority}`;
   hostHeader = authority;
   touch();
@@ -59972,7 +59988,8 @@ template library (create-only unless you tick "replace").
   --note ID            Also preview one real note (x-coredata://.../ICNote/pN), read-only
   --tailnet            Listen on this Mac's Tailscale address instead of 127.0.0.1,
                        so other devices on your tailnet can open the editor.
-                       Anyone on the tailnet who has the printed URL can save templates.
+                       Anyone on the tailnet who has the printed URL can read and save
+                       templates, and with --note can read the full body of that note.
 
 Every request needs the per-run token in the printed URL. Press Ctrl-C to stop.
 `;
@@ -60013,6 +60030,14 @@ var editorSignals = (stop) => {
     process.off("SIGTERM", stop);
   };
 };
+function tailnetWarning(host, withNote) {
+  const lines = [
+    `Listening on the tailnet address ${host}. Any device on your tailnet that has this URL can read and save templates. Keep the URL private.`,
+    withNote ? "--note is set: the full body of that note is shown in the preview, so anyone with this URL can read the entire note. Stop the editor when you are done." : "--note exposes the full note body to anyone with this URL, so do not combine it with --tailnet unless you want that."
+  ];
+  return `${lines.join("\n")}
+`;
+}
 async function runTemplatesCommand(argv, deps = {}) {
   const out = deps.out ?? ((text2) => process.stdout.write(text2));
   const err = deps.err ?? ((text2) => process.stderr.write(text2));
@@ -60057,11 +60082,7 @@ ${TEMPLATES_USAGE}`);
   }
   out(`Template editor: ${handle.url}
 `);
-  if (args.tailnet)
-    err(
-      `Listening on the tailnet address ${handle.host}. Any device on your tailnet that has this URL can read and save templates. Keep the URL private.
-`
-    );
+  if (args.tailnet) err(tailnetWarning(handle.host, args.noteId !== void 0));
   err(
     args.idleMinutes > 0 ? `Press Ctrl-C to stop. Stops by itself after ${args.idleMinutes} idle minute(s).
 ` : "Press Ctrl-C to stop.\n"

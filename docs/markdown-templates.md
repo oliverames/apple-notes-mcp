@@ -323,3 +323,9 @@ With `--tailnet`, every device on your tailnet that is allowed to reach this
 Mac can connect to the port, and any of them that has the printed address can
 read and save templates. Share the address only with yourself, and stop the
 editor when you are done.
+
+**`--note` with `--tailnet` exposes the full note.** `--note <id>` previews one
+real note, and the preview shows that note's whole body. With `--tailnet`,
+anyone on your tailnet who has the printed address can read the entire note,
+not only the templates. Do not combine the two unless you want that. The
+editor prints this warning at startup, and `templates edit --help` repeats it.

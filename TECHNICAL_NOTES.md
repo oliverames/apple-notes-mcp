@@ -876,13 +876,18 @@ the URL, and never logged.
 The address comes from `os.networkInterfaces()`: the first non-internal IPv4
 in 100.64.0.0/10, preferring `utun*` interfaces. No `tailscale` command runs,
 and no Tailscale, Serve/Funnel or firewall setting is read or changed.
-Without such an address the command exits 1. The same token, host and origin
-checks apply. Tailscale encrypts the traffic between devices, but the
-editor speaks plain HTTP and anyone on the tailnet who can reach the port and
-has the URL can save templates. The address range is shared with other
-carrier-grade NAT users, so on a Mac with another VPN in that range the
-editor could bind to that VPN's address instead; the startup message names
-the bound address.
+`findTailnetAddress` in src/utils/localServer.ts does this. The same module
+holds the other pieces a local server needs: the per-run token, the Bearer
+header reader, the constant-time comparison, the `Host` authority and the
+cross-origin check. Without such an address the command exits 1. The same
+token, host and origin checks apply. Tailscale encrypts the traffic between
+devices, but the editor speaks plain HTTP and anyone on the tailnet who can
+reach the port and has the URL can read and save templates, and with `--note`
+can read the entire note body. The startup warning says so
+(`tailnetWarning` in src/services/templateEditorCli.ts). The address range is
+shared with other carrier-grade NAT users, so on a Mac with another VPN in
+that range the editor could bind to that VPN's address instead; the startup
+message names the bound address.
 
 ---
 
