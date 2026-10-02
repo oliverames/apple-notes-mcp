@@ -1813,7 +1813,7 @@ disabled checkboxes, block quotes and monospaced paragraphs become
 `blockquote` and `pre`, and inline runs keep bold, italic, underline,
 strikethrough, highlight, superscript, subscript, text color and safe links.
 Tables are semantic `<table>` elements with a header row. Images, drawings
-(Notes' fallback image, or its preview), scans (PDF with preview), audio,
+(Notes' fallback image by default, SVG with `vectorDrawings: true`; see below), scans (PDF with preview), audio,
 video, files and link cards (title, domain and preview thumbnail) appear in
 body order. Attachments with no body marker are appended in creation order.
 An attachment with no usable source renders a visible
@@ -1822,6 +1822,22 @@ An attachment with no usable source renders a visible
 
 A folder export is one presentation document with notes separated by
 `<hr class="note-separator">`. It is not a backup or restore format.
+
+By default every drawing keeps Notes' own fallback image, a fixed-size PNG.
+With `vectorDrawings: true`, classic PencilKit drawings (`com.apple.drawing.2`
+and `com.apple.drawing`) are rendered as SVG instead, decoded through the
+public native helper exactly as [`get-note-drawings`](#get-note-drawings)
+does. The option is off by default because decoding runs the helper and costs
+extra time per note. The SVG is embedded as a data
+URL, or written to the sidecar directory with `embedAssets: false`, and it is
+subject to the same size limits as any other asset. It stays sharp at any
+zoom. Paper drawings
+(`com.apple.paper`) have no public decoder and keep Notes' fallback image or
+preview. If the helper is not built (`apple-notes-mcp setup --public-helper`),
+a drawing does not decode, the helper stopped at its stroke limit, or the SVG
+is too large, that drawing falls back to the PNG; the export never fails for
+it. The SVG traces each stroke's points with its color and mean width, so
+pencil grain and marker blending are approximated.
 
 **Requires:** Full Disk Access. Password-protected notes are skipped in a
 folder export and refused for a single note.
@@ -1835,6 +1851,7 @@ folder export and refused for a single note.
 | `outputPath` | string | Yes | Absolute HTML file to create. Create-only: an existing file is refused with `[output_exists]` |
 | `embedAssets` | boolean | No | Embed assets as data URLs (default `true`). Each asset is capped at 10 MiB and a document at 256 MiB of embedded assets; a larger one renders as unavailable with a hint to use `embedAssets: false` |
 | `assetsDir` | string | No | With `embedAssets: false`, the sidecar directory (default `<output stem>.assets` beside the file). Existing files are never replaced; a taken name gets `-2`, `-3`, ... |
+| `vectorDrawings` | boolean | No | Render classic drawings as SVG through the public native helper (default `false`). When `false` or omitted, every drawing keeps Notes' PNG and the helper never runs |
 
 The HTML is always written to a file, because an embedded document is too
 large for an MCP message. Paths follow the `save-attachment` rules and may not
@@ -1842,8 +1859,14 @@ point inside the Notes library container. Sidecar URLs are relative to the
 HTML file, so the file and its `.assets` directory can be moved together.
 
 **Returns:** `format`, `count`, `bytes`, `output`, either `embedded` (assets
-embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. Nothing
-already written is deleted if a later step fails.
+embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. When the notes
+contain classic drawings and `vectorDrawings` is `true`, `vectorDrawings` reports
+`rendered` (drawings placed as SVG), `fallback` (drawings left as PNG), and
+`fallbackReasons`, a count per code such as `helper_not_installed`,
+`undecodable`, `truncated`, `timeout`, or `too-large`. After one helper
+timeout, or when the helper is not usable, the remaining drawings in the
+export are not decoded. Nothing already written is deleted if a later step
+fails.
 
 ---
 

@@ -4390,7 +4390,7 @@ registerTool(
   "export-notes-html",
   {
     description:
-      "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.",
+      "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.\nDrawings: by default every drawing keeps Notes' PNG. With vectorDrawings true, classic PencilKit drawings are rendered as SVG through the public native helper (setup --public-helper); Paper drawings keep the PNG. A drawing that cannot be decoded falls back to the PNG and is counted in vectorDrawings.fallbackReasons; it never fails the export.",
     inputSchema: {
       id: noteIdInput.optional(),
       folder: z
@@ -4427,6 +4427,12 @@ registerTool(
       assetsDir: exportPathInput(
         "Sidecar directory when embedAssets is false (default <stem>.assets)"
       ),
+      vectorDrawings: z
+        .boolean()
+        .optional()
+        .describe(
+          "Render classic PencilKit drawings as SVG via the public native helper (default false). When false or omitted, Notes' PNG rendering is kept and the helper never runs"
+        ),
     },
     outputSchema: {
       format: z.string().optional(),
@@ -4436,6 +4442,13 @@ registerTool(
       output: z.string().optional(),
       assets: z.object({ dir: z.string(), files: z.number() }).optional(),
       embedded: z.number().optional(),
+      vectorDrawings: z
+        .object({
+          rendered: z.number(),
+          fallback: z.number(),
+          fallbackReasons: z.record(z.string(), z.number()).optional(),
+        })
+        .optional(),
       stats: exportStatsSchema.optional(),
       skipped: z.array(z.object({ id: z.string(), code: z.string() })).optional(),
     },
@@ -4463,8 +4476,17 @@ registerTool(
     const skipped =
       (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") +
       (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
+    const vector = receipt.vectorDrawings;
+    const drawings = vector
+      ? `; ${vector.rendered} drawing(s) as SVG` +
+        (vector.fallback
+          ? `, ${vector.fallback} as PNG (${Object.entries(vector.fallbackReasons ?? {})
+              .map(([code, n]) => `${code}: ${n}`)
+              .join(", ")})`
+          : "")
+      : "";
     return successResponse(
-      `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
+      `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${drawings}${skipped}.`,
       { ...receipt }
     );
   }, "Error exporting HTML")
