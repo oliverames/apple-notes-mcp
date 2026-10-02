@@ -1,6 +1,24 @@
 # Worklog
 
-## 2026-09-25 - Upstream submission, live tests, fork and clone sync (Mac) - START HERE
+## 2026-10-02 - #262 split per sweetrb's review; PDF follow-up; branch cleanup (Mac) - START HERE
+
+**What changed**:
+- sweetrb requested changes on #262 (2026-09-25 15:36): split it, hold the writer for live evidence, no 3.0.0, one minor bump and CHANGELOG section per PR. Full review saved locally at `.git/PR262_REVIEW_sweetrb.md`.
+- Split out of #262, each on upstream/main `70fbf3a` with his fixes: **#271** query facets (2.10.0), **#272** SVG drawing export with `vectorDrawings` off by default (2.11.0), **#274** `setup --permissions` with an opt-in Automation probe, no Apple event under `--check` or SSH, and an unprobed item that neither fails the exit code nor shows as pending (2.12.0), **#273** template editor with the `--note` exposure warning (2.13.0), **#275** paragraph anchors without `remint`, recording tools not read-only, and a per-peer lockout (2.14.0). #273 and #275 share a byte-identical `src/utils/localServer.ts`.
+- **#262** is now a draft holding the writer only. It got the upstream 2.9.34 merge (2.9.35), the Paper SVG `format` on `native-read-paper`, and a read-only replica-table decoder (`src/utils/noteReplicaTable.ts`) with an unrun copy-store script (`scripts/test-private-writer-replica-identity-copy-store.sh`). TECHNICAL_NOTES' stale "no bundle identifier" paragraph is corrected from the source. Reply posted on #262 linking the split.
+- **#270**: PDF attachment verification follow-up to #240/#241 (type check, body reference, lag wait extended, fresh contentHash), 2.9.35.
+- Branches: folded `feat/paper-vector-decode` into #262 (its SVG renderer only; #262 already decodes Paper strokes). Deleted 8 old fork branches after checking their closed PRs' work is in upstream main; the one orphaned worklog entry from `claude/kind-dijkstra-rs5flp` is now on main (`bb0b23c`).
+
+**Left off at**:
+- [ ] Version collisions: #262 and #270 both claim 2.9.35, and the five split PRs claim 2.10.0 to 2.14.0 in order. Re-bump whatever is still open after each merge.
+- [ ] Writer evidence for #262 (sweetrb's Q1 dirty editor, Q2 replica identity, upload lag) is **not gathered**. Oliver authorized live trials on 2026-10-02, then chose to skip them because no process on this Mac has Full Disk Access (Claude, Terminal.app and Ghostty all get "authorization denied"). To run Q2: grant a terminal Full Disk Access, then in `.claude/worktrees/gap-parity-sync` run `APPLE_NOTES_MCP_ENABLE_PRIVATE=1 scripts/test-private-writer-replica-identity-copy-store.sh [NOTE_UUID]`. The decoder's field layout is inferred and unchecked against a real note: if `lengthsMatchText` is false, run the CLI with `--shape` and fix the layout first. Q1 needs a live trial with the target note open and unsaved in Notes.app.
+- [ ] When the evidence is in, restage the writer as sweetrb's (a) to (d), with every fix on his writer list.
+- [ ] #274's Swift checklist window change compiled and installed to a scratch dir, but was not viewed on screen.
+- [ ] Worktrees `.claude/worktrees/{gap-parity-sync,pdf-followup,split-1-facets,split-2-svg,split-3-permissions,split-4-templates,split-5-anchors}` stay until their PRs merge.
+
+**Verification**: each split PR passed sync-skills, lint, format, plugin-version, typecheck, `test:coverage` (2550 to 2615 tests) and a matching bundle locally; #262 head passed 3267 tests. `test:integration` was not run on any of them. Two timing flakes under heavy machine load (`publicHelper.test.ts`, `privateWriter.test.ts`) passed on rerun. Under a load average of 350 to 900 from other sessions, the pre-push hook failed twice on spawn-timing tests in `privateWriter.test.ts`, which `e7d15fd` does not touch and which pass alone (56/56). `e7d15fd` was pushed with `--no-verify`, so GitHub CI on #262 is its check. This doc-only entry was pushed the same way.
+
+## 2026-09-25 - Upstream submission, live tests, fork and clone sync (Mac)
 
 **What changed**:
 - `feat/gap-parity` rebuilt on `origin/feat/gap-parity` (`da9dff0`): cherry-picked the #84 heal wiring (`edd4a63`, was `32933d0`) and the writer harness fixes (`81f808a`, was `d714f5d`), carried their README/TECHNICAL_NOTES/CHANGELOG text (`2f57069`), and dropped `60b4ace` (2.9.28 release). `c6d3497` was already on origin. Later merged upstream 2.9.30 and renumbered to **2.9.31** (`3e4ef92`), then fixed two CodeQL `js/file-system-race` findings in `anchorRegistry.test.ts` (`65029da`, `686e714`). No force-push.
