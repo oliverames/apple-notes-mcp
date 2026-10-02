@@ -23,6 +23,13 @@ not security fixes to an earlier released writer.
   `add-attachment` file policy (#259, #260): approved roots, regular files,
   private-path restrictions, and descriptor identity checks.
 
+### Fixed
+
+- The development replica-table decoder no longer treats paired zero-length
+  start/end records as character owners. Those sentinels had shifted one-based
+  replica attribution; disposable live fixtures and four constructed regressions
+  now verify complete character mapping.
+
 ### Added
 
 - `compose-note` takes local files (`{"type":"file","path":…}`, with

@@ -47,6 +47,18 @@ client and was rejected by schema validation. The client was corrected and the
 same fixture reused; the intended refusal tests then passed. This was a test
 client error, not a product failure.
 
+## Replica decoder observation
+
+Read-only snapshots of these two synthetic notes exposed paired zero-length
+boundary records (`replica=0`, clocks `0` and `UINT32_MAX`). They incorrectly
+selected zero-based owner indexing even though character owners were one-based.
+The decoder now excludes only that recognized boundary pair from owner inference
+and counts, preserving diagnostics for arbitrary zero-length records and support
+for real zero-based owners. Four constructed regressions cover the fix. Offline
+replay of the saved fixture payloads maps all 140/140 and 118/118 live UTF-16
+characters without warnings. This establishes decoding correctness for the
+fixtures, not replica-identity behavior across processes, binaries, or preferences.
+
 ## Remaining evidence
 
 The broad live integration suite and copy-store harnesses were not run: they

@@ -136,6 +136,91 @@ describe("parseNoteReplicaTable", () => {
     expect(table.layout.warnings).toEqual([]);
   });
 
+  it("does not treat paired start/end sentinels as zero-based replica owners", () => {
+    const table = parseNoteReplicaTableFromPlain(
+      document({
+        body: "abc",
+        clocks: [{ seed: 1, subClocks: [5] }],
+        substrings: [
+          { replica: 0, clock: 0, length: 0 },
+          { replica: 1, clock: 2, length: 3 },
+          { replica: 1, clock: 0, length: 2, tombstone: true },
+          { replica: 0, clock: 0xffffffff, length: 0 },
+        ],
+      })
+    );
+    expect(table.layout).toMatchObject({
+      indexBase: 1,
+      lengthsMatchText: true,
+      unmappedReplicaIds: [],
+      warnings: [],
+    });
+    expect(table.replicas[0]).toMatchObject({ chars: 5, liveChars: 3, substrings: 2 });
+    expect(table.substrings).toBe(4); // Includes the structural boundary records.
+  });
+
+  it("attributes every live and tombstoned character across replicas with boundary sentinels", () => {
+    // Constructed from the numeric shape of disposable test notes, with
+    // generated UUIDs and replacement text; no saved Notes payload is used.
+    const table = parseNoteReplicaTableFromPlain(
+      document({
+        body: "x".repeat(140),
+        clocks: [1, 2, 3, 4].map((seed) => ({ seed, subClocks: [200] })),
+        substrings: [
+          { replica: 0, clock: 0, length: 0 },
+          { replica: 4, clock: 0, length: 99 },
+          { replica: 4, clock: 99, length: 17, tombstone: true },
+          { replica: 1, clock: 116, length: 17 },
+          { replica: 3, clock: 132, length: 22 },
+          { replica: 2, clock: 154, length: 2 },
+          { replica: 0, clock: 0xffffffff, length: 0 },
+        ],
+      })
+    );
+    expect(table.layout).toMatchObject({
+      indexBase: 1,
+      lengthsMatchText: true,
+      unmappedReplicaIds: [],
+      warnings: [],
+    });
+    expect(table.replicas.map((r) => r.chars)).toEqual([17, 2, 22, 116]);
+    expect(table.replicas.map((r) => r.liveChars)).toEqual([17, 2, 22, 99]);
+    expect(table.replicas.reduce((sum, r) => sum + r.liveChars, 0)).toBe(table.layout.textUtf16);
+  });
+
+  it("still accepts real zero-based owners between structural sentinels", () => {
+    const table = parseNoteReplicaTableFromPlain(
+      document({
+        body: "a",
+        clocks: [{ seed: 1, subClocks: [1] }],
+        substrings: [
+          { replica: 0, clock: 0, length: 0 },
+          { replica: 0, clock: 1, length: 1 },
+          { replica: 0, clock: 0xffffffff, length: 0 },
+        ],
+      })
+    );
+    expect(table.layout.indexBase).toBe(0);
+    expect(table.replicas[0]).toMatchObject({ chars: 1, substrings: 1 });
+    expect(table.layout.warnings).toEqual([]);
+  });
+
+  it("does not hide an arbitrary zero-length replica record as a sentinel", () => {
+    const table = parseNoteReplicaTableFromPlain(
+      document({
+        body: "a",
+        clocks: [{ seed: 1, subClocks: [1] }],
+        substrings: [
+          { replica: 0, clock: 7, length: 0 },
+          { replica: 1, clock: 1, length: 1 },
+          { replica: 0, clock: 0xffffffff, length: 0 },
+        ],
+      })
+    );
+    expect(table.layout.indexBase).toBe(0);
+    expect(table.layout.unmappedReplicaIds).toEqual([1]);
+  });
+
   it("leaves the index base open when no substring settles it", () => {
     const table = parseNoteReplicaTableFromPlain(
       document({

@@ -66,8 +66,9 @@ export interface ReplicaTableLayout {
   lengthsMatchText: boolean;
   /**
    * Whether substring replica IDs index the clock list from 0 or from 1
-   * (1 when no reference is 0 and the highest equals the list length). `null` when nothing in the
-   * note settles it.
+   * (1 when no character-owner reference is 0 and the highest equals the list length).
+   * The paired zero-length start/end sentinels are not character owners. `null`
+   * when nothing in the note settles it.
    */
   indexBase: 0 | 1 | null;
   /** Replica IDs referenced by substrings that match no clock entry. */
@@ -150,27 +151,48 @@ export function parseNoteReplicaTableFromPlain(plain: Uint8Array): NoteReplicaTa
 
   const warnings: string[] = [];
   const substrings = all(body, 3);
-  const records: Array<{ replicaId: number; length: number; live: boolean }> = [];
+  const records: Array<{ replicaId: number; clock: number; length: number; live: boolean }> = [];
   for (const record of substrings) {
     const fields = message(record);
     const charId = fields && message(field(fields, 1));
     const replicaId = (charId && int(field(charId, 1))) ?? 0;
+    const clock = (charId && int(field(charId, 2))) ?? 0;
     const length = (fields && int(field(fields, 2))) ?? 0;
     const tombstone = (fields && int(field(fields, 4))) ?? 0;
-    records.push({ replicaId, length, live: tombstone === 0 });
+    records.push({ replicaId, clock, length, live: tombstone === 0 });
   }
 
-  const maxRef = records.reduce((max, r) => Math.max(max, r.replicaId), -1);
-  const minRef = records.reduce((min, r) => Math.min(min, r.replicaId), Infinity);
+  // Notes can wrap the substring sequence in two structural sentinels:
+  // replica 0 / clock 0 at the start, and replica 0 / clock UINT32_MAX at
+  // the end, both live and zero-length. They do not name vector-clock
+  // entries. Counting their zero IDs as indexing evidence shifted every
+  // one-based owner and left the last replica's characters unmapped.
+  // Recognize only this complete boundary pair; arbitrary zero-length
+  // records still participate in the normal diagnostics.
+  const first = records[0];
+  const last = records.at(-1);
+  const hasBoundarySentinels =
+    records.length >= 2 &&
+    first.replicaId === 0 &&
+    first.clock === 0 &&
+    first.length === 0 &&
+    first.live &&
+    last?.replicaId === 0 &&
+    last.clock === 0xffffffff &&
+    last.length === 0 &&
+    last.live;
+  const owners = hasBoundarySentinels ? records.slice(1, -1) : records;
+  const maxRef = owners.reduce((max, r) => Math.max(max, r.replicaId), -1);
+  const minRef = owners.reduce((min, r) => Math.min(min, r.replicaId), Infinity);
   let indexBase: 0 | 1 | null = null;
-  if (records.length > 0) {
+  if (owners.length > 0) {
     if (minRef === 0) indexBase = 0;
     else if (maxRef === replicas.length) indexBase = 1;
   }
   const base = indexBase ?? 0;
   const unmapped = new Set<number>();
   let liveChars = 0;
-  for (const r of records) {
+  for (const r of owners) {
     const replica = replicas[r.replicaId - base];
     if (!replica) {
       unmapped.add(r.replicaId);
