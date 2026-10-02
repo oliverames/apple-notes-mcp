@@ -429,7 +429,8 @@ export function runPermissionsWindow(
         return;
       }
       const item = report.items.find((candidate) => candidate.id === message.id);
-      if (!item) return;
+      // An unprobed item has no pane button, so a request for one is not honored.
+      if (!item || item.notProbed) return;
       const result = session.open(item);
       log(
         result.ok

@@ -70,7 +70,10 @@ export interface PermissionItem {
 }
 
 export interface PermissionsReport {
-  /** True when every required item is granted. */
+  /**
+   * True when no required item is missing or unverifiable: each is granted or
+   * was deliberately not probed (`notProbed`). It decides the exit code.
+   */
   ready: boolean;
   /** The .app macOS attributes these grants to, when one was found above this process. */
   launchingApp: string | null;
@@ -175,7 +178,7 @@ export function checkPermissions(
     speechItem(probes, macOSVersion, who),
   ];
   return {
-    ready: items.every((item) => !item.required || item.status === "granted"),
+    ready: items.every((item) => !item.required || item.status === "granted" || item.notProbed),
     launchingApp,
     execPath: probes.execPath,
     macOSVersion,
@@ -541,15 +544,13 @@ export function formatPermissionsReport(report: PermissionsReport): string {
     }
   }
   lines.push("");
-  const blocking = report.items.filter(
-    (item) => item.required && item.status !== "granted" && !item.notProbed
-  );
+  const unchecked = report.items.some((item) => item.notProbed);
   lines.push(
-    report.ready
-      ? "Every required permission is granted."
-      : blocking.length > 0
-        ? "Required permissions are missing; the server works only partly until they are granted."
-        : "Every required permission that was checked is granted. Automation of Notes.app was not checked."
+    !report.ready
+      ? "Required permissions are missing; the server works only partly until they are granted."
+      : unchecked
+        ? "Every required permission that was checked is granted. Automation of Notes.app was not checked."
+        : "Every required permission is granted."
   );
   return lines.join("\n");
 }

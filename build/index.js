@@ -59304,7 +59304,7 @@ function checkPermissions(probes = defaultPermissionProbes(), options = defaultC
     speechItem(probes, macOSVersion, who)
   ];
   return {
-    ready: items.every((item) => !item.required || item.status === "granted"),
+    ready: items.every((item) => !item.required || item.status === "granted" || item.notProbed),
     launchingApp,
     execPath: probes.execPath,
     macOSVersion,
@@ -59582,11 +59582,9 @@ function formatPermissionsReport(report) {
     }
   }
   lines.push("");
-  const blocking = report.items.filter(
-    (item) => item.required && item.status !== "granted" && !item.notProbed
-  );
+  const unchecked = report.items.some((item) => item.notProbed);
   lines.push(
-    report.ready ? "Every required permission is granted." : blocking.length > 0 ? "Required permissions are missing; the server works only partly until they are granted." : "Every required permission that was checked is granted. Automation of Notes.app was not checked."
+    !report.ready ? "Required permissions are missing; the server works only partly until they are granted." : unchecked ? "Every required permission that was checked is granted. Automation of Notes.app was not checked." : "Every required permission is granted."
   );
   return lines.join("\n");
 }
@@ -59948,7 +59946,7 @@ function runPermissionsWindow(binaryPath, session) {
         return;
       }
       const item = report.items.find((candidate) => candidate.id === message.id);
-      if (!item) return;
+      if (!item || item.notProbed) return;
       const result = session.open(item);
       log(
         result.ok ? `Opened ${item.settingsPane}.

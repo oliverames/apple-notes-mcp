@@ -255,7 +255,8 @@ describe("Automation probe opt-in", () => {
     expect(automation.notProbed).toBe(true);
     expect(automation.detail).toContain("--probe-automation");
     expect(automation.fix).toContain("setup --permissions --probe-automation");
-    expect(report.ready).toBe(false);
+    // Not probed is not missing: it must not fail the run.
+    expect(report.ready).toBe(true);
   });
 
   it("probes only when --probe-automation is given and no other rule blocks it", () => {
@@ -311,6 +312,15 @@ describe("Automation probe opt-in", () => {
     expect(text).not.toContain("?Privacy_Automation");
     expect(text).toContain("Automation of Notes.app was not checked");
     expect(text).not.toContain("Required permissions are missing");
+  });
+
+  it("still counts a probed Automation failure against readiness", () => {
+    const denied = probes({
+      notesAutomation: () => ({ success: false, error: "execution error: (-1743)" }),
+    });
+    expect(checkPermissions(denied, options({})).ready).toBe(false);
+    const timedOut = probes({ notesAutomation: () => ({ success: false, error: "timed out" }) });
+    expect(checkPermissions(timedOut, options({})).ready).toBe(false);
   });
 
   it("still reports missing grants as missing when Automation is unprobed", () => {
@@ -453,10 +463,24 @@ describe("runPermissionsCli", () => {
     expect(output()).toContain("Every required permission is granted.");
   });
 
+  it("exits 0 on a default run when everything else is granted and Automation is unprobed", async () => {
+    const unprobed = checkPermissions(probes());
+    expect(item(unprobed, "notesAutomation").notProbed).toBe(true);
+    const { deps, output } = cliDeps([unprobed], [""]);
+    expect(await runPermissionsCli(base(), deps)).toBe(0);
+    expect(output()).toContain("Automation of Notes.app was not checked");
+  });
+
+  it("exits 1 when a known required grant is missing, even with Automation unprobed", async () => {
+    const report = checkPermissions(probes({ fullDiskAccess: () => false }));
+    const { deps } = cliDeps([report], []);
+    expect(await runPermissionsCli({ ...base(), once: true }, deps)).toBe(1);
+  });
+
   it("does not open the Automation pane or wait for Enter when Automation was not probed", async () => {
     const unprobed = checkPermissions(probes());
     const { deps } = cliDeps([unprobed], [""]);
-    expect(await runPermissionsCli({ ...base(), open: true }, deps)).toBe(1);
+    expect(await runPermissionsCli({ ...base(), open: true }, deps)).toBe(0);
     expect(deps.open).not.toHaveBeenCalled();
     expect(deps.waitForEnter).not.toHaveBeenCalled();
   });

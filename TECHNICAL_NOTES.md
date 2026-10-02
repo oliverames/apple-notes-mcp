@@ -845,7 +845,7 @@ Automation cannot be read without an Apple event: `get-capabilities` reports it 
 - `--check` was passed, which reports state only; or
 - `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt.
 
-In each case the item is `unknown` with `notProbed: true` and its detail names the reason. A not-probed item is not pending: the loop does not wait on it and `--open` does not open its pane, since checking again would not change it. With the probe allowed, the 60-second timeout leaves time to answer the prompt. `permissionsCliProbe.test.ts` mocks the AppleScript layer to pin that the real CLI wiring sends zero events in the three cases above and exactly one with the flag.
+In each case the item is `unknown` with `notProbed: true` and its detail names the reason. A not-probed item is not pending and does not fail the run: the loop does not wait on it, `--open` does not open its pane, and `report.ready` (which sets the exit code) counts it as satisfied, since checking again would not change it. The window reads the same `notProbed` field: it draws the item as "Not checked" with the item's `fix` text, gives it no Open Settings button, and the command ignores an `open` request for it. With the probe allowed, the 60-second timeout leaves time to answer the prompt. `permissionsCliProbe.test.ts` mocks the AppleScript layer to pin that the real CLI wiring sends zero events in the three cases above and exactly one with the flag.
 
 On macOS 26 and later the helper transcribes with SpeechAnalyzer, which needs no grant, so only an explicit refusal blocks it (see `checkSpeechAccess` in the helper). `speech_status` reports `requiresGrant` from the same `#available(macOS 26, *)` test, so the check and `transcribe` cannot disagree.
 

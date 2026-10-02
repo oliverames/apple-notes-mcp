@@ -15,16 +15,18 @@
   Notes.app, which can raise macOS's consent prompt, so it runs only with
   `--probe-automation`. By default the Automation item reports `unknown` (not
   probed) with the command that checks it, and it does not count as a pending
-  item. It also reports `unknown` under `--check`, which reports state only
-  and never sends an Apple event, and whenever `SSH_CONNECTION` is set, because
-  nobody at the remote shell can answer the prompt. A run that has not probed
-  Automation exits 1.
+  item and does not change the exit code. It also reports `unknown` under
+  `--check`, which reports state only and never sends an Apple event, and
+  whenever `SSH_CONNECTION` is set, because nobody at the remote shell can
+  answer the prompt. The exit code is 1 only when a required grant is missing
+  or a probe that ran could not verify it.
 - An optional checklist window with Open Settings and Re-check buttons:
   `apple-notes-mcp setup --permissions-window` compiles it from the packaged
   Swift source, signs it ad hoc and installs it in Application Support like the
   public helper; `setup --permissions --window` opens it (add
-  `--probe-automation` to include the Automation check). The window probes
-  nothing itself, and the server never uses it.
+  `--probe-automation` to include the Automation check; otherwise the window
+  shows Automation as "Not checked" with no Open Settings button). The window
+  probes nothing itself, and the server never uses it.
 - The public native helper gains a `speech_status` action that reads the Speech
   Recognition status without prompting. Changing the helper source means an
   installed helper reports stale until `apple-notes-mcp setup --public-helper`

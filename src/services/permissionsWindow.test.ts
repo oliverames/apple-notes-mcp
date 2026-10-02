@@ -275,6 +275,38 @@ describe("runPermissionsWindow", () => {
     expect(await done).toBe(0);
   });
 
+  it("sends an unprobed item with notProbed and ignores a request to open its pane", async () => {
+    const window = fakeWindow();
+    const unprobed = checkPermissions({
+      fullDiskAccess: () => true,
+      notesAutomation: () => ({ success: true }),
+      shortcuts: () => ({ ready: true, checkOnly: true, items: [] }),
+      speech: () => ({ ok: true, speechAuthorization: "authorized", requiresGrant: true }),
+      macOSVersion: () => "27.2",
+      launchingApp: () => null,
+      execPath: "/usr/local/bin/node",
+    });
+    const open = vi.fn(() => ({ ok: true }));
+    const done = runPermissionsWindow("/fake/window", {
+      check: () => unprobed,
+      open,
+      launch: () => window.child,
+    });
+    await tick();
+    const sent = window.received[0] as {
+      report: { ready: boolean; items: Array<Record<string, unknown>> };
+    };
+    const automation = sent.report.items.find((entry) => entry.id === "notesAutomation")!;
+    expect(automation).toMatchObject({ status: "unknown", notProbed: true });
+    expect(String(automation.fix)).toContain("--probe-automation");
+    expect(sent.report.ready).toBe(true);
+    window.say({ type: "open", id: "notesAutomation" });
+    await tick();
+    expect(open).not.toHaveBeenCalled();
+    window.close();
+    expect(await done).toBe(0);
+  });
+
   it("ignores lines that are not JSON and exits 1 when grants are still missing", async () => {
     const window = fakeWindow();
     const done = runPermissionsWindow("/fake/window", {

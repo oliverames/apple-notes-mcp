@@ -43,6 +43,8 @@ struct Item: Identifiable {
     let settingsPane: String?
     let hasSettings: Bool
     let fix: String?
+    /// The command deliberately did not probe this item (Automation is opt-in).
+    let notProbed: Bool
 
     init?(_ object: [String: Any]) {
         guard let id = object["id"] as? String, let title = object["title"] as? String,
@@ -55,9 +57,10 @@ struct Item: Identifiable {
         settingsPane = object["settingsPane"] as? String
         hasSettings = (object["settingsUrl"] as? String)?.hasPrefix("x-apple.systempreferences:") ?? false
         fix = object["fix"] as? String
+        notProbed = object["notProbed"] as? Bool ?? false
     }
 
-    var pending: Bool { status == "missing" || status == "unknown" }
+    var pending: Bool { !notProbed && (status == "missing" || status == "unknown") }
 }
 
 final class Model: ObservableObject {
@@ -91,6 +94,8 @@ struct StatusIcon: View {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case "missing":
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        case "not_checked":
+            Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
         default:
             Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange)
         }
@@ -108,11 +113,14 @@ struct ChecklistView: View {
                 .font(.callout).foregroundStyle(.secondary)
             ForEach(model.items) { item in
                 HStack(alignment: .top, spacing: 10) {
-                    StatusIcon(status: item.status).font(.title3)
+                    StatusIcon(status: item.notProbed ? "not_checked" : item.status).font(.title3)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.required ? item.title : "\(item.title) (optional)").font(.headline)
+                        if item.notProbed {
+                            Text("Not checked").font(.caption).bold().foregroundStyle(.secondary)
+                        }
                         Text(item.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
-                        if item.pending, let fix = item.fix {
+                        if item.pending || item.notProbed, let fix = item.fix {
                             Text(fix).font(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
@@ -127,7 +135,9 @@ struct ChecklistView: View {
             }
             Divider()
             HStack {
-                Text(model.ready ? "Every required permission is granted." : "Required permissions are missing.")
+                Text(!model.ready ? "Required permissions are missing."
+                    : model.items.contains { $0.notProbed } ? "Every required permission that was checked is granted."
+                    : "Every required permission is granted.")
                     .font(.callout)
                 Spacer()
                 if model.checking { ProgressView().controlSize(.small) }
