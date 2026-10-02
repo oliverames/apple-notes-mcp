@@ -59370,9 +59370,43 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
 }
 
 // src/services/anchorServer.ts
-import { randomBytes as randomBytes3, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
+
+// src/utils/localServer.ts
+import { randomBytes as randomBytes3, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
+function isTailnetIPv4(address) {
+  const match = /^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
+  if (!match) return false;
+  const [second, third, fourth] = match.slice(1).map(Number);
+  return second >= 64 && second <= 127 && third <= 255 && fourth <= 255;
+}
+function findTailnetAddress(interfaces = networkInterfaces()) {
+  const candidates = [];
+  for (const [name, infos] of Object.entries(interfaces)) {
+    for (const info of infos ?? []) {
+      if (info.family === "IPv4" && !info.internal && isTailnetIPv4(info.address))
+        candidates.push({ address: info.address, interface: name });
+    }
+  }
+  return candidates.find((c) => c.interface.startsWith("utun")) ?? candidates[0];
+}
+function newServerToken() {
+  return randomBytes3(32).toString("hex");
+}
+function bearerToken(req) {
+  const auth = req.headers.authorization;
+  return auth?.startsWith("Bearer ") ? auth.slice(7) : void 0;
+}
+function tokenMatches(given, token) {
+  if (!given) return false;
+  const a = Buffer.from(given, "utf8");
+  const b = Buffer.from(token, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function hostAuthority(host, port) {
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
 
 // src/utils/paragraphAnchors.ts
 import { createHash as createHash8 } from "node:crypto";
@@ -59606,25 +59640,6 @@ function paragraphIdReminter() {
 
 // src/services/anchorServer.ts
 var MIN_TOKEN_LENGTH = 32;
-var inCgnat = (address) => {
-  const [a, b] = address.split(".").map(Number);
-  return a === 100 && b >= 64 && b <= 127;
-};
-function tailnetAddress(interfaces = networkInterfaces()) {
-  const names = Object.keys(interfaces).sort(
-    (x, y) => Number(!x.startsWith("utun")) - Number(!y.startsWith("utun"))
-  );
-  for (const name of names)
-    for (const info of interfaces[name] ?? [])
-      if (info.family === "IPv4" && !info.internal && inCgnat(info.address)) return info.address;
-  return void 0;
-}
-function tokenMatches(given, token) {
-  if (!given) return false;
-  const a = Buffer.from(given, "utf8");
-  const b = Buffer.from(token, "utf8");
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 var STATUS_CODE = {
   resolved: 302,
   "needs-reminting": 409,
@@ -59662,7 +59677,7 @@ function createAnchorServer(options) {
       return send(405, "Method not allowed.", { Allow: "GET, HEAD" });
     const address = server2.address();
     const port = address && typeof address === "object" ? address.port : options.port;
-    const hosts = /* @__PURE__ */ new Set([`${options.host}:${port}`]);
+    const hosts = /* @__PURE__ */ new Set([hostAuthority(options.host, port)]);
     if (options.host === "127.0.0.1") hosts.add(`localhost:${port}`);
     if (!hosts.has((req.headers.host ?? "").toLowerCase()))
       return send(403, "Unexpected Host header.");
@@ -59672,9 +59687,7 @@ function createAnchorServer(options) {
     } catch {
       return send(400, "Bad request.");
     }
-    const auth = req.headers.authorization;
-    const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : void 0;
-    if (!tokenMatches(url.searchParams.get("token") ?? bearer, options.token)) {
+    if (!tokenMatches(url.searchParams.get("token") ?? bearerToken(req), options.token)) {
       failures.push(now);
       return send(401, "Missing or wrong token.");
     }
@@ -59706,7 +59719,7 @@ function startAnchorServer(options) {
       const port = address && typeof address === "object" ? address.port : options.port;
       resolve10({
         server: server2,
-        baseUrl: `http://${options.host}:${port}`,
+        baseUrl: `http://${hostAuthority(options.host, port)}`,
         close: () => new Promise((done) => {
           server2.closeAllConnections();
           server2.close(() => done());
@@ -59761,7 +59774,7 @@ ${ANCHORS_USAGE}
     out(ANCHORS_USAGE + "\n");
     return 0;
   }
-  const host = args.tailnet ? tailnetAddress(interfaces) : "127.0.0.1";
+  const host = args.tailnet ? findTailnetAddress(interfaces)?.address : "127.0.0.1";
   if (!host) {
     out("No Tailscale address (100.64.0.0/10) found on this Mac; is Tailscale connected?\n");
     return 1;
@@ -59772,7 +59785,7 @@ ${ANCHORS_USAGE}
 `);
     return 1;
   }
-  const token = fromEnv || randomBytes3(32).toString("hex");
+  const token = fromEnv || newServerToken();
   let started;
   try {
     started = await startAnchorServer({ host, port: args.port, token, resolve: resolve10 });

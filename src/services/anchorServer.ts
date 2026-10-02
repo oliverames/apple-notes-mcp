@@ -25,9 +25,15 @@
  *
  * @module services/anchorServer
  */
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { networkInterfaces } from "node:os";
+import type { networkInterfaces } from "node:os";
+import {
+  bearerToken,
+  findTailnetAddress,
+  hostAuthority,
+  newServerToken,
+  tokenMatches,
+} from "../utils/localServer.js";
 import { ANCHOR_ID_PATTERN, type AnchorResolution } from "../utils/paragraphAnchors.js";
 
 /** Resolve an anchor id; undefined means no such anchor is recorded. */
@@ -46,34 +52,6 @@ export interface AnchorServerOptions {
 
 /** Tokens shorter than this are refused. */
 export const MIN_TOKEN_LENGTH = 32;
-
-const inCgnat = (address: string) => {
-  const [a, b] = address.split(".").map(Number);
-  return a === 100 && b >= 64 && b <= 127;
-};
-
-/**
- * This Mac's Tailscale IPv4 address: the first address in 100.64.0.0/10,
- * preferring utun interfaces. Undefined when there is none.
- */
-export function tailnetAddress(
-  interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()
-): string | undefined {
-  const names = Object.keys(interfaces).sort(
-    (x, y) => Number(!x.startsWith("utun")) - Number(!y.startsWith("utun"))
-  );
-  for (const name of names)
-    for (const info of interfaces[name] ?? [])
-      if (info.family === "IPv4" && !info.internal && inCgnat(info.address)) return info.address;
-  return undefined;
-}
-
-function tokenMatches(given: string | undefined, token: string): boolean {
-  if (!given) return false;
-  const a = Buffer.from(given, "utf8");
-  const b = Buffer.from(token, "utf8");
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 const STATUS_CODE: Record<AnchorResolution["status"], number> = {
   resolved: 302,
@@ -117,7 +95,7 @@ export function createAnchorServer(options: AnchorServerOptions): Server {
 
     const address = server.address();
     const port = address && typeof address === "object" ? address.port : options.port;
-    const hosts = new Set([`${options.host}:${port}`]);
+    const hosts = new Set([hostAuthority(options.host, port)]);
     if (options.host === "127.0.0.1") hosts.add(`localhost:${port}`);
     if (!hosts.has((req.headers.host ?? "").toLowerCase()))
       return send(403, "Unexpected Host header.");
@@ -128,9 +106,8 @@ export function createAnchorServer(options: AnchorServerOptions): Server {
     } catch {
       return send(400, "Bad request.");
     }
-    const auth = req.headers.authorization;
-    const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
-    if (!tokenMatches(url.searchParams.get("token") ?? bearer, options.token)) {
+    // `?token=` wins over the header: links opened from other apps carry it.
+    if (!tokenMatches(url.searchParams.get("token") ?? bearerToken(req), options.token)) {
       failures.push(now);
       return send(401, "Missing or wrong token.");
     }
@@ -167,7 +144,7 @@ export function startAnchorServer(
       const port = address && typeof address === "object" ? address.port : options.port;
       resolve({
         server,
-        baseUrl: `http://${options.host}:${port}`,
+        baseUrl: `http://${hostAuthority(options.host, port)}`,
         close: () =>
           new Promise<void>((done) => {
             server.closeAllConnections();
@@ -244,7 +221,7 @@ export async function runAnchorsCli(
     out(ANCHORS_USAGE + "\n");
     return 0;
   }
-  const host = args.tailnet ? tailnetAddress(interfaces) : "127.0.0.1";
+  const host = args.tailnet ? findTailnetAddress(interfaces)?.address : "127.0.0.1";
   if (!host) {
     out("No Tailscale address (100.64.0.0/10) found on this Mac; is Tailscale connected?\n");
     return 1;
@@ -254,7 +231,7 @@ export async function runAnchorsCli(
     out(`APPLE_NOTES_MCP_ANCHORS_TOKEN must be at least ${MIN_TOKEN_LENGTH} characters.\n`);
     return 1;
   }
-  const token = fromEnv || randomBytes(32).toString("hex");
+  const token = fromEnv || newServerToken();
   let started: Awaited<ReturnType<typeof startAnchorServer>>;
   try {
     started = await startAnchorServer({ host, port: args.port, token, resolve });
