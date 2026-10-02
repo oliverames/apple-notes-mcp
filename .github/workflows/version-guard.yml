@@ -55,12 +55,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Test version guard policy
+        run: node --test scripts/test-version-guard.mjs
+
       - name: Require a version bump when shipped bytes change
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+
+          if [ -z "${GITHUB_REPOSITORY:-}" ]; then
+            echo "::error::GITHUB_REPOSITORY is required to identify the publishing repository."
+            exit 1
+          fi
 
           # Under workflow_dispatch there is no PR context — fall back to the
           # fork point from origin/main (same semantics as the PR's triple-dot
@@ -179,19 +187,25 @@ jobs:
               console.error("::error::package.json version went " + process.env.OLDV + " -> " + process.env.NEWV + " (not an increase). Bump it forward.");
               process.exit(1);
             '
-            # …and require it to be UNPUBLISHED. Two concurrently-open PRs can
-            # each bump to the same next patch; without this, the second merge
-            # is a version collision publish.yml silently skips. Registry
-            # errors fail open (a registry outage must not block merges).
-            PKG="$(node -p "require('./package.json').name")"
-            set +e
-            existing="$(npm view "${PKG}@${newv}" version 2>/dev/null)"
-            set -e
-            if [ -n "$existing" ]; then
-              echo "::error::${PKG}@${newv} is already published on npm — this bump collides with an existing release (another PR likely claimed it first). Rebase on main and bump again:  pnpm version patch --no-git-tag-version"
-              exit 1
+            # Only the publishing repository must claim an UNPUBLISHED version.
+            # Contributor forks need to sync already-published upstream releases;
+            # their publish.yml exact-repository guard prevents publishing them.
+            # Keep every version/history/shipped-byte check active on forks.
+            if [ "$GITHUB_REPOSITORY" = "sweetrb/apple-notes-mcp" ]; then
+              # Concurrent PRs can claim the same next patch. A registry outage
+              # still fails open, as before, rather than blocking all merges.
+              PKG="$(node -p "require('./package.json').name")"
+              set +e
+              existing="$(npm view "${PKG}@${newv}" version 2>/dev/null)"
+              set -e
+              if [ -n "$existing" ]; then
+                echo "::error::${PKG}@${newv} is already published on npm — this bump collides with an existing release (another PR likely claimed it first). Rebase on main and bump again:  pnpm version patch --no-git-tag-version"
+                exit 1
+              fi
+              echo "${PKG}@${newv} is unclaimed on npm."
+            else
+              echo "::notice::${GITHUB_REPOSITORY} does not publish this package; allowing an upstream version already on npm."
             fi
-            echo "${PKG}@${newv} is unclaimed on npm."
 
             # …and require CHANGELOG.md to document it under a REAL version
             # heading. An entry parked under "## [Unreleased]" is orphaned the

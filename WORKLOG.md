@@ -1,5 +1,13 @@
 # Worklog
 
+## 2026-10-02 - Fork version guard permits published upstream syncs
+
+**Problem**: Fork PR #6 correctly raised 2.9.30 to upstream's already-published 2.9.34, but `version-guard.yml` rejected that version's npm registry entry. This fork cannot publish because `publish.yml` requires the exact upstream repository.
+
+**Change**: Scope only the registry-collision rejection to `sweetrb/apple-notes-mcp`, matching the existing publishing guard. Require `GITHUB_REPOSITORY` and fail closed when it is absent or empty. Forks still enforce version increases, shipped-byte/runtime-dependency bumps, existing release headings, the new release heading, and an empty Unreleased marker. Version 2.9.34, all runtime/build bytes, and publishing safeguards remain unchanged.
+
+**Validation**: Added a workflow step running 14 dependency-free Node fixtures against disposable Git repositories and a stub npm command. Publisher collision/refusal, valid fork sync, exact repository matching, missing identity, missing bumps, downgrade, history/heading/Unreleased failures, and the docs-only exception all passed. The fixtures perform no registry/network or Notes operations. Independent review found no defects. No repeat of the previously passing 2,548 runtime tests was needed for this workflow-only fix. This follow-up commit is held locally for parent review before push; no default branch, tag, or release was changed.
+
 ## 2026-10-02 - Local fork sync proposal to upstream 2.9.34 (pending review)
 
 **Scope**: In a new isolated clone, branch `chore/sync-upstream-2.9.34` starts at verified fork main `57318b454ec47aaa592545cb6eb33c8af2a6f4d9` and integrates only verified upstream main `70fbf3accb8b302186f580218ea419cf17928c23`. This is a local merge proposal, not a default-branch update. It contains no writer or split-feature branch merge, new release, tag, publishing, or deployment.
