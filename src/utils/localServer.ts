@@ -1,6 +1,6 @@
 /**
- * Shared pieces of the opt-in local HTTP servers, starting with the paragraph
- * anchor resolver (`anchors serve`). Any later local server can reuse them.
+ * Shared pieces of the opt-in local HTTP servers that the command line starts
+ * (today the template editor, `templates edit`).
  *
  * - Address: `findTailnetAddress` finds this Mac's Tailscale IPv4 address for
  *   `--tailnet`. Tailscale gives each device an address in the carrier-grade
@@ -10,10 +10,12 @@
  *   firewall.
  * - Token: `newServerToken` makes the per-run token, `bearerToken` reads an
  *   `Authorization: Bearer` header, and `tokenMatches` compares in constant
- *   time. Each server decides which of `?token=` and the header wins.
+ *   time. A server decides which of `?token=` and the header wins.
  * - Host: `hostAuthority` is the `host:port` a request's Host header must
  *   name, which blocks DNS rebinding (a hostile name resolving to this
  *   address).
+ * - Origin: `crossOriginRefusal` refuses requests a browser marks as coming
+ *   from another site.
  *
  * @module utils/localServer
  */
@@ -68,4 +70,27 @@ export function tokenMatches(given: string | undefined, token: string): boolean 
 /** `host:port`, with an IPv6 host in brackets, as a Host header names it. */
 export function hostAuthority(host: string, port: number): string {
   return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
+/** Why `crossOriginRefusal` refused a request. */
+export type CrossOriginRefusal = "cross-site" | "foreign-origin" | "missing-origin";
+
+/**
+ * Why a request from another site must be refused, or undefined when it may
+ * proceed. `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`
+ * ("cross-site"); `Origin`, when sent, must be `origin` ("foreign-origin").
+ * With `requireOrigin` (state-changing requests), `Origin` must be present
+ * ("missing-origin"), which a cross-site HTML form cannot arrange.
+ */
+export function crossOriginRefusal(
+  req: Pick<IncomingMessage, "headers">,
+  origin: string,
+  requireOrigin = false
+): CrossOriginRefusal | undefined {
+  const site = req.headers["sec-fetch-site"];
+  if (site && site !== "same-origin" && site !== "none") return "cross-site";
+  const requestOrigin = req.headers.origin;
+  if (requestOrigin !== undefined && requestOrigin !== origin) return "foreign-origin";
+  if (requireOrigin && requestOrigin !== origin) return "missing-origin";
+  return undefined;
 }

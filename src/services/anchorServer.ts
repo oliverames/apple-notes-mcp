@@ -34,7 +34,7 @@ import {
   hostAuthority,
   newServerToken,
   tokenMatches,
-} from "../utils/localServer.js";
+} from "@/utils/localServer.js";
 import { ANCHOR_ID_PATTERN, type AnchorResolution } from "../utils/paragraphAnchors.js";
 
 /** Resolve an anchor id; undefined means no such anchor is recorded. */

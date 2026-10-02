@@ -1,11 +1,14 @@
 /**
- * Shared helpers of the local servers: tailnet address detection, token
- * handling and the Host authority. Pure functions; nothing listens.
+ * Shared helpers of the local servers (the template editor today): tailnet
+ * address detection, token handling, the Host authority and the cross-origin
+ * check. Pure functions; nothing listens.
  */
 import { describe, expect, it } from "vitest";
+import type { IncomingHttpHeaders } from "node:http";
 import type { NetworkInterfaceInfo } from "node:os";
 import {
   bearerToken,
+  crossOriginRefusal,
   findTailnetAddress,
   hostAuthority,
   isTailnetIPv4,
@@ -99,5 +102,30 @@ describe("hostAuthority", () => {
     expect(hostAuthority("127.0.0.1", 8123)).toBe("127.0.0.1:8123");
     expect(hostAuthority("100.101.1.2", 80)).toBe("100.101.1.2:80");
     expect(hostAuthority("::1", 8123)).toBe("[::1]:8123");
+  });
+});
+
+describe("crossOriginRefusal", () => {
+  const origin = "http://127.0.0.1:8123";
+  const req = (headers: IncomingHttpHeaders) => ({ headers });
+
+  it("allows same-origin, direct and header-less requests", () => {
+    expect(crossOriginRefusal(req({}), origin)).toBeUndefined();
+    expect(crossOriginRefusal(req({ "sec-fetch-site": "none" }), origin)).toBeUndefined();
+    expect(
+      crossOriginRefusal(req({ "sec-fetch-site": "same-origin", origin }), origin, true)
+    ).toBeUndefined();
+  });
+
+  it("refuses other sites and foreign origins", () => {
+    expect(crossOriginRefusal(req({ "sec-fetch-site": "cross-site" }), origin)).toBe("cross-site");
+    expect(crossOriginRefusal(req({ "sec-fetch-site": "same-site" }), origin)).toBe("cross-site");
+    expect(crossOriginRefusal(req({ origin: "http://evil.example" }), origin)).toBe(
+      "foreign-origin"
+    );
+  });
+
+  it("requires the own Origin when asked", () => {
+    expect(crossOriginRefusal(req({}), origin, true)).toBe("missing-origin");
   });
 });
