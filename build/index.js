@@ -59640,6 +59640,8 @@ function paragraphIdReminter() {
 
 // src/services/anchorServer.ts
 var MIN_TOKEN_LENGTH = 32;
+var FAILURE_WINDOW_MS = 6e4;
+var MAX_TRACKED_PEERS = 256;
 var STATUS_CODE = {
   resolved: 302,
   "needs-reminting": 409,
@@ -59655,7 +59657,13 @@ function createAnchorServer(options) {
     throw new Error(`The resolver token must be at least ${MIN_TOKEN_LENGTH} characters`);
   const log = options.log ?? ((line) => process.stderr.write(line + "\n"));
   const maxFailures = options.maxAuthFailures ?? 20;
-  let failures = [];
+  const failuresByPeer = /* @__PURE__ */ new Map();
+  const recentFailures = (peer, now) => {
+    const recent = (failuresByPeer.get(peer) ?? []).filter((t) => now - t < FAILURE_WINDOW_MS);
+    if (recent.length) failuresByPeer.set(peer, recent);
+    else failuresByPeer.delete(peer);
+    return recent;
+  };
   const server2 = createServer((req, res) => {
     const send = (status, body, headers = {}) => {
       res.writeHead(status, {
@@ -59670,8 +59678,10 @@ function createAnchorServer(options) {
       log(`${req.method} ${path10} ${status}`);
     };
     const now = Date.now();
-    failures = failures.filter((t) => now - t < 6e4);
-    if (failures.length >= maxFailures)
+    const peer = req.socket.remoteAddress ?? "unknown";
+    if (failuresByPeer.size > MAX_TRACKED_PEERS)
+      for (const other of [...failuresByPeer.keys()]) recentFailures(other, now);
+    if (recentFailures(peer, now).length >= maxFailures)
       return send(429, "Too many failed requests; wait a minute.");
     if (req.method !== "GET" && req.method !== "HEAD")
       return send(405, "Method not allowed.", { Allow: "GET, HEAD" });
@@ -59688,7 +59698,7 @@ function createAnchorServer(options) {
       return send(400, "Bad request.");
     }
     if (!tokenMatches(url.searchParams.get("token") ?? bearerToken(req), options.token)) {
-      failures.push(now);
+      failuresByPeer.set(peer, [...recentFailures(peer, now), now]);
       return send(401, "Missing or wrong token.");
     }
     const match = /^\/a\/([^/]+)$/.exec(url.pathname);

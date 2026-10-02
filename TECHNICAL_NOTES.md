@@ -570,11 +570,19 @@ corrupt file is never rewritten. The limit is 20,000 anchors.
 the current `applenotes://` link when the anchor resolves, and a plain-text
 409 or 404 otherwise. It binds 127.0.0.1, or with `--tailnet` the first IPv4
 in 100.64.0.0/10 found by `os.networkInterfaces()` (utun interfaces first).
-It never runs `tailscale` or changes any configuration. The request checks
-run in this order: the failed-token limit (429), the method (GET or HEAD),
-the Host header (the bound address, or `localhost` on loopback), and the
-token (`?token=` or `Authorization: Bearer`, compared with `timingSafeEqual`),
-before the path is looked at. The token is in the query string because a link
+It never runs `tailscale` or changes any configuration. The tailnet scan,
+token generation, Bearer parsing, constant-time comparison and the Host
+authority come from `src/utils/localServer.ts`. The request checks
+run in this order: the failed-token limit for the peer (429), the method (GET
+or HEAD), the Host header (the bound address, or `localhost` on loopback), and
+the token (`?token=` or `Authorization: Bearer`, compared with
+`timingSafeEqual`), before the path is looked at. The limit counts failed
+token checks per peer address (`req.socket.remoteAddress`) over a sliding
+minute, 20 by default, so a peer that guesses tokens locks out only itself. A
+request refused for its method or Host never reaches the token check and never
+counts. Over the tailnet each device has its own address, so peers are
+distinguishable. On loopback every client is `127.0.0.1`, which is one peer by
+construction. The token is in the query string because a link
 opened from another app cannot add a header; `Referrer-Policy: no-referrer`
 and `Cache-Control: no-store` keep it from leaking onward, and the request
 log records only the method, path and status.

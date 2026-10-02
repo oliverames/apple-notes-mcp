@@ -3021,7 +3021,10 @@ paragraph or note.
   least 32 characters; use this for links that must survive a restart), or a
   random token printed once at startup. Tokens are compared in constant time
   and never logged; request logs on stderr omit the query string. After 20
-  failed token checks in a minute, requests get 429 until the minute passes.
+  failed token checks in a minute from one peer address, that peer gets 429
+  until the minute passes. The count is per peer, so one client guessing
+  tokens cannot lock out another, and requests refused for their method or
+  `Host` header never count.
 - **Host check.** The `Host` header must name the bound address, which blocks
   DNS rebinding. Only `GET` and `HEAD` are served, with `Cache-Control:
   no-store` and `Referrer-Policy: no-referrer`.

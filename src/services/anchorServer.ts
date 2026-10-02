@@ -20,8 +20,9 @@
  * - The Host header must name the bound address, which blocks DNS rebinding.
  * - Only GET and HEAD are served. Responses are `no-store` with
  *   `Referrer-Policy: no-referrer`, so the token does not leak onward.
- * - After 20 failed token checks in a minute, every request gets 429 until
- *   the minute passes.
+ * - After 20 failed token checks from one peer address in a minute, that peer
+ *   gets 429 until the minute passes. The count is per peer, so one bad peer
+ *   cannot lock out another. Requests refused for method or Host never count.
  *
  * @module services/anchorServer
  */
@@ -46,12 +47,17 @@ export interface AnchorServerOptions {
   resolve: AnchorLookup;
   /** One line per request, without query strings. Default: stderr. */
   log?: (line: string) => void;
-  /** Failed token checks allowed per minute before 429 (default 20). */
+  /** Failed token checks allowed per peer per minute before 429 (default 20). */
   maxAuthFailures?: number;
 }
 
 /** Tokens shorter than this are refused. */
 export const MIN_TOKEN_LENGTH = 32;
+
+/** How long a failed token check counts toward a peer's limit. */
+const FAILURE_WINDOW_MS = 60_000;
+/** Above this many peers with recent failures, expired entries are swept on each request. */
+const MAX_TRACKED_PEERS = 256;
 
 const STATUS_CODE: Record<AnchorResolution["status"], number> = {
   resolved: 302,
@@ -70,7 +76,15 @@ export function createAnchorServer(options: AnchorServerOptions): Server {
     throw new Error(`The resolver token must be at least ${MIN_TOKEN_LENGTH} characters`);
   const log = options.log ?? ((line: string) => process.stderr.write(line + "\n"));
   const maxFailures = options.maxAuthFailures ?? 20;
-  let failures: number[] = [];
+  // Failed token checks in the last minute, by peer address. Keyed per peer so
+  // that one client guessing tokens cannot lock the others out.
+  const failuresByPeer = new Map<string, number[]>();
+  const recentFailures = (peer: string, now: number): number[] => {
+    const recent = (failuresByPeer.get(peer) ?? []).filter((t) => now - t < FAILURE_WINDOW_MS);
+    if (recent.length) failuresByPeer.set(peer, recent);
+    else failuresByPeer.delete(peer);
+    return recent;
+  };
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const send = (status: number, body: string, headers: Record<string, string> = {}) => {
@@ -87,8 +101,10 @@ export function createAnchorServer(options: AnchorServerOptions): Server {
     };
 
     const now = Date.now();
-    failures = failures.filter((t) => now - t < 60000);
-    if (failures.length >= maxFailures)
+    const peer = req.socket.remoteAddress ?? "unknown";
+    if (failuresByPeer.size > MAX_TRACKED_PEERS)
+      for (const other of [...failuresByPeer.keys()]) recentFailures(other, now);
+    if (recentFailures(peer, now).length >= maxFailures)
       return send(429, "Too many failed requests; wait a minute.");
     if (req.method !== "GET" && req.method !== "HEAD")
       return send(405, "Method not allowed.", { Allow: "GET, HEAD" });
@@ -108,7 +124,7 @@ export function createAnchorServer(options: AnchorServerOptions): Server {
     }
     // `?token=` wins over the header: links opened from other apps carry it.
     if (!tokenMatches(url.searchParams.get("token") ?? bearerToken(req), options.token)) {
-      failures.push(now);
+      failuresByPeer.set(peer, [...recentFailures(peer, now), now]);
       return send(401, "Missing or wrong token.");
     }
 
