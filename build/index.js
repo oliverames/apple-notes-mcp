@@ -54118,18 +54118,34 @@ function storedAttachmentIds(manager, id2) {
     return null;
   }
 }
-function storedInsertion(manager, id2, before, bytes, returnedId) {
+var KIND_BY_EXTENSION = {
+  ".pdf": "pdf",
+  ".png": "image",
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".heic": "image",
+  ".tif": "image",
+  ".tiff": "image",
+  ".gif": "image"
+};
+function referencedByBody(assets, row) {
+  return assets.orderSource === "body" ? row.bodyIndex !== null : void 0;
+}
+function storedInsertion(manager, id2, before, bytes, name, returnedId) {
   let added = [];
+  let assets;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) pause(250);
     try {
-      added = manager.getAttachmentAssetsById(id2).attachments.filter(
+      assets = manager.getAttachmentAssetsById(id2);
+      added = assets.attachments.filter(
         (item) => item.parentIdentifier === null && !before.has(item.identifier.toLowerCase())
       );
     } catch {
       added = [];
     }
-    if (added.length === 1 && added[0].assetPaths.length > 0) break;
+    if (added.length === 1 && added[0].assetPaths.length > 0 && referencedByBody(assets, added[0]) !== false)
+      break;
   }
   if (added.length === 0) return null;
   if (added.length > 1) throw new Error(UNCERTAIN);
@@ -54137,6 +54153,15 @@ function storedInsertion(manager, id2, before, bytes, returnedId) {
   const attachmentId = attachmentCoreDataId(id2, row.pk);
   if (returnedId && /\/ICAttachment\/p\d+$/.test(returnedId) && returnedId !== attachmentId)
     throw new Error(UNCERTAIN);
+  const expectedKind = KIND_BY_EXTENSION[extname7(name).toLowerCase()];
+  if (expectedKind && row.kind !== expectedKind)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but its type (${row.uti ?? "unknown"}) does not fit ${name}; read the exact note and do not attach the file again`
+    );
+  if (referencedByBody(assets, row) === false)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but the note body does not reference it; read the exact note and do not attach the file again`
+    );
   const expected = sha256(bytes);
   const matches = row.assetPaths.some((path10) => fileMatches(path10, bytes.length, expected));
   if (!matches)
@@ -54188,7 +54213,7 @@ function attachFile(manager, args, checked, progress = { insertionStarted: false
       if (!saved.success || !fileMatches(saved.savedPath ?? verifyPath, bytes.length, sha256(bytes)))
         throw new Error("Attachment bytes were not verified; read the exact note before retrying");
     } else {
-      const stored = inserted.length === 0 && beforeStored ? storedInsertion(manager, id2, beforeStored, bytes, returnedId) : null;
+      const stored = inserted.length === 0 && beforeStored ? storedInsertion(manager, id2, beforeStored, bytes, name, returnedId) : null;
       if (!stored)
         throw new Error(
           inserted.length === 0 && !beforeStored ? `${UNCERTAIN}. Notes' AppleScript does not list some attachments (PDFs on macOS 27); grant Full Disk Access so the server can verify through the Notes database` : UNCERTAIN
@@ -54198,11 +54223,17 @@ function attachFile(manager, args, checked, progress = { insertionStarted: false
       verifiedBy = "database";
     }
     const nameVerified = reportedName === name;
+    let contentHash = after.hash;
+    if (verifiedBy === "database") {
+      const final = readSnapshot(manager, id2);
+      assertExistingContentPreserved(before, final);
+      contentHash = final.hash;
+    }
     return {
       ok: true,
       id: id2,
       attachmentId,
-      contentHash: after.hash,
+      contentHash,
       bytes: bytes.length,
       name: reportedName,
       ...verifiedBy === "database" ? { verifiedBy } : {},

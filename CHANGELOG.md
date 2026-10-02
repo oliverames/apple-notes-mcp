@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+## [2.9.35] - 2026-10-02
+
+### Fixed
+
+- `add-attachment`'s NoteStore verification of a PDF on macOS 27 (#236) now
+  checks more than the new row's bytes. The row's type must fit the file's
+  extension, and when the decoded note body lists attachments it must
+  reference the new one, so a stray row or a file Notes has not placed in the
+  note is no longer reported as success. A row that fails either check is an
+  error that names the attachment and says not to attach the file again. The
+  existing poll for database lag now also waits for the body to reference the
+  row, and the returned `contentHash` is read after verification finishes
+  instead of right after insertion, so it matches the note when Notes writes
+  the body late and the next guarded write does not fail with a revision
+  conflict. Follow-up to #240. Only the database path changed. A note whose
+  body lists no attachment yet cannot be checked against the body, and that
+  part of the check is skipped.
+
 ## [2.9.34] - 2026-10-02
 
 ### Security
