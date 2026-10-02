@@ -224,7 +224,8 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
 if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions")) {
   // Guided permissions check; opens System Settings panes only with --open.
   const args = process.argv.slice(3);
-  const cli = defaultPermissionsCliDeps();
+  const options = parsePermissionsArgs(args);
+  const cli = defaultPermissionsCliDeps(options);
   let code: number;
   const window = args.includes("--window") ? inspectPermissionsWindow() : null;
   if (window?.ready) {
@@ -235,7 +236,7 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
     });
   } else {
     if (window) cli.write(`${window.detail} Showing the checklist here instead.\n\n`);
-    code = await runPermissionsCli(parsePermissionsArgs(args), cli);
+    code = await runPermissionsCli(options, cli);
   }
   cli.close();
   process.exit(code);

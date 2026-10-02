@@ -59281,13 +59281,25 @@ function paneFields(pane, macOSVersion) {
     settingsUrl: settingsUrl(pane, macOSVersion)
   };
 }
-function checkPermissions(probes = defaultPermissionProbes()) {
+function defaultCheckOptions() {
+  return { probeAutomation: false, check: false, env: process.env };
+}
+function automationSkipReason(options) {
+  if (!options.probeAutomation)
+    return "this check sends no Apple event to Notes.app unless you pass --probe-automation";
+  if (options.env.SSH_CONNECTION)
+    return "this is an SSH session, where macOS cannot show its permission prompt, so no Apple event was sent";
+  if (options.check)
+    return "--check reports state only and never sends an Apple event to Notes.app";
+  return null;
+}
+function checkPermissions(probes = defaultPermissionProbes(), options = defaultCheckOptions()) {
   const macOSVersion = safe(probes.macOSVersion, null);
   const launchingApp = safe(probes.launchingApp, null);
   const who = launchingApp ?? "the app that launches the server";
   const items = [
     fullDiskAccessItem(probes, macOSVersion),
-    automationItem(probes, macOSVersion, who),
+    automationItem(probes, macOSVersion, who, automationSkipReason(options)),
     shortcutsItem(probes),
     speechItem(probes, macOSVersion, who)
   ];
@@ -59339,13 +59351,22 @@ function fullDiskAccessItem(probes, macOSVersion) {
     fix: fdaRemediation(probes.execPath)
   };
 }
-function automationItem(probes, macOSVersion, who) {
+var PROBE_AUTOMATION_COMMAND = "apple-notes-mcp setup --permissions --probe-automation";
+function automationItem(probes, macOSVersion, who, skipReason) {
   const base = {
     id: "notesAutomation",
     title: "Automation of Notes.app",
     required: true,
     ...paneFields("automation", macOSVersion)
   };
+  if (skipReason !== null)
+    return {
+      ...base,
+      status: "unknown",
+      detail: `not probed: ${skipReason}`,
+      fix: `On this Mac, in a terminal, run \`${PROBE_AUTOMATION_COMMAND}\`. It sends one read-only Apple event to Notes.app, and macOS may ask whether this app may control Notes; choose Allow.`,
+      notProbed: true
+    };
   let result;
   try {
     result = probes.notesAutomation();
@@ -59530,7 +59551,9 @@ function openUrl(url) {
   return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
 }
 function pendingItems(report) {
-  return report.items.filter((item) => item.status === "missing" || item.status === "unknown");
+  return report.items.filter(
+    (item) => !item.notProbed && (item.status === "missing" || item.status === "unknown")
+  );
 }
 var ICONS = {
   granted: "\u2713",
@@ -59550,15 +59573,20 @@ function formatPermissionsReport(report) {
   for (const item of report.items) {
     const tag = item.required ? "" : " (optional)";
     lines.push(`${ICONS[item.status]} ${item.title}${tag}: ${item.detail}`);
-    if (item.status === "missing" || item.status === "unknown") {
+    if (item.notProbed) {
+      if (item.fix) lines.push(`    To check: ${item.fix}`);
+    } else if (item.status === "missing" || item.status === "unknown") {
       if (item.settingsPane) lines.push(`    Pane: ${item.settingsPane}`);
       if (item.settingsUrl) lines.push(`    URL:  ${item.settingsUrl}`);
       if (item.fix) lines.push(`    Fix:  ${item.fix}`);
     }
   }
   lines.push("");
+  const blocking = report.items.filter(
+    (item) => item.required && item.status !== "granted" && !item.notProbed
+  );
   lines.push(
-    report.ready ? "Every required permission is granted." : "Required permissions are missing; the server works only partly until they are granted."
+    report.ready ? "Every required permission is granted." : blocking.length > 0 ? "Required permissions are missing; the server works only partly until they are granted." : "Every required permission that was checked is granted. Automation of Notes.app was not checked."
   );
   return lines.join("\n");
 }
@@ -59566,7 +59594,9 @@ function parsePermissionsArgs(args) {
   return {
     open: args.includes("--open"),
     once: args.includes("--once") || args.includes("--check"),
-    json: args.includes("--json")
+    json: args.includes("--json"),
+    probeAutomation: args.includes("--probe-automation"),
+    check: args.includes("--check")
   };
 }
 async function runPermissionsCli(options, deps) {
@@ -59597,7 +59627,7 @@ async function runPermissionsCli(options, deps) {
     deps.write("\n");
   }
 }
-function defaultPermissionsCliDeps() {
+function defaultPermissionsCliDeps(options) {
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const rl = interactive ? createInterface({ input: process.stdin }) : null;
   const lines = [];
@@ -59613,7 +59643,11 @@ function defaultPermissionsCliDeps() {
     for (const waiter of waiters.splice(0)) waiter(null);
   });
   return {
-    check: () => checkPermissions(),
+    check: () => checkPermissions(defaultPermissionProbes(), {
+      probeAutomation: options.probeAutomation,
+      check: options.check,
+      env: process.env
+    }),
     open: (item) => openSettingsPane(item),
     write: (text2) => process.stdout.write(text2),
     waitForEnter: () => new Promise((resolveLine) => {
@@ -59633,7 +59667,7 @@ import {
   existsSync as existsSync17,
   mkdirSync as mkdirSync10,
   mkdtempSync as mkdtempSync9,
-  readFileSync as readFileSync7,
+  readFileSync as readFileSync6,
   renameSync as renameSync4,
   rmSync as rmSync9,
   writeFileSync as writeFileSync8
@@ -59662,7 +59696,7 @@ function defaultPermissionsWindowDeps(overrides = {}) {
     platform: process.platform,
     sourcePath: join31(packageRoot(), PERMISSIONS_WINDOW_SOURCE),
     exists: existsSync17,
-    readFile: (path10) => readFileSync7(path10),
+    readFile: (path10) => readFileSync6(path10),
     spawn: spawnSync7,
     now: () => /* @__PURE__ */ new Date(),
     ...overrides
@@ -60063,7 +60097,8 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
 }
 if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions")) {
   const args = process.argv.slice(3);
-  const cli = defaultPermissionsCliDeps();
+  const options = parsePermissionsArgs(args);
+  const cli = defaultPermissionsCliDeps(options);
   let code;
   const window2 = args.includes("--window") ? inspectPermissionsWindow() : null;
   if (window2?.ready) {
@@ -60076,7 +60111,7 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
     if (window2) cli.write(`${window2.detail} Showing the checklist here instead.
 
 `);
-    code = await runPermissionsCli(parsePermissionsArgs(args), cli);
+    code = await runPermissionsCli(options, cli);
   }
   cli.close();
   process.exit(code);

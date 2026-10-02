@@ -6,9 +6,11 @@
  *
  * - Full Disk Access: one read-only `SELECT 1` against NoteStore.sqlite.
  * - Automation of Notes.app: one read-only Apple event (the name of the first
- *   account). The first time, macOS shows its "wants to control Notes" prompt;
- *   that prompt is the only way to grant Automation, since the Automation pane
- *   has no + button.
+ *   account), sent only when the user passes `--probe-automation`. The first
+ *   time, macOS shows its "wants to control Notes" prompt; that prompt is the
+ *   only way to grant Automation, since the Automation pane has no + button.
+ *   Without the flag, under `--check`, and in an SSH session (where the prompt
+ *   cannot appear), no Apple event is sent and the item reports `unknown`.
  * - Shortcut bridges: `shortcuts list`, as `apple-notes-mcp setup --check` does.
  * - Speech Recognition: the public native helper's `speech_status` action,
  *   which reads the status without prompting.
@@ -59,6 +61,12 @@ export interface PermissionItem {
   settingsUrl: string | null;
   /** What to do when the status is not granted. */
   fix: string | null;
+  /**
+   * True when the probe was deliberately not run (the Automation probe sends
+   * an Apple event, so it is opt-in). The status is `unknown`, and the item
+   * does not count as something to wait on or to open a pane for.
+   */
+  notProbed?: boolean;
 }
 
 export interface PermissionsReport {
@@ -118,16 +126,51 @@ function paneFields(pane: SettingsPane, macOSVersion: string | null) {
   };
 }
 
-/** Run every probe once and build the report. A probe that throws reports `unknown`. */
+/** What may be sent to Notes.app during one check. */
+export interface PermissionsCheckOptions {
+  /** The user asked for the Automation probe (`--probe-automation`). */
+  probeAutomation: boolean;
+  /** `--check`: report state only, send nothing to any app. */
+  check: boolean;
+  /** The environment to inspect for `SSH_CONNECTION`. */
+  env: Readonly<Record<string, string | undefined>>;
+}
+
+/** The default sends no Apple event: Automation is probed only on request. */
+export function defaultCheckOptions(): PermissionsCheckOptions {
+  return { probeAutomation: false, check: false, env: process.env };
+}
+
+/**
+ * Why the Automation probe must not run, or null when it may. A probe sends a
+ * real Apple event, which can raise macOS's consent prompt, so it needs the
+ * explicit flag, never runs under `--check`, and never runs over SSH, where
+ * nobody can answer the prompt.
+ */
+export function automationSkipReason(options: PermissionsCheckOptions): string | null {
+  if (!options.probeAutomation)
+    return "this check sends no Apple event to Notes.app unless you pass --probe-automation";
+  if (options.env.SSH_CONNECTION)
+    return "this is an SSH session, where macOS cannot show its permission prompt, so no Apple event was sent";
+  if (options.check)
+    return "--check reports state only and never sends an Apple event to Notes.app";
+  return null;
+}
+
+/**
+ * Run every probe once and build the report. A probe that throws reports
+ * `unknown`. The Automation probe runs only when `options` allow it.
+ */
 export function checkPermissions(
-  probes: PermissionProbes = defaultPermissionProbes()
+  probes: PermissionProbes = defaultPermissionProbes(),
+  options: PermissionsCheckOptions = defaultCheckOptions()
 ): PermissionsReport {
   const macOSVersion = safe(probes.macOSVersion, null);
   const launchingApp = safe(probes.launchingApp, null);
   const who = launchingApp ?? "the app that launches the server";
   const items = [
     fullDiskAccessItem(probes, macOSVersion),
-    automationItem(probes, macOSVersion, who),
+    automationItem(probes, macOSVersion, who, automationSkipReason(options)),
     shortcutsItem(probes),
     speechItem(probes, macOSVersion, who),
   ];
@@ -187,10 +230,13 @@ function fullDiskAccessItem(probes: PermissionProbes, macOSVersion: string | nul
       };
 }
 
+const PROBE_AUTOMATION_COMMAND = "apple-notes-mcp setup --permissions --probe-automation";
+
 function automationItem(
   probes: PermissionProbes,
   macOSVersion: string | null,
-  who: string
+  who: string,
+  skipReason: string | null
 ): PermissionItem {
   const base = {
     id: "notesAutomation" as const,
@@ -198,6 +244,17 @@ function automationItem(
     required: true,
     ...paneFields("automation", macOSVersion),
   };
+  if (skipReason !== null)
+    return {
+      ...base,
+      status: "unknown",
+      detail: `not probed: ${skipReason}`,
+      fix:
+        `On this Mac, in a terminal, run \`${PROBE_AUTOMATION_COMMAND}\`. It sends one ` +
+        "read-only Apple event to Notes.app, and macOS may ask whether this app may control " +
+        "Notes; choose Allow.",
+      notProbed: true,
+    };
   let result: { success: boolean; error?: string };
   try {
     result = probes.notesAutomation();
@@ -438,9 +495,14 @@ function openUrl(url: string): { ok: boolean; error?: string } {
     : { ok: false, error: result.stderr || result.error?.message || "open failed" };
 }
 
-/** Items that still need the user's attention. */
+/**
+ * Items that still need the user's attention. An item that was deliberately
+ * not probed is not one: checking again would not change it.
+ */
 export function pendingItems(report: PermissionsReport): PermissionItem[] {
-  return report.items.filter((item) => item.status === "missing" || item.status === "unknown");
+  return report.items.filter(
+    (item) => !item.notProbed && (item.status === "missing" || item.status === "unknown")
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -470,17 +532,24 @@ export function formatPermissionsReport(report: PermissionsReport): string {
   for (const item of report.items) {
     const tag = item.required ? "" : " (optional)";
     lines.push(`${ICONS[item.status]} ${item.title}${tag}: ${item.detail}`);
-    if (item.status === "missing" || item.status === "unknown") {
+    if (item.notProbed) {
+      if (item.fix) lines.push(`    To check: ${item.fix}`);
+    } else if (item.status === "missing" || item.status === "unknown") {
       if (item.settingsPane) lines.push(`    Pane: ${item.settingsPane}`);
       if (item.settingsUrl) lines.push(`    URL:  ${item.settingsUrl}`);
       if (item.fix) lines.push(`    Fix:  ${item.fix}`);
     }
   }
   lines.push("");
+  const blocking = report.items.filter(
+    (item) => item.required && item.status !== "granted" && !item.notProbed
+  );
   lines.push(
     report.ready
       ? "Every required permission is granted."
-      : "Required permissions are missing; the server works only partly until they are granted."
+      : blocking.length > 0
+        ? "Required permissions are missing; the server works only partly until they are granted."
+        : "Every required permission that was checked is granted. Automation of Notes.app was not checked."
   );
   return lines.join("\n");
 }
@@ -492,6 +561,10 @@ export interface PermissionsCliOptions {
   once: boolean;
   /** Print JSON instead of text. */
   json: boolean;
+  /** Send the one read-only Apple event that probes Automation (opt-in). */
+  probeAutomation: boolean;
+  /** Report state only: send nothing to any app, so Automation stays unprobed. */
+  check: boolean;
 }
 
 export function parsePermissionsArgs(args: readonly string[]): PermissionsCliOptions {
@@ -499,6 +572,8 @@ export function parsePermissionsArgs(args: readonly string[]): PermissionsCliOpt
     open: args.includes("--open"),
     once: args.includes("--once") || args.includes("--check"),
     json: args.includes("--json"),
+    probeAutomation: args.includes("--probe-automation"),
+    check: args.includes("--check"),
   };
 }
 
@@ -550,7 +625,9 @@ export async function runPermissionsCli(
 }
 
 /** Default CLI dependencies: real probes, stdout, and stdin lines. */
-export function defaultPermissionsCliDeps(): PermissionsCliDeps & { close: () => void } {
+export function defaultPermissionsCliDeps(
+  options: Pick<PermissionsCliOptions, "probeAutomation" | "check">
+): PermissionsCliDeps & { close: () => void } {
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const rl = interactive ? createInterface({ input: process.stdin }) : null;
   const lines: string[] = [];
@@ -566,7 +643,12 @@ export function defaultPermissionsCliDeps(): PermissionsCliDeps & { close: () =>
     for (const waiter of waiters.splice(0)) waiter(null);
   });
   return {
-    check: () => checkPermissions(),
+    check: () =>
+      checkPermissions(defaultPermissionProbes(), {
+        probeAutomation: options.probeAutomation,
+        check: options.check,
+        env: process.env,
+      }),
     open: (item) => openSettingsPane(item),
     write: (text) => process.stdout.write(text),
     waitForEnter: () =>

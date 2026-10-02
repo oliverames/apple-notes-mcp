@@ -835,11 +835,17 @@ A future write PR needs evidence on all three first.
 | Item | Probe | Status values |
 |------|-------|---------------|
 | Full Disk Access | `hasFullDiskAccess()`: `sqlite3 -readonly NoteStore.sqlite "SELECT 1;"` | granted, missing, unknown (probe threw) |
-| Automation of Notes.app | `tell application "Notes" to get name of account 1`, one attempt, 60 s | granted; missing when `isPermissionDenied` matches (-1743); unknown for any other failure |
+| Automation of Notes.app | only with `--probe-automation`: `tell application "Notes" to get name of account 1`, one attempt, 60 s | granted; missing when `isPermissionDenied` matches (-1743); unknown for any other failure, and unknown (`notProbed`) when the probe is not allowed to run |
 | Shortcut bridges | `setupShortcuts(true)`, the `setup --check` path | granted, missing, unknown (the `shortcuts` command failed) |
 | Speech Recognition | public helper `speech_status`: `SFSpeechRecognizer.authorizationStatus()`, never `requestAuthorization` | granted; missing for denied or restricted, and for notDetermined before macOS 26; not_needed for notDetermined on macOS 26+; unknown while the helper is not built |
 
-Automation cannot be read without an Apple event: `get-capabilities` reports it as `unverified` for that reason. The setup command is run by a person at the keyboard, so it does send one read-only event. If the grant is undetermined, macOS shows its "wants to control Notes" prompt, which is the only way to create an Automation grant (the Automation pane has no + button). The 60-second timeout leaves time to answer it.
+Automation cannot be read without an Apple event: `get-capabilities` reports it as `unverified` for that reason. An Apple event can also raise macOS's "wants to control Notes" prompt, which is the only way to create an Automation grant (the Automation pane has no + button), and can launch Notes.app. A report-only command must not do either, so the probe is opt-in (`automationSkipReason` in `permissions.ts`) and does not run when:
+
+- `--probe-automation` was not passed (the default);
+- `--check` was passed, which reports state only; or
+- `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt.
+
+In each case the item is `unknown` with `notProbed: true` and its detail names the reason. A not-probed item is not pending: the loop does not wait on it and `--open` does not open its pane, since checking again would not change it. With the probe allowed, the 60-second timeout leaves time to answer the prompt. `permissionsCliProbe.test.ts` mocks the AppleScript layer to pin that the real CLI wiring sends zero events in the three cases above and exactly one with the flag.
 
 On macOS 26 and later the helper transcribes with SpeechAnalyzer, which needs no grant, so only an explicit refusal blocks it (see `checkSpeechAccess` in the helper). `speech_status` reports `requiresGrant` from the same `#available(macOS 26, *)` test, so the check and `transcribe` cannot disagree.
 
