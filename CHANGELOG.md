@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-## [2.9.31] - 2026-09-25
+## [2.9.35] - 2026-10-02
 
 ### Security
 
@@ -446,6 +446,57 @@
 - The probe checks the folder fields `read_sync_state` reads, and a copy of
   the store (`APPLE_NOTES_MCP_PRIVATE_STORE`) still needs
   `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`.
+
+## [2.9.34] - 2026-10-02
+
+### Security
+
+- **`brace-expansion` 1.1.18 → 1.1.21 and 5.0.9 → 5.0.12, clearing GHSA-q2hr-2g5m-vwhr (medium) — dev toolchain only, not in the shipped bundle.** A further incomplete-fix variant of the same unbounded-expansion class as GHSA-mh99-v99m-4gvg. Per the advisory's reported ranges, only the 1.x and 5.x lines were vulnerable; the 2.x floor (2.1.4) is untouched. Reached via eslint → minimatch on both lines, so development scope only. `pnpm-workspace.yaml`'s two-sided override ranges are raised accordingly. Clears Dependabot alerts #33 and #32.
+
+## [2.9.33] - 2026-09-30
+### Changed
+- Dependency bump via Dependabot; committed bundle rebuilt. (automated)
+
+## [2.9.32] - 2026-09-29
+
+### Security
+
+- Raised the `fast-uri` override floor to `>=3.1.7 <4` (GHSA-58mr-gqgx-xq4g,
+  high). `fast-uri` is in the shipped bundle (via
+  `@modelcontextprotocol/sdk` -> `ajv`).
+- Raised the `ip-address` override floor to `>=10.5.1 <11`
+  (GHSA-2vr4-cq9g-pvrc, medium). Not in the shipped bundle (reached via
+  `@modelcontextprotocol/sdk` -> `express-rate-limit`, dev/transitive only).
+
+## [2.9.31] - 2026-09-26
+
+### Fixed
+
+- Clients that pass the model only a tool result's text, such as Claude
+  Desktop, can now complete guarded writes (#264, reported by @aaronaccessvr).
+  The `contentHash` revision token that `update-note`, `append-to-note`,
+  `delete-note`, `add-native-tags`, `add-attachment` and the other guarded
+  writes require as `expectedContentHash` was returned only in
+  `structuredContent`, which those clients drop, so every guarded write failed
+  with a revision conflict. Every result that has `structuredContent` now ends
+  with one more text block, `structuredContent: {...}`, holding the same data
+  as a single JSON line, as the MCP spec recommends for backward
+  compatibility. An audit found the gap across most tools registered in
+  `src/index.ts`: `get-note-content` (`contentHash`, `writable`,
+  `nativeTags`, `links`), `get-native-objects` (`contentHash`, `nativeTags`,
+  object and checklist ids; its text was only "Native objects read from the
+  exact note"), `create-note`, `update-note` and `append-to-note` (the new
+  `contentHash`), `delete-note` (`guardContentHash`), `list-native-tags` for a
+  folder, stable `identifier` UUIDs on list and read tools, and the `code`,
+  `committed` and `indeterminate` of every error result, including the SDK's
+  input-validation errors. Tools whose text already is that JSON (the native
+  and direct-operation tools, `get-note-by-id`, `get-note-details`,
+  `export-notes-json`) get no extra block. A long value the text already
+  shows, such as the note body, appears as `"[shown in full above]"` rather
+  than twice; if the line would still exceed 16 KB, fields over 1 KB are left
+  out and named in `_omitted`. `structuredContent` itself is unchanged. The
+  wrapper is installed on the server before any tool registers, so tools
+  added later get it too.
 
 ## [2.9.30] - 2026-09-25
 
