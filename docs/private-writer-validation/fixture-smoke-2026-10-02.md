@@ -59,6 +59,17 @@ replay of the saved fixture payloads maps all 140/140 and 118/118 live UTF-16
 characters without warnings. This establishes decoding correctness for the
 fixtures, not replica-identity behavior across processes, binaries, or preferences.
 
+## Public attachment metadata follow-up
+
+A third disposable note received the same synthetic PNG through the public
+`add-attachment` connector. Both public and private attachments reported
+`contentType` equal to `contentId`. This is the documented compatibility alias
+introduced in 2.6.7, not a writer defect. Reading the public fixture with
+`list-attachments` and `includePaths: true` returned the actual `uti: public.png`.
+Tool text and documentation now label the alias accurately; response fields and
+values are unchanged. The third note was also moved once to Recently Deleted
+with fresh hash and folder guards. The retained disposable folder is empty.
+
 ## Remaining evidence
 
 The broad live integration suite and copy-store harnesses were not run: they

@@ -2137,7 +2137,10 @@ flagged state with sqlite3 on the copy only); not validated live, so
 
 ### Replica identity
 
-Status: **unverified.** No replica table has been captured from a store. This
+Status: **Q2 remains unverified.** Replica-table snapshots from two disposable
+live notes were decoded during the [2026-10-02 fixture smoke test](docs/private-writer-validation/fixture-smoke-2026-10-02.md#replica-decoder-observation).
+Those observations validate decoding for the fixtures, not the writer's replica
+identity or its reuse across processes, binaries, and preference resets. This
 section records what the source shows, what is inferred, and how to measure it.
 
 What the source shows (`native/private-helper/apple-notes-private-writer.m`):
@@ -2177,8 +2180,12 @@ clocks, and for each replica the characters its character IDs own. The layout
 reverse-engineering notes, not a vendor schema, so the decoder checks itself
 (live substring lengths must equal the text length) and
 `scripts/note-replica-table.ts STORE UUID --shape` prints the raw field
-structure when a check fails. The decoder is covered by a synthetic fixture
-only; it has not been run against a real note.
+structure when a check fails. The disposable-note snapshots exposed paired
+zero-length boundary records that incorrectly selected zero-based owner
+indexing. The corrected decoder has four constructed regression cases, and
+offline replay of the saved snapshots maps all 140/140 and 118/118 live UTF-16
+characters without warnings. This is limited decoder evidence; the complete
+Q2 replica-identity experiment below has not run.
 
 `scripts/test-private-writer-replica-identity-copy-store.sh` runs the
 experiment on a copy of the store: baseline, 5 appends in 5 processes, 5 more

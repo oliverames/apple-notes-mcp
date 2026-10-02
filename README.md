@@ -2379,6 +2379,8 @@ Lists attachments in a note.
 
 **Returns:** List of attachments with IDs, names, content identifiers, URLs when available, created/modified dates, and shared state.
 
+`contentId` is Notes' content identifier, such as `cid:…@icloud.apple.com`. The legacy `contentType` field contains the same value for compatibility; it is not a MIME type or UTI. To read the actual stored type, pass `includePaths: true` with the exact note `id` and use `uti` (for example, `public.png`). This needs Full Disk Access; `uti` is `null` when Notes has no stored type.
+
 With `includePaths`, each attachment also carries `identifier`, `uti`, `kind` (`image`, `scan`, `drawing`, `pdf`, `audio`, `video`, `url`, `table`, `other`), `bodyIndex`, and three path fields read from NoteStore and the Notes data folder (read-only):
 
 - `assetPaths`: the attachment's own files, best first (the media file, or Notes' fallback image or PDF rendering).
@@ -2403,7 +2405,7 @@ Saves a note attachment to disk.
 | `attachmentId` | string | Yes | Attachment ID (from `list-attachments`) |
 | `savePath` | string | Yes | Absolute destination file path. Must be under your home directory, a temp directory, or `/Volumes`, and never inside the Notes data folder (`~/Library/Group Containers/group.com.apple.notes`), however it is reached (symlink or different letter case) |
 
-**Returns:** Confirmation with the saved path, name, and content type (also in `structuredContent`).
+**Returns:** Confirmation with the saved path, name, and legacy `contentType` field (also in `structuredContent`). That field is Notes' content identifier (`cid:…`), not a MIME type or UTI. For the stored UTI, use `list-attachments` with `includePaths: true`.
 
 ---
 
@@ -2491,7 +2493,7 @@ Returns a note attachment's bytes as base64, without writing to disk (the read c
 | `noteId` | string | Yes | CoreData note ID (from `search-notes`/`list-notes`) |
 | `attachmentId` | string | Yes | Attachment ID (from `list-attachments`) |
 
-**Returns:** The attachment name, content type, byte count, and base64 payload in `structuredContent.base64`.
+**Returns:** The attachment name, legacy `contentType` field, byte count, and base64 payload in `structuredContent.base64`. `contentType` is Notes' content identifier (`cid:…`), not a MIME type or UTI. For the stored UTI, use `list-attachments` with `includePaths: true`.
 
 ---
 

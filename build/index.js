@@ -45015,7 +45015,7 @@ var AppleNotesManager = class {
   /**
    * Lists attachments for a note by its ID.
    *
-   * Returns metadata about each attachment including name and content type.
+   * Returns metadata about each attachment including name and content identifier.
    * Note: The position within the note cannot be determined via AppleScript.
    *
    * @param id - CoreData URL identifier for the note
@@ -45026,7 +45026,7 @@ var AppleNotesManager = class {
    * @example
    * ```typescript
    * const attachments = manager.listAttachmentsById("x-coredata://ABC/ICNote/p123");
-   * attachments.forEach(a => console.log(`${a.name}: ${a.contentType}`));
+   * attachments.forEach(a => console.log(`${a.name}: ${a.contentId}`));
    * ```
    */
   listAttachmentsById(id2) {
@@ -68456,7 +68456,7 @@ registerTool(
 registerTool(
   "resolve-paragraph-anchor",
   {
-    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); changes Notes only with remint and the opt-in private writer. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until the paragraph gets a new ID. remint: true then calls the private writer's native-set-paragraph-id on the matched block (with a fresh revision, refusing if the paragraph changed) and resolves again; it runs only when APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1 (and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1), and otherwise reports writer-unavailable. refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
+    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); changes Notes only with remint and the opt-in private writer. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until the paragraph gets a new ID. remint: true then calls the private writer's native-set-paragraph-id on the matched block (with a fresh revision, refusing if the paragraph changed) and resolves again; it runs only when APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1 (and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS=1), and otherwise reports writer-unavailable. refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
     inputSchema: {
       anchorId: anchorIdInput,
       minConfidence: external_exports.number().min(0).max(1).optional().describe(`Lowest confidence accepted as a match (default ${DEFAULT_MIN_CONFIDENCE})`),
@@ -69711,13 +69711,13 @@ function firstImageView(noteId3, first2) {
 registerTool(
   "list-attachments",
   {
-    description: "Use when: listing the attachments of one note, by id (preferred) or title. With includePaths, also where each attachment's files are on disk; with firstImage, only the note's lead visual.\nReturns: each attachment's name, content type, and id (use with save-attachment/fetch-attachment). includePaths adds identifier, uti, kind, bodyIndex, assetPaths (the attachment's own files), previewPath (Notes' largest rendered thumbnail, always an image file), and paths. firstImage returns {firstImage, orderSource}: the first image in body order even when its asset has not downloaded (path null), else the first scan or drawing, else null.\nDo not use when: you want the attachment bytes (fetch-attachment) or files on disk (save-attachment, export-attachments).\nNote: includePaths and firstImage need the note id and Full Disk Access; they read NoteStore and the Notes data folder read-only. Treat the returned paths as local data: copy files out with export-attachments rather than handing raw paths on.",
+    description: "Use when: listing the attachments of one note, by id (preferred) or title. With includePaths, also where each attachment's files are on disk; with firstImage, only the note's lead visual.\nReturns: each attachment's name, contentId, and id (use with save-attachment/fetch-attachment). The legacy contentType field aliases contentId (a cid: identifier), not a MIME type or UTI. includePaths adds uti (Notes' stored type, or null), identifier, kind, bodyIndex, assetPaths (the attachment's own files), previewPath (Notes' largest rendered thumbnail, always an image file), and paths. firstImage returns {firstImage, orderSource}: the first image in body order even when its asset has not downloaded (path null), else the first scan or drawing, else null.\nDo not use when: you want the attachment bytes (fetch-attachment) or files on disk (save-attachment, export-attachments).\nNote: includePaths and firstImage need the note id and Full Disk Access; they read NoteStore and the Notes data folder read-only. Treat the returned paths as local data: copy files out with export-attachments rather than handing raw paths on.",
     inputSchema: {
       id: looseNoteId(external_exports.string()).optional().describe(`Note ID (preferred - more reliable than title): ${NOTE_ID_FORMS}`),
       title: external_exports.string().max(MAX.TITLE).optional().describe("Note title (use id instead when available)"),
       account: external_exports.string().max(MAX.ACCOUNT).optional().describe("Account containing the note (ignored if id is provided)"),
       includePaths: external_exports.boolean().optional().describe(
-        "Add on-disk assetPaths, previewPath, and paths to each attachment (requires id and Full Disk Access)"
+        "Add Notes' stored uti and on-disk assetPaths, previewPath, and paths to each attachment (requires id and Full Disk Access)"
       ),
       firstImage: external_exports.boolean().optional().describe(
         "Return only the note's lead visual in body order instead of the list (requires id and Full Disk Access)"
@@ -69753,7 +69753,7 @@ registerTool(
           count: 0
         });
       }
-      const attachmentList2 = attachments2.map((a) => `  - ${a.name} (${a.contentType})`).join("\n");
+      const attachmentList2 = attachments2.map((a) => `  - ${a.name} (content ID: ${a.contentId ?? a.contentType})`).join("\n");
       if (!includePaths) {
         return successResponse(
           `Found ${attachments2.length} attachment(s) in "${note2.title}":
@@ -69805,7 +69805,7 @@ ${attachmentList2}`,
     if (attachments.length === 0) {
       return successResponse(`Note "${title}" has no attachments`, { attachments: [], count: 0 });
     }
-    const attachmentList = attachments.map((a) => `  - ${a.name} (${a.contentType})`).join("\n");
+    const attachmentList = attachments.map((a) => `  - ${a.name} (content ID: ${a.contentId ?? a.contentType})`).join("\n");
     return successResponse(
       `Found ${attachments.length} attachment(s) in "${title}":
 ${attachmentList}`,
@@ -69925,7 +69925,7 @@ registerTool(
 registerTool(
   "save-attachment",
   {
-    description: "Use when: writing one note attachment to a file on disk.\nReturns: the saved path.\nDo not use when: you want the bytes in-memory as base64 (fetch-attachment).\nSafety: writes a file; savePath must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Get the ids from list-attachments first.",
+    description: "Use when: writing one note attachment to a file on disk.\nReturns: the saved path, name, and legacy contentType (a content identifier, not a MIME type or UTI). Get the stored uti from list-attachments with includePaths: true.\nDo not use when: you want the bytes in-memory as base64 (fetch-attachment).\nSafety: writes a file; savePath must be absolute and under the home directory, a temp dir, or /Volumes, and not inside the Notes data folder. Get the ids from list-attachments first.",
     inputSchema: {
       noteId: looseNoteId(external_exports.string().min(1, "noteId is required")).describe(
         `Note id (from search/list): ${NOTE_ID_FORMS}`
@@ -69938,7 +69938,7 @@ registerTool(
     outputSchema: {
       savedPath: external_exports.string().optional(),
       name: external_exports.string().optional(),
-      contentType: external_exports.string().optional()
+      contentType: external_exports.string().optional().describe("Legacy content identifier (cid:), not a MIME type or UTI")
     }
   },
   withErrorHandling(({ noteId: noteId3, attachmentId, savePath }) => {
@@ -70101,7 +70101,7 @@ Safety: writes files; exportDir must be absolute and under the home directory, a
 registerTool(
   "fetch-attachment",
   {
-    description: "Use when: retrieving one note attachment's bytes inline as base64 (no file written).\nReturns: name, content type, byte count, and base64 data.\nDo not use when: you want it saved to disk (save-attachment).\nNote: get the ids from list-attachments first.",
+    description: "Use when: retrieving one note attachment's bytes inline as base64 (no file written).\nReturns: name, legacy contentType (a content identifier, not a MIME type or UTI), byte count, and base64 data. Get the stored uti from list-attachments with includePaths: true.\nDo not use when: you want it saved to disk (save-attachment).\nNote: get the ids from list-attachments first.",
     inputSchema: {
       noteId: looseNoteId(external_exports.string().min(1, "noteId is required")).describe(
         `Note id (from search/list): ${NOTE_ID_FORMS}`
@@ -70110,7 +70110,7 @@ registerTool(
     },
     outputSchema: {
       name: external_exports.string().optional(),
-      contentType: external_exports.string().optional(),
+      contentType: external_exports.string().optional().describe("Legacy content identifier (cid:), not a MIME type or UTI"),
       bytes: external_exports.number().optional(),
       base64: external_exports.string().optional()
     }
@@ -70121,7 +70121,7 @@ registerTool(
       return errorResponse(`Failed to fetch attachment: ${r.error ?? "unknown error"}`);
     }
     return successResponse(
-      `Fetched "${r.name ?? "attachment"}" (${r.contentType ?? "unknown type"}, ${r.bytes ?? 0} bytes) as base64.`,
+      `Fetched "${r.name ?? "attachment"}" (content ID: ${r.contentType ?? "unavailable"}, ${r.bytes ?? 0} bytes) as base64.`,
       { name: r.name, contentType: r.contentType, bytes: r.bytes, base64: r.base64 }
     );
   }, "Error fetching attachment")

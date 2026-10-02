@@ -19,11 +19,17 @@ not security fixes to an earlier released writer.
 - Sync nudge and relaunch are live-validation gated. Native saves check expected
   changes and refuse unsafe cloud/deletion states. The writer has its own
   transaction author, and native framework tests are explicitly opt-in.
-- Compose files and edit replacement-file plans follow the established
-  `add-attachment` file policy (#259, #260): approved roots, regular files,
-  private-path restrictions, and descriptor identity checks.
+- Compose files follow the established `add-attachment` file policy (#259,
+  #260): approved roots, regular files, private-path restrictions, and descriptor
+  identity checks. Edit replacement-file requests remain refused.
 
 ### Fixed
+
+- Attachment tool descriptions and text labels distinguish the legacy
+  `contentType`/`contentId` compatibility alias from the actual `uti` returned
+  by `list-attachments` with `includePaths`. Response fields remain unchanged.
+- Reconciled the roadmap and contributor guidance with shipped work, the open
+  split PRs, and the remaining writer evidence requirements.
 
 - The development replica-table decoder no longer treats paired zero-length
   start/end records as character owners. Those sentinels had shifted one-based
@@ -385,18 +391,17 @@ not security fixes to an earlier released writer.
   checklist, or with `select: "all"` every checklist row, with new items and
   their checked states, leaving every other paragraph and attachment as it
   is. The dry run lists the rows it would remove.
-- `native-edit-note` can replace an attachment with a new image or PDF file
-  (`replacement: {file, filename?}` with an attachment selector) in one save.
-  The dry run reports the file's size and SHA-256; the apply verifies the new
-  attachment's type, name, and bytes and removes it again if anything fails
-  before the save. The writer probe reports it as `editReplaceFile`.
+- `native-edit-note` attachment removal and file replacement remain unavailable.
+  Both dry run and apply refuse with `unsupported_attachment_change`, and the
+  writer probe reports `editReplaceFile` unavailable until the old attachment
+  row and media can be safely tombstoned.
 - `native-edit-note` apply takes `ifPlanDigest`, the dry run's `planDigest`,
-  and refuses a request, `requireNonSystemPaper` value, or replacement file
-  that differs from the dry run (`plan_mismatch`).
+  and refuses a request or `requireNonSystemPaper` value that differs from
+  the dry run (`plan_mismatch`).
 - `native-edit-note` attachment selectors count and edit attachments, not
   glyphs. Notes stores some attachments (for example an image added through
-  AppleScript) as two adjacent glyphs; `ordinal`, `expectedCount`, removal,
-  and text beside the attachment now treat them as one.
+  AppleScript) as two adjacent glyphs; `ordinal`, `expectedCount`, and text
+  beside the attachment now treat them as one. Removal remains refused.
 - The edit read-back compares every stored field of paragraph styles
   (including list numbering and hints), checklist todos, attachment
   references, fonts, and colors explicitly instead of through `description`,

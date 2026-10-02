@@ -612,6 +612,8 @@ export interface Attachment {
    * Despite the field name this is NOT a UTI — Notes' AppleScript dictionary
    * exposes no MIME type or UTI for attachments, so this mirrors {@link contentId}.
    * Kept for backwards compatibility with existing consumers.
+   * For Notes' stored UTI, use list-attachments with includePaths: true and read
+   * the separate `uti` field (requires an exact note id and Full Disk Access).
    */
   contentType: string;
 
