@@ -57,7 +57,7 @@ describe("checklist writer tools", () => {
     const description = config("native-set-checklist-item").description;
     expect(description).toMatch(/Safety:.*ifRevision/s);
     expect(description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
-    expect(description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+    expect(description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_CHECKLIST=1/);
   });
 
   it("reads the native checklist for a resolved note through the writer deps", async () => {

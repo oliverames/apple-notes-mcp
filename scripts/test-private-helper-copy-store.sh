@@ -20,9 +20,12 @@
 #              attachments, plus up to 3 without. The first note also runs
 #              the rich-run, inline-link, and checklist steps (4c2); notes
 #              with an attachment in the body also run the attachment
-#              selector steps (4d), including a file replacement when one
-#              of the first five attachments is a file (image, PDF). If the
-#              default sample has none, name such notes in EDIT_NOTES.
+#              selector steps (4d), including refusal of attachment removal
+#              and file replacement. File replacement refusals need a file
+#              attachment among the first five (image, PDF). If the default
+#              sample has none, name such notes in EDIT_NOTES.
+#   Quit Notes.app first: orphan-table pruning refuses while it runs,
+#              including on a copy.
 #
 # Some steps use the writer's copy-only fault injection
 # (APPLE_NOTES_MCP_PRIVATE_TEST_FAULT), which the writer ignores unless
@@ -31,6 +34,28 @@
 # Prints states and counts only, never note titles or bodies. Needs Full Disk
 # Access for the terminal running it. Removes the copy on exit.
 set -euo pipefail
+
+# Prune applies require Notes.app to stay closed, even for copy stores.
+# Fail before making the copy if that prerequisite cannot be established.
+if /usr/bin/pgrep -x -u "$(/usr/bin/id -u)" Notes >/dev/null; then
+  echo "FAIL: quit Notes.app before running the orphan-prune copy-store harness" >&2
+  exit 1
+else
+  PROCESS_STATUS=$?
+  if [ "$PROCESS_STATUS" != "1" ]; then
+    echo "FAIL: could not establish whether Notes.app is running" >&2
+    exit 1
+  fi
+fi
+
+# Explicit test opt-ins for only the write features exercised by this harness.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS=1
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$REPO/native/private-helper/apple-notes-private-writer.m"
@@ -66,13 +91,15 @@ echo "copied store: $(/usr/bin/stat -f %z "$COPY") bytes"
 
 # The write switch is always cleared, so the live store can only be opened
 # read-only; copy writes do not need it.
-run() { printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES "$HELPER" 2>/dev/null; }
+run() { printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES -u APPLE_NOTES_MCP_PRIVATE_STORE "$HELPER" 2>/dev/null; }
 copy_run() {
   printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES \
     APPLE_NOTES_MCP_PRIVATE_STORE="$COPY" "$HELPER" 2>/dev/null
 }
 read_request() { printf '{"protocol":1,"action":"read_note_state","identifier":"%s"}' "$1"; }
 ZERO="r1:$(printf '0%.0s' $(seq 1 64))"
+EDIT_ZERO_DIGEST="p2:${ZERO#r1:}"
+COMPOSE_ZERO_DIGEST="c1:${ZERO#r1:}"
 
 NOTE="${1:-}"
 if [ -z "$NOTE" ]; then
@@ -323,7 +350,10 @@ import { anchorFor, setParagraphIdReminter } from "@/utils/paragraphAnchors.js";
 const [id, dbPath, block, registryPath, sourcePath] = process.argv.slice(2);
 // The client's gates see both switches; the writer process gets neither the
 // write switch nor anything but the copy.
-const env = { ...process.env, APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+// This isolated test deliberately overrides only the TypeScript process guard:
+// the child still has its live write switch removed and its copy-store path
+// enforced by the binary. No request here can open the live store read-write.
+const env = { ...process.env, APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS: "1", APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "1" };
 const childEnv = { ...env };
 delete childEnv.APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES;
 const deps = () =>
@@ -622,11 +652,10 @@ RICH_CHECKLIST_OPS='[{"op":"replace_checklist","containing":"copy-store item 1",
 RICH_TAMPER_OPS='[{"op":"replace","selector":{"text":"copy-store new 1","match":"equals"},"replacement":{"text":"copy-store new 1b"}}]'
 RICH_UNMARK_OPS='[{"op":"delete_paragraph","selector":{"text":"copy-store rich copy-store link"}},{"op":"delete_paragraph","selector":{"text":"copy-store new 1b"}},{"op":"delete_paragraph","selector":{"text":"copy-store new 2"}},{"op":"delete_paragraph","selector":{"text":"copy-store new 3"}},{"op":"delete_paragraph","selector":{"text":"copy-store rich end"}}]'
 RICH_DONE=0
-FILE_REPLACED=0
+FILE_REFUSED=0
 # A small PNG from the system to stand in for a new chart.
 REPLACEMENT_FILE="$WORK/copy-store-source.png"
 cp /System/Library/CoreServices/Dock.app/Contents/Resources/pileArrow@2x.png "$REPLACEMENT_FILE"
-REPLACEMENT_SHA="$(/usr/bin/shasum -a 256 "$REPLACEMENT_FILE" | cut -d' ' -f1)"
 TRIMMED=0
 EDITED=0
 REFUSED_NOTES=0
@@ -635,11 +664,14 @@ for EDIT_NOTE in $EDIT_NOTES; do
   EDIT_LIVE_BEFORE="$EDIT_LIVE_BEFORE $EDIT_NOTE=$(field "$(run "$(read_request "$EDIT_NOTE")")" revision)"
   # Guard rails: the live store is gated, a missing ifRevision is refused, a
   # stale one is a conflict, and none of them commit.
-  OUT="$(run "$(edit_request edit_note "$EDIT_NOTE" "$ZERO" "$RESTYLE_OPS")" || true)"
+  OUT="$(run "$(edit_request edit_note "$EDIT_NOTE" "$ZERO" "$RESTYLE_OPS" ",\"ifPlanDigest\":\"$EDIT_ZERO_DIGEST\"")" || true)"
   [ "$(field "$OUT" code)" = "writes_disabled" ] || fail "live edit_note not gated: $(field "$OUT" code)"
   OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "" "$RESTYLE_OPS")" || true)"
   [ "$(field "$OUT" code)" = "invalid_request" ] || fail "edit_note without ifRevision was not refused"
   OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "$ZERO" "$RESTYLE_OPS")" || true)"
+  [ "$(field "$OUT" code)" = "invalid_request" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "edit_note without ifPlanDigest was not refused"
+  OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "$ZERO" "$RESTYLE_OPS" ",\"ifPlanDigest\":\"$EDIT_ZERO_DIGEST\"")" || true)"
   if [ "$(field "$OUT" code)" != "revision_conflict" ] || [ "$(field "$OUT" committed)" != "false" ]; then
     fail "stale edit ifRevision not refused: $(field "$OUT" code)"
   fi
@@ -735,7 +767,7 @@ for EDIT_NOTE in $EDIT_NOTES; do
     # edit (a toggled checklist todo, injected into the read-back on the copy).
     snap "$EDIT_NOTE" before
     PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$RICH_TAMPER_OPS")" || true)"
-    OUT="$(fault_run tamper_todo "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$RICH_TAMPER_OPS")" || true)"
+    OUT="$(fault_run tamper_todo "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$RICH_TAMPER_OPS" ",\"ifPlanDigest\":\"$(field "$PLAN" planDigest)\"")" || true)"
     [ "$(field "$OUT" code)" = "verification_failed" ] && [ "$(field "$OUT" committed)" = "true" ] ||
       fail "a toggled todo outside the edit was not caught: $(field "$OUT" code) $(field "$OUT" message)"
     echo "ok: the read-back catches a checklist todo toggled outside the edited ranges ($(field "$OUT" message))"
@@ -781,9 +813,9 @@ for EDIT_NOTE in $EDIT_NOTES; do
   # 4d. Attachment selectors on notes whose body holds an attachment: add a
   # caption inline after the first attachment and remove it, insert and
   # delete a paragraph anchored on it (both must restore the note exactly),
-  # then remove the attachment from the body. The removal cannot be undone,
-  # so it runs last, on the copy only; the independent check proves every
-  # other attachment row and every other row unchanged.
+  # then prove attachment removal and replacement are refused. The snapshot
+  # checks prove these refusals leave the copy unchanged; tombstones are not
+  # yet verified, so the harness must not expect those mutations to succeed.
   PROBE="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$CAPTION_OPS")" || true)"
   if [ "$(field "$PROBE" code)" = "match_count_mismatch" ]; then
     continue
@@ -804,18 +836,15 @@ for EDIT_NOTE in $EDIT_NOTES; do
   # edit (injected into the read-back on the copy); the caption it commits
   # is then removed again.
   PLAN="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$CAPTION_OPS")" || true)"
-  OUT="$(fault_run tamper_attachment "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$CAPTION_OPS")" || true)"
+  OUT="$(fault_run tamper_attachment "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$CAPTION_OPS" ",\"ifPlanDigest\":\"$(field "$PLAN" planDigest)\"")" || true)"
   [ "$(field "$OUT" code)" = "verification_failed" ] && [ "$(field "$OUT" committed)" = "true" ] ||
     fail "a re-pointed attachment glyph was not caught: $(field "$OUT" code) $(field "$OUT" message)"
   echo "ok: the read-back catches an attachment glyph re-pointed outside the edited ranges"
   edit_step "$EDIT_NOTE" "remove the caption again" "$UNCAPTION_OPS"
-  # Replace the first attachment with a new image file in one save. A
-  # failure injected just before the save must leave the store and the
-  # media folder untouched; the real apply is then checked by the
-  # independent decoder (the new attachment and media rows are the only new
-  # rows) and by the media file's bytes.
-  # The first of the note's first five attachments that is a file (image,
-  # PDF, or other file); tables, drawings, and cards are refused.
+  # File replacement is deliberately disabled until row/media tombstones
+  # have real evidence. Verify refusal at plan AND apply, without new media.
+  snap "$EDIT_NOTE" before
+  MEDIA_BEFORE="$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')"
   PLAN=""
   for ORDINAL in 1 2 3 4 5; do
     FILE_OPS="$(printf '[{"op":"replace","selector":{"kind":"attachment","ordinal":%s},"replacement":{"file":"%s","filename":"copy-store-chart.png"}}]' "$ORDINAL" "$REPLACEMENT_FILE")"
@@ -823,38 +852,34 @@ for EDIT_NOTE in $EDIT_NOTES; do
     [ "$(field "$PLAN" code)" = "unsupported_attachment" ] || break
   done
   if [ "$(field "$PLAN" code)" = "unsupported_attachment" ] || [ "$(field "$PLAN" code)" = "match_count_mismatch" ]; then
-    echo "note: no file attachment among the first five; file replacement not exercised on this note"
+    echo "note: no file attachment among the first five; file replacement refusal not exercised on this note"
   else
-    [ "$(field "$PLAN" status)" = "planned" ] || fail "file replacement plan: $(field "$PLAN" code) $(field "$PLAN" message)"
-    [ "$(field "$PLAN" replacementFiles.0.sha256)" = "$REPLACEMENT_SHA" ] || fail "the plan hashed another file"
-    snap "$EDIT_NOTE" before
-    MEDIA_BEFORE="$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')"
-    OUT="$(fault_run fail_before_save "$(edit_request edit_note "$EDIT_NOTE" "$(field "$PLAN" revisionBefore)" "$FILE_OPS")" || true)"
-    [ "$(field "$OUT" code)" = "test_fault" ] && [ "$(field "$OUT" committed)" = "false" ] ||
-      fail "injected failure: $(field "$OUT" code) $(field "$OUT" message)"
+    [ "$(field "$PLAN" code)" = "unsupported_attachment_change" ] && [ "$(field "$PLAN" committed)" = "false" ] ||
+      fail "file replacement plan was not refused: $(field "$PLAN" code)"
+    FREV="$(field "$(copy_run "$(read_request "$EDIT_NOTE")")" revision)"
+    OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "$FREV" "$FILE_OPS" ",\"ifPlanDigest\":\"$EDIT_ZERO_DIGEST\"")" || true)"
+    [ "$(field "$OUT" code)" = "unsupported_attachment_change" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+      fail "file replacement apply was not refused: $(field "$OUT" code)"
     snap "$EDIT_NOTE" after
     node "$CHECK" same "$WORK/before.json" "$WORK/after.json" >/dev/null ||
-      fail "a failed file replacement left rows behind"
+      fail "refused file replacement changed the store"
     [ "$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')" = "$MEDIA_BEFORE" ] ||
-      fail "a failed file replacement left its media file"
-    echo "ok: a file replacement that fails before the save leaves no row and no media file"
-    edit_step "$EDIT_NOTE" "replace an attachment with a file" "$FILE_OPS"
-    [ -n "$(field "$OUT" replacementFiles.0.attachmentIdentifier)" ] || fail "file replacement reported no new attachment"
-    [ "$(field "$OUT" preservation.replacementFilesVerified)" = "1" ] || fail "file replacement was not verified"
-    [ "$(find "$WORK" -name copy-store-chart.png | wc -l | tr -d ' ')" = "$((MEDIA_BEFORE + 1))" ] ||
-      fail "the file replacement did not write exactly one media file"
-    while IFS= read -r STORED; do
-      [ "$(/usr/bin/shasum -a 256 "$STORED" | cut -d' ' -f1)" = "$REPLACEMENT_SHA" ] ||
-        fail "the new attachment's media file does not hold the source bytes"
-    done < <(find "$WORK" -name copy-store-chart.png)
-    echo "   new attachment $(field "$OUT" replacementFiles.0.uti), media file beside the copy with the source bytes"
-    FILE_REPLACED=$((FILE_REPLACED + 1))
+      fail "refused file replacement created a media file"
+    echo "ok: file replacement refused at plan and apply; no rows or media changed"
+    FILE_REFUSED=$((FILE_REFUSED + 1))
   fi
-  edit_step "$EDIT_NOTE" "remove an attachment from the body" "$REMOVE_ATTACHMENT_OPS"
-  [ "$(field "$OUT" removedAttachments.0)" != "" ] || fail "attachment removal reported no removed attachment"
-  [ "$(field "$OUT" preservation.removedAttachments.0.identifier)" = "$(field "$OUT" removedAttachments.0)" ] ||
-    fail "attachment removal did not report the removed row's state"
-  echo "   removed attachment row: stillInNote=$(field "$OUT" preservation.removedAttachments.0.rowStillInNote) markedForDeletion=$(field "$OUT" preservation.removedAttachments.0.markedForDeletion) changedBeforeSave=$(json_field "$OUT" removedAttachmentRowChanges)"
+  snap "$EDIT_NOTE" before
+  OUT="$(copy_run "$(edit_request plan_edit "$EDIT_NOTE" "" "$REMOVE_ATTACHMENT_OPS")" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_attachment_change" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "attachment removal plan was not refused: $(field "$OUT" code)"
+  AREV="$(field "$(copy_run "$(read_request "$EDIT_NOTE")")" revision)"
+  OUT="$(copy_run "$(edit_request edit_note "$EDIT_NOTE" "$AREV" "$REMOVE_ATTACHMENT_OPS" ",\"ifPlanDigest\":\"$EDIT_ZERO_DIGEST\"")" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_attachment_change" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "attachment removal apply was not refused: $(field "$OUT" code)"
+  snap "$EDIT_NOTE" after
+  node "$CHECK" same "$WORK/before.json" "$WORK/after.json" >/dev/null ||
+    fail "refused attachment removal changed the store"
+  echo "ok: attachment removal refused at plan and apply; copy unchanged"
   ATTACHMENT_EDITED=$((ATTACHMENT_EDITED + 1))
 done
 [ "$EDITED" -gt 0 ] || fail "the edit_note round trip ran on no note"
@@ -863,8 +888,8 @@ echo "ok: edit_note round trip restored $EDITED note(s) exactly; $REFUSED_NOTES 
 echo "ok: attachment selector steps passed on $ATTACHMENT_EDITED note(s)"
 echo "ok: trim_blank_lines steps passed on $TRIMMED note(s)"
 [ "$RICH_DONE" = "1" ] || fail "the rich-run and checklist steps ran on no note"
-[ "$FILE_REPLACED" -gt 0 ] || fail "file replacement ran on no note (EDIT_NOTES needs a note whose first attachment is an image, PDF, or file)"
-echo "ok: rich runs, inline link, checklist replacement, and file replacement ($FILE_REPLACED note(s)) passed"
+[ "$FILE_REFUSED" -gt 0 ] || fail "file replacement refusal ran on no note (EDIT_NOTES needs a note whose first attachment is an image, PDF, or file)"
+echo "ok: rich runs, inline link, checklist replacement, and file replacement refusals ($FILE_REFUSED note(s)) passed"
 
 # 4e. Structured compose: plan, guarded apply with verified read-back, replay,
 #     prepend below the title, and insertion before an exact heading.
@@ -880,7 +905,7 @@ compose_req() { # mode, extra JSON fields (leading comma)
   printf '{"protocol":1,"action":"compose_note","identifier":"%s","mode":"%s","paragraphs":%s%s}' \
     "$NOTE" "$1" "$PARAS" "$2"
 }
-GATED="$(run "$(compose_req append ",\"ifRevision\":\"$ZERO\"")" || true)"
+GATED="$(run "$(compose_req append ",\"ifRevision\":\"$ZERO\",\"ifPlanDigest\":\"$COMPOSE_ZERO_DIGEST\"")" || true)"
 [ "$(field "$GATED" code)" = "writes_disabled" ] && [ "$(field "$GATED" committed)" = "false" ] ||
   fail "live compose not gated: $(field "$GATED" code)"
 echo "ok: live compose refused without APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES"
@@ -888,12 +913,14 @@ PLAN="$(copy_run "$(compose_req append ',"dryRun":true')" || true)"
 [ "$(field "$PLAN" status)" = "planned" ] || fail "compose plan failed: $(field "$PLAN" code) $(field "$PLAN" message)"
 [ "$(field "$PLAN" committed)" = "false" ] || fail "compose plan reported committed"
 CREV="$(field "$PLAN" revisionBefore)"
+CDIG="$(field "$PLAN" planDigest)"
+[ -n "$CDIG" ] || fail "compose plan has no digest"
 [ "$CREV" = "$(field "$(copy_run "$READ")" revision)" ] || fail "plan revision differs from note state"
 echo "ok: compose dry run planned $(field "$PLAN" paragraphs) paragraphs, nothing written"
-OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$ZERO\"")" || true)"
+OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$ZERO\",\"ifPlanDigest\":\"$CDIG\"")" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
   fail "stale compose revision not refused"
-OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\"")" || true)"
+OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\",\"ifPlanDigest\":\"$CDIG\"")" || true)"
 [ "$(field "$OUT" status)" = "updated" ] || fail "compose failed: $(field "$OUT" code) $(field "$OUT" message)"
 [ "$(field "$OUT" verified)" = "true" ] || fail "compose not verified"
 [ "$(field "$OUT" storeKind)" = "copy" ] || fail "compose did not report the copy store"
@@ -905,17 +932,23 @@ OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\"")" || true)"
 [ -n "$(field "$OUT" objectURI)" ] || fail "compose did not report objectURI"
 [ "$(field "$OUT" pushScheduled)" = "false" ] || fail "compose reported a scheduled push"
 echo "ok: compose applied; 13 paragraphs verified (styles, indent, quote, checklist state, runs); unitStart $(field "$OUT" unitStart)"
-OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\"")" || true)"
+OUT="$(copy_run "$(compose_req append ",\"ifRevision\":\"$CREV\",\"ifPlanDigest\":\"$CDIG\"")" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
   fail "replayed compose not refused"
 echo "ok: stale and replayed compose refused, committed=false"
-PREV="$(field "$(copy_run "$READ")" revision)"
-OUT="$(copy_run "$(compose_req prepend ",\"ifRevision\":\"$PREV\"")" || true)"
+PLAN="$(copy_run "$(compose_req prepend ',"dryRun":true')" || true)"
+[ "$(field "$PLAN" status)" = "planned" ] || fail "prepend plan failed: $(field "$PLAN" code)"
+PREV="$(field "$PLAN" revisionBefore)"
+PDIG="$(field "$PLAN" planDigest)"
+OUT="$(copy_run "$(compose_req prepend ",\"ifRevision\":\"$PREV\",\"ifPlanDigest\":\"$PDIG\"")" || true)"
 [ "$(field "$OUT" verified)" = "true" ] || fail "prepend failed: $(field "$OUT" code) $(field "$OUT" message)"
 echo "ok: prepend verified at UTF-16 offset $(field "$OUT" insertAt) (below the title line)"
 ANCHOR=',"insertBeforeHeading":{"text":"Compose check","occurrence":2,"expectedCount":2}'
-HREV="$(field "$(copy_run "$READ")" revision)"
-OUT="$(copy_run "$(compose_req append "$ANCHOR,\"ifRevision\":\"$HREV\"")" || true)"
+PLAN="$(copy_run "$(compose_req append "$ANCHOR,\"dryRun\":true")" || true)"
+[ "$(field "$PLAN" status)" = "planned" ] || fail "heading compose plan failed: $(field "$PLAN" code)"
+HREV="$(field "$PLAN" revisionBefore)"
+HDIG="$(field "$PLAN" planDigest)"
+OUT="$(copy_run "$(compose_req append "$ANCHOR,\"ifRevision\":\"$HREV\",\"ifPlanDigest\":\"$HDIG\"")" || true)"
 [ "$(field "$OUT" placementVerified)" = "true" ] || fail "insert before heading failed: $(field "$OUT" code) $(field "$OUT" message)"
 OUT="$(copy_run "$(compose_req append "$ANCHOR,\"dryRun\":true")" || true)"
 [ "$(field "$OUT" code)" = "selector_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
@@ -927,15 +960,16 @@ OBJECTS='[{"style":"body","runs":[{"text":"objects"}]},{"kind":"divider"},
 OREQ="$(printf '{"protocol":1,"action":"compose_note","identifier":"%s","mode":"append","paragraphs":%s' "$NOTE" "$OBJECTS")"
 OUT="$(copy_run "$OREQ,\"dryRun\":true}" || true)"
 [ "$(field "$OUT" status)" = "planned" ] || fail "object plan failed: $(field "$OUT" code) $(field "$OUT" message)"
+ODIG="$(field "$OUT" planDigest)"
 OBJ_BEFORE="$(/usr/bin/sqlite3 "$COPY" "SELECT COUNT(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline') OR ZTYPEUTI1 IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline');" 2>/dev/null || echo "?")"
 OREV="$(field "$(copy_run "$READ")" revision)"
-OUT="$(copy_run "$OREQ,\"ifRevision\":\"$OREV\"}" || true)"
+OUT="$(copy_run "$OREQ,\"ifRevision\":\"$OREV\",\"ifPlanDigest\":\"$ODIG\"}" || true)"
 [ "$(field "$OUT" verified)" = "true" ] || fail "object compose failed: $(field "$OUT" code) $(field "$OUT" message)"
 [ "$(field "$OUT" objects)" = "3" ] || fail "expected 3 created objects, got $(field "$OUT" objects)"
 [ "$(field "$OUT" objects.1.uti)" = "com.apple.notes.table" ] || fail "table object has UTI $(field "$OUT" objects.1.uti)"
 OBJ_AFTER="$(/usr/bin/sqlite3 "$COPY" "SELECT COUNT(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline') OR ZTYPEUTI1 IN ('com.apple.notes.table','com.apple.notes.inlinetextattachment.dividerline');" 2>/dev/null || echo "?")"
 echo "ok: 2 dividers and a table created, placed, and verified cell by cell (divider UTI $(field "$OUT" objects.0.uti); object rows $OBJ_BEFORE -> $OBJ_AFTER)"
-OUT="$(copy_run "$OREQ,\"ifRevision\":\"$OREV\"}" || true)"
+OUT="$(copy_run "$OREQ,\"ifRevision\":\"$OREV\",\"ifPlanDigest\":\"$ODIG\"}" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
   fail "replayed object compose not refused"
 echo "ok: replayed object compose refused, committed=false"
@@ -1098,9 +1132,13 @@ table_checks() {
     echo "skip: the copy has no second table to turn into an orphan"
   else
     OUT="$(copy_run "$(prune_request "$TID" true)" || true)"
+    [ "$(field "$OUT" code)" != "cloud_state_unverified" ] ||
+      fail "prune validation needs a sanitized quiescent fixture: this copy has pending/unverified cloud state; no prune apply ran"
     [ "$(field "$OUT" code)" = "unsupported_attachment" ] || fail "visible table accepted as an orphan"
     echo "ok: visible table refused by prune"
     PLAN="$(copy_run "$(prune_request "$ORPHAN" true)" || true)"
+    [ "$(field "$PLAN" code)" != "cloud_state_unverified" ] ||
+      fail "prune validation needs a sanitized quiescent fixture: the orphan has pending/unverified cloud state; no prune apply ran"
     [ "$(field "$PLAN" status)" = "planned" ] || fail "prune dry run: $(field "$PLAN" code) $(field "$PLAN" message)"
     OUT="$(copy_run "$(prune_request "$ORPHAN" false "$(field "$PLAN" revision)" "$(field "$PLAN" tableDigest)")" || true)"
     [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||

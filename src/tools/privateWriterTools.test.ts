@@ -77,7 +77,27 @@ describe("private writer tools", () => {
     const append = config("native-append-plain-text");
     expect(append.annotations.readOnlyHint).toBe(false);
     expect(append.description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
-    expect(append.description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+    expect(append.description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1/);
+  });
+
+  it("describes attachment edits as refusals while preserving supported adjacent-text guidance", () => {
+    const edit = fixture().config("native-edit-note");
+    expect(edit.description).toMatch(
+      /Attachment removal and replacement are refused in both the dry run and the apply/
+    );
+    expect(edit.description).not.toMatch(
+      /A failed apply removes any attachment|each replacement file's bytes|state of each removed attachment/
+    );
+    expect(edit.inputSchema.operations.description).toMatch(
+      /position 'before'\/'after' to insert text inline beside/
+    );
+    expect(edit.inputSchema.operations.description).toMatch(
+      /replacement\.file.*refused with unsupported_attachment_change in both plan and apply/
+    );
+    expect(edit.inputSchema.operations.description).not.toMatch(
+      /puts a new attachment in its place|removes that attachment from the body/
+    );
+    expect(edit.inputSchema.dryRun.description).toMatch(/requires ifRevision and ifPlanDigest/);
   });
 
   it("status adds the writer setup command while it is not installed", async () => {

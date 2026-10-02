@@ -79,7 +79,7 @@ describe("native table writer tools", () => {
       "native-prune-orphan-table",
     ]) {
       expect(config(name).description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
-      expect(config(name).description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+      expect(config(name).description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES=1/);
     }
     expect(config("native-set-table-cell").description).toMatch(/Safety:.*ifTableDigest/s);
   });

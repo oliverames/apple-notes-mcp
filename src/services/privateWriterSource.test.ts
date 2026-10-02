@@ -272,9 +272,8 @@ describe("private writer source contract", () => {
 
   it("guards an apply with the dry run's plan digest", () => {
     const apply = handlerBody("HandleEditNote");
-    expect(apply).toMatch(
-      /if \(ifPlanDigest && !\[ifPlanDigest isEqualToString:response\[""\]\]\)\s*Fail\(""/
-    );
+    expect(apply).toMatch(/if \(!\[ifPlanDigest isEqualToString:response\[""\]\]\)\s*Fail\(""/);
+    expect(apply).toMatch(/NSString \*ifPlanDigest = RequireString\(request, ""\);/);
     expect(SOURCE).toMatch(/\{"edit_note", "[^"]*ifPlanDigest[^"]*", HandleEditNote\}/);
     const digest = CODE.slice(CODE.indexOf("static NSString *PlanDigest("));
     expect(digest.slice(0, digest.indexOf("\n}\n"))).toMatch(/requireNonSystemPaper/);
@@ -292,6 +291,7 @@ describe("private writer source contract", () => {
       /@catch \(NSException \*e\) \{[\s\S]{0,400}if \(nothingSaved\) \{\s*\[context rollback\];\s*for \(NSString \*container in mediaContainers\)/
     );
     expect(apply).toMatch(/verifyError = VerifyReplacementFiles\(fresh, reread, plan\.files\)/);
+    expect(apply).toMatch(/BOOL nothingSaved = !gEarlySaves &&/);
     // The file is read once, without following a final link.
     expect(CODE).toMatch(
       /open\(\[path fileSystemRepresentation\], O_RDONLY \| O_NOFOLLOW \| O_CLOEXEC\)/
@@ -411,7 +411,7 @@ describe("private writer source contract", () => {
     expect(CODE.match(/save:&\w+\]/g)).toHaveLength(2);
     expect(
       CODE.match(
-        /EnforceScopeGuard\(context\);\s*NSError \*saveError = nil;\s*gSaveAttempted = YES;/g
+        /EnforceScopeGuard\(context\);\s*CheckExpectedChangesBeforeSave\(context\);\s*NSError \*saveError = nil;\s*gSaveAttempted = YES;/g
       )
     ).toHaveLength(2);
     // Dispatch validates the fields first and re-checks a call that saved nothing.
@@ -452,7 +452,85 @@ describe("private writer source contract", () => {
     expect(body).toMatch(/the note body changed/);
   });
 
+  it("refuses attachment removal or replacement before any edit is applied", () => {
+    expect(SOURCE).toMatch(
+      /if \(removed\.count \|\| plan\.files\.count\)\s*Fail\(@"unsupported_attachment_change"/
+    );
+    const planStart = SOURCE.indexOf("static EditPlan *PlanEdit(");
+    const refusal = SOURCE.indexOf('Fail(@"unsupported_attachment_change"', planStart);
+    expect(refusal).toBeGreaterThan(planStart);
+    expect(refusal).toBeLessThan(SOURCE.indexOf("static void ApplyInContext("));
+  });
+
+  it("checks running Notes in the binary both before opening and before saving", () => {
+    expect(SOURCE).toContain('kAllowRunningEnv = @"APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING"');
+    expect(CODE).toMatch(/if \(!readOnly\) RequireNotesWriteSafety\(store\);/);
+    expect(CODE).toMatch(
+      /static void CheckExpectedChangesBeforeSave[^;]*\{[\s\S]*?RequireNotesWriteSafety/
+    );
+    expect(handlerBody("HandlePruneOrphanTable")).toMatch(/gStrictNotesClosed = apply;/);
+    expect(handlerBody("HandleRepairPurgeFlag")).toMatch(/gStrictNotesClosed = !dryRun;/);
+  });
+
+  it("detects early saves in every write context and keeps saved media", () => {
+    expect(CODE).toMatch(/if \(!readOnly\) ObserveUnexpectedSaves\(context\);/);
+    expect(CODE).toMatch(/if \(!gSaveAttempted\) \{\s*gEarlySaves\+\+;\s*gSaveSucceeded = YES;/);
+    for (const name of ["HandleEditNote", "HandleAddPaper", "HandleComposeNote"])
+      expect(handlerBody(name)).toMatch(/BOOL nothingSaved = !gEarlySaves &&/);
+    expect(SOURCE.match(/out\[@"earlySaves"\] = @\(gEarlySaves\);/g)).toHaveLength(2);
+  });
+
+  it("declares expected objects on every saving path and rechecks at both save sites", () => {
+    const savingFunctions = [
+      ...CODE.matchAll(/^static [^\n(]*?\*?(\w+)\([^;{]*\)\s*\{\n([\s\S]*?)\n\}\n/gm),
+    ].filter((m) => /\bSaveOrFail(?:For)?\(/.test(m[2]) && m[1] !== "SaveOrFailFor");
+    for (const fn of savingFunctions) expect(fn[2], fn[1]).toMatch(/RequireExpectedChanges\(/);
+    expect(
+      CODE.match(/EnforceScopeGuard\(context\);\s*CheckExpectedChangesBeforeSave\(context\);/g)
+    ).toHaveLength(2);
+    expect(SOURCE).toContain('context.userInfo[@"writerExpectedObjects"] = owned;');
+    expect(SOURCE).not.toContain(
+      'if ([object.entity.name isEqualToString:@"ICCloudState"]) continue;'
+    );
+  });
+
+  it("refuses uncertain cloud state before orphan pruning and synced purge flags", () => {
+    const prune = handlerBody("HandlePruneOrphanTable");
+    expect(prune).toMatch(/RequireCloudMutationReady\(target\.note\);/);
+    expect(prune).toMatch(/RequireCloudMutationReady\(target\.attachment\);/);
+    expect(SOURCE).toContain('@"needsToBeFetchedFromCloud"');
+    expect(SOURCE).toContain('@"unverified_merge:"');
+    expect(SOURCE).toMatch(/if \(current <= synced\) return @"flagged_version_already_synced";/);
+  });
+
+  it("keeps every direct write behind its own feature opt-in before loading the framework", () => {
+    const start = SOURCE.indexOf(
+      "static NSDictionary<NSString *, NSString *> *UnverifiedWriteFeatures("
+    );
+    const body = SOURCE.slice(
+      start,
+      SOURCE.indexOf("static void RequireUnverifiedActionOptIn", start)
+    );
+    const actions = [...body.matchAll(/@"([a-z_]+)" : @"[A-Z_]+"/g)].map((match) => match[1]);
+    expect(new Set(actions)).toEqual(
+      new Set(
+        Object.entries(WRITER_ACTIONS)
+          .filter(([, kind]) => kind === "write")
+          .map(([action]) => action)
+      )
+    );
+    expect(CODE).toMatch(
+      /RequireUnverifiedActionOptIn\(action, request, NSProcessInfo.processInfo.environment\);[\s\S]*ParseScopeGuard\(request, subject\);/
+    );
+    const loader = SOURCE.slice(
+      SOURCE.indexOf("static void LoadFramework(void) {"),
+      SOURCE.indexOf("static NSArray", SOURCE.indexOf("static void LoadFramework(void) {"))
+    );
+    expect(loader.indexOf('Fail(@"disabled"')).toBeLessThan(loader.indexOf("dlopen("));
+  });
+
   it("identifies itself as the writer in hello and probe", () => {
+    expect(SOURCE).toContain('kTransactionAuthor = @"apple-notes-mcp-private-writer"');
     expect(SOURCE.match(/@"role" : @"writer"/g)).toHaveLength(2);
     expect(SOURCE.match(/@"readOnly" : @NO/g)).toHaveLength(2);
   });

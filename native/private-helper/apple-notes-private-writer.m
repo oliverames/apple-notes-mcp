@@ -17,9 +17,10 @@
 // Every write action follows one contract: an `ifRevision` compare-and-swap
 // token checked against the persisted note before anything changes, an edit
 // through NotesShared's own model (never SQL), a Core Data save with
-// NSErrorMergePolicy so a concurrent Notes.app save wins, a fresh read-back
+// NSErrorMergePolicy to reject conflicting persisted changes, a fresh read-back
 // through a brand-new coordinator, and an explicit `committed` flag on every
-// failure that happens after the save.
+// failure that happens after the save. Unsaved Notes.app editor state is not
+// covered by optimistic locking; live writes refuse a running app by default.
 //
 // This is UNSUPPORTED PRIVATE API. Every class and selector is resolved at
 // runtime and checked before use; a missing one fails closed with
@@ -73,10 +74,11 @@ __attribute__((used, section("__TEXT,__info_plist"))) static const char kInfoPli
 
 static NSString *const kFrameworkPath =
     @"/System/Library/PrivateFrameworks/NotesShared.framework/NotesShared";
-static NSString *const kTransactionAuthor = @"apple-notes-mcp-private-helper";
+static NSString *const kTransactionAuthor = @"apple-notes-mcp-private-writer";
 static NSString *const kChangeReason = @"apple-notes-mcp append_plain_text";
 static NSString *const kEnableEnv = @"APPLE_NOTES_MCP_ENABLE_PRIVATE";
 static NSString *const kWritesEnv = @"APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
+static NSString *const kAllowRunningEnv = @"APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING";
 static NSString *const kCopyStoreEnv = @"APPLE_NOTES_MCP_PRIVATE_STORE";
 
 #pragma mark - Errors
@@ -176,6 +178,31 @@ typedef struct {
 static BOOL gWriteRequest = NO;
 static BOOL gSaveAttempted = NO;
 static BOOL gSaveSucceeded = NO;
+static NSUInteger gEarlySaves = 0;
+static BOOL gStrictNotesClosed = NO;
+static NSMutableArray *gSaveObservers;
+
+// A private API can save before our guarded save. Record that immediately so
+// any later refusal is committed/indeterminate and cannot delete saved media.
+static void ObserveUnexpectedSaves(NSManagedObjectContext *context) {
+  if (!gSaveObservers) gSaveObservers = [NSMutableArray array];
+  id observer = [NSNotificationCenter.defaultCenter
+      addObserverForName:NSManagedObjectContextDidSaveNotification object:context queue:nil
+      usingBlock:^(NSNotification *notification) {
+        (void)notification;
+        if (!gSaveAttempted) {
+          gEarlySaves++;
+          gSaveSucceeded = YES;
+        }
+      }];
+  [gSaveObservers addObject:observer];
+}
+
+static void RequireNoEarlySave(void) {
+  if (gEarlySaves)
+    Fail(@"unexpected_early_save", @"NotesShared saved before the guarded save; read the note before any retry",
+         @{@"committed" : @YES, @"indeterminate" : @YES, @"earlySaves" : @(gEarlySaves)});
+}
 
 static const ModelRequirement kModelProperties[] = {
     {"ICNote",
@@ -471,6 +498,9 @@ static BOOL gFrameworkLoaded = NO;
 static NSString *gFrameworkError = nil;
 
 static void LoadFramework(void) {
+  // Disabled requests must never load NotesShared, even before OpenContext.
+  if (![NSProcessInfo.processInfo.environment[kEnableEnv] isEqualToString:@"1"])
+    Fail(@"disabled", @"The private helper is disabled; set APPLE_NOTES_MCP_ENABLE_PRIVATE=1 to opt in", nil);
   static BOOL attempted = NO;
   if (attempted) return;
   attempted = YES;
@@ -693,9 +723,24 @@ static StoreLocation ResolveStore(void) {
   return (StoreLocation){live, NO};
 }
 
+static BOOL NotesAppRunning(void);
+
+static BOOL RunningNotesBlocksWrite(BOOL isCopy, BOOL strict, BOOL running, BOOL optedIn) {
+  return running && (strict || (!isCopy && !optedIn));
+}
+
+static void RequireNotesWriteSafety(StoreLocation store) {
+  if (RunningNotesBlocksWrite(store.isCopy, gStrictNotesClosed, NotesAppRunning(),
+                             [NSProcessInfo.processInfo.environment[kAllowRunningEnv] isEqualToString:@"1"]))
+    Fail(@"notes_app_running",
+         gStrictNotesClosed ? @"Quit Notes.app before pruning or repairing deletion state; this refusal cannot be overridden"
+                            : @"Quit Notes.app before live writes, or explicitly set APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1 for an experiment",
+         @{@"committed" : @NO});
+}
+
 // Opens NotesShared's model over the store with Notes' own store options
 // (persistent history tracking + remote change notifications), which is what
-// lets a running Notes.app merge the helper's saves. Reads add
+// exposes persisted saves to Notes; it cannot prove an open editor merges them. Reads add
 // NSReadOnlyPersistentStoreOption so a read can never write.
 static NSManagedObjectContext *OpenContext(StoreLocation store, BOOL readOnly) {
   RequireFeature(FeatureModel);
@@ -709,6 +754,7 @@ static NSManagedObjectContext *OpenContext(StoreLocation store, BOOL readOnly) {
     Fail(@"writes_disabled",
          @"Private writes are disabled; set APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1 to opt in",
          @{@"committed" : @NO});
+  if (!readOnly) RequireNotesWriteSafety(store);
   if (![NSFileManager.defaultManager isReadableFileAtPath:store.path])
     Fail(@"store_unavailable",
          @"NoteStore.sqlite is not readable. Grant Full Disk Access to the app that launches the MCP "
@@ -745,6 +791,8 @@ static NSManagedObjectContext *OpenContext(StoreLocation store, BOOL readOnly) {
   // our save, the save fails instead of silently overwriting.
   context.mergePolicy = NSErrorMergePolicy;
   context.undoManager = nil;
+  context.userInfo[@"writerStoreIsCopy"] = @(store.isCopy);
+  if (!readOnly) ObserveUnexpectedSaves(context);
   return context;
 }
 
@@ -913,6 +961,10 @@ static NSDictionary *EditFileFeatureReport(BOOL contextOK, NSString *contextReas
 static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request);
 // Folder scope guards; defined in "Scope guards" below. Every save calls it.
 static void EnforceScopeGuard(NSManagedObjectContext *context);
+static void RequireExpectedChanges(NSManagedObjectContext *context, NSArray<NSManagedObject *> *allowed,
+                                   NSSet<NSString *> *allowedInsertedEntities);
+static void CheckExpectedChangesBeforeSave(NSManagedObjectContext *context);
+static NSArray<NSManagedObject *> *AttachmentWriteObjects(NSManagedObject *note, NSArray *attachments);
 static NSDictionary *PaperReadFeatureReport(BOOL contextOK, NSString *contextReason, BOOL shapes);
 
 typedef struct {
@@ -931,7 +983,7 @@ static const ActionSpec kActions[] = {
     {"plan_edit", "identifier,requireNonSystemPaper,operations", HandlePlanEdit},
     {"edit_note", "identifier,ifRevision,requireNonSystemPaper,operations,ifPlanDigest", HandleEditNote},
     {"compose_note",
-     "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading",
+     "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading,ifPlanDigest",
      HandleComposeNote},
     {"read_checklist", "identifier", HandleReadChecklist},
     {"set_checklist_item", "identifier,todoIdentifier,done,ifRevision", HandleSetChecklistItem},
@@ -1185,7 +1237,9 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
   ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"),
                                         kChangeReason);
 
+  RequireExpectedChanges(context, @[ note ], [NSSet set]);
   EnforceScopeGuard(context);
+  CheckExpectedChangesBeforeSave(context);
   NSError *saveError = nil;
   gSaveAttempted = YES;
   if (![context save:&saveError]) {
@@ -1253,6 +1307,7 @@ static NSDictionary *HandleAppendPlainText(NSDictionary *request) {
 // tell a failure before, during, and after it apart.
 static void SaveOrFailFor(NSManagedObjectContext *context, NSString *what) {
   EnforceScopeGuard(context);
+  CheckExpectedChangesBeforeSave(context);
   NSError *saveError = nil;
   gSaveAttempted = YES;
   if ([context save:&saveError]) {
@@ -1409,7 +1464,7 @@ static BOOL IsJSONBool(id value) {
 //   only when an explicit attachment selector named that one attachment, and
 //   then only that attachment's glyphs, so every other attachment, table, and
 //   inline object is never inside an edited range.
-// - edit_note takes an optional `ifPlanDigest` (the dry run's planDigest),
+// - edit_note requires `ifPlanDigest` (the dry run's planDigest),
 //   which also covers requireNonSystemPaper and each replacement file's bytes.
 // - A note holding an attribute value whose class the writer cannot compare
 //   field by field (CanonicalValue) is refused at the plan.
@@ -2312,11 +2367,9 @@ static NSArray<NSString *> *MissingForEditFile(void) {
 }
 
 static NSDictionary *EditFileFeatureReport(BOOL contextOK, NSString *contextReason) {
-  NSArray *missing = MissingForEditFile();
-  if (missing.count) return @{@"available" : @NO, @"reason" : @"private_api_unavailable", @"missing" : missing};
-  if (!contextOK)
-    return @{@"available" : @NO, @"reason" : contextReason ?: @"store_unavailable", @"missing" : @[]};
-  return @{@"available" : @YES, @"reason" : [NSNull null], @"missing" : @[]};
+  (void)contextOK;
+  (void)contextReason;
+  return @{@"available" : @NO, @"reason" : @"unsupported_attachment_change", @"missing" : @[]};
 }
 
 static void InstallAccountSandbox(NSString *root);
@@ -3217,6 +3270,10 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
     [removed addObject:key];
     [removedReport addObject:entry[@"identifier"]];
   }
+  if (removed.count || plan.files.count)
+    Fail(@"unsupported_attachment_change",
+         @"Attachment removal and replacement are disabled until their row and media tombstones are verified; nothing was changed",
+         @{@"committed" : @NO, @"attachments" : removedReport});
   plan.removedAttachments = removed;
   plan.unchanged = [NSMutableArray array];
   plan.replaced = [NSMutableArray array];
@@ -3476,7 +3533,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   NSString *ifRevision = RequireString(request, @"ifRevision");
   NSArray *operations = EditOperations(request);
   BOOL requireNonSystemPaper = OptionalBool(request, @"requireNonSystemPaper", NO);
-  NSString *ifPlanDigest = request[@"ifPlanDigest"] ? RequireString(request, @"ifPlanDigest") : nil;
+  NSString *ifPlanDigest = RequireString(request, @"ifPlanDigest");
   RequireFeature(FeatureEdit);
 
   StoreLocation store = ResolveStore();
@@ -3486,7 +3543,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   response[@"dryRun"] = @NO;
   // The dry run's planDigest: the same identifier, operations,
   // requireNonSystemPaper, and replacement file bytes.
-  if (ifPlanDigest && ![ifPlanDigest isEqualToString:response[@"planDigest"]])
+  if (![ifPlanDigest isEqualToString:response[@"planDigest"]])
     Fail(@"plan_mismatch",
          @"The request or a replacement file differs from the dry run that produced ifPlanDigest; nothing was saved",
          @{@"committed" : @NO, @"planDigest" : response[@"planDigest"]});
@@ -3508,6 +3565,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
       plan.createdObjects = MaterializeReplacementFiles(plan.files, plan.note, mediaContainers);
     }
     ApplyInContext(context, plan, YES);
+    RequireExpectedChanges(context, @[ plan.note ], [NSSet set]);
     if ([fault isEqualToString:@"fail_before_save"]) {
       [context rollback];
       Fail(@"test_fault", @"Copy-store fault injection: failed after the edit, before the save",
@@ -3518,8 +3576,8 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
     // Nothing reached the store (the save was never tried, or it failed and
     // rolled back): drop the new attachments and remove the media files
     // NotesShared already wrote for them.
-    BOOL nothingSaved = !gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
-                                            [e.userInfo[@"committed"] isEqual:@NO]);
+    BOOL nothingSaved = !gEarlySaves && (!gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
+                                            [e.userInfo[@"committed"] isEqual:@NO]));
     if (nothingSaved) {
       [context rollback];
       for (NSString *container in mediaContainers)
@@ -3797,7 +3855,8 @@ static NSString *ComposeFileName(NSString *source, id requested) {
 // and keeps those bytes: the attachment is created from exactly the bytes it
 // hashed, so a file that changes afterwards cannot slip in.
 static NSDictionary *ValidateFileParagraph(NSDictionary *paragraph) {
-  RequireOnlyKeys(paragraph, @"kind,path,filename", @"file paragraph");
+  RequireOnlyKeys(paragraph, @"kind,path,filename,expectedSha256", @"file paragraph");
+  NSString *expectedSha256 = RequireString(paragraph, @"expectedSha256");
   NSString *path = paragraph[@"path"];
   if (![path isKindOfClass:[NSString class]] || path.length == 0 || path.length > 4096 || ![path isAbsolutePath] ||
       [path rangeOfCharacterFromSet:ForbiddenTextCharacters(NO)].location != NSNotFound)
@@ -3822,6 +3881,10 @@ static NSDictionary *ValidateFileParagraph(NSDictionary *paragraph) {
   close(fd);
   if (n < 0 || (long long)data.length != info.st_size)
     Fail(@"invalid_request", @"The file changed while it was read; try again", nil);
+  NSString *actualSha256 = SHA256Hex(data);
+  if (![expectedSha256 isEqualToString:actualSha256])
+    Fail(@"plan_mismatch", @"The file bytes differ from the reviewed SHA-256; nothing was saved",
+         @{@"committed" : @NO});
   // The type Notes records, from Launch Services' reading of the source file;
   // `filename` keeps its extension. An unregistered type becomes generic data.
   NSString *uti = nil;
@@ -4652,6 +4715,23 @@ static NSArray *ReadBackSummary(NSArray *signatures) {
 // gWriteRequest without gSaveAttempted), so the client never reports a
 // refused compose as indeterminate. Failures from the save on set committed
 // themselves.
+static NSString *ComposePlanDigest(NSDictionary *request, NSString *revisionBefore) {
+  NSMutableDictionary *canonical = [@{
+    @"identifier" : request[@"identifier"], @"mode" : request[@"mode"],
+    @"paragraphs" : request[@"paragraphs"], @"ifRevision" : revisionBefore,
+  } mutableCopy];
+  if ([request[@"requireNonSystemPaper"] boolValue]) canonical[@"requireNonSystemPaper"] = @YES;
+  for (NSString *key in @[ @"insertBeforeHeading", @"ifFolderId", @"ifAncestorFolderId",
+                           @"forbiddenAncestorFolderIds" ])
+    if (request[key] && (![request[key] isKindOfClass:[NSArray class]] || [request[key] count]))
+      canonical[key] = request[key];
+  NSError *error = nil;
+  NSData *data = [NSJSONSerialization dataWithJSONObject:canonical
+      options:NSJSONWritingSortedKeys | NSJSONWritingWithoutEscapingSlashes error:&error];
+  if (!data) Fail(@"invalid_request", @"The compose plan cannot be canonicalized", @{@"committed" : @NO});
+  return [@"c1:" stringByAppendingString:SHA256Hex(data)];
+}
+
 static NSDictionary *HandleComposeNote(NSDictionary *request) {
   gWriteRequest = YES;
   NSString *identifier = RequireIdentifier(request);
@@ -4662,10 +4742,12 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
   BOOL requireNonSystemPaper = ComposeBool(request, @"requireNonSystemPaper", @"Request");
   NSString *ifRevision = nil;
   if (dryRun) {
-    if (request[@"ifRevision"]) Fail(@"invalid_request", @"`dryRun` does not take `ifRevision`", nil);
+    if (request[@"ifRevision"] || request[@"ifPlanDigest"])
+      Fail(@"invalid_request", @"`dryRun` does not take `ifRevision` or `ifPlanDigest`", nil);
   } else {
     ifRevision = RequireString(request, @"ifRevision");
   }
+  NSString *ifPlanDigest = dryRun ? nil : RequireString(request, @"ifPlanDigest");
   NSDictionary *beforeHeading = request[@"insertBeforeHeading"];
   if (beforeHeading) {
     if (![beforeHeading isKindOfClass:[NSDictionary class]])
@@ -4700,6 +4782,11 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
   if (!dryRun && ![revisionBefore isEqualToString:ifRevision])
     Fail(@"revision_conflict", @"The note changed since ifRevision was read",
          @{@"committed" : @NO, @"currentRevision" : revisionBefore});
+
+  NSString *planDigest = ComposePlanDigest(request, revisionBefore);
+  if (!dryRun && ![ifPlanDigest isEqualToString:planDigest])
+    Fail(@"plan_mismatch", @"The compose request differs from its reviewed plan; nothing was saved",
+         @{@"committed" : @NO, @"planDigest" : planDigest});
 
   id ms = Send(note, "mergeableString");
   NSAttributedString *existing = ms ? Send(ms, "attributedString") : nil;
@@ -4765,6 +4852,7 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
       @"unitStart" : @(placement.index + unitOffset),
       @"objectURI" : note.objectID.URIRepresentation.absoluteString,
       @"revisionBefore" : revisionBefore,
+      @"planDigest" : planDigest,
       @"requiredNonSystemPaper" : @(requireNonSystemPaper),
       @"storeKind" : store.isCopy ? @"copy" : @"live",
       @"frozenAttachments" : FrozenReport(frozenStats),
@@ -4812,13 +4900,16 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
         [NSProcessInfo.processInfo.environment[kFaultEnv] isEqualToString:@"compose_before_save"])
       Fail(@"injected_fault", @"Injected failure before the save (copy store only)", @{@"committed" : @NO});
 
+    NSMutableArray *writeAttachments = [NSMutableArray array];
+    for (NSDictionary *object in created) [writeAttachments addObject:object[@"attachment"]];
+    RequireExpectedChanges(context, AttachmentWriteObjects(note, writeAttachments), [NSSet set]);
     SaveOrFail(context);
   } @catch (NSException *e) {
     // Nothing reached the store (the save was never tried, or it failed and
     // rolled back): remove the files NotesShared already wrote.
     [NSNotificationCenter.defaultCenter removeObserver:saveObserver];
-    BOOL nothingSaved = !gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
-                                            [e.userInfo[@"committed"] isEqual:@NO]);
+    BOOL nothingSaved = !gEarlySaves && (!gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
+                                            [e.userInfo[@"committed"] isEqual:@NO]));
     // Part of the change was saved before the failure: report it as a
     // committed, indeterminate write and keep every file a saved row names.
     if (earlySaves)
@@ -5179,6 +5270,7 @@ static NSDictionary *HandleSetChecklistItem(NSDictionary *request) {
     MergeAttributes(ms, body, [edit[0] rangeValue], @{kStyleKey : edit[1]}, nil);
   SendVoid(ms, "endEditing");
   FinishAttributeEdit(note, span, @"apple-notes-mcp set_checklist_item");
+  RequireExpectedChanges(context, @[ note ], [NSSet set]);
   SaveOrFail(context);
 
   // Fresh read-back through a new coordinator: the text is unchanged, the item
@@ -5537,6 +5629,7 @@ static NSDictionary *HandleSetHighlight(NSDictionary *request) {
   for (NSArray *run in expectedMap)
     if (![run[2] isKindOfClass:[NSNull class]]) anyEmphasis = YES;
   NSNumber *expectedFlag = HasEmphasisFlag(note) ? @(anyEmphasis) : nil;
+  RequireExpectedChanges(context, @[ note ], [NSSet set]);
   SaveOrFail(context);
 
   NSDictionary *after = nil;
@@ -5815,6 +5908,7 @@ static NSDictionary *HandleAddURLCard(NSDictionary *request) {
   // be eligible for upload even when the note is.
   ((void (*)(id, SEL, id))objc_msgSend)(attachment, sel_registerName("updateChangeCountWithReason:"),
                                         @"apple-notes-mcp add_url_card");
+  RequireExpectedChanges(context, AttachmentWriteObjects(note, @[ attachment ]), [NSSet set]);
   SaveOrFail(context);
 
   // Fresh read-back: the text is the old text plus the insertion at the
@@ -6130,6 +6224,7 @@ static NSDictionary *HandleSetParagraphId(NSDictionary *request) {
   ((void (*)(id, SEL, NSUInteger, NSRange, NSInteger))objc_msgSend)(
       note, sel_registerName("edited:range:changeInLength:"), EDITED_ATTRIBUTES, owned, 0);
   FinishNoteEdit(note, @"apple-notes-mcp set_paragraph_id", [NSDate date]);
+  RequireExpectedChanges(context, @[ note ], [NSSet set]);
   SaveOrFail(context);
 
   // Fresh read-back: same text, the block carries the new UUID on every
@@ -6547,6 +6642,10 @@ static NSDictionary *HandleAddSectionLink(NSDictionary *request) {
   ((void (*)(id, SEL, id))objc_msgSend)(
       inlineAttachment, sel_registerName("updateChangeCountWithReason:"),
       @"apple-notes-mcp add_section_link");
+  NSMutableArray *writeObjects = [AttachmentWriteObjects(source, @[ inlineAttachment ]) mutableCopy];
+  if (!selfLink && minted) [writeObjects addObject:target];
+  for (NSDictionary *entry in cleared) [writeObjects addObject:entry[@"attachment"]];
+  RequireExpectedChanges(context, writeObjects, [NSSet set]);
   SaveOrFail(context);
 
   // 5. Fresh read-back of both notes and the attachment.
@@ -6988,6 +7087,7 @@ static NSDictionary *CommitTableEdit(TableTarget target, id model, NSString *rea
   [target.note setValue:now forKey:@"modificationDate"];
   ((void (*)(id, SEL, id))objc_msgSend)(target.note, sel_registerName("updateChangeCountWithReason:"),
                                         reason);
+  RequireExpectedChanges(target.context, @[ target.note, target.attachment ], [NSSet set]);
   SaveOrFail(target.context);
 
   NSString *verifyDetail = nil;
@@ -7216,12 +7316,42 @@ static NSUInteger UnidentifiedAttachmentGlyphs(NSAttributedString *body) {
   return count;
 }
 
+// These stored flags must be available and clear before declaring a table
+// orphaned. A cached server record is not proof it was merged into noteData;
+// until that private contract is validated, any payload blocks this action.
+static NSArray<NSString *> *CloudMutationBlockers(NSManagedObject *object) {
+  NSMutableArray *blockers = [NSMutableArray array];
+  for (NSString *key in @[ @"needsInitialFetchFromCloud", @"needsToBeFetchedFromCloud" ]) {
+    if (!object.entity.attributesByName[key]) [blockers addObject:[@"unavailable:" stringByAppendingString:key]];
+    else if ([[object valueForKey:key] boolValue]) [blockers addObject:key];
+  }
+  for (NSString *key in @[ @"serverRecordData", @"userSpecificServerRecordData" ]) {
+    if (!object.entity.attributesByName[key]) [blockers addObject:[@"unavailable:" stringByAppendingString:key]];
+    else {
+      id data = [object valueForKey:key];
+      if (data && (![data isKindOfClass:[NSData class]] || [data length]))
+        [blockers addObject:[@"unverified_merge:" stringByAppendingString:key]];
+    }
+  }
+  return blockers;
+}
+
+static void RequireCloudMutationReady(NSManagedObject *object) {
+  NSArray *blockers = CloudMutationBlockers(object);
+  if (blockers.count)
+    Fail(@"cloud_state_unverified", @"A cloud fetch is pending or the stored server version cannot be proven merged",
+         @{@"committed" : @NO, @"entity" : object.entity.name, @"blockers" : blockers});
+}
+
 static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
   gWriteRequest = YES;
   BOOL dryRun = RequireBool(request, @"dryRun");
   NSString *ifRevision = nil, *ifTableDigest = nil;
   BOOL apply = RequireGuards(request, dryRun, &ifRevision, &ifTableDigest);
+  gStrictNotesClosed = apply;
   TableTarget target = ResolveTableTarget(request, !apply, NO, FeaturePruneTable);
+  RequireCloudMutationReady(target.note);
+  RequireCloudMutationReady(target.attachment);
   if (apply) CompareTableGuards(target, ifRevision, ifTableDigest);
   NSUInteger unidentified = UnidentifiedAttachmentGlyphs(BodyAttributedString(target.note));
   if (unidentified)
@@ -7987,30 +8117,76 @@ static NSArray<NSManagedObject *> *ActiveFoldersTitled(NSManagedObjectContext *c
 // Before any save, the context may hold only the changes this action means
 // to make. A NotesShared factory or setter that touches anything else makes
 // the write refuse instead of saving side effects nobody reviewed.
-static void RequireExpectedChanges(NSManagedObjectContext *context, NSArray<NSManagedObject *> *allowed,
-                                   NSSet<NSString *> *allowedInsertedEntities) {
+static NSArray<NSManagedObject *> *OwnedWriteObjects(NSArray<NSManagedObject *> *roots) {
+  NSMutableArray *owned = [roots mutableCopy];
+  // Only ownership relationships: never walk account, folder, note, or a
+  // collection of existing attachments, which could authorize unrelated rows.
+  for (NSUInteger i = 0; i < owned.count; i++) {
+    NSManagedObject *object = owned[i];
+    for (NSString *key in @[ @"noteData", @"cloudState", @"media" ]) {
+      NSRelationshipDescription *relationship = object.entity.relationshipsByName[key];
+      if (!relationship || relationship.isToMany) continue;
+      NSManagedObject *child = [object valueForKey:key];
+      if ([child isKindOfClass:[NSManagedObject class]] && ![owned containsObject:child]) [owned addObject:child];
+    }
+  }
+  return owned;
+}
+
+static NSArray<NSManagedObject *> *AttachmentWriteObjects(NSManagedObject *note, NSArray *attachments) {
+  NSMutableArray *allowed = [NSMutableArray arrayWithObject:note];
+  [allowed addObjectsFromArray:attachments];
+  NSManagedObject *account = note.entity.relationshipsByName[@"account"] ? [note valueForKey:@"account"] : nil;
+  if (account && attachments.count) {
+    NSSet *keys = [NSSet setWithArray:account.changedValues.allKeys];
+    NSSet *relationshipKeys = [NSSet setWithArray:@[ @"attachments", @"inlineAttachments", @"media" ]];
+    if (![keys isSubsetOfSet:relationshipKeys])
+      Fail(@"unexpected_changes", @"The attachment factory changed account fields beyond its attachment relationships",
+           @{@"committed" : @NO});
+    [allowed addObject:account];
+  }
+  return allowed;
+}
+
+static void ValidateExpectedObjects(NSManagedObjectContext *context, NSSet *owned) {
+  RequireNoEarlySave();
   [context processPendingChanges];
-  NSMutableSet *allowedIDs = [NSMutableSet set];
-  for (NSManagedObject *object in allowed)
-    if (object) [allowedIDs addObject:object.objectID];
+  RequireNoEarlySave();
   NSMutableArray *unexpected = [NSMutableArray array];
   for (NSManagedObject *object in context.deletedObjects)
     [unexpected addObject:[@"deleted " stringByAppendingString:object.entity.name]];
   for (NSManagedObject *object in context.insertedObjects)
-    if (![allowedIDs containsObject:object.objectID] &&
-        ![allowedInsertedEntities containsObject:object.entity.name])
+    if (![owned containsObject:object])
       [unexpected addObject:[@"inserted " stringByAppendingString:object.entity.name]];
-  for (NSManagedObject *object in context.updatedObjects) {
-    if ([allowedIDs containsObject:object.objectID]) continue;
-    // Cloud-state rows belong to the object whose change count moved.
-    if ([object.entity.name isEqualToString:@"ICCloudState"]) continue;
-    [unexpected addObject:[@"updated " stringByAppendingString:object.entity.name]];
-  }
+  for (NSManagedObject *object in context.updatedObjects)
+    if (![owned containsObject:object])
+      [unexpected addObject:[@"updated " stringByAppendingString:object.entity.name]];
   if (unexpected.count) {
     [context rollback];
     Fail(@"unexpected_changes", @"NotesShared staged changes beyond the requested write; nothing was saved",
          @{@"committed" : @NO, @"unexpected" : unexpected});
   }
+}
+
+static void RequireExpectedChanges(NSManagedObjectContext *context, NSArray<NSManagedObject *> *allowed,
+                                   NSSet<NSString *> *allowedInsertedEntities) {
+  // Entity-wide exemptions are intentionally unsupported. An inserted cloud
+  // row must belong to an explicitly authorized object, just like an update.
+  (void)allowedInsertedEntities;
+  NSSet *owned = [NSSet setWithArray:OwnedWriteObjects(allowed)];
+  ValidateExpectedObjects(context, owned);
+  // Freeze object identities; later relationship changes cannot widen this set.
+  context.userInfo[@"writerExpectedObjects"] = owned;
+}
+
+static void CheckExpectedChangesBeforeSave(NSManagedObjectContext *context) {
+  RequireNoEarlySave();
+  RequireNotesWriteSafety((StoreLocation){nil, [context.userInfo[@"writerStoreIsCopy"] boolValue]});
+  NSSet *allowed = context.userInfo[@"writerExpectedObjects"];
+  if (!allowed)
+    Fail(@"unexpected_changes", @"This write did not declare its expected Core Data changes; nothing was saved",
+         @{@"committed" : @NO});
+  ValidateExpectedObjects(context, allowed);
 }
 
 // The writer never uploads (see HandleAppendPlainText). `saved` NO means the
@@ -9024,13 +9200,14 @@ static NSDictionary *HandleAddPaper(NSDictionary *request) {
     ((void (*)(id, SEL, id))objc_msgSend)(attachment, sel_registerName("updateChangeCountWithReason:"),
                                           kPaperChangeReason);
     ((void (*)(id, SEL, id))objc_msgSend)(note, sel_registerName("updateChangeCountWithReason:"), kPaperChangeReason);
+    RequireExpectedChanges(context, AttachmentWriteObjects(note, @[ attachment ]), [NSSet set]);
     SaveOrFail(context);
   } @catch (NSException *e) {
     // Nothing reached the store (the save was never tried, or it failed and
     // rolled back): remove the bundle NotesShared already wrote, and only when
     // it sits exactly where a Paper bundle belongs.
-    BOOL nothingSaved = !gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
-                                            [e.userInfo[@"committed"] isEqual:@NO]);
+    BOOL nothingSaved = !gEarlySaves && (!gSaveAttempted || ([e isKindOfClass:[HelperError class]] &&
+                                            [e.userInfo[@"committed"] isEqual:@NO]));
     if (nothingSaved && bundlePath && [bundlePath hasSuffix:@".bundle"] &&
         [[bundlePath stringByDeletingLastPathComponent] hasSuffix:@"/Paper/Bundles"])
       [NSFileManager.defaultManager removeItemAtPath:bundlePath error:NULL];
@@ -9412,6 +9589,25 @@ static NSString *DeletionState(NSManagedObject *note) {
   return marked ? @"purge_flag_outside_recently_deleted" : @"active";
 }
 
+// A local version newer than the last upload does not establish when the
+// purge flag was introduced: an older flagged version may already have synced.
+// Without flag-introduction provenance, only a never-uploaded row is eligible.
+static NSString *PurgeVersionBlocker(NSManagedObject *cloud) {
+  if (!cloud || !cloud.entity.attributesByName[@"currentLocalVersion"] ||
+      !cloud.entity.attributesByName[@"latestVersionSyncedToCloud"])
+    return @"cloud_version_unverifiable";
+  id currentValue = [cloud valueForKey:@"currentLocalVersion"];
+  id syncedValue = [cloud valueForKey:@"latestVersionSyncedToCloud"];
+  if (![currentValue isKindOfClass:[NSNumber class]] || ![syncedValue isKindOfClass:[NSNumber class]])
+    return @"cloud_version_unverifiable";
+  long long current = [currentValue longLongValue];
+  long long synced = [syncedValue longLongValue];
+  if (current <= 0 || synced < 0) return @"cloud_version_unverifiable";
+  if (current <= synced) return @"flagged_version_already_synced";
+  if (synced > 0) return @"flag_introduction_version_unverifiable";
+  return nil;
+}
+
 // The note's state and everything that blocks a repair.
 static NSDictionary *PurgePlan(NSManagedObject *note) {
   NSString *state = DeletionState(note);
@@ -9433,6 +9629,9 @@ static NSDictionary *PurgePlan(NSManagedObject *note) {
       BoolAttr(trash, @"markedForDeletion"))
     [blockers addObject:@"no_recently_deleted_folder"];
   if (markedAttachments) [blockers addObject:@"attachments_marked_for_deletion"];
+  NSString *versionBlocker = PurgeVersionBlocker([note valueForKey:@"cloudState"]);
+  if (versionBlocker) [blockers addObject:versionBlocker];
+  [blockers addObjectsFromArray:CloudMutationBlockers(note)];
   return @{
     @"identifier" : OrNull(StringAttr(note, @"identifier")),
     @"objectURI" : note.objectID.URIRepresentation.absoluteString,
@@ -9499,6 +9698,7 @@ static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request) {
            nil);
   }
   RequireFeature(FeaturePurgeRepair);
+  gStrictNotesClosed = !dryRun;
 
   StoreLocation store = ResolveStore();
   NSManagedObjectContext *context = OpenContext(store, dryRun);
@@ -10678,6 +10878,32 @@ static NSData *ReadStdin(void) {
   return data;
 }
 
+// Every writer feature still lacks the reviewed live-evidence artifact.
+// Keep direct binary invocation behind the same per-feature experiment opt-in
+// as TypeScript, including copy stores. A future evidence-backed release must
+// deliberately update both boundaries; no blanket switch enables a feature.
+static NSDictionary<NSString *, NSString *> *UnverifiedWriteFeatures(void) {
+  return @{
+    @"append_plain_text" : @"APPEND", @"edit_note" : @"EDIT", @"compose_note" : @"COMPOSE",
+    @"set_checklist_item" : @"CHECKLIST", @"set_highlight" : @"HIGHLIGHT", @"add_url_card" : @"LINK_CARD",
+    @"set_paragraph_id" : @"PARAGRAPH_IDS", @"add_section_link" : @"SECTION_LINKS",
+    @"delete_table_row" : @"TABLES", @"insert_table_row" : @"TABLES", @"set_table_cell" : @"TABLES",
+    @"prune_orphan_table" : @"TABLES", @"create_smart_folder" : @"SMART_FOLDERS",
+    @"update_smart_folder" : @"SMART_FOLDERS", @"delete_smart_folder" : @"SMART_FOLDERS",
+    @"add_paper" : @"PAPER", @"repair_purge_flag" : @"PURGE_REPAIR",
+  };
+}
+
+static void RequireUnverifiedActionOptIn(NSString *action, NSDictionary *request, NSDictionary *environment) {
+  NSString *feature = UnverifiedWriteFeatures()[action];
+  if (!feature || (IsJSONBool(request[@"dryRun"]) && [request[@"dryRun"] boolValue])) return;
+  gWriteRequest = YES;
+  NSString *optIn = [@"APPLE_NOTES_MCP_ALLOW_UNVERIFIED_" stringByAppendingString:feature];
+  if (![environment[optIn] isEqualToString:@"1"])
+    Fail(@"not_live_validated", @"This writer feature has no reviewed live validation; its specific testing opt-in is required",
+         @{@"committed" : @NO, @"feature" : feature, @"optIn" : optIn});
+}
+
 static NSDictionary *Dispatch(void) {
   NSData *input = ReadStdin();
   if (input.length == 0) Fail(@"invalid_json", @"Empty request", nil);
@@ -10703,6 +10929,7 @@ static NSDictionary *Dispatch(void) {
     for (NSString *key in request)
       if (![allowed containsObject:key])
         Fail(@"invalid_request", [NSString stringWithFormat:@"Unknown request field `%@`", key], nil);
+    RequireUnverifiedActionOptIn(action, request, NSProcessInfo.processInfo.environment);
     if (subject == ScopeSubjectNone) return kActions[i].handler(request);
     ParseScopeGuard(request, subject);
     NSDictionary *result = kActions[i].handler(request);
@@ -10722,6 +10949,11 @@ int main(void) {
       if (gWriteRequest && !gSaveAttempted && !out[@"committed"]) out[@"committed"] = @NO;
       out[@"status"] = @"error";
       out[@"message"] = e.reason ?: @"error";
+      if (gEarlySaves) {
+        out[@"committed"] = @YES;
+        out[@"indeterminate"] = @YES;
+        out[@"earlySaves"] = @(gEarlySaves);
+      }
       EmitAndExit(out, 1);
     } @catch (NSException *e) {
       NSMutableDictionary *out = [@{
@@ -10736,6 +10968,11 @@ int main(void) {
       if (gSaveSucceeded) {
         out[@"code"] = @"verification_failed";
         out[@"committed"] = @YES;
+      }
+      if (gEarlySaves) {
+        out[@"committed"] = @YES;
+        out[@"indeterminate"] = @YES;
+        out[@"earlySaves"] = @(gEarlySaves);
       }
       EmitAndExit(out, 1);
     }

@@ -8,6 +8,11 @@
 #   NOTE_UUID  note to use in the copy. Default: the most recent writable note.
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
 set -euo pipefail
+
+# Explicit test opt-ins for only the write features exercised by this harness.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_LINK_CARD=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1
 # shellcheck source=scripts/private-writer-copy-store-lib.sh
 . "$(dirname "$0")/private-writer-copy-store-lib.sh"
 
@@ -91,7 +96,12 @@ echo "ok: three public.url cards inserted and read back at the planned glyph ind
 #     read-back checks the card line's style.
 CHK="card-checklist-$(date +%s)"
 REV="$(field "$(copy_run "$READ")" revision)"
-OUT="$(copy_run "{\"protocol\":1,\"action\":\"compose_note\",\"identifier\":\"$NOTE\",\"mode\":\"append\",\"ifRevision\":\"$REV\",\"paragraphs\":[{\"style\":\"checklist\",\"checked\":false,\"runs\":[{\"text\":\"$CHK\"}]},{\"style\":\"body\",\"runs\":[{\"text\":\"after the checklist\"}]}]}" || true)"
+CHECKLIST_REQ="{\"protocol\":1,\"action\":\"compose_note\",\"identifier\":\"$NOTE\",\"mode\":\"append\",\"paragraphs\":[{\"style\":\"checklist\",\"checked\":false,\"runs\":[{\"text\":\"$CHK\"}]},{\"style\":\"body\",\"runs\":[{\"text\":\"after the checklist\"}]}]"
+PLAN="$(copy_run "$CHECKLIST_REQ,\"dryRun\":true}" || true)"
+[ "$(field "$PLAN" status)" = "planned" ] || fail "could not plan the checklist fixture: $(field "$PLAN" code)"
+REV="$(field "$PLAN" revisionBefore)"
+CDIG="$(field "$PLAN" planDigest)"
+OUT="$(copy_run "$CHECKLIST_REQ,\"ifRevision\":\"$REV\",\"ifPlanDigest\":\"$CDIG\"}" || true)"
 [ "$(field "$OUT" verified)" = "true" ] || fail "could not add the checklist fixture: $(field "$OUT" code) $(field "$OUT" message)"
 CL0="$(copy_run "{\"protocol\":1,\"action\":\"read_checklist\",\"identifier\":\"$NOTE\"}" || true)"
 ITEMS_BEFORE="$(field "$CL0" total)"

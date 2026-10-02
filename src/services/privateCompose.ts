@@ -16,6 +16,7 @@
  *
  * @module services/privateCompose
  */
+import { createHash } from "node:crypto";
 import { basename, extname, isAbsolute } from "node:path";
 import { z } from "zod";
 import {
@@ -29,7 +30,7 @@ import {
   writeSyncFields,
   type PrivateHelperDeps,
 } from "./privateWriter.js";
-import { assertAllowedFile } from "../utils/attachmentFs.js";
+import { assertAllowedFile, readAllowedFile } from "../utils/attachmentFs.js";
 import { readNoteBlocks, type NoteBlock, type NoteBlocksDocument } from "../utils/noteBlocks.js";
 import { parseNotesShowUrl } from "../utils/noteLinks.js";
 import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
@@ -87,7 +88,7 @@ export interface WireParagraph {
 export type WireObject =
   | { kind: "divider" }
   | { kind: "table"; rows: string[][] }
-  | { kind: "file"; path: string; filename?: string }
+  | { kind: "file"; path: string; filename?: string; expectedSha256?: string }
   | { kind: "url"; url: string };
 
 /** One entry of the writer's `paragraphs` array. */
@@ -928,6 +929,67 @@ const summarySchema = z.array(
 );
 
 const REVISION = /^r1:[a-f0-9]{64}$/;
+export const COMPOSE_PLAN_DIGEST = /^c1:[a-f0-9]{64}$/;
+
+/** Stable JSON shared with the native writer's sorted-key JSON serialization. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
+}
+
+/** Bind the complete planned request, including each file's captured hash. */
+export function composePlanDigest(fields: Record<string, unknown>): string {
+  return `c1:${createHash("sha256").update(canonicalJson(fields)).digest("hex")}`;
+}
+
+export function assertComposePlanDigest(value: string | undefined, expected: string): void {
+  if (!value || !COMPOSE_PLAN_DIGEST.test(value))
+    throw invalid("ifPlanDigest (the planDigest of an identical dry run) is required to apply");
+  if (value !== expected)
+    throw new PrivateWriteError(
+      "plan_mismatch",
+      "The request or an attachment file differs from the dry run; run dryRun again",
+      false
+    );
+}
+
+/**
+ * Capture hashes under the content-file policy before create can call Notes.app.
+ * The native writer checks these hashes against the exact bytes it retains for
+ * the save, closing the gap between this read and its own read. A previously
+ * captured hash is a precondition, never replaced silently with a newer hash.
+ */
+export function snapshotComposeFiles(paragraphs: WireEntry[]): WireEntry[] {
+  const hashes = new Map<string, string>();
+  return paragraphs.map((entry) => {
+    if (!isObject(entry) || entry.kind !== "file") return entry;
+    let hash = hashes.get(entry.path);
+    if (!hash) {
+      composeFileSize(entry.path);
+      try {
+        hash = createHash("sha256")
+          .update(readAllowedFile(entry.path, MAX_COMPOSE_FILE_BYTES, { label: "File" }))
+          .digest("hex");
+      } catch (error) {
+        throw invalid(`file: ${(error as Error).message}`);
+      }
+      hashes.set(entry.path, hash);
+    }
+    if (entry.expectedSha256 !== undefined && entry.expectedSha256 !== hash)
+      throw new PrivateWriteError(
+        "plan_mismatch",
+        "An attachment file changed after it was planned; run dryRun again",
+        false
+      );
+    return { ...entry, expectedSha256: hash };
+  });
+}
 
 export const composePlanSchema = z
   .object({
@@ -941,6 +1003,7 @@ export const composePlanSchema = z
     insertAt: z.number().int(),
     unitStart: z.number().int(),
     revisionBefore: z.string().regex(REVISION),
+    planDigest: z.string().regex(COMPOSE_PLAN_DIGEST),
     plan: summarySchema,
   })
   .passthrough();
@@ -992,6 +1055,7 @@ export interface ComposeRequest {
   mode: "append" | "prepend";
   paragraphs: WireEntry[];
   ifRevision?: string;
+  ifPlanDigest?: string;
   dryRun?: boolean;
   requireNonSystemPaper?: boolean;
   insertBeforeHeading?: InsertBeforeHeading;
@@ -1237,14 +1301,14 @@ export function crossCheckWithDatabase(
   };
 }
 
-/** Refuse an unvalidated compose write unless APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. */
+/** Refuse an unvalidated compose write without its feature-specific opt-in. */
 export function assertComposeWritesAllowed(env: NodeJS.ProcessEnv): void {
   requireLiveValidated(COMPOSE_LIVE_VALIDATED, "compose-note", env);
 }
 
 /**
- * Plan (dryRun) or apply one compose. Apply requires `ifRevision` from a
- * fresh plan or native-note-state; a stale token fails with nothing written.
+ * Plan (dryRun) or apply one compose. Apply requires both the revision and
+ * content digest from an identical plan; changed files refuse before writing.
  */
 export function composeNote(
   request: ComposeRequest,
@@ -1252,11 +1316,13 @@ export function composeNote(
 ): ComposePlan | ComposeResult {
   assertNoteIdentifier(request.identifier);
   const dryRun = request.dryRun === true;
-  if (dryRun && request.ifRevision !== undefined)
-    throw invalid("A dry run does not take ifRevision");
+  if (dryRun && (request.ifRevision !== undefined || request.ifPlanDigest !== undefined))
+    throw invalid("A dry run does not take ifRevision or ifPlanDigest");
   if (!dryRun) {
     if (!request.ifRevision || !REVISION.test(request.ifRevision))
       throw invalid("ifRevision (the revisionBefore of a dry run) is required to apply");
+    if (!request.ifPlanDigest || !COMPOSE_PLAN_DIGEST.test(request.ifPlanDigest))
+      throw invalid("ifPlanDigest (the planDigest of an identical dry run) is required to apply");
     assertComposeWritesAllowed(deps.env);
   }
   if (request.insertBeforeHeading && request.mode !== "append")
@@ -1270,19 +1336,37 @@ export function composeNote(
   const fields: Record<string, unknown> = {
     identifier: request.identifier,
     mode: request.mode,
-    paragraphs: request.paragraphs,
+    paragraphs: snapshotComposeFiles(request.paragraphs),
   };
-  if (dryRun) fields.dryRun = true;
-  else fields.ifRevision = request.ifRevision;
   if (request.requireNonSystemPaper) fields.requireNonSystemPaper = true;
   if (request.insertBeforeHeading) fields.insertBeforeHeading = request.insertBeforeHeading;
   Object.assign(fields, writerScopeFields(request.scope));
+  if (!dryRun)
+    assertComposePlanDigest(
+      request.ifPlanDigest,
+      composePlanDigest({ ...fields, ifRevision: request.ifRevision })
+    );
+  const wireFields = {
+    ...fields,
+    ...(dryRun
+      ? { dryRun: true }
+      : { ifRevision: request.ifRevision, ifPlanDigest: request.ifPlanDigest }),
+  };
 
-  assertWriterRequestSize(fields);
+  assertWriterRequestSize(wireFields);
 
   try {
-    const response = callPrivateWriter("compose_note", fields, deps);
-    if (dryRun) return parseWriterResult(composePlanSchema, response, false);
+    const response = callPrivateWriter("compose_note", wireFields, deps, { dryRun });
+    if (dryRun) {
+      const plan = parseWriterResult(composePlanSchema, response, false);
+      if (plan.planDigest !== composePlanDigest({ ...fields, ifRevision: plan.revisionBefore }))
+        throw new PrivateWriteError(
+          "invalid_response",
+          "The writer's plan digest differs from the requested content",
+          false
+        );
+      return plan;
+    }
     const result = parseWriterResult(composeResultSchema, response, true);
     const mismatches = verifyAgainstRequest(request.paragraphs, result);
     if (mismatches.length)

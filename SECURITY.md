@@ -26,6 +26,9 @@ You will receive a response within 48 hours acknowledging receipt. Security issu
 This MCP server:
 - Runs locally on your machine
 - Uses AppleScript to interact with Notes.app
+- Reads the Notes database by default. The optional, unsupported private writer
+  can write through NotesShared only with explicit private-write and per-feature
+  opt-ins. These gates do not establish safe concurrent-edit or CloudKit behavior.
 - Does not transmit data to external servers
 - Does not store credentials or passwords
 - Cannot access password-protected notes

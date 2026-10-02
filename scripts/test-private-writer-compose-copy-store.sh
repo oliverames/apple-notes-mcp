@@ -11,6 +11,9 @@
 #              that already has an attachment.
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
 set -euo pipefail
+# This harness exercises only compose; the legacy blanket opt-in does not
+# authorize private writer actions. The live write switch stays cleared.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1
 # shellcheck source=scripts/private-writer-copy-store-lib.sh
 . "$(dirname "$0")/private-writer-copy-store-lib.sh"
 
@@ -44,30 +47,37 @@ printf 'compose copy-store fixture %s\n' "$(date +%s)" >"$TXT"
 PNG_SHA="$(/usr/bin/shasum -a 256 "$PNG" | cut -d' ' -f1)"
 TXT_SHA="$(/usr/bin/shasum -a 256 "$TXT" | cut -d' ' -f1)"
 PARAS="[{\"style\":\"heading\",\"runs\":[{\"text\":\"Compose attachments\"}]},
-{\"kind\":\"file\",\"path\":\"$PNG\",\"filename\":\"Chart.png\"},
+{\"kind\":\"file\",\"path\":\"$PNG\",\"filename\":\"Chart.png\",\"expectedSha256\":\"$PNG_SHA\"},
 {\"style\":\"body\",\"runs\":[{\"text\":\"between\"}]},
 {\"kind\":\"url\",\"url\":\"https://example.com/compose\"},
 {\"kind\":\"table\",\"rows\":[[\"A\",\"B\"],[\"1\",\"2\"]]},
-{\"kind\":\"file\",\"path\":\"$TXT\"},
+{\"kind\":\"file\",\"path\":\"$TXT\",\"expectedSha256\":\"$TXT_SHA\"},
 {\"style\":\"body\",\"runs\":[{\"text\":\"end\"}]}]"
 compose_request() { # extra JSON fields (leading comma)
   printf '{"protocol":1,"action":"compose_note","identifier":"%s","mode":"append","paragraphs":%s%s}' \
     "$NOTE" "$PARAS" "$1"
 }
+apply_request() {
+  compose_request ",\"ifRevision\":\"$REV\",\"ifPlanDigest\":\"$PLAN_DIGEST\""
+}
+ZERO_PLAN="c1:${ZERO#r1:}"
 MARKER_FILE="$WORK/compose-marker"
 touch "$MARKER_FILE"
 
 # 1. Without the write switch the writer refuses a read-write open of the live store.
-OUT="$(run "$(compose_request ",\"ifRevision\":\"$ZERO\"")" || true)"
+OUT="$(run "$(compose_request ",\"ifRevision\":\"$ZERO\",\"ifPlanDigest\":\"$ZERO_PLAN\"")" || true)"
 [ "$(field "$OUT" code)" = "writes_disabled" ] && [ "$(field "$OUT" committed)" = "false" ] ||
   fail "live compose not gated: $(field "$OUT" code)"
 echo "ok: live compose with attachments refused without APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES"
 
 # 2. A refusal raised before the save reports committed=false.
-BAD="{\"protocol\":1,\"action\":\"compose_note\",\"identifier\":\"$NOTE\",\"mode\":\"append\",\"paragraphs\":[{\"kind\":\"file\",\"path\":\"relative.png\"}],\"dryRun\":true}"
+BAD="{\"protocol\":1,\"action\":\"compose_note\",\"identifier\":\"$NOTE\",\"mode\":\"append\",\"paragraphs\":[{\"kind\":\"file\",\"path\":\"relative.png\",\"expectedSha256\":\"$PNG_SHA\"}],\"dryRun\":true}"
 OUT="$(copy_run "$BAD" || true)"
-[ "$(field "$OUT" code)" = "invalid_request" ] && [ "$(field "$OUT" committed)" = "false" ] ||
-  fail "relative file path not refused with committed=false: $(field "$OUT" code)"
+# The native error contains literal backticks around the field name.
+# shellcheck disable=SC2016
+[ "$(field "$OUT" code)" = "invalid_request" ] && [ "$(field "$OUT" committed)" = "false" ] &&
+  [ "$(field "$OUT" message)" = 'File `path` must be an absolute path of at most 4096 characters' ] ||
+  fail "relative file path not refused with committed=false: $(field "$OUT" code) $(field "$OUT" message)"
 echo "ok: a relative file path is refused before anything is created, committed=false"
 
 # 3. Dry run: the plan names each object and the bytes read; nothing changes.
@@ -75,6 +85,9 @@ REV="$(field "$(copy_run "$READ")" revision)"
 ROWS_BEFORE="$(attachment_rows)"
 OUT="$(copy_run "$(compose_request ',"dryRun":true')" || true)"
 [ "$(field "$OUT" status)" = "planned" ] || fail "dry run failed: $(field "$OUT" code) $(field "$OUT" message)"
+PLAN_DIGEST="$(field "$OUT" planDigest)"
+[[ "$PLAN_DIGEST" =~ ^c1:[a-f0-9]{64}$ ]] || fail "dry run did not return a compose plan digest"
+[ "$(field "$OUT" revisionBefore)" = "$REV" ] || fail "dry run planned a different revision"
 [ "$(field "$OUT" objects.0.sha256)" = "$PNG_SHA" ] || fail "plan does not carry the PNG's SHA-256"
 [ "$(field "$OUT" objects.0.filename)" = "Chart.png" ] || fail "plan does not carry the file name"
 [ "$(field "$OUT" objects.1.url)" = "https://example.com/compose" ] || fail "plan does not carry the card URL"
@@ -83,10 +96,28 @@ FROZEN="$(field "$OUT" frozenAttachments.attachments)"
 [ "$(field "$(copy_run "$READ")" revision)" = "$REV" ] || fail "dry run changed the note"
 echo "ok: dry run planned 4 objects and fingerprinted $FROZEN existing attachment(s); nothing written"
 
+# An apply cannot skip its plan, substitute another digest, or attach bytes
+# changed since the dry run. Only our generated text fixture is modified.
+OUT="$(copy_run "$(compose_request ",\"ifRevision\":\"$REV\"")" || true)"
+[ "$(field "$OUT" code)" = "invalid_request" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "compose without ifPlanDigest was not refused"
+OUT="$(copy_run "$(compose_request ",\"ifRevision\":\"$REV\",\"ifPlanDigest\":\"$ZERO_PLAN\"")" || true)"
+[ "$(field "$OUT" code)" = "plan_mismatch" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "compose with another plan digest was not refused"
+/bin/cp "$TXT" "$TXT.before-plan"
+/usr/bin/sed 's/^compose/changed/' "$TXT.before-plan" >"$TXT"
+OUT="$(copy_run "$(apply_request)" || true)"
+/bin/mv "$TXT.before-plan" "$TXT"
+[ "$(field "$OUT" code)" = "plan_mismatch" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+  fail "same-size attachment change was not refused: $(field "$OUT" code)"
+[ "$(field "$(copy_run "$READ")" revision)" = "$REV" ] || fail "rejected plan changed the note"
+[ "$(attachment_rows)" = "$ROWS_BEFORE" ] || fail "rejected plan left attachment rows behind"
+echo "ok: missing or changed plan digest and same-size file change refused before saving"
+
 # 4. A failure injected after every object exists, just before the save,
 #    must leave no row and no file behind.
 FILES_BEFORE="$(copy_files)"
-OUT="$(printf '%s' "$(compose_request ",\"ifRevision\":\"$REV\"")" |
+OUT="$(printf '%s' "$(apply_request)" |
   env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES APPLE_NOTES_MCP_PRIVATE_STORE="$COPY" \
     APPLE_NOTES_MCP_WRITER_FAULT=compose_before_save "$HELPER" 2>/dev/null || true)"
 [ "$(field "$OUT" code)" = "injected_fault" ] && [ "$(field "$OUT" committed)" = "false" ] ||
@@ -97,7 +128,7 @@ OUT="$(printf '%s' "$(compose_request ",\"ifRevision\":\"$REV\"")" |
 echo "ok: a failure before the save rolled back every row and removed every file written"
 
 # 5. Apply: two files, a card, and a table in one verified save.
-OUT="$(copy_run "$(compose_request ",\"ifRevision\":\"$REV\"")" || true)"
+OUT="$(copy_run "$(apply_request)" || true)"
 [ "$(field "$OUT" status)" = "updated" ] && [ "$(field "$OUT" verified)" = "true" ] ||
   fail "compose failed: $(field "$OUT" code) $(field "$OUT" message)"
 [ "$(field "$OUT" storeKind)" = "copy" ] || fail "compose did not report the copy store"
@@ -118,7 +149,7 @@ done
 echo "ok: 2 files, a link card, and a table created in one save; glyphs, rows, and file bytes verified; $FROZEN existing attachment(s) unchanged"
 
 # 6. The replayed request is stale.
-OUT="$(copy_run "$(compose_request ",\"ifRevision\":\"$REV\"")" || true)"
+OUT="$(copy_run "$(apply_request)" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] && [ "$(field "$OUT" committed)" = "false" ] ||
   fail "replayed compose not refused"
 echo "ok: replayed compose refused, committed=false"

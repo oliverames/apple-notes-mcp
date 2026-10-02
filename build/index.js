@@ -60171,20 +60171,89 @@ function registerPrivateHelperTools(server2, manager, depsFactory = () => defaul
   );
 }
 
-// src/services/privateWriterBuild.ts
-import {
-  chmodSync as chmodSync4,
-  existsSync as existsSync18,
-  mkdirSync as mkdirSync11,
-  mkdtempSync as mkdtempSync10,
-  renameSync as renameSync5,
-  rmSync as rmSync10,
-  writeFileSync as writeFileSync9
-} from "node:fs";
-import { join as join33 } from "node:path";
-
 // src/services/privateWriter.ts
 import { extname as extname8, join as join32 } from "node:path";
+
+// src/services/notesRunning.ts
+import { execFileSync as execFileSync21 } from "node:child_process";
+function notesRunningForThisUser(run = execFileSync21, uid = process.getuid?.() ?? -1) {
+  if (uid < 0)
+    throw new Error("Cannot tell whose Notes.app is running: no user id on this platform");
+  try {
+    run("/usr/bin/pgrep", ["-x", "-u", String(uid), "Notes"], {
+      timeout: 5e3,
+      stdio: "ignore"
+    });
+    return true;
+  } catch (error2) {
+    if (error2.status === 1) return false;
+    const reason = error2 instanceof Error ? error2.message : String(error2);
+    throw new Error(`Could not check whether Notes.app is running (pgrep: ${reason})`, {
+      cause: error2
+    });
+  }
+}
+
+// src/services/privateWriterValidation.ts
+var WRITER_VALIDATION_RECORDS = {
+  APPEND: null,
+  EDIT: null,
+  COMPOSE: null,
+  CHECKLIST: null,
+  HIGHLIGHT: null,
+  LINK_CARD: null,
+  PARAGRAPH_IDS: null,
+  SECTION_LINKS: null,
+  TABLES: null,
+  SMART_FOLDERS: null,
+  PAPER: null,
+  PURGE_REPAIR: null,
+  SYNC_PUSH: null
+};
+function writerFeatureIsValidated(feature, records = WRITER_VALIDATION_RECORDS) {
+  const record2 = records[feature];
+  return record2 != null && /^docs\/private-writer-validation\/[a-z0-9-]+\.md$/.test(record2.artifact) && /^[a-f0-9]{64}$/.test(record2.artifactSha256) && /^[a-f0-9]{64}$/.test(record2.writerSourceSha256) && /^\d{4}-\d{2}-\d{2}$/.test(record2.validatedAt);
+}
+var WRITER_VALIDATION_KEYS = {
+  "native-append-plain-text": "APPEND",
+  appendPlainText: "APPEND",
+  "native-edit-note": "EDIT",
+  editNote: "EDIT",
+  editReplaceFile: "EDIT",
+  "compose-note": "COMPOSE",
+  composeNote: "COMPOSE",
+  composeObjects: "COMPOSE",
+  composeAttachments: "COMPOSE",
+  "native-set-checklist-item": "CHECKLIST",
+  checklistToggle: "CHECKLIST",
+  "native-highlight-text": "HIGHLIGHT",
+  highlight: "HIGHLIGHT",
+  "native-add-url-card": "LINK_CARD",
+  linkCard: "LINK_CARD",
+  "native-set-paragraph-id": "PARAGRAPH_IDS",
+  setParagraphId: "PARAGRAPH_IDS",
+  "native-add-section-link": "SECTION_LINKS",
+  addSectionLink: "SECTION_LINKS",
+  "native-delete-table-row": "TABLES",
+  "native-insert-table-row": "TABLES",
+  "native-set-table-cell": "TABLES",
+  "native-prune-orphan-table": "TABLES",
+  editTables: "TABLES",
+  pruneOrphanTable: "TABLES",
+  "native-create-smart-folder": "SMART_FOLDERS",
+  "native-update-smart-folder": "SMART_FOLDERS",
+  "native-delete-smart-folder": "SMART_FOLDERS",
+  editSmartFolders: "SMART_FOLDERS",
+  "native-add-paper": "PAPER",
+  addPaper: "PAPER",
+  "native-repair-purge-flag": "PURGE_REPAIR",
+  purgeRepair: "PURGE_REPAIR",
+  "native-sync-push": "SYNC_PUSH"
+};
+function writerUnverifiedEnv(toolOrFeature) {
+  const feature = Object.hasOwn(WRITER_VALIDATION_KEYS, toolOrFeature) ? WRITER_VALIDATION_KEYS[toolOrFeature] : void 0;
+  return feature ? `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_${feature}` : void 0;
+}
 
 // src/services/privateWriterScope.ts
 var FOLDER_ID_MESSAGE = "Use an exact folder id from list-folders (x-coredata://\u2026/ICFolder/p\u2026)";
@@ -60237,7 +60306,7 @@ function writerScopeFields(guard) {
 // src/services/privateWriter.ts
 var PRIVATE_WRITER_PROTOCOL = 1;
 var WRITES_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
-var ALLOW_UNVERIFIED_ENV = "APPLE_NOTES_MCP_ALLOW_UNVERIFIED";
+var ALLOW_NOTES_RUNNING_ENV = "APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING";
 var WRITER_BINARY_NAME = "apple-notes-private-writer";
 var WRITER_SOURCE_RELATIVE = "native/private-helper/apple-notes-private-writer.m";
 var WRITER_MANIFEST_NAME = "writer-manifest.json";
@@ -60272,20 +60341,24 @@ var WRITER_ACTIONS = {
   repair_purge_flag: "write",
   read_paper: "read"
 };
-var APPEND_LIVE_VALIDATED = false;
-var PAPER_WRITE_LIVE_VALIDATED = false;
-var EDIT_LIVE_VALIDATED = false;
-var COMPOSE_LIVE_VALIDATED = false;
-var SECTION_LINKS_LIVE_VALIDATED = false;
-var CHECKLIST_TOGGLE_LIVE_VALIDATED = false;
-var HIGHLIGHT_LIVE_VALIDATED = false;
-var LINK_CARD_LIVE_VALIDATED = false;
-var PARAGRAPH_IDS_LIVE_VALIDATED = false;
-var TABLE_WRITES_LIVE_VALIDATED = false;
-var SMART_FOLDERS_LIVE_VALIDATED = false;
-var PURGE_REPAIR_LIVE_VALIDATED = false;
+var APPEND_LIVE_VALIDATED = writerFeatureIsValidated("APPEND");
+var PAPER_WRITE_LIVE_VALIDATED = writerFeatureIsValidated("PAPER");
+var EDIT_LIVE_VALIDATED = writerFeatureIsValidated("EDIT");
+var COMPOSE_LIVE_VALIDATED = writerFeatureIsValidated("COMPOSE");
+var SECTION_LINKS_LIVE_VALIDATED = writerFeatureIsValidated("SECTION_LINKS");
+var CHECKLIST_TOGGLE_LIVE_VALIDATED = writerFeatureIsValidated("CHECKLIST");
+var HIGHLIGHT_LIVE_VALIDATED = writerFeatureIsValidated("HIGHLIGHT");
+var LINK_CARD_LIVE_VALIDATED = writerFeatureIsValidated("LINK_CARD");
+var PARAGRAPH_IDS_LIVE_VALIDATED = writerFeatureIsValidated("PARAGRAPH_IDS");
+var TABLE_WRITES_LIVE_VALIDATED = writerFeatureIsValidated("TABLES");
+var SMART_FOLDERS_LIVE_VALIDATED = writerFeatureIsValidated("SMART_FOLDERS");
+var PURGE_REPAIR_LIVE_VALIDATED = writerFeatureIsValidated("PURGE_REPAIR");
+var SYNC_PUSH_LIVE_VALIDATED = writerFeatureIsValidated("SYNC_PUSH");
 function defaultWriterDeps(overrides = {}) {
-  return defaultDeps2({ sourcePath: join32(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides });
+  return {
+    ...defaultDeps2({ sourcePath: join32(packageRoot2(), WRITER_SOURCE_RELATIVE), ...overrides }),
+    notesRunning: overrides.notesRunning
+  };
 }
 function privateWritesEnabled(env = process.env) {
   return privateHelperEnabled(env) && env[WRITES_ENV] === "1";
@@ -60462,6 +60535,27 @@ function callPrivateWriter(action, fields = {}, deps = defaultWriterDeps(), opti
       );
     binaryPath = install.binaryPath;
   }
+  if (isWrite) {
+    const alwaysRefuseRunning = action === "prune_orphan_table" || action === "repair_purge_flag";
+    if (alwaysRefuseRunning || deps.env[ALLOW_NOTES_RUNNING_ENV] !== "1") {
+      let running;
+      try {
+        running = (options.notesRunning ?? deps.notesRunning ?? notesRunningForThisUser)();
+      } catch (error2) {
+        throw new PrivateWriteError(
+          "notes_app_state_unavailable",
+          `Cannot establish whether Notes.app is running: ${error2 instanceof Error ? error2.message : String(error2)}`,
+          false
+        );
+      }
+      if (running)
+        throw new PrivateWriteError(
+          "notes_app_running",
+          alwaysRefuseRunning ? `${action} refuses while Notes.app is running. Quit Notes.app before retrying.` : `Notes.app is running. Quit it before writing, or set ${ALLOW_NOTES_RUNNING_ENV}=1 only for a controlled concurrency experiment.`,
+          false
+        );
+    }
+  }
   const timeout = Number.parseInt(deps.env[TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS4;
   const result = deps.spawn(binaryPath, [], {
     input: JSON.stringify({ protocol: PRIVATE_WRITER_PROTOCOL, action, ...fields }),
@@ -60532,12 +60626,15 @@ function parseWriterResult(schema, value, isWrite) {
   return parsed.data;
 }
 function requireLiveValidated(validated, toolName, env) {
-  if (!validated && env[ALLOW_UNVERIFIED_ENV] !== "1")
-    throw new PrivateWriteError(
-      "not_live_validated",
-      `${toolName} has not passed live validation in this build. Set ${ALLOW_UNVERIFIED_ENV}=1 to run it on a disposable note.`,
-      false
-    );
+  const feature = Object.hasOwn(WRITER_VALIDATION_KEYS, toolName) ? WRITER_VALIDATION_KEYS[toolName] : void 0;
+  const optIn = writerUnverifiedEnv(toolName);
+  if (feature && validated && writerFeatureIsValidated(feature)) return;
+  if (optIn && env[optIn] === "1") return;
+  throw new PrivateWriteError(
+    "not_live_validated",
+    `${toolName} has not passed live validation in this build. ` + (optIn ? `Set ${optIn}=1 to run this feature on a disposable note.` : "This feature has no registered validation gate and cannot be enabled."),
+    false
+  );
 }
 function assertNoteIdentifier2(identifier) {
   try {
@@ -60959,11 +61056,11 @@ function editNote(request, deps = defaultWriterDeps()) {
       "Applying an edit requires ifRevision: run the identical request with dryRun: true first and pass its revisionBefore."
     );
   assertRevision(request.ifRevision, "a dry run's revisionBefore");
-  if (request.ifPlanDigest !== void 0) {
-    if (!planDigestToken.safeParse(request.ifPlanDigest).success)
-      throw refuse("ifPlanDigest must be a dry run's planDigest (p2: followed by 64 hex digits)");
-    fields.ifPlanDigest = request.ifPlanDigest;
-  }
+  if (!planDigestToken.safeParse(request.ifPlanDigest).success)
+    throw refuse(
+      "Applying an edit requires ifPlanDigest from the identical dry run (p2: followed by 64 hex digits)"
+    );
+  fields.ifPlanDigest = request.ifPlanDigest;
   requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
   return parseWriterResult(
     editResultSchema,
@@ -61059,18 +61156,31 @@ function privateWriterCapabilities(deps = defaultWriterDeps()) {
         detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason
       };
     }
-    if (!row.liveValidated && deps.env[ALLOW_UNVERIFIED_ENV] !== "1")
-      return {
-        available: false,
-        reason: "not_live_validated",
-        detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`
-      };
+    if (!row.liveValidated) {
+      const optIn = writerUnverifiedEnv(row.key);
+      if (!optIn || deps.env[optIn] !== "1")
+        return {
+          available: false,
+          reason: "not_live_validated",
+          detail: optIn ? `Not yet live-validated; ${optIn}=1 enables this feature for testing.` : "This feature has no registered live-validation gate."
+        };
+    }
     return { available: true, reason: null, detail: null };
   });
   return { ...base, probe, features };
 }
 
 // src/services/privateWriterBuild.ts
+import {
+  chmodSync as chmodSync4,
+  existsSync as existsSync18,
+  mkdirSync as mkdirSync11,
+  mkdtempSync as mkdtempSync10,
+  renameSync as renameSync5,
+  rmSync as rmSync10,
+  writeFileSync as writeFileSync9
+} from "node:fs";
+import { join as join33 } from "node:path";
 function writerCompileArguments(sourcePath, outputPath, sourceSha) {
   const args = compileArguments(sourcePath, outputPath, sourceSha);
   const appKit = args.indexOf("AppKit");
@@ -61231,7 +61341,7 @@ function formatWriterBuild(report) {
   if (report.ok) {
     lines.push(`Installed at ${report.installation.binaryPath}.`);
     lines.push(
-      `The writer stays off until you set both APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and ${WRITES_ENV}=1 for the MCP server. Writes that have not passed live validation also need APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. It uses unsupported private API; try it on disposable notes first.`
+      `The writer stays off until you set both APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and ${WRITES_ENV}=1 for the MCP server. Writes that have not passed live validation also need their own APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1 opt-in; the blanket switch does not enable them. It uses unsupported private API; try it on disposable notes first.`
     );
   } else if (report.checkOnly) {
     lines.push(`Run \`${WRITER_SETUP_COMMAND}\` to build it.`);
@@ -61242,7 +61352,7 @@ function formatWriterBuild(report) {
 }
 
 // src/services/privateSyncNudge.ts
-import { execFileSync as execFileSync21 } from "node:child_process";
+import { execFileSync as execFileSync22 } from "node:child_process";
 var UUID3 = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 var NOTE_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i;
 var FOLDER_URI = /^x-coredata:\/\/[0-9A-F-]+\/ICFolder\/p\d+$/i;
@@ -61318,29 +61428,12 @@ function moveInPlaceScript(noteURI, folderURI) {
     "end tell"
   ].join("\n");
 }
-function notesRunningForThisUser(run = execFileSync21, uid = process.getuid?.() ?? -1) {
-  if (uid < 0)
-    throw new Error("Cannot tell whose Notes.app is running: no user id on this platform");
-  try {
-    run("/usr/bin/pgrep", ["-x", "-u", String(uid), "Notes"], {
-      timeout: 5e3,
-      stdio: "ignore"
-    });
-    return true;
-  } catch (error2) {
-    if (error2.status === 1) return false;
-    const reason = error2 instanceof Error ? error2.message : String(error2);
-    throw new Error(`Could not check whether Notes.app is running (pgrep: ${reason})`, {
-      cause: error2
-    });
-  }
-}
 function defaultNudgeDeps(overrides = {}) {
   return {
     helper: defaultWriterDeps(),
     runAppleScript: (script) => executeAppleScript(script, { maxRetries: 1, timeoutMs: 3e4 }),
     launchNotes: () => {
-      execFileSync21("/usr/bin/open", ["-g", "-a", "Notes"], { timeout: 15e3 });
+      execFileSync22("/usr/bin/open", ["-g", "-a", "Notes"], { timeout: 15e3 });
     },
     notesRunning: () => notesRunningForThisUser(),
     sleep: (ms) => new Promise((resolve10) => setTimeout(resolve10, ms)),
@@ -61361,6 +61454,7 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
   const waitSeconds = request.waitSeconds ?? (act ? 30 : 0);
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_NUDGE_WAIT_SECONDS)
     throw invalid2(`waitSeconds must be 0-${MAX_NUDGE_WAIT_SECONDS}`);
+  if (act) requireLiveValidated(SYNC_PUSH_LIVE_VALIDATED, "native-sync-push", deps.helper.env);
   const before = readSyncState(identifiers, deps.helper);
   const byId = new Map(before.objects.map((o) => [o.identifier, o]));
   const results = new Map(
@@ -61433,7 +61527,7 @@ async function nudgeInPlace(request, deps = defaultNudgeDeps()) {
   for (const r of targets)
     if (r.action === "moved_in_place" && r.contentUnchanged === false)
       warnings.push(
-        `${r.identifier}: the note's revision changed while it was nudged; something else edited it at the same time. Read it before relying on its content.`
+        `${r.identifier}: the note's revision changed while it was nudged; the nudge or another save may have changed it. Read it before relying on its content.`
       );
   if (stillPending.length && act)
     warnings.push(
@@ -61649,6 +61743,7 @@ async function syncPush(request, deps = defaultNudgeDeps()) {
       "method relaunch quits and reopens Notes.app, which interrupts anyone using it. Ask the user, then pass confirm: true.",
       false
     );
+  requireLiveValidated(SYNC_PUSH_LIVE_VALIDATED, "native-sync-push", deps.helper.env);
   const first2 = readSyncState(identifiers, deps.helper);
   if (first2.syncHostRunning) {
     const quit = deps.runAppleScript(QUIT_SCRIPT);
@@ -61736,6 +61831,7 @@ function writerEnvelopeCode(helperCode, message) {
     case "plan_mismatch":
       return "revision_conflict";
     case "unsupported_attachment":
+    case "unsupported_attachment_change":
       return "unsupported";
     case "unsupported_folder":
     case "query_not_representable":
@@ -61751,6 +61847,8 @@ function writerEnvelopeCode(helperCode, message) {
       return "verification_failed";
     case "writes_disabled":
     case "not_live_validated":
+    case "notes_app_running":
+    case "notes_app_state_unavailable":
       return "unsupported";
     case "ambiguous":
     case "ambiguous_target":
@@ -61836,7 +61934,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
     server2,
     depsFactory,
     "native-append-plain-text",
-    "Use when: appending plain text paragraphs to one exact note through Notes' own data model, with a compare-and-swap guard. This is the private-writer path, distinct from append-native (Shortcuts) and append-to-note (AppleScript HTML rewrite).\nReturns: committed/verified flags, revisionBefore/revisionAfter, the new modification date, and sync state: pushScheduled (always false; the writer cannot upload), pushState, cloudSync versions, and with nudge: true a `sync` report of the move-in-place nudge (uploadRecorded per target).\nDo not use when: the note is locked, shared, trashed, or still downloading, or you need formatting (text is appended as plain body paragraphs).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. Verifies by re-reading in a new Core Data stack. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: appending plain text paragraphs to one exact note through Notes' own data model, with a compare-and-swap guard. This is the private-writer path, distinct from append-native (Shortcuts) and append-to-note (AppleScript HTML rewrite).\nReturns: committed/verified flags, revisionBefore/revisionAfter, the new modification date, and sync state: pushScheduled (always false; the writer cannot upload), pushState, cloudSync versions, and with nudge: true a `sync` report of the move-in-place nudge (uploadRecorded per target).\nDo not use when: the note is locked, shared, trashed, or still downloading, or you need formatting (text is appended as plain body paragraphs).\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. Verifies by re-reading in a new Core Data stack. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -61878,7 +61976,7 @@ function registerPrivateWriterTools(server2, manager, depsFactory = defaultWrite
     `Use when: a note or folder changed through the private writer earlier (native-append-plain-text and the other native write tools, without nudge or with a nudge that timed out) still shows cloudSync.uploadPending, and you want Notes.app to upload it, or just to check whether it has.
 Returns: per target, Notes' own version counters before and after, uploadRecorded (true only when Notes recorded the current version as synced to iCloud), the action taken, and a skip reason; the library-wide pendingUploadCount before and after; warnings. pushScheduled is always false: only Notes.app uploads.
 Do not use when: the change was made through AppleScript or Shortcuts tools (Notes.app uploads those itself), or right after a native write that already ran with nudge: true and reported uploadRecorded.
-Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer's revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. After a relaunch, each folder target reports adoptedByNotesApp: whether the reopened Notes.app shows it (or, for a deleted folder, no longer shows it), read through AppleScript. If reading the state after the relaunch fails, the error says Notes.app was already restarted; check with method status rather than relaunching again. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).`,
+Safety: never writes to the Notes database. method "status" is read-only. "nudge" (default) makes Notes.app save each pending note by moving it into the folder it is already in: no text, title, or modification date changes, and the writer's revision token is compared before and after (contentUnchanged). It skips locked, shared, trashed, and non-iCloud notes, and folders. "relaunch" quits and reopens Notes.app so its launch sweep uploads everything pending, folders included; it interrupts anyone using Notes and requires confirm: true after asking the user. After a relaunch, each folder target reports adoptedByNotesApp: whether the reopened Notes.app shows it (or, for a deleted folder, no longer shows it), read through AppleScript. If reading the state after the relaunch fails, the error says Notes.app was already restarted; check with method status rather than relaunching again. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). Nudge and relaunch additionally require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SYNC_PUSH=1 until live-validated; status does not.`,
     {
       identifiers: external_exports.array(notesUuid2).min(1).max(MAX_SYNC_TARGETS).describe("Notes UUIDs of the notes or folders to check (from native-note-state etc.)"),
       method: external_exports.enum(["status", "nudge", "relaunch"]).optional().describe(
@@ -61896,19 +61994,21 @@ Safety: never writes to the Notes database. method "status" is read-only. "nudge
     server2,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence) with plain text or formatted runs (bold, italic, underline, strikethrough, link, highlight, color), insert paragraphs (checklist rows checked or not) before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, add inline runs such as a link at the end of one exact paragraph (append_to_paragraph), replace a note's checklist with new items (replace_checklist), delete a paragraph or list row, retitle, replace, remove, or add text beside one named attachment, or swap it for a new image or PDF file (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan, revisionBefore, and planDigest, then the IDENTICAL request with dryRun: false, ifRevision set to that revisionBefore, and ifPlanDigest set to that planDigest.\nReturns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16; replace_checklist lists removedItems with their text and checked state), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, attachmentSpans, revisionBefore, and planDigest. removedAttachments (identifiers the plan takes out of the body) and replacementFiles (name, type, size, SHA-256 of each file that replaces an attachment). An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, every untargeted attachment row unchanged, each replacement file's bytes, and the state of each removed attachment's row), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never splits a character. Only an attachment selector touches an attachment, and only the one it names (all of its glyphs); inline objects (hashtags, mentions, note links) are never selectable.\nSafety: a dry run is read-only and never writes a file. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run, or plan_mismatch: the request or a replacement file differs from the dry run's planDigest), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unsupported_attachment, unexpected_side_effect. A failed apply removes any attachment it created. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence) with plain text or formatted runs (bold, italic, underline, strikethrough, link, highlight, color), insert paragraphs (checklist rows checked or not) before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, add inline runs such as a link at the end of one exact paragraph (append_to_paragraph), replace a note's checklist with new items (replace_checklist), delete a paragraph or list row, retitle, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan, revisionBefore, and planDigest, then the IDENTICAL request with dryRun: false, ifRevision set to that revisionBefore, and ifPlanDigest set to that planDigest.\nReturns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16; replace_checklist lists removedItems with their text and checked state), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, attachmentSpans, revisionBefore, and planDigest. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and every attachment row unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never splits a character. Removing or replacing attachments is refused until safe tombstoning is implemented; inserting beside one remains supported. Inline objects (hashtags, mentions, note links) are never selectable.\nSafety: a dry run is read-only and never writes a file. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), plan_mismatch (the request differs from the dry run's planDigest), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unsupported_attachment, unsupported_attachment_change (attachment removal or replacement), unexpected_side_effect. Attachment removal and replacement are refused in both the dry run and the apply; nothing is changed. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
-      dryRun: external_exports.boolean().describe("true: plan only and return revisionBefore. false: apply; requires ifRevision"),
+      dryRun: external_exports.boolean().describe(
+        "true: plan only and return revisionBefore and planDigest. false: apply; requires ifRevision and ifPlanDigest"
+      ),
       ifRevision: revisionToken.optional().describe("The revisionBefore of an identical dry run (required when dryRun is false)"),
       ifPlanDigest: planDigestToken.optional().describe(
-        "The planDigest of the identical dry run (recommended on apply; refuses with plan_mismatch if the request or a replacement file changed)"
+        "The planDigest of the identical dry run (required on apply; refuses with plan_mismatch if the request changed)"
       ),
       requireNonSystemPaper: external_exports.boolean().optional().describe("Refuse Quick Notes; repeat it in both the dry run and the apply"),
       ...writerScopeGuardInput(),
       operations: editOperationsSchema.describe(
-        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position?:'self'|'before'|'after'}, replacement:{text}|{runs}|{file, filename?}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, append_to_paragraph {anchor (as for inserts), runs}, replace_checklist {select?:'block'|'all', containing?, occurrence?, items:[{text|runs, checked, indent?}], expectedCount?}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. A run is {text, bold?, italic?, underline?, strikethrough?, link? (http, https, mailto, tel, notes, applenotes), highlight? (purple, pink, orange, mint, blue), color? (#RRGGBB)}; its formatting replaces the replaced text's inline formatting. An attachment replace with position 'self' and text '' removes that attachment from the body, and with {file, filename?} (an absolute path to an image or PDF of at most 64 MiB in home, temp, or /Volumes) puts a new attachment in its place in the same save; 'before'/'after' insert the text inline beside it. delete_paragraph with an attachment selector removes the attachment's own paragraph, which must hold nothing else; deleting the last paragraph leaves the previous paragraph's line break. ordinal counts the note's attachments in body order. append_to_paragraph adds the runs at the end of the anchor paragraph, on the same line (put a leading space in the first run). replace_checklist replaces one contiguous run of checklist rows (the one holding a row whose text equals containing, the occurrence-th, or the only one) or, with select 'all', every checklist row; all other text and attachments stay. expectedCount (default 1) must equal the full match count; occurrence picks one of them and may not exceed it. For replace_checklist, expectedCount is optional and counts replaced rows. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
+        "Applied together against one snapshot. ops: replace {selector:{text, scope?, match?, occurrence?}|{kind:'attachment', identifier|id|ordinal, position:'before'|'after'}, replacement:{text}|{runs}}, delete_paragraph {selector:{text, scope?, occurrence?}|{kind:'blank', style, occurrence?}}, insert_after/insert_before {anchor:{text, scope?, occurrence?}|{kind:'style', style, occurrence?}|{kind:'attachment', identifier|id|ordinal}, blocks:[{type, text|runs, checked?}]}, append_to_paragraph {anchor (as for inserts), runs}, replace_checklist {select?:'block'|'all', containing?, occurrence?, items:[{text|runs, checked, indent?}], expectedCount?}, set_title {replacement:{text}|{runs}}, trim_blank_lines {mode:'runs'|'end'|'around', keep?, anchor? (around only: {text, scope?, occurrence?}|{kind:'style', style, occurrence?}, must name one paragraph), side?:'before'|'after'|'both', expectedCount?}. A run is {text, bold?, italic?, underline?, strikethrough?, link? (http, https, mailto, tel, notes, applenotes), highlight? (purple, pink, orange, mint, blue), color? (#RRGGBB)}; its formatting replaces the replaced text's inline formatting. Attachment selectors support only position 'before'/'after' to insert text inline beside the attachment. Replacing or removing an attachment, supplying replacement.file, or deleting a paragraph that contains an attachment is refused with unsupported_attachment_change in both plan and apply; nothing is changed. Deleting the last text paragraph leaves the previous paragraph's line break. ordinal counts the note's attachments in body order. append_to_paragraph adds the runs at the end of the anchor paragraph, on the same line (put a leading space in the first run). replace_checklist replaces one contiguous run of checklist rows (the one holding a row whose text equals containing, the occurrence-th, or the only one) or, with select 'all', every checklist row; all other text and attachments stay. expectedCount (default 1) must equal the full match count; occurrence picks one of them and may not exceed it. For replace_checklist, expectedCount is optional and counts replaced rows. For trim_blank_lines, expectedCount is optional and counts removed paragraphs; only whitespace-only title, heading, subheading, or body paragraphs are removed (never the title paragraph, list, checklist, monospaced, or attachment rows), keep (0 to 10) is how many of each run stay (default 1 for runs, 0 otherwise)."
       ),
       nudge: external_exports.boolean().optional().describe(
         "After a verified apply, ask Notes.app to upload the note by moving it into its own folder (default false)"
@@ -61959,6 +62059,7 @@ async function nudgeAfterWrite(identifier, waitSeconds, deps) {
 import { basename as basename8 } from "node:path";
 
 // src/services/privateCompose.ts
+import { createHash as createHash8 } from "node:crypto";
 import { basename as basename7, extname as extname9, isAbsolute as isAbsolute6 } from "node:path";
 var HIGHLIGHTS2 = ["purple", "pink", "orange", "mint", "blue"];
 var MAX_INDENT = 8;
@@ -62584,6 +62685,49 @@ var summarySchema = external_exports.array(
   }).passthrough()
 );
 var REVISION = /^r1:[a-f0-9]{64}$/;
+var COMPOSE_PLAN_DIGEST = /^c1:[a-f0-9]{64}$/;
+function canonicalJson2(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson2).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value).filter(([, item]) => item !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson2(item)}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+function composePlanDigest(fields) {
+  return `c1:${createHash8("sha256").update(canonicalJson2(fields)).digest("hex")}`;
+}
+function assertComposePlanDigest(value, expected) {
+  if (!value || !COMPOSE_PLAN_DIGEST.test(value))
+    throw invalid3("ifPlanDigest (the planDigest of an identical dry run) is required to apply");
+  if (value !== expected)
+    throw new PrivateWriteError(
+      "plan_mismatch",
+      "The request or an attachment file differs from the dry run; run dryRun again",
+      false
+    );
+}
+function snapshotComposeFiles(paragraphs) {
+  const hashes = /* @__PURE__ */ new Map();
+  return paragraphs.map((entry) => {
+    if (!isObject4(entry) || entry.kind !== "file") return entry;
+    let hash = hashes.get(entry.path);
+    if (!hash) {
+      composeFileSize(entry.path);
+      try {
+        hash = createHash8("sha256").update(readAllowedFile(entry.path, MAX_COMPOSE_FILE_BYTES, { label: "File" })).digest("hex");
+      } catch (error2) {
+        throw invalid3(`file: ${error2.message}`);
+      }
+      hashes.set(entry.path, hash);
+    }
+    if (entry.expectedSha256 !== void 0 && entry.expectedSha256 !== hash)
+      throw new PrivateWriteError(
+        "plan_mismatch",
+        "An attachment file changed after it was planned; run dryRun again",
+        false
+      );
+    return { ...entry, expectedSha256: hash };
+  });
+}
 var composePlanSchema = external_exports.object({
   status: external_exports.literal("planned"),
   dryRun: external_exports.literal(true),
@@ -62595,6 +62739,7 @@ var composePlanSchema = external_exports.object({
   insertAt: external_exports.number().int(),
   unitStart: external_exports.number().int(),
   revisionBefore: external_exports.string().regex(REVISION),
+  planDigest: external_exports.string().regex(COMPOSE_PLAN_DIGEST),
   plan: summarySchema
 }).passthrough();
 var composeResultSchema = external_exports.object({
@@ -62802,11 +62947,13 @@ function assertComposeWritesAllowed(env) {
 function composeNote(request, deps = defaultWriterDeps()) {
   assertNoteIdentifier2(request.identifier);
   const dryRun = request.dryRun === true;
-  if (dryRun && request.ifRevision !== void 0)
-    throw invalid3("A dry run does not take ifRevision");
+  if (dryRun && (request.ifRevision !== void 0 || request.ifPlanDigest !== void 0))
+    throw invalid3("A dry run does not take ifRevision or ifPlanDigest");
   if (!dryRun) {
     if (!request.ifRevision || !REVISION.test(request.ifRevision))
       throw invalid3("ifRevision (the revisionBefore of a dry run) is required to apply");
+    if (!request.ifPlanDigest || !COMPOSE_PLAN_DIGEST.test(request.ifPlanDigest))
+      throw invalid3("ifPlanDigest (the planDigest of an identical dry run) is required to apply");
     assertComposeWritesAllowed(deps.env);
   }
   if (request.insertBeforeHeading && request.mode !== "append")
@@ -62816,17 +62963,33 @@ function composeNote(request, deps = defaultWriterDeps()) {
   const fields = {
     identifier: request.identifier,
     mode: request.mode,
-    paragraphs: request.paragraphs
+    paragraphs: snapshotComposeFiles(request.paragraphs)
   };
-  if (dryRun) fields.dryRun = true;
-  else fields.ifRevision = request.ifRevision;
   if (request.requireNonSystemPaper) fields.requireNonSystemPaper = true;
   if (request.insertBeforeHeading) fields.insertBeforeHeading = request.insertBeforeHeading;
   Object.assign(fields, writerScopeFields(request.scope));
-  assertWriterRequestSize(fields);
+  if (!dryRun)
+    assertComposePlanDigest(
+      request.ifPlanDigest,
+      composePlanDigest({ ...fields, ifRevision: request.ifRevision })
+    );
+  const wireFields = {
+    ...fields,
+    ...dryRun ? { dryRun: true } : { ifRevision: request.ifRevision, ifPlanDigest: request.ifPlanDigest }
+  };
+  assertWriterRequestSize(wireFields);
   try {
-    const response = callPrivateWriter("compose_note", fields, deps);
-    if (dryRun) return parseWriterResult(composePlanSchema, response, false);
+    const response = callPrivateWriter("compose_note", wireFields, deps, { dryRun });
+    if (dryRun) {
+      const plan = parseWriterResult(composePlanSchema, response, false);
+      if (plan.planDigest !== composePlanDigest({ ...fields, ifRevision: plan.revisionBefore }))
+        throw new PrivateWriteError(
+          "invalid_response",
+          "The writer's plan digest differs from the requested content",
+          false
+        );
+      return plan;
+    }
     const result = parseWriterResult(composeResultSchema, response, true);
     const mismatches = verifyAgainstRequest(request.paragraphs, result);
     if (mismatches.length)
@@ -62857,6 +63020,7 @@ var composeNoteInput = {
     "Markdown to import natively: # and ## headings, ### subheadings, lists, - [ ]/- [x] checklists, > quotes, fenced code, --- dividers, pipe tables, **bold**, *italic*, ~~strike~~, <u>underline</u>, links; an image alone on a line becomes a file (absolute path) or link card (http URL)"
   ),
   ifRevision: revisionToken.optional().describe("append/prepend apply: revisionBefore from an identical dry run"),
+  ifPlanDigest: external_exports.string().regex(COMPOSE_PLAN_DIGEST).optional().describe("All apply modes: planDigest from an identical dry run, including file contents"),
   dryRun: external_exports.boolean().optional().describe("Validate and plan without writing"),
   requireNonSystemPaper: external_exports.boolean().optional().describe("append/prepend: refuse a Quick Note target; repeat in plan and apply"),
   insertBeforeHeading: external_exports.object({
@@ -62886,6 +63050,10 @@ function contentFor(args) {
 function checkModeFields(args) {
   const present = (keys) => keys.filter((k) => args[k] !== void 0);
   if (args.dryRun && args.nudge) throw invalid4("A dry run does not take nudge");
+  if (args.dryRun && args.ifPlanDigest !== void 0)
+    throw invalid4("A dry run does not take ifPlanDigest");
+  if (!args.dryRun && (!args.ifPlanDigest || !COMPOSE_PLAN_DIGEST.test(args.ifPlanDigest)))
+    throw invalid4("Applying requires ifPlanDigest: run the identical request with dryRun first");
   if (args.mode === "create") {
     const extra2 = present([
       "identifier",
@@ -62960,11 +63128,18 @@ function poll(attempt, sleep3) {
 function createAndCompose(args, paragraphs, runtime) {
   const { manager, deps, sleep: sleep3 } = runtime;
   assertComposeWritesAllowed(deps.env);
+  if (deps.env.APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING !== "1")
+    throw new PrivateWriteError(
+      "notes_app_running",
+      "Create uses Notes.app. Set APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1 only for a controlled concurrency experiment before applying this plan",
+      false
+    );
   assertWriterRequestSize({
     identifier: PLACEHOLDER_IDENTIFIER,
     mode: "append",
     paragraphs,
-    ifRevision: PLACEHOLDER_REVISION
+    ifRevision: PLACEHOLDER_REVISION,
+    ifPlanDigest: `c1:${"0".repeat(64)}`
   });
   const features = privateWriterCapabilities(deps).features;
   const kinds = new Set(paragraphs.filter(isObject4).map((p) => p.kind));
@@ -63017,10 +63192,8 @@ function createAndCompose(args, paragraphs, runtime) {
     if (!state)
       throw new PrivateWriteError("not_found", "The writer cannot see the new note yet", false);
     revision10 = state.revision;
-    const result = composeNote(
-      { identifier, mode: "append", paragraphs, ifRevision: state.revision },
-      deps
-    );
+    const fields = { identifier, mode: "append", paragraphs, ifRevision: state.revision };
+    const result = composeNote({ ...fields, ifPlanDigest: composePlanDigest(fields) }, deps);
     return {
       ...withDatabaseCheck(result, paragraphs),
       mode: "create",
@@ -63046,12 +63219,22 @@ function runComposeNote(args, runtime) {
   assertNoteLinkTargets(paragraphs, runtime.deps);
   const extra = warnings.length ? { warnings } : {};
   if (args.mode === "create") {
+    const capturedParagraphs = snapshotComposeFiles(paragraphs);
+    const planDigest = composePlanDigest({
+      mode: args.mode,
+      title: args.title,
+      ...args.folder !== void 0 ? { folder: args.folder } : {},
+      ...args.account !== void 0 ? { account: args.account } : {},
+      paragraphs: capturedParagraphs
+    });
+    if (!args.dryRun) assertComposePlanDigest(args.ifPlanDigest, planDigest);
     if (args.dryRun) {
       assertWriterRequestSize({
         identifier: PLACEHOLDER_IDENTIFIER,
         mode: "append",
-        paragraphs,
-        ifRevision: PLACEHOLDER_REVISION
+        paragraphs: capturedParagraphs,
+        ifRevision: PLACEHOLDER_REVISION,
+        ifPlanDigest: `c1:${"0".repeat(64)}`
       });
       return {
         status: "planned",
@@ -63059,11 +63242,16 @@ function runComposeNote(args, runtime) {
         committed: false,
         mode: "create",
         paragraphs: paragraphs.length,
-        plan: paragraphs.map(
+        planDigest,
+        plan: capturedParagraphs.map(
           (p) => isObject4(p) ? {
             kind: p.kind,
             ...p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {},
-            ...p.kind === "file" ? { path: p.path, filename: p.filename ?? basename8(p.path) } : {},
+            ...p.kind === "file" ? {
+              path: p.path,
+              filename: p.filename ?? basename8(p.path),
+              sha256: p.expectedSha256
+            } : {},
             ...p.kind === "url" ? { url: p.url } : {}
           } : {
             style: p.style,
@@ -63076,7 +63264,7 @@ function runComposeNote(args, runtime) {
         ...extra
       };
     }
-    return { ...createAndCompose(args, paragraphs, runtime), ...extra };
+    return { ...createAndCompose(args, capturedParagraphs, runtime), ...extra };
   }
   const identifier = resolveIdentifier(runtime.manager, args);
   const result = composeNote(
@@ -63084,7 +63272,7 @@ function runComposeNote(args, runtime) {
       identifier,
       mode: args.mode,
       paragraphs,
-      ...args.dryRun ? { dryRun: true } : { ifRevision: args.ifRevision },
+      ...args.dryRun ? { dryRun: true } : { ifRevision: args.ifRevision, ifPlanDigest: args.ifPlanDigest },
       ...args.requireNonSystemPaper ? { requireNonSystemPaper: true } : {},
       ...args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {},
       scope: scopeGuardFrom(args)
@@ -63103,7 +63291,7 @@ function registerComposeNoteTool(server2, manager, depsFactory = defaultWriterTo
     server2,
     depsFactory,
     "compose-note",
-    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, local files and rich link cards placed in order, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider, table, file with its size and SHA-256, or link card), frozenAttachments (existing attachments proven unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, still downloading, or has no title line.\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, local files and rich link cards placed in order, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\nReturns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider, table, file with its size and SHA-256, or link card), frozenAttachments (existing attachments proven unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\nDo not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, still downloading, or has no title line.\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). All modes: run with dryRun: true, then send the IDENTICAL request with ifPlanDigest set to the plan's planDigest; append/prepend also require ifRevision set to revisionBefore. The digest binds content, target, placement, guards, and attachment file hashes. Changed files or requests refuse before writing; create validates its digest before calling Notes.app. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1. Live writes require Notes.app to be closed unless APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1; create needs this opt-in because it uses Notes.app.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {
@@ -63219,7 +63407,7 @@ function registerPrivateWriterChecklistTools(server2, manager, depsFactory = def
     server2,
     depsFactory,
     "native-set-checklist-item",
-    "Use when: checking or unchecking one existing Apple Notes checklist item, addressed by its todo identifier (native-checklist-state todoIdentifier, or get-native-objects checklistItems id). Shortcuts cannot do this.\nReturns: status (updated, or unchanged when the item already had that state and nothing was written), committed, persistedDone (re-read from a fresh Core Data stack), previousDone, index, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: adding checklist items (create-checklist-item), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API, changing only that item's done bit. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` as ifRevision; refuses on any change since, on an identifier that matches no item (not_found), and on one found in two places (ambiguous_target). A timeout is indeterminate (indeterminate: true): read native-checklist-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+    "Use when: checking or unchecking one existing Apple Notes checklist item, addressed by its todo identifier (native-checklist-state todoIdentifier, or get-native-objects checklistItems id). Shortcuts cannot do this.\nReturns: status (updated, or unchanged when the item already had that state and nothing was written), committed, persistedDone (re-read from a fresh Core Data stack), previousDone, index, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report of the move-in-place nudge.\nDo not use when: adding checklist items (create-checklist-item), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API, changing only that item's done bit. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` as ifRevision; refuses on any change since, on an identifier that matches no item (not_found), and on one found in two places (ambiguous_target). A timeout is indeterminate (indeterminate: true): read native-checklist-state before any retry. Not yet live-validated, so it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED_CHECKLIST=1.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -63409,7 +63597,7 @@ function registerPrivateWriterHighlightTools(server2, manager, depsFactory = def
     server2,
     depsFactory,
     "native-highlight-text",
-    'Use when: applying or removing Notes\' highlight (the purple, pink, orange, mint, and blue highlight colors) on exact text in one note (scope "text", the default) or on the whole note body after the title (scope "note"). AppleScript and Shortcuts cannot set it.\nReturns: status (planned for a dry run, unchanged when every target range already has that state, updated), rangeCount, characterCount (UTF-16 units targeted), a per-range plan with current runs (dry run or no-op) or the stored runs re-read after the write (`ranges`), for scope note `skipped` (titleUTF16, attachmentGlyphs, highlightedAttachmentGlyphs), hasEmphasis (Notes\' derived flag), revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the text spans paragraphs (use scope note for the whole body), or you need bold, italic, or text color.\nSafety: writes to the Notes database through unsupported private API, changing only the highlight attribute of the target characters. Scope text: `match` is literal and case-sensitive; the call refuses (match_count_mismatch, nothing written) unless it occurs exactly `expectedCount` times. Scope note: takes no match or expectedCount; it covers everything after the title paragraph except attachment glyphs (images, files, tables, drawings, inline tags), whose contents it never changes, and refuses with nothing_to_highlight when nothing is left. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Verifies every highlight run in the note by re-reading it in a new Core Data stack. A timeout is indeterminate (indeterminate: true). Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.',
+    'Use when: applying or removing Notes\' highlight (the purple, pink, orange, mint, and blue highlight colors) on exact text in one note (scope "text", the default) or on the whole note body after the title (scope "note"). AppleScript and Shortcuts cannot set it.\nReturns: status (planned for a dry run, unchanged when every target range already has that state, updated), rangeCount, characterCount (UTF-16 units targeted), a per-range plan with current runs (dry run or no-op) or the stored runs re-read after the write (`ranges`), for scope note `skipped` (titleUTF16, attachmentGlyphs, highlightedAttachmentGlyphs), hasEmphasis (Notes\' derived flag), revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the text spans paragraphs (use scope note for the whole body), or you need bold, italic, or text color.\nSafety: writes to the Notes database through unsupported private API, changing only the highlight attribute of the target characters. Scope text: `match` is literal and case-sensitive; the call refuses (match_count_mismatch, nothing written) unless it occurs exactly `expectedCount` times. Scope note: takes no match or expectedCount; it covers everything after the title paragraph except attachment glyphs (images, files, tables, drawings, inline tags), whose contents it never changes, and refuses with nothing_to_highlight when nothing is left. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Verifies every highlight run in the note by re-reading it in a new Core Data stack. A timeout is indeterminate (indeterminate: true). Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_HIGHLIGHT=1; dryRun does not.',
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -63550,7 +63738,7 @@ function registerPrivateWriterLinkCardTools(server2, manager, depsFactory = defa
     server2,
     depsFactory,
     "native-add-url-card",
-    "Use when: adding a rich web link card (the preview tile Notes shows for a pasted URL) to one note, at the end or right after one exact paragraph. Neither AppleScript nor Shortcuts can create one.\nReturns: status (planned for a dry run, updated), the attachment identifier, its stored type and URL, its own cloudSync counters, the glyph position re-read from a fresh Core Data stack, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: you want a plain or labeled text link (insert-link or append-native), or a link to another note (insert-note-link).\nSafety: writes to the Notes database through unsupported private API: one new public.url attachment and one attachment glyph on its own line; no other text changes. `url` must be absolute http(s). `afterParagraph` must equal the full text of exactly one paragraph, or nothing is written (match_count_mismatch). The writer makes no network request; Notes fetches the card title and preview image itself later. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Not idempotent: a repeat adds a second card, but the replayed revision is refused. A timeout is indeterminate (indeterminate: true): read the note before any retry. Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.",
+    "Use when: adding a rich web link card (the preview tile Notes shows for a pasted URL) to one note, at the end or right after one exact paragraph. Neither AppleScript nor Shortcuts can create one.\nReturns: status (planned for a dry run, updated), the attachment identifier, its stored type and URL, its own cloudSync counters, the glyph position re-read from a fresh Core Data stack, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: you want a plain or labeled text link (insert-link or append-native), or a link to another note (insert-note-link).\nSafety: writes to the Notes database through unsupported private API: one new public.url attachment and one attachment glyph on its own line; no other text changes. `url` must be absolute http(s). `afterParagraph` must equal the full text of exactly one paragraph, or nothing is written (match_count_mismatch). The writer makes no network request; Notes fetches the card title and preview image itself later. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and a fresh `revision` from native-note-state as ifRevision (optional for dryRun). Not idempotent: a repeat adds a second card, but the replayed revision is refused. A timeout is indeterminate (indeterminate: true): read the note before any retry. Writes are not yet live-validated, so they also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_LINK_CARD=1; dryRun does not.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -63745,7 +63933,7 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
     server2,
     depsFactory,
     "native-set-paragraph-id",
-    "Use when: list-note-paragraphs shows paragraphIdStatus `shared` or `missing` (or get-paragraph-link refuses with paragraph-id-shared / paragraph-id-missing) for a paragraph you need to link to. Gives that paragraph an identifier of its own so its paragraph link opens exactly there.\nReturns: `status` (`updated`, or `unchanged` when the paragraph already had a unique identifier and nothing was written), `paragraphId`, `url` (applenotes://showNote?identifier=\u2026&paragraphID=\u2026), `previousParagraphId`, `previousParagraphIdStatus`, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the paragraph is already `unique` (use its url from list-note-paragraphs), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API. Needs the paragraph's `blockIndex` and exact `text` (as expectedText) from list-note-paragraphs, and a fresh `revision` from native-note-state as ifRevision; refuses on any change (revision_conflict or paragraph_changed, committed: false). Only the paragraph style's identifier changes: a fresh read-back verifies the text, the paragraph's other attributes, every other paragraph's identifier, and that no other paragraph carries the new one. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until live-validated.",
+    "Use when: list-note-paragraphs shows paragraphIdStatus `shared` or `missing` (or get-paragraph-link refuses with paragraph-id-shared / paragraph-id-missing) for a paragraph you need to link to. Gives that paragraph an identifier of its own so its paragraph link opens exactly there.\nReturns: `status` (`updated`, or `unchanged` when the paragraph already had a unique identifier and nothing was written), `paragraphId`, `url` (applenotes://showNote?identifier=\u2026&paragraphID=\u2026), `previousParagraphId`, `previousParagraphIdStatus`, revisionBefore/revisionAfter, sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: the paragraph is already `unique` (use its url from list-note-paragraphs), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API. Needs the paragraph's `blockIndex` and exact `text` (as expectedText) from list-note-paragraphs, and a fresh `revision` from native-note-state as ifRevision; refuses on any change (revision_conflict or paragraph_changed, committed: false). Only the paragraph style's identifier changes: a fresh read-back verifies the text, the paragraph's other attributes, every other paragraph's identifier, and that no other paragraph carries the new one. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS=1 until live-validated.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -63783,7 +63971,7 @@ function registerPrivateWriterParagraphTools(server2, manager, depsFactory = def
     server2,
     depsFactory,
     "native-add-section-link",
-    "Use when: inserting a native section-link chip (what Notes' Copy Link to Section pastes) that opens a paragraph or heading in the same note or another note. macOS 27 or later.\nReturns: `url` and `token` (applenotes://showNote?identifier=\u2026&paragraphID=\u2026), the `section` label, `paragraphId`, `paragraphIdMinted` (true when the target paragraph needed an identifier of its own), `inlineAttachmentIdentifier`, `clearedSectionLinks`, revisionBefore/After (plus targetRevisionBefore/After for another note), sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: a link string is enough (get-paragraph-link, or native-set-paragraph-id first when the identifier is shared), or you want a chip to a whole note.\nSafety: writes to the Notes database through unsupported private API. Selects the target paragraph by `blockIndex` + `expectedText` from list-note-paragraphs, by a unique `paragraphId`, by `heading` text (exact, case-insensitive), or defaults to the first heading or subheading; refuses a missing or ambiguous match. Needs `ifRevision` and, for another note, `ifTargetRevision`, both from native-note-state; refuses on any change (committed: false). `clearExistingSectionLinks` removes only chips that are section links; note-link chips stay. Verified by a fresh read-back of both notes and the attachment. A timeout is indeterminate (indeterminate: true). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until live-validated.",
+    "Use when: inserting a native section-link chip (what Notes' Copy Link to Section pastes) that opens a paragraph or heading in the same note or another note. macOS 27 or later.\nReturns: `url` and `token` (applenotes://showNote?identifier=\u2026&paragraphID=\u2026), the `section` label, `paragraphId`, `paragraphIdMinted` (true when the target paragraph needed an identifier of its own), `inlineAttachmentIdentifier`, `clearedSectionLinks`, revisionBefore/After (plus targetRevisionBefore/After for another note), sync state (pushScheduled is always false), and with nudge: true a `sync` report.\nDo not use when: a link string is enough (get-paragraph-link, or native-set-paragraph-id first when the identifier is shared), or you want a chip to a whole note.\nSafety: writes to the Notes database through unsupported private API. Selects the target paragraph by `blockIndex` + `expectedText` from list-note-paragraphs, by a unique `paragraphId`, by `heading` text (exact, case-insensitive), or defaults to the first heading or subheading; refuses a missing or ambiguous match. Needs `ifRevision` and, for another note, `ifTargetRevision`, both from native-note-state; refuses on any change (committed: false). `clearExistingSectionLinks` removes only chips that are section links; note-link chips stay. Verified by a fresh read-back of both notes and the attachment. A timeout is indeterminate (indeterminate: true). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS=1 until live-validated.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID of the note that receives the chip"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -64061,7 +64249,7 @@ var WRITE = {
   openWorldHint: false
 };
 var DESTRUCTIVE = { ...WRITE, destructiveHint: true };
-var GATE = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer); applying (not a dry run) also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until this path is live-validated. nudge: true runs the move-in-place sync nudge after a verified apply; its uploadRecorded covers the note record, not the table attachment.";
+var GATE = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer); applying (not a dry run) also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES=1 until this path is live-validated. nudge: true runs the move-in-place sync nudge after a verified apply; its uploadRecorded covers the note record, not the table attachment.";
 async function withNudge(result, identifier, args, deps) {
   if (!args.nudge || result.committed !== true) return { ...result };
   return { ...result, sync: await nudgeAfterWrite(identifier, args.nudgeWaitSeconds, deps.nudge) };
@@ -64462,7 +64650,7 @@ async function withAdoption(result, waitSeconds, deps) {
     adoption: { checked: report.checked, waitedSeconds: report.waitedSeconds, ...folder }
   };
 }
-var GATE2 = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders. After a committed write, adoptedByNotesApp says whether a running Notes.app shows the change (read-only AppleScript; null when Notes.app is not running or it could not be checked).";
+var GATE2 = "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders. After a committed write, adoptedByNotesApp says whether a running Notes.app shows the change (read-only AppleScript; null when Notes.app is not running or it could not be checked).";
 function registerPrivateWriterSmartFolderTools(server2, depsFactory = defaultWriterToolDeps) {
   registerWriterTool(
     server2,
@@ -65166,7 +65354,7 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
     server2,
     depsFactory,
     "native-add-paper",
-    "Use when: adding a hand-drawn-style drawing to the end of one exact note as editable ink, from stroke and shape JSON or from an SVG file, through the opt-in private writer.\nReturns: status (planned or created), the attachment format (paper or drawing) and typeUTI, stroke and point counts, decodedStrokeCount/decodedPointCount from the verifying read-back, attachmentIdentifier, revisionBefore/revisionAfter, and sync state: pushScheduled (always false; the writer cannot upload), pushState, cloudSync versions, and with nudge: true a `sync` report. For an SVG, svgAnalysis names the digest and the losses accepted; for JSON, shapeCount and shapePersistence (shapes are written as strokes tracing them).\nDo not use when: you want a picture of the SVG exactly as it looks (attach a PNG with add-attachment instead), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. An SVG is re-analyzed at write time: a lossy one needs ifSvgAnalysis equal to analyze-svg's analysisDigest and allowSvgLosses equal to its requiredLosses. Verifies by decoding the saved drawing in a new Core Data stack. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Not yet live-validated, so a write also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1; dryRun does not.",
+    "Use when: adding a hand-drawn-style drawing to the end of one exact note as editable ink, from stroke and shape JSON or from an SVG file, through the opt-in private writer.\nReturns: status (planned or created), the attachment format (paper or drawing) and typeUTI, stroke and point counts, decodedStrokeCount/decodedPointCount from the verifying read-back, attachmentIdentifier, revisionBefore/revisionAfter, and sync state: pushScheduled (always false; the writer cannot upload), pushState, cloudSync versions, and with nudge: true a `sync` report. For an SVG, svgAnalysis names the digest and the losses accepted; for JSON, shapeCount and shapePersistence (shapes are written as strokes tracing them).\nDo not use when: you want a picture of the SVG exactly as it looks (attach a PNG with add-attachment instead), or the note is locked, shared, trashed, or still downloading.\nSafety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and a fresh `revision` from native-note-state as ifRevision; refuses on any change since. An SVG is re-analyzed at write time: a lossy one needs ifSvgAnalysis equal to analyze-svg's analysisDigest and allowSvgLosses equal to its requiredLosses. Verifies by decoding the saved drawing in a new Core Data stack. A timeout is indeterminate (indeterminate: true): read native-note-state before any retry. Not yet live-validated, so a write also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PAPER=1; dryRun does not.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -65382,7 +65570,7 @@ function registerPrivateWriterPurgeRepairTools(server2, manager, depsFactory = d
     server2,
     depsFactory,
     "native-repair-purge-flag",
-    "Use when: a note vanished from Notes without passing through Recently Deleted, or you want to check for notes that carry Notes' permanent-deletion (purge) flag while still in an ordinary folder. That state is corrupt: Notes hides the note and will purge it, and the user cannot recover it. The repair finishes an ordinary delete: it clears the flag and moves the note to Recently Deleted.\nReturns: without identifier (scan): candidateCount, truncated, and up to 50 candidates. With identifier and dryRun (default): the note's state (active, in_recently_deleted, purging_from_recently_deleted, purge_flag_outside_recently_deleted, purge_flag_without_folder, folderless), repairable, blockers, its folder and the account's Recently Deleted folder, attachment counts, and `revision`. Apply: status repaired, state in_recently_deleted, revisionBefore/revisionAfter, and sync state (pushScheduled is always false). The move-in-place nudge skips trashed notes, so to upload the move now use native-sync-push with method relaunch.\nDo not use when: deleting an ordinary note (delete-note), restoring a note from Recently Deleted (move-note), or the plan lists blockers (locked, shared, downloading, attachments_marked_for_deletion, no_recently_deleted_folder).\nSafety: scan and plan are read-only. The apply writes through unsupported private API and never purges: it clears the note's flag, moves it to its account's Recently Deleted folder, stamps the folder time (which starts Notes' 30-day clock), and verifies all of it plus an unchanged body in a fresh Core Data stack. It needs the plan's `revision` as ifRevision and confirm: true after the user agreed. A flag Notes set on purpose (a permanent delete on another device that has not finished syncing) looks the same, and repairing it brings that note back into Recently Deleted on every device; only repair a note the user recognizes. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 for the apply. A timeout is indeterminate: plan again before any retry.",
+    "Use when: a note vanished from Notes without passing through Recently Deleted, or you want to check for notes that carry Notes' permanent-deletion (purge) flag while still in an ordinary folder. That state is corrupt: Notes hides the note and will purge it, and the user cannot recover it. The repair finishes an ordinary delete: it clears the flag and moves the note to Recently Deleted.\nReturns: without identifier (scan): candidateCount, truncated, and up to 50 candidates. With identifier and dryRun (default): the note's state (active, in_recently_deleted, purging_from_recently_deleted, purge_flag_outside_recently_deleted, purge_flag_without_folder, folderless), repairable, blockers, its folder and the account's Recently Deleted folder, attachment counts, and `revision`. Apply: status repaired, state in_recently_deleted, revisionBefore/revisionAfter, and sync state (pushScheduled is always false). The move-in-place nudge skips trashed notes, so to upload the move now use native-sync-push with method relaunch.\nDo not use when: deleting an ordinary note (delete-note), restoring a note from Recently Deleted (move-note), or the plan lists blockers (locked, shared, downloading, attachments_marked_for_deletion, no_recently_deleted_folder).\nSafety: scan and plan are read-only. The apply writes through unsupported private API and never purges: it clears the note's flag, moves it to its account's Recently Deleted folder, stamps the folder time (which starts Notes' 30-day clock), and verifies all of it plus an unchanged body in a fresh Core Data stack. It needs the plan's `revision` as ifRevision and confirm: true after the user agreed. A flag Notes set on purpose (a permanent delete on another device that has not finished syncing) looks the same, and repairing it brings that note back into Recently Deleted on every device; only repair a note the user recognizes. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer, and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR=1 for the apply. A timeout is indeterminate: plan again before any retry.",
     {
       identifier: notesUuid2.optional().describe("Notes UUID; omit (with dryRun) to scan for every note in the purge-flag state"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -65411,10 +65599,10 @@ function registerPrivateWriterPurgeRepairTools(server2, manager, depsFactory = d
 }
 
 // src/utils/paragraphAnchors.ts
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 var ANCHOR_ID_PATTERN = /^pa_[0-9a-f]{24}$/;
 var DEFAULT_MIN_CONFIDENCE = 0.6;
-var textFingerprint = (normalized2) => createHash8("sha256").update(normalized2, "utf8").digest("hex").slice(0, 32);
+var textFingerprint = (normalized2) => createHash9("sha256").update(normalized2, "utf8").digest("hex").slice(0, 32);
 function textSimilarity(a, b) {
   if (a === b) return 1;
   if (!a || !b) return 0;
@@ -67026,17 +67214,19 @@ registerSvgAnalysis(server);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
-registerPrivateWriterTools(server, notesManager);
-registerComposeNoteTool(server, notesManager);
-registerPrivateWriterChecklistTools(server, notesManager);
-registerPrivateWriterHighlightTools(server, notesManager);
-registerPrivateWriterLinkCardTools(server, notesManager);
-registerPrivateWriterParagraphTools(server, notesManager);
-registerPrivateWriterTableTools(server, notesManager);
-registerPrivateWriterSmartFolderTools(server);
-registerPrivatePaperWriterTools(server, notesManager);
-registerPrivateWriterPurgeRepairTools(server, notesManager);
-installWriterParagraphIdReminter();
+if (process.env[WRITES_ENV] === "1") {
+  registerPrivateWriterTools(server, notesManager);
+  registerComposeNoteTool(server, notesManager);
+  registerPrivateWriterChecklistTools(server, notesManager);
+  registerPrivateWriterHighlightTools(server, notesManager);
+  registerPrivateWriterLinkCardTools(server, notesManager);
+  registerPrivateWriterParagraphTools(server, notesManager);
+  registerPrivateWriterTableTools(server, notesManager);
+  registerPrivateWriterSmartFolderTools(server);
+  registerPrivatePaperWriterTools(server, notesManager);
+  registerPrivateWriterPurgeRepairTools(server, notesManager);
+  installWriterParagraphIdReminter();
+}
 function successResponse(message, structured) {
   const res = { content: [{ type: "text", text: message }] };
   if (structured) res.structuredContent = structured;

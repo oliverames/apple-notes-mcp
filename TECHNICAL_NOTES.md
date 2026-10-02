@@ -1003,7 +1003,9 @@ the writer's own contract.
 Every write action in the writer:
 
 1. is refused before spawning unless both switches are on, and, until it has
-   passed live validation in a release, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`;
+   passed live validation with a recorded evidence artifact, that feature's
+   `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` switch. The shared
+   `APPLE_NOTES_MCP_ALLOW_UNVERIFIED` switch cannot enable writer actions;
 2. is refused by the writer itself (`writes_disabled`, `committed: false`)
    when it would open the live store read-write without
    `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`;
@@ -1011,8 +1013,10 @@ Every write action in the writer:
    `revision` (the same `r1:` digest the read-only helper reports) before
    changing anything (`revision_conflict`, `committed: false`);
 4. edits through NotesShared's model (the CRDT for body text), never SQL, and
-   saves with `NSErrorMergePolicy`, so a concurrent Notes.app save wins and the
-   writer's save fails with nothing written;
+   saves with `NSErrorMergePolicy`. Persisted-store conflict checks do not
+   establish what happens to unsaved edits in Notes.app. Live writes refuse
+   while Notes.app is running unless `APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1`;
+   that experimental opt-in does not guarantee which concurrent save wins;
 5. re-reads the note through a brand-new coordinator opened read-only and
    compares the result with the intended change; a mismatch is
    `verification_failed` with `committed: true`;
@@ -1188,6 +1192,11 @@ as `invalid_request` (the client refuses both before spawning the writer).
 
 #### Attachment selector
 
+Current planning and apply both refuse attachment removal or replacement with
+`unsupported_attachment_change`, before mutation. The historical preservation
+machinery described below does not establish safe tombstoning of the old row
+and media. Insertion beside an attachment remains supported.
+
 Selectors resolve through `ResolveSelector()` by `kind` (`text`, `style`,
 `blank`, `attachment`), and the client schema is a union on the same key.
 `{kind: "attachment"}` names exactly one of the note's attachment rows by
@@ -1228,11 +1237,15 @@ NotesShared marks the row for deletion during the save, or Notes.app does it
 later, has not been observed yet; the apply reports it rather than assuming
 it. The copy-store script adds a caption beside the first attachment and
 removes it, inserts and deletes a paragraph anchored on it (both restore the
-note exactly), and then removes the attachment on the copy.
+note exactly). It then verifies that removal is refused and the copy is unchanged.
 `check-edit-preservation.mjs` compares attachment rows one by one and skips
 only the rows named in the response's `removedAttachments`.
 
 #### Replacing an attachment with a file
+
+This implementation is retained for development reference but is unreachable:
+planning and applying replacement currently refuse `unsupported_attachment_change`.
+The copy-store harness verifies that refusal rather than exercising this save path.
 
 `replacement: {file, filename?}` with an attachment selector at position
 `self` replaces the attachment's span with one new glyph for a new
@@ -1385,7 +1398,8 @@ for a match at offset 0), and inserts before the `occurrence`-th.
 The dry run opens the store read-only, builds the full unit, resolves the
 placement, and returns `revisionBefore`, `insertAt`, `unitStart`, and the
 per-paragraph plan; it needs both switches (every writer call does) but not
-`APPLE_NOTES_MCP_ALLOW_UNVERIFIED`. The apply follows the write contract
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE`. The apply requires the identical
+plan digest, including input-file hashes, and follows the write contract
 above. Verification opens a new read-only coordinator and requires (1) the
 persisted text to equal the old text with the insertion spliced in at
 `insertAt`, and (2) each written paragraph's signature (style number, indent,

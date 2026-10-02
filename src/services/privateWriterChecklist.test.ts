@@ -78,6 +78,7 @@ beforeEach(() => {
   );
   deps = (env = {}) =>
     defaultWriterDeps({
+      notesRunning: () => false,
       env: {
         PATH: process.env.PATH,
         APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: installDir,
@@ -91,7 +92,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-const ALLOW = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const ALLOW = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_CHECKLIST: "1" };
 
 function caught(fn: () => unknown): PrivateWriteError {
   try {

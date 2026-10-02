@@ -25,7 +25,7 @@ const ON = {
   APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
   APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1",
 };
-const UNVERIFIED = { ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const UNVERIFIED = { ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS: "1" };
 const deps = (env: Record<string, string>) => () => ({ env }) as unknown as PrivateHelperDeps;
 
 const request = {
@@ -135,7 +135,7 @@ describe("writer paragraph-ID reminter", () => {
   it("keeps native-set-paragraph-id's live-validation gate", async () => {
     writer();
     await expect(writerParagraphIdReminter(deps(ON))(request)).rejects.toThrow(
-      /APPLE_NOTES_MCP_ALLOW_UNVERIFIED/
+      /APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS/
     );
     expect(readWriterNoteState).toHaveBeenCalledTimes(1);
     expect(callPrivateWriter).not.toHaveBeenCalled();

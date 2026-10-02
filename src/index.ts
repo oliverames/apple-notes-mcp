@@ -200,6 +200,7 @@ import {
   runPermissionsWindow,
 } from "@/services/permissionsWindow.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
+import { WRITES_ENV } from "@/services/privateWriter.js";
 import { buildPrivateWriter, formatWriterBuild } from "@/services/privateWriterBuild.js";
 import { registerPrivateWriterTools } from "@/tools/privateWriterTools.js";
 import { registerComposeNoteTool } from "@/tools/composeNoteTool.js";
@@ -322,18 +323,20 @@ registerSvgAnalysis(server);
 registerNativeTagsBridge(server, notesManager);
 registerNativeOperations(server, notesManager);
 registerPrivateHelperTools(server, notesManager);
-registerPrivateWriterTools(server, notesManager);
-registerComposeNoteTool(server, notesManager);
-registerPrivateWriterChecklistTools(server, notesManager);
-registerPrivateWriterHighlightTools(server, notesManager);
-registerPrivateWriterLinkCardTools(server, notesManager);
-registerPrivateWriterParagraphTools(server, notesManager);
-registerPrivateWriterTableTools(server, notesManager);
-registerPrivateWriterSmartFolderTools(server);
-registerPrivatePaperWriterTools(server, notesManager);
-registerPrivateWriterPurgeRepairTools(server, notesManager);
-// resolve-paragraph-anchor remint: the writer's set_paragraph_id, only with both writer switches on.
-installWriterParagraphIdReminter();
+if (process.env[WRITES_ENV] === "1") {
+  registerPrivateWriterTools(server, notesManager);
+  registerComposeNoteTool(server, notesManager);
+  registerPrivateWriterChecklistTools(server, notesManager);
+  registerPrivateWriterHighlightTools(server, notesManager);
+  registerPrivateWriterLinkCardTools(server, notesManager);
+  registerPrivateWriterParagraphTools(server, notesManager);
+  registerPrivateWriterTableTools(server, notesManager);
+  registerPrivateWriterSmartFolderTools(server);
+  registerPrivatePaperWriterTools(server, notesManager);
+  registerPrivateWriterPurgeRepairTools(server, notesManager);
+  // resolve-paragraph-anchor remint: the writer's set_paragraph_id, only with both writer switches on.
+  installWriterParagraphIdReminter();
+}
 
 // =============================================================================
 // Response Helpers

@@ -75,7 +75,7 @@ process.stdin.on("end", () => {
 
 let root: string;
 let deps: (env?: Record<string, string>) => PrivateHelperDeps;
-const GATED = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "" };
+const GATED = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS: "" };
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "writer-smart-folder-test-"));
@@ -100,12 +100,13 @@ beforeEach(() => {
   );
   deps = (env = {}) =>
     defaultWriterDeps({
+      notesRunning: () => false,
       env: {
         PATH: process.env.PATH,
         APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: installDir,
         APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
         APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1",
-        APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1",
+        APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS: "1",
         ...env,
       },
       platform: "darwin",

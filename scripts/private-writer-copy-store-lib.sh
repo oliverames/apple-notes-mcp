@@ -52,7 +52,7 @@ COPY="$WORK/NoteStore.sqlite"
 /usr/bin/sqlite3 -readonly "$LIVE" ".backup '$COPY'"
 echo "copied store: $(/usr/bin/stat -f %z "$COPY") bytes"
 
-run() { printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES "$HELPER" 2>/dev/null; }
+run() { printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES -u APPLE_NOTES_MCP_PRIVATE_STORE "$HELPER" 2>/dev/null; }
 copy_run() {
   printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES \
     APPLE_NOTES_MCP_PRIVATE_STORE="$COPY" "$HELPER" 2>/dev/null

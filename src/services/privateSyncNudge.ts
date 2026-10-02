@@ -30,9 +30,13 @@
  */
 import { execFileSync } from "node:child_process";
 import { z } from "zod";
+import { notesRunningForThisUser } from "./notesRunning.js";
+export { notesRunningForThisUser } from "./notesRunning.js";
 import { executeAppleScript } from "../utils/applescript.js";
 import {
   PrivateWriteError,
+  SYNC_PUSH_LIVE_VALIDATED,
+  requireLiveValidated,
   callPrivateWriter,
   defaultWriterDeps,
   parseWriterResult,
@@ -146,33 +150,6 @@ export function moveInPlaceScript(noteURI: string, folderURI: string): string {
   ].join("\n");
 }
 
-/**
- * Whether this user has a Notes.app process. `pgrep` is scoped to the
- * current user, so another logged-in user's Notes.app does not count, and
- * only its "no match" exit (1) means not running: any other failure throws
- * rather than reading as "quit".
- */
-export function notesRunningForThisUser(
-  run: typeof execFileSync = execFileSync,
-  uid: number = process.getuid?.() ?? -1
-): boolean {
-  if (uid < 0)
-    throw new Error("Cannot tell whose Notes.app is running: no user id on this platform");
-  try {
-    run("/usr/bin/pgrep", ["-x", "-u", String(uid), "Notes"], {
-      timeout: 5_000,
-      stdio: "ignore",
-    });
-    return true;
-  } catch (error) {
-    if ((error as { status?: number | null }).status === 1) return false;
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not check whether Notes.app is running (pgrep: ${reason})`, {
-      cause: error,
-    });
-  }
-}
-
 /** Machine side effects of a nudge or relaunch, injectable for tests. */
 export interface NudgeDeps {
   helper: PrivateHelperDeps;
@@ -261,6 +238,7 @@ export async function nudgeInPlace(
   if (!Number.isFinite(waitSeconds) || waitSeconds < 0 || waitSeconds > MAX_NUDGE_WAIT_SECONDS)
     throw invalid(`waitSeconds must be 0-${MAX_NUDGE_WAIT_SECONDS}`);
 
+  if (act) requireLiveValidated(SYNC_PUSH_LIVE_VALIDATED, "native-sync-push", deps.helper.env);
   const before = readSyncState(identifiers, deps.helper);
   const byId = new Map(before.objects.map((o) => [o.identifier, o]));
   const results = new Map<string, NudgeTargetResult>(
@@ -343,8 +321,8 @@ export async function nudgeInPlace(
   for (const r of targets)
     if (r.action === "moved_in_place" && r.contentUnchanged === false)
       warnings.push(
-        `${r.identifier}: the note's revision changed while it was nudged; something else ` +
-          "edited it at the same time. Read it before relying on its content."
+        `${r.identifier}: the note's revision changed while it was nudged; the nudge or another save ` +
+          "may have changed it. Read it before relying on its content."
       );
   if (stillPending.length && act)
     warnings.push(
@@ -669,6 +647,7 @@ export async function syncPush(
         "Ask the user, then pass confirm: true.",
       false
     );
+  requireLiveValidated(SYNC_PUSH_LIVE_VALIDATED, "native-sync-push", deps.helper.env);
   const first = readSyncState(identifiers, deps.helper);
   if (first.syncHostRunning) {
     const quit = deps.runAppleScript(QUIT_SCRIPT);

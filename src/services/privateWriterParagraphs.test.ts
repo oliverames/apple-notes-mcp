@@ -4,7 +4,12 @@ vi.mock(import("./privateWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   callPrivateWriter: vi.fn(),
 }));
-import { PrivateWriteError, WRITER_ACTIONS, callPrivateWriter } from "./privateWriter.js";
+import {
+  PARAGRAPH_IDS_LIVE_VALIDATED,
+  PrivateWriteError,
+  WRITER_ACTIONS,
+  callPrivateWriter,
+} from "./privateWriter.js";
 import { setParagraphId, setParagraphIdSchema } from "./privateWriterParagraphs.js";
 
 const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
@@ -12,7 +17,7 @@ const PID = "0B6E6F46-5C9E-4F7B-9E57-7D3C9A1E2F10";
 const REV = `r1:${"a".repeat(64)}`;
 const REV2 = `r1:${"b".repeat(64)}`;
 const URL = `applenotes://showNote?identifier=${NOTE}&paragraphID=${PID}`;
-const UNVERIFIED = { env: { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" } } as never;
+const UNVERIFIED = { env: { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS: "1" } } as never;
 const base = { identifier: NOTE, blockIndex: 2, expectedText: "Heading", ifRevision: REV };
 
 const updated = {
@@ -49,6 +54,9 @@ function thrown(fn: () => unknown): PrivateWriteError {
 beforeEach(() => vi.clearAllMocks());
 
 describe("setParagraphId", () => {
+  it("keeps paragraph-id writes unvalidated pending recorded live evidence", () => {
+    expect(PARAGRAPH_IDS_LIVE_VALIDATED).toBe(false);
+  });
   it("is a write action in the writer table", () => {
     expect(WRITER_ACTIONS.set_paragraph_id).toBe("write");
   });
@@ -93,7 +101,7 @@ describe("setParagraphId", () => {
     expect(callPrivateWriter).not.toHaveBeenCalled();
   });
 
-  it("needs APPLE_NOTES_MCP_ALLOW_UNVERIFIED until live-validated", () => {
+  it("needs APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS until live-validated", () => {
     expect(thrown(() => setParagraphId(base, { env: {} } as never))).toMatchObject({
       code: "not_live_validated",
       committed: false,

@@ -28,7 +28,6 @@ import {
   assertAppendText,
   assertRevision,
   callPrivateWriter,
-  WRITER_FEATURES,
   defaultWriterDeps,
   editNote,
   editOperationSchema,
@@ -45,6 +44,7 @@ import { z } from "zod";
 
 const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
 const REV = `r1:${"a".repeat(64)}`;
+const PLAN = `p2:${"b".repeat(64)}`;
 const SOURCE = "// fake writer source\n";
 
 const FAKE_WRITER = `#!/usr/bin/env node
@@ -130,8 +130,17 @@ function install(manifest: Record<string, unknown> = {}, binary = FAKE_WRITER) {
 const ON = {
   APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
   APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1",
+  // These processes are test scripts, never the native writer or Notes store.
+  APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "1",
 };
-const UNVERIFIED = { ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const UNVERIFIED = {
+  ...ON,
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND: "1",
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT: "1",
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES: "1",
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS: "1",
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR: "1",
+};
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "private-writer-test-"));
@@ -244,6 +253,68 @@ describe("callPrivateWriter", () => {
     expect(out.echo).toEqual({ protocol: 1, action: "read_note_state", identifier: NOTE });
   });
 
+  it("refuses a live write while Notes is running, before spawning the helper", () => {
+    let spawned = false;
+    const d = {
+      ...deps({ ...ON, APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "" }),
+      spawn: (() => {
+        spawned = true;
+        throw new Error("the writer must not start");
+      }) as PrivateHelperDeps["spawn"],
+    };
+    expect(
+      thrown(() => callPrivateWriter("append_plain_text", {}, d, { notesRunning: () => true }))
+    ).toMatchObject({ code: "notes_app_running", committed: false });
+    expect(spawned).toBe(false);
+  });
+
+  it("fails closed when the Notes process check fails", () => {
+    const d = deps({ ...ON, APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "" });
+    expect(
+      thrown(() =>
+        callPrivateWriter("append_plain_text", {}, d, {
+          notesRunning: () => {
+            throw new Error("process check unavailable");
+          },
+        })
+      )
+    ).toMatchObject({ code: "notes_app_state_unavailable", committed: false });
+  });
+
+  it("allows a stopped Notes app, an explicit override, and read-only requests", () => {
+    const guarded = deps({ ...ON, APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "" });
+    expect(
+      callPrivateWriter("append_plain_text", { text: "x" }, guarded, {
+        notesRunning: () => false,
+      }).status
+    ).toBe("updated");
+    expect(
+      callPrivateWriter("append_plain_text", { text: "x" }, deps(ON), {
+        notesRunning: () => true,
+      }).status
+    ).toBe("updated");
+    expect(
+      callPrivateWriter("read_note_state", { identifier: NOTE }, guarded, {
+        notesRunning: () => true,
+      }).status
+    ).toBe("ok");
+    expect(
+      callPrivateWriter("delete_table_row", {}, guarded, {
+        dryRun: true,
+        notesRunning: () => true,
+      }).status
+    ).toBe("planned");
+  });
+
+  it.each(["prune_orphan_table", "repair_purge_flag"])(
+    "never bypasses the running-Notes refusal for %s",
+    (action) => {
+      expect(
+        thrown(() => callPrivateWriter(action, {}, deps(ON), { notesRunning: () => true }))
+      ).toMatchObject({ code: "notes_app_running", committed: false });
+    }
+  );
+
   it("allows hello with allowDisabled against an explicit binary", () => {
     const out = callPrivateWriter("hello", {}, deps(), {
       allowDisabled: true,
@@ -333,15 +404,38 @@ describe("validation helpers", () => {
     });
   });
 
-  it("requireLiveValidated gates unvalidated writes on ALLOW_UNVERIFIED", () => {
-    expect(thrown(() => requireLiveValidated(false, "x", {}))).toMatchObject({
+  it("requires the exact feature opt-in and ignores the former global bypass", () => {
+    for (const env of [
+      {},
+      { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" },
+      { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT: "1" },
+      { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND: "true" },
+    ]) {
+      expect(
+        thrown(() => requireLiveValidated(false, "native-append-plain-text", env))
+      ).toMatchObject({
+        code: "not_live_validated",
+        committed: false,
+      });
+    }
+    expect(() =>
+      requireLiveValidated(false, "native-append-plain-text", {
+        APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND: "1",
+      })
+    ).not.toThrow();
+    // A boolean alone cannot claim validation without a registered evidence record.
+    expect(thrown(() => requireLiveValidated(true, "native-append-plain-text", {}))).toMatchObject({
       code: "not_live_validated",
       committed: false,
     });
-    expect(() =>
-      requireLiveValidated(false, "x", { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" })
-    ).not.toThrow();
-    expect(() => requireLiveValidated(true, "x", {})).not.toThrow();
+    expect(thrown(() => requireLiveValidated(false, "unknown-tool", UNVERIFIED))).toMatchObject({
+      code: "not_live_validated",
+      committed: false,
+    });
+    expect(thrown(() => requireLiveValidated(true, "unknown-tool", UNVERIFIED))).toMatchObject({
+      code: "not_live_validated",
+      committed: false,
+    });
   });
 
   it("assertRevision and assertAppendText refuse bad input with committed false", () => {
@@ -359,7 +453,7 @@ describe("validation helpers", () => {
 describe("appendPlainText", () => {
   beforeEach(() => install());
 
-  it("is not live-validated, so it needs ALLOW_UNVERIFIED", () => {
+  it("is not live-validated, so it needs the APPEND opt-in", () => {
     expect(APPEND_LIVE_VALIDATED).toBe(false);
     const error = thrown(() =>
       appendPlainText({ identifier: NOTE, text: "x", ifRevision: REV }, deps(ON))
@@ -509,6 +603,23 @@ describe("privateWriterCapabilities", () => {
     expect(on.editNote.reason).toBe("not_live_validated");
     expect(privateWriterCapabilities(deps(UNVERIFIED)).features.editNote.available).toBe(true);
   });
+
+  it("an EDIT opt-in opens only editing, while a global opt-in opens no write features", () => {
+    install();
+    const editOnly = privateWriterCapabilities(
+      deps({ ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT: "1" })
+    ).features;
+    expect(editOnly.editNote.available).toBe(true);
+    expect(editOnly.appendPlainText.reason).toBe("not_live_validated");
+    expect(editOnly.editTables.reason).toBe("not_live_validated");
+    expect(editOnly.editSmartFolders.reason).toBe("not_live_validated");
+    const global = privateWriterCapabilities(
+      deps({ ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" })
+    ).features;
+    for (const key of ["appendPlainText", "editNote", "editTables", "editSmartFolders"])
+      expect(global[key].reason).toBe("not_live_validated");
+    expect(global.planEdit.available).toBe(true);
+  });
 });
 
 const REPLACE = [
@@ -544,6 +655,7 @@ describe("editNote", () => {
         identifier: NOTE,
         dryRun: false,
         ifRevision: REV,
+        ifPlanDigest: PLAN,
         requireNonSystemPaper: true,
         operations: REPLACE,
       },
@@ -567,12 +679,13 @@ describe("editNote", () => {
       operations: REPLACE,
       requireNonSystemPaper: true,
       ifRevision: REV,
+      ifPlanDigest: PLAN,
     });
   });
 
   it("reports an unchanged apply as not committed", () => {
     const r = editNote(
-      { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+      { identifier: NOTE, dryRun: false, ifRevision: REV, ifPlanDigest: PLAN, operations: REPLACE },
       deps({ ...UNVERIFIED, FAKE_MODE: "edit-noop" })
     );
     expect(r).toMatchObject({ status: "unchanged", committed: false });
@@ -587,7 +700,13 @@ describe("editNote", () => {
     expect(
       thrown(() =>
         editNote(
-          { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+          {
+            identifier: NOTE,
+            dryRun: false,
+            ifRevision: REV,
+            ifPlanDigest: PLAN,
+            operations: REPLACE,
+          },
           deps(ON)
         )
       )
@@ -595,8 +714,14 @@ describe("editNote", () => {
     expect(
       thrown(() =>
         editNote(
-          { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
-          deps({ APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" })
+          {
+            identifier: NOTE,
+            dryRun: false,
+            ifRevision: REV,
+            ifPlanDigest: PLAN,
+            operations: REPLACE,
+          },
+          deps({ APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT: "1" })
         )
       )
     ).toMatchObject({ code: "writes_disabled", committed: false });
@@ -646,7 +771,13 @@ describe("editNote", () => {
     expect(e.details.objects).toEqual(["updated ICAttachment (noteUsingTitleForNoteTitle)"]);
     const applied = thrown(() =>
       editNote(
-        { identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE },
+        {
+          identifier: NOTE,
+          dryRun: false,
+          ifRevision: REV,
+          ifPlanDigest: PLAN,
+          operations: REPLACE,
+        },
         deps({ ...UNVERIFIED, FAKE_MODE: "edit-side-effect" })
       )
     );
@@ -660,7 +791,16 @@ describe("editNote", () => {
     ).toBeUndefined();
     expect(
       thrown(() =>
-        editNote({ identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE }, d)
+        editNote(
+          {
+            identifier: NOTE,
+            dryRun: false,
+            ifRevision: REV,
+            ifPlanDigest: PLAN,
+            operations: REPLACE,
+          },
+          d
+        )
       ).committed
     ).toBe("unknown");
   });
@@ -831,7 +971,7 @@ describe("attachment selector schema", () => {
       },
     ];
     const r = editNote(
-      { identifier: NOTE, dryRun: false, ifRevision: REV, operations },
+      { identifier: NOTE, dryRun: false, ifRevision: REV, ifPlanDigest: PLAN, operations },
       deps({ ...UNVERIFIED, FAKE_MODE: "edit-attachment" })
     );
     expect(r).toMatchObject({
@@ -1148,6 +1288,24 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
         )
       )
     ).toMatchObject({ code: "invalid_request", committed: false });
+  });
+
+  it("requires the reviewed plan digest before an edit can spawn", () => {
+    install();
+    let spawned = false;
+    const d = {
+      ...deps(UNVERIFIED),
+      spawn: (() => {
+        spawned = true;
+        throw new Error("the writer must not start");
+      }) as PrivateHelperDeps["spawn"],
+    };
+    const error = thrown(() =>
+      editNote({ identifier: NOTE, dryRun: false, ifRevision: REV, operations: REPLACE }, d)
+    );
+    expect(error).toMatchObject({ code: "invalid_request", committed: false });
+    expect(error.message).toMatch(/ifPlanDigest/);
+    expect(spawned).toBe(false);
   });
 
   it("lists file replacement as its own gated feature", () => {

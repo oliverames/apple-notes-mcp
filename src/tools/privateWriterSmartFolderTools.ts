@@ -95,7 +95,7 @@ async function withAdoption(
 }
 
 const GATE =
-  "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders. After a committed write, adoptedByNotesApp says whether a running Notes.app shows the change (read-only AppleScript; null when Notes.app is not running or it could not be checked).";
+  "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS=1. The writer cannot upload; Notes.app uploads the folder (pushScheduled is always false; check cloudSync with native-read-smart-folder). There is no sync nudge for folders. After a committed write, adoptedByNotesApp says whether a running Notes.app shows the change (read-only AppleScript; null when Notes.app is not running or it could not be checked).";
 
 export function registerPrivateWriterSmartFolderTools(
   server: McpServer,

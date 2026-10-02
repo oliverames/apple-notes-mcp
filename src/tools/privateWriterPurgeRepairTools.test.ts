@@ -44,7 +44,7 @@ describe("native-repair-purge-flag", () => {
     expect(config.description).toMatch(/never purges/);
     expect(config.description).toMatch(/confirm: true/);
     expect(config.description).toMatch(/permanent delete on another device/);
-    expect(config.description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+    expect(config.description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR=1/);
     expect(Object.keys(config.inputSchema)).toEqual(
       expect.arrayContaining(["ifFolderId", "ifAncestorFolderId", "forbiddenAncestorFolderIds"])
     );

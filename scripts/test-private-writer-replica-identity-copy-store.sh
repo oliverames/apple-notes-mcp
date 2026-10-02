@@ -33,6 +33,9 @@
 #              the copy, which is most likely one edited in Notes.app.
 #   HELPER=/path/to/binary reuses a built writer instead of compiling.
 set -euo pipefail
+
+# Explicit test opt-ins for only the write features exercised by this harness.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1
 # shellcheck source=scripts/private-writer-copy-store-lib.sh
 . "$(dirname "$0")/private-writer-copy-store-lib.sh"
 

@@ -15,7 +15,7 @@
  * (`APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and
  * `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`); otherwise the resolver keeps
  * reporting `writer-unavailable`. `native-set-paragraph-id`'s gates still
- * apply, including `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until it is
+ * apply, including `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS=1` until it is
  * live-validated, and a refusal is reported as `writer-failed`.
  *
  * @module services/privateWriterReminter

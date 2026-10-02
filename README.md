@@ -1,6 +1,6 @@
 # Apple Notes MCP Server
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that lets Claude (Claude Code and Claude Desktop), Codex, and other MCP clients read, search, create, edit, organize, and export notes in Apple Notes on macOS. It runs locally on your Mac and talks to Notes through AppleScript, Apple Shortcuts, and read-only access to the Notes database.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that lets Claude (Claude Code and Claude Desktop), Codex, and other MCP clients read, search, create, edit, organize, and export notes in Apple Notes on macOS. It runs locally on your Mac and talks to Notes through AppleScript, Apple Shortcuts, and read-only access to the Notes database. A separate experimental private writer can modify the database only when explicitly enabled.
 
 Beyond creating and editing notes, it manages folders and accounts, native tags, checklists, tables, pinned notes, links, and attachments. It can also export notes as Markdown, HTML, or JSON, read audio transcripts and drawings, and run a query language across your whole library.
 
@@ -804,7 +804,7 @@ block a new ID through the opt-in private writer's `native-set-paragraph-id`
 (with a fresh revision, refusing if the paragraph changed) and resolves again.
 It runs only when `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and
 `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1` are set and the writer is built
-(plus `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until that write is
+(plus `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS=1` until that write is
 live-validated); otherwise it reports `writer-unavailable`.
 
 To share anchored links outside Notes, see the
@@ -2825,8 +2825,19 @@ apple-notes-mcp setup --native-writer --check  # report only
 - `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` (the private opt-in) **and**
   `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1` (the write opt-in). The writer
   itself refuses a read-write open of the live store without the second one.
-- `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` for a write that has not passed live
-  validation in a release (every write so far).
+- The exact `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` switch for an
+  unvalidated feature. The shared `APPLE_NOTES_MCP_ALLOW_UNVERIFIED` switch
+  does not enable any writer feature. Validation claims must reference a
+  checked-in evidence record. No writer feature is live-validated yet.
+- Live writes refuse while Notes.app runs unless
+  `APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1` is explicitly set. The opt-in
+  permits an experiment; it does not establish concurrent-editor safety.
+
+Writer tools are absent from tools/list unless the private-write switch is on.
+Feature suffixes are `APPEND`, `EDIT`, `COMPOSE`, `CHECKLIST`, `HIGHLIGHT`,
+`LINK_CARD`, `PARAGRAPH_IDS`, `SECTION_LINKS`, `TABLES`, `SMART_FOLDERS`, `PAPER`,
+`PURGE_REPAIR`, and `SYNC_PUSH`. Nudge and relaunch require `SYNC_PUSH`; a
+read-only sync status does not.
 
 Every write takes an `ifRevision` compare-and-swap token (the `revision` from
 `native-note-state` or a feature's own read), saves through Notes' own data
@@ -2903,6 +2914,10 @@ counters fails after Notes.app was restarted, the error
 
 #### `native-edit-note`
 
+Apply requires the identical dry run's `planDigest` as `ifPlanDigest`. Attachment
+removal and replacement are refused until safe tombstoning of the old row and
+media is implemented. Planning refuses the same unsupported attachment changes.
+
 Edits selected text inside one note in place and leaves everything outside
 the edited ranges alone: attachments, tables, checklist state, paragraph
 styles, and inline formatting. Operations, applied together against one
@@ -2968,30 +2983,13 @@ Notes stores some attachments, such as an image added through AppleScript, as
 two adjacent glyphs; the selector treats them as one attachment, counts it
 once, and edits all of its glyphs together.
 
-- In `replace`, `position: "self"` (the default) replaces the attachment with
-  the replacement text, and empty text removes it from the body.
-  `position: "before"` or `"after"` inserts the text inline beside it.
-- In `replace` with `position: "self"`, `replacement: {file, filename?}` puts
-  a new attachment in its place in the same save: `file` is an absolute path
-  in your home folder, a temporary folder, or `/Volumes` to a non-empty image
-  or PDF of at most 64 MiB (the final path component may not be a link), and
-  `filename` is the name Notes shows, which must keep the file's extension.
-  The attachment it replaces must be a file (image, PDF, or other file), not a
-  table, drawing, or link card. The dry run reads the file and reports its
-  size and SHA-256 in `replacementFiles` without writing anything; the apply
-  creates the attachment, verifies its type, name, and bytes in a fresh read,
-  and removes it again if anything fails before the save.
-- In `delete_paragraph`, it removes the attachment's own paragraph, which must
-  hold nothing but the attachment and whitespace.
+- `replace` with `position: "before"` or `"after"` inserts text inline beside
+  the attachment.
 - As an `insert_after` / `insert_before` / `append_to_paragraph` anchor, it
   names the paragraph that holds the attachment.
-
-Only the named attachment's glyphs may be inside an edited range. The plan
-lists `removedAttachments`. The apply proves that every other attachment row
-still belongs to the note with the same stored values and reports what
-happened to each removed attachment's row (`rowStillInNote`,
-`markedForDeletion`). Removing an attachment from the body does not delete its
-file; Notes decides when to clean up the row.
+- Planning and applying any attachment removal or replacement refuse with
+  `unsupported_attachment_change`. Removing its body glyph alone does not
+  safely tombstone the old row and media.
 
 Always call it twice. `dryRun: true` is read-only and returns the plan
 (targets, `lengthBefore`/`lengthAfter`, `unchangedUTF16`, `wouldChange`),
@@ -3004,8 +3002,7 @@ differs from the dry run. The apply re-reads the note in a
 fresh Core Data stack and returns `preservation`, which says that every
 character outside the edits kept its formatting, that the attachment glyph
 sequence is the planned one, and that the note's attachment rows did not
-change (apart from an attachment the request removed or a replacement file
-added). The comparison reads every stored field of each paragraph style
+change. The comparison reads every stored field of each paragraph style
 (including checklist state and list numbering), font, color, link, and
 attachment reference; a note holding formatting of any other kind is refused
 at the dry run (`unsupported_note`) rather than edited without that proof.
@@ -3015,10 +3012,14 @@ Refusals commit nothing: `revision_conflict`, `match_count_mismatch`,
 `unexpected_side_effect` (the edit would change
 another object, for example an attachment Notes uses for the title). Takes
 `nudge` like `native-append-plain-text`. Planning needs the two writer
-switches; applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until the
+switches; applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT=1` until the
 edit path is live-validated.
 
 #### `compose-note`
+
+Apply requires the identical dry run's `planDigest` as `ifPlanDigest`, including
+create mode. The plan binds the request and each input file's bytes. A changed
+request, changed file, or missing digest is refused before creating a note.
 
 Writes natively formatted content through the writer in one save: headings,
 subheadings, body paragraphs, block quotes, monospaced blocks, bulleted,
@@ -3125,7 +3126,7 @@ apply and reported under `objects`; the dry run lists what it would create,
 with each file's size and SHA-256. The writer re-reads each object, every
 table cell, each card's URL, and each file's bytes. Writes need both writer
 switches and, until this path passes live validation in a release,
-`APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; dry runs do not. Files and link cards
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1`; dry runs do not. Files and link cards
 also need the writer's `composeAttachments` feature (`native-writer-status`).
 
 #### `native-checklist-state`
@@ -3173,7 +3174,7 @@ flag to agree, then returns the stored runs per match (`ranges`). When every
 match already has the requested state it writes nothing
 (`status: "unchanged"`). Sync reporting and the optional `nudge` match
 `native-append-plain-text`. Writes also require
-`APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated in a release; dry
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED_HIGHLIGHT=1` until live-validated in a release; dry
 runs do not.
 
 `scope: "note"` targets the whole body after the title instead of `match`
@@ -3209,7 +3210,7 @@ network request: Notes fetches the card's title and preview image itself. The
 result carries the attachment's own `cloudSync` counters. Not idempotent: a
 repeat adds a second card, but the replayed revision is refused. Sync
 reporting and the optional `nudge` match `native-append-plain-text`. Writes
-also require `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated in a
+also require `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_LINK_CARD=1` until live-validated in a
 release; dry runs do not.
 
 #### `native-set-paragraph-id`
@@ -3260,7 +3261,7 @@ unchanged and the table equals the planned result. A stale token fails with
 token; `helperCode` says which) and `committed: false`. Applies take the
 same optional `nudge`; its `uploadRecorded` covers the note record, not the
 table attachment's own record. Dry runs and `native-read-tables` are not
-gated by `APPLE_NOTES_MCP_ALLOW_UNVERIFIED`; applies are.
+gated by `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES`; applies are.
 
 #### `native-read-tables`
 
@@ -3291,7 +3292,9 @@ refuses a visible table, and a note whose body has an attachment glyph it
 cannot identify, since that glyph could be the table's
 (`unsupported_attachment`, `unidentifiedGlyphs`). Before saving it refuses
 any change beyond the note and the table (`unexpected_changes`), and the
-read-back requires the table row to exist and be marked deleted.
+read-back requires the table row to exist and be marked deleted. It also
+refuses while Notes.app runs and when pending uploads, a cloud delete, or
+unknown cloud metadata prevent proving a quiescent state (`cloud_state_unverified`).
 
 #### Smart folders
 
@@ -3314,7 +3317,7 @@ Notes.app shows the change (the folder, with its title, or after a delete its
 absence), polled for `adoptionWaitSeconds` (0 to 60, default 10). Notes.app is
 never launched for this; when it is not running, `adoptedByNotesApp` is
 `null`. Writes
-need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`; the read and the delete's dry run
+need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS=1`; the read and the delete's dry run
 do not.
 
 #### `native-read-smart-folder`
@@ -3365,7 +3368,7 @@ Inks are `pen` (default), `pencil`, `marker`, `fountainpen`, `watercolor`, and
 `crayon`; the writer refuses an ink that PencilKit would store as a different
 one. Guarded by `ifRevision` like every write; `dryRun: true` validates and
 reports the plan (format, stroke and point counts, bounds) without writing and
-without `APPLE_NOTES_MCP_ALLOW_UNVERIFIED`. A write is verified by decoding
+without `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PAPER`. A write is verified by decoding
 the saved drawing in a fresh Core Data stack (`decodedStrokeCount`,
 `decodedPointCount`) and returns `attachmentIdentifier` and the usual sync
 fields; `nudge` works as for `native-append-plain-text`. The writer embeds a
@@ -3395,13 +3398,19 @@ it. The known cause is a tool that set the flag instead of moving the note.
   starts Notes' 30-day clock. It never purges anything. A fresh read-back
   checks the flag, the folder, the timestamp, and an unchanged body.
 
+The apply refuses while Notes.app runs. Unknown cloud metadata, pending
+uploads, and any positive synced-version history also refuse: a newer local
+version does not establish that the deletion flag itself has never synced.
+Synthetic tests cover these conservative refusals; successful repair still
+needs a sanitized fixture with a proven safe state.
+
 Risk: a flag Notes set on purpose, for example a permanent delete on another
 device that has not finished syncing, looks the same on this Mac. Repairing
 that note brings it back into Recently Deleted, and the move syncs to every
 device. Only repair a note the user recognizes as wrongly lost. The move then
 needs Notes.app to upload it; the in-place nudge skips trashed notes, so use
 `native-sync-push` with `method: "relaunch"` if it should upload now. The
-apply needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated.
+apply needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR=1` until live-validated.
 
 #### `native-read-paper`
 
@@ -3451,7 +3460,7 @@ shapes come from PaperKit through two internal entry points, so they are
 checked at run time and offered only on macOS 27; the other layers use
 NotesShared's drawing reader and the stored PDF. Like every writer tool it
 needs both writer switches, but it writes nothing and needs no
-`APPLE_NOTES_MCP_ALLOW_UNVERIFIED`.
+unverified-feature opt-in.
 
 ## Usage Patterns
 

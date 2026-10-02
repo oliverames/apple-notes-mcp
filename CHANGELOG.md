@@ -2,27 +2,26 @@
 
 ## [2.9.35] - 2026-10-02
 
-### Security
+### Unreleased Writer Design and Safety
 
-- `compose-note` file blocks now follow the file policy that
-  `add-attachment`, `create-note`'s `contentPath`, `analyze-svg` and the
-  template tools use (#259, #260). A file must be a regular file in home,
-  temp or `/Volumes`, not a symbolic link or a FIFO. Hidden paths and
-  `~/Library` outside iCloud Drive and CloudStorage are refused unless
-  `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Before this, a prompt could
-  compose `~/.ssh/id_ed25519` into a synced note, and a FIFO could block the
-  server. The check uses a new `assertAllowedFile`, which shares
-  `readAllowedFile`'s checks without reading the file, since the writer reads
-  it itself.
-- `native-edit-note`'s attachment replacement files now follow the file
-  policy that `add-attachment`, `create-note`'s `contentPath`, `analyze-svg`
-  and the template tools use (#259, #260). A file must be a regular file in
-  home, temp or `/Volumes`, not a symbolic link or a FIFO. Hidden paths and
-  `~/Library` outside iCloud Drive and CloudStorage are refused unless
-  `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Before this, a prompt could
-  swap an attachment for `~/.ssh/id_ed25519` in a synced note. The check uses
-  a new `assertAllowedFile`, which shares `readAllowedFile`'s checks without
-  reading the file, since the writer reads it itself.
+These private-writer changes have not shipped. They are design safeguards,
+not security fixes to an earlier released writer.
+
+- Writer tools are registered only with the private-write switch. Unvalidated
+  features require separate opt-ins and any future validation flag needs an
+  evidence record. The shared Shortcuts opt-in cannot enable writer actions.
+- Live writes refuse a running Notes.app unless separately enabled for an
+  experiment. Concurrent dirty-editor, replica-identity, and upload-lag
+  evidence remains outstanding; no safety claim is inferred from store revisions.
+- Edit and compose applies require their dry-run plan digest. Compose binds
+  input-file content, and edit attachment removal/replacement is refused until
+  safe tombstoning is available.
+- Sync nudge and relaunch are live-validation gated. Native saves check expected
+  changes and refuse unsafe cloud/deletion states. The writer has its own
+  transaction author, and native framework tests are explicitly opt-in.
+- Compose files and edit replacement-file plans follow the established
+  `add-attachment` file policy (#259, #260): approved roots, regular files,
+  private-path restrictions, and descriptor identity checks.
 
 ### Added
 
@@ -48,7 +47,7 @@
   flag while still in an ordinary folder and, after a dry run and with
   `confirm: true`, finishes an ordinary delete: it clears the flag and moves
   the note to Recently Deleted, verified by a fresh read-back. It never
-  purges. Needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated.
+  purges. Needs the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in until live-validated.
 - `resolve-paragraph-anchor` with `remint: true` gives a `needs-reminting`
   paragraph a new ID through the writer's `set_paragraph_id` (with a fresh
   revision and the matched block's text) and resolves again, when both writer
@@ -83,7 +82,7 @@
 - Two switches gate every writer call: `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and
   the new `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`. The writer checks the
   second itself before opening the live store read-write. Writes that have not
-  passed live validation also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
+  passed live validation also need the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in.
 - Write contract shared by every write action: `ifRevision` compare-and-swap,
   a save with optimistic locking, a fresh read-back through a new Core Data
   stack, and `committed` / `indeterminate` on every uncertain outcome.
@@ -105,21 +104,16 @@
   insert or delete paragraphs, retitle) that leave attachments and formatting
   outside the edited ranges untouched. `dryRun: true` runs the read-only
   `plan_edit` action; the apply (`edit_note`) needs the plan's
-  `revisionBefore` as `ifRevision`, refuses any edit that would change
+  `revisionBefore` as `ifRevision` and `planDigest` as `ifPlanDigest`, refuses any edit that would change
   another object, and re-reads the note to prove the text, every attribute
   run outside the edits, the attachment glyph sequence, and the attachment
   rows (reported as `preservation`). Optional `nudge`. Not yet
-  live-validated, so applying also needs `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
-- `native-edit-note` attachment selector (`{kind: "attachment"}` with
-  `identifier`, `id`, or `ordinal`): replace an attachment with text, remove
-  it from the body (`replace` with empty text, or `delete_paragraph` on its
-  own paragraph), insert text inline beside it (`position: "before"` or
-  `"after"`), or anchor inserted paragraphs on it. It is the only selector
-  whose target may contain an attachment glyph, and only the named one. The
-  plan reports `removedAttachments`; the apply's read-back proves every other
-  attachment row still belongs to the note with the same stored values
-  (`preservation.otherAttachmentRowsUnchanged`) and reports what became of
-  each removed attachment's row. The copy-store script adds attachment steps.
+  live-validated, so applying also needs the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in.
+- `native-edit-note` attachment selectors (`identifier`, `id`, or `ordinal`)
+  support inserting text beside an attachment and anchoring inserted paragraphs.
+  Planning and applying removal or replacement refuse with
+  `unsupported_attachment_change` until safe tombstoning is implemented. The
+  copy-store harness checks these refusals and unchanged attachment data.
 - `native-edit-note` operation `trim_blank_lines`: removes redundant empty
   paragraphs (`mode: "runs"` keeps the first `keep` of every run of blank
   lines, `"end"` trims trailing blank lines, `"around"` trims the blank lines
@@ -147,14 +141,15 @@
   `create` (Notes.app creates the note, then the writer appends below the
   title under a fresh revision), `append` (optionally before one exact
   Heading, `insertBeforeHeading`), and `prepend` (below the title). Apply
-  follows a `dryRun` plan with its `revisionBefore` as `ifRevision`. The writer
+  requires a `dryRun` plan's `planDigest` as `ifPlanDigest`, and existing-note
+  modes also require its `revisionBefore` as `ifRevision`. The writer
   compares every written paragraph's style, indent, block quote, checklist
   state, and runs in a fresh read-only stack, reports `unitStart` and
   `objectURI`, and the server cross-checks the same paragraphs with its own
   NoteStore decoder (`databaseReadBack`). Every refusal before the save
   reports `committed: false`. Optional `nudge`. Gated by
   `COMPOSE_LIVE_VALIDATED = false`, so writes also need
-  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. The writer probe and
+  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. The writer probe and
   `native-writer-status` report a `composeNote` feature, and the copy-store
   script exercises plan, apply, stale and replayed revisions, prepend,
   heading placement, and the Quick Note refusal.
@@ -177,7 +172,7 @@
   nothing when the item already has the requested state. Items are located by
   the exact characters that carry each todo identity, not by line boundaries.
   Optional `nudge`. Until it passes live validation it also requires
-  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
+  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. Ported from the earlier combined
   helper branch.
 - `scripts/test-private-writer-checklist-copy-store.sh` exercises the
   checklist actions on a store copy, with shared setup in
@@ -192,7 +187,7 @@
   verify the text, every highlight run, and Notes' `hasEmphasis` flag. A
   request that is already satisfied writes nothing. Optional `nudge`. Until
   it passes live validation, writes also require
-  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
+  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. Ported from the earlier combined
   helper branch.
 - `native-highlight-text` takes `scope: "note"` to highlight (or with
   `color: "none"`, un-highlight) the whole body after the title paragraph.
@@ -218,7 +213,7 @@
   the attachment's type, URL, and owning note. The writer makes no network
   request; Notes fetches the card preview itself. Optional `nudge`. Until it
   passes live validation, writes also require
-  `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`. Ported from the earlier combined
+  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. Ported from the earlier combined
   helper branch.
 - `scripts/test-private-writer-link-card-copy-store.sh` exercises the link
   card action on a store copy, with shared setup in
@@ -269,7 +264,7 @@
   `ifSvgAnalysis` equal to its `analysisDigest` and `allowSvgLosses` equal to
   its `requiredLosses`. Guarded by `ifRevision`, plannable with `dryRun`,
   verified by decoding the saved drawing in a fresh Core Data stack, and
-  behind `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` until live-validated. On a copy
+  behind the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in until live-validated. On a copy
   store the writer redirects every Notes file directory beside the copy. The
   writer now links PencilKit and embeds a bundle identifier, which PencilKit
   needs to build a drawing. `native-writer-status` reports `addPaper`.

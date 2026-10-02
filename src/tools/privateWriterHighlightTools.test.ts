@@ -53,7 +53,7 @@ describe("highlight writer tool", () => {
     });
     const description = config("native-highlight-text").description;
     expect(description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
-    expect(description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+    expect(description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_HIGHLIGHT=1/);
     expect(description).toMatch(/match_count_mismatch/);
   });
 

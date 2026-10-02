@@ -72,10 +72,22 @@ function refusingWriter(requests: Array<Record<string, unknown>>): PrivateHelper
     return { status: 1, stdout: JSON.stringify(refusal), stderr: "", signal: null };
   }) as unknown as typeof spawnSync;
   return defaultWriterDeps({
+    notesRunning: () => false,
     env: {
       APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
       APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1",
-      APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_CHECKLIST: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_HIGHLIGHT: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_LINK_CARD: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PARAGRAPH_IDS: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PAPER: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR: "1",
       APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: "/fake",
     },
     platform: "darwin",
@@ -168,6 +180,7 @@ describe("every writer write forwards the scope guard", () => {
             identifier: NOTE,
             dryRun: false,
             ifRevision: REV,
+            ifPlanDigest: `p2:${"b".repeat(64)}`,
             operations: [{ op: "replace", selector: { text: "a" }, replacement: { text: "b" } }],
             scope: GUARD,
           },

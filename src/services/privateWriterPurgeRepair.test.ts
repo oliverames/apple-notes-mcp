@@ -98,6 +98,7 @@ function writer(
     return { status: 0, stdout: JSON.stringify(out), stderr: "", signal: null };
   }) as unknown as typeof spawnSync;
   return defaultWriterDeps({
+    notesRunning: () => false,
     env: {
       APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
       APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1",
@@ -173,7 +174,7 @@ describe("repairPurgeFlag", () => {
 
     const repaired = repairPurgeFlag(
       { identifier: NOTE, dryRun: false, ifRevision: REV, confirm: true },
-      writer(requests, { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" })
+      writer(requests, { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR: "1" })
     );
     expect(requests[0]).toEqual({
       protocol: PRIVATE_WRITER_PROTOCOL,

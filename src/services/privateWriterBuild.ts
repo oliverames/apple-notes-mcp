@@ -244,7 +244,8 @@ export function formatWriterBuild(report: WriterBuildReport): string {
     lines.push(
       `The writer stays off until you set both APPLE_NOTES_MCP_ENABLE_PRIVATE=1 and ${WRITES_ENV}=1 ` +
         "for the MCP server. Writes that have not passed live validation also need " +
-        "APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. It uses unsupported private API; try it on disposable notes first."
+        "their own APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1 opt-in; the blanket switch does not enable them. " +
+        "It uses unsupported private API; try it on disposable notes first."
     );
   } else if (report.checkOnly) {
     lines.push(`Run \`${WRITER_SETUP_COMMAND}\` to build it.`);

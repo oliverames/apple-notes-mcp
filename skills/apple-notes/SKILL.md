@@ -151,8 +151,16 @@ read-only: write support was deliberately deferred by the maintainer.
 
 A separate writer (`apple-notes-mcp setup --native-writer`), off unless both
 `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`
-are set; unvalidated writes also need `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1`.
-Call `native-writer-status` first. Every write needs a fresh `revision` as
+are set. Writer tools are absent from tools/list unless private writes are enabled.
+Unvalidated writes also need the exact feature switch, such as
+`APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT=1`; the shared `ALLOW_UNVERIFIED` switch
+does not enable them. Live writes refuse while Notes.app runs unless
+`APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1` is explicitly set. Concurrent editor and
+sync safety remain unverified; do not set these opt-ins without user direction.
+Call `native-writer-status` first. `native-edit-note` and `compose-note` apply
+require the identical dry run's `planDigest` as `ifPlanDigest`; changed requests
+or files are refused before mutation. Removing or replacing an attachment is
+refused until safe tombstoning is implemented. Every write needs a fresh `revision` as
 `ifRevision`; on `revision_conflict` or `indeterminate: true`, read the note
 before retrying. Every write also takes the folder scope guards
 (`ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds`), checked
@@ -165,7 +173,7 @@ the note is no longer where the guard requires, and
 | `native-writer-status`       | Report both switches, writer build state, and live probe (read-only)                                                                                                                                           |
 | `native-append-plain-text`   | Append plain paragraphs with a revision guard and read-back; optional sync nudge                                                                                                                               |
 | `native-sync-push`           | Check or get writer changes uploaded later (status, nudge, confirmed relaunch)                                                                                                                                 |
-| `native-edit-note`           | Edit text (runs with links, highlights, colors), append a link to a paragraph, replace a checklist, remove or swap one attachment for a file, or trim blank lines in place: dry run, then apply                |
+| `native-edit-note`           | Edit text (runs with links, highlights, colors), append a link to a paragraph, replace a checklist, or trim blank lines in place: dry run, then apply                |
 | `native-checklist-state`     | List native checklist items with `todoIdentifier`, `done`, and the note `revision` (read-only)                                                                                                                 |
 | `native-set-checklist-item`  | Check or uncheck one item by `todoIdentifier` with `ifRevision`; `persistedDone` read-back; same state writes nothing                                                                                          |
 | `native-highlight-text`      | Highlight (purple/pink/orange/mint/blue) or remove (`none`) exact text (`expectedCount` guard) or, with `scope: "note"`, the whole body after the title, skipping attachments; `dryRun`, stored runs read back |

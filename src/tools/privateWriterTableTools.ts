@@ -78,7 +78,7 @@ const WRITE = {
 const DESTRUCTIVE = { ...WRITE, destructiveHint: true };
 
 const GATE =
-  "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer); applying (not a dry run) also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1 until this path is live-validated. nudge: true runs the move-in-place sync nudge after a verified apply; its uploadRecorded covers the note record, not the table attachment.";
+  "Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer); applying (not a dry run) also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES=1 until this path is live-validated. nudge: true runs the move-in-place sync nudge after a verified apply; its uploadRecorded covers the note record, not the table attachment.";
 
 /** Run the nudge only after a verified apply the caller asked to nudge. */
 async function withNudge(

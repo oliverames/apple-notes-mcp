@@ -13,7 +13,7 @@
  *   `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` (the existing private opt-in) and
  *   `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1` (this layer's own gate). Write
  *   actions that have not passed live validation in a release also need
- *   `APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1` ({@link requireLiveValidated});
+ *   their feature-specific testing opt-in ({@link requireLiveValidated});
  * - refusing a missing, stale, or modified writer binary before EVERY
  *   dispatch, against `writer-manifest.json` (source and binary SHA-256);
  * - sending only actions listed in {@link WRITER_ACTIONS};
@@ -29,6 +29,13 @@
  * @module services/privateWriter
  */
 import { extname, join } from "node:path";
+import { notesRunningForThisUser } from "./notesRunning.js";
+import {
+  WRITER_VALIDATION_KEYS,
+  writerFeatureIsValidated,
+  writerUnverifiedEnv,
+} from "./privateWriterValidation.js";
+export { writerUnverifiedEnv } from "./privateWriterValidation.js";
 import { z } from "zod";
 import {
   ENABLE_ENV,
@@ -52,13 +59,14 @@ import { assertAllowedFile } from "../utils/attachmentFs.js";
 import { writerScopeFields, type ScopeGuard } from "./privateWriterScope.js";
 
 export type { PrivateHelperDeps };
+export type PrivateWriterDeps = PrivateHelperDeps & { notesRunning?: () => boolean };
 
 /** The only writer protocol version this client speaks. */
 export const PRIVATE_WRITER_PROTOCOL = 1;
 /** This layer's own switch. Required together with APPLE_NOTES_MCP_ENABLE_PRIVATE=1. */
 export const WRITES_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES";
-/** The repo's existing gate for native writes that have not passed live validation. */
-export const ALLOW_UNVERIFIED_ENV = "APPLE_NOTES_MCP_ALLOW_UNVERIFIED";
+/** Extra opt-in for experiments beside a running Notes.app. */
+export const ALLOW_NOTES_RUNNING_ENV = "APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING";
 
 export const WRITER_BINARY_NAME = "apple-notes-private-writer";
 export const WRITER_SOURCE_RELATIVE = "native/private-helper/apple-notes-private-writer.m";
@@ -103,70 +111,73 @@ export const WRITER_ACTIONS: Readonly<Record<string, "read" | "write">> = {
 
 /**
  * The plain-text append has not passed live end-to-end validation in a
- * released build. Until it has, it also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ * released build. Until it has, it also requires the feature-specific testing opt-in.
  */
-export const APPEND_LIVE_VALIDATED = false;
+export const APPEND_LIVE_VALIDATED = writerFeatureIsValidated("APPEND");
 /**
  * Paper authoring (`add_paper`) has not passed live end-to-end validation,
  * including iCloud sync, on this writer. Until it has, a write (not a dry run)
- * also requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ * also requires the feature-specific testing opt-in.
  */
-export const PAPER_WRITE_LIVE_VALIDATED = false;
+export const PAPER_WRITE_LIVE_VALIDATED = writerFeatureIsValidated("PAPER");
 
 /**
  * Applying an in-place edit (edit_note) has passed the copy-store
  * preservation checks but not a live validation that includes iCloud sync.
  * Planning (plan_edit) is read-only and needs no such gate.
  */
-export const EDIT_LIVE_VALIDATED = false;
+export const EDIT_LIVE_VALIDATED = writerFeatureIsValidated("EDIT");
 
 /** Same gate for structured compose (services/privateCompose.ts). */
-export const COMPOSE_LIVE_VALIDATED = false;
+export const COMPOSE_LIVE_VALIDATED = writerFeatureIsValidated("COMPOSE");
 
 /** Same gate for inserting native section-link chips (native-add-section-link). */
-export const SECTION_LINKS_LIVE_VALIDATED = false;
+export const SECTION_LINKS_LIVE_VALIDATED = writerFeatureIsValidated("SECTION_LINKS");
 
 /**
  * Checking or unchecking a checklist item has not passed live end-to-end
  * validation in a released build of the writer. Until it has, it also
- * requires APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
+ * requires the feature-specific testing opt-in.
  */
-export const CHECKLIST_TOGGLE_LIVE_VALIDATED = false;
+export const CHECKLIST_TOGGLE_LIVE_VALIDATED = writerFeatureIsValidated("CHECKLIST");
 
 /**
  * Highlighting has not passed live end-to-end validation in a released build
  * of the writer. Until it has, a write also requires
- * APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. A dry run never writes and is not gated.
+ * the feature-specific testing opt-in. A dry run never writes and is not gated.
  */
-export const HIGHLIGHT_LIVE_VALIDATED = false;
+export const HIGHLIGHT_LIVE_VALIDATED = writerFeatureIsValidated("HIGHLIGHT");
 
 /**
  * URL link cards have not passed live end-to-end validation in a released
  * build of the writer. Until they have, a write also requires
- * APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1. A dry run never writes and is not gated.
+ * the feature-specific testing opt-in. A dry run never writes and is not gated.
  */
-export const LINK_CARD_LIVE_VALIDATED = false;
+export const LINK_CARD_LIVE_VALIDATED = writerFeatureIsValidated("LINK_CARD");
 
 /** Same gate for minting paragraph identifiers (native-set-paragraph-id). */
-export const PARAGRAPH_IDS_LIVE_VALIDATED = false;
+export const PARAGRAPH_IDS_LIVE_VALIDATED = writerFeatureIsValidated("PARAGRAPH_IDS");
 
 /**
  * The same gate for the native table writes (row delete and insert, cell
  * edit, orphan-table prune). Dry runs and `read_tables` are not gated.
  */
-export const TABLE_WRITES_LIVE_VALIDATED = false;
+export const TABLE_WRITES_LIVE_VALIDATED = writerFeatureIsValidated("TABLES");
 
 /**
  * The same gate for the smart-folder writes (create, update, delete). The
  * delete's dry run and `read_smart_folder` are not gated.
  */
-export const SMART_FOLDERS_LIVE_VALIDATED = false;
+export const SMART_FOLDERS_LIVE_VALIDATED = writerFeatureIsValidated("SMART_FOLDERS");
 
 /**
  * The same gate for the purge-flag repair (native-repair-purge-flag). Its
  * dry run and scan are read-only and not gated.
  */
-export const PURGE_REPAIR_LIVE_VALIDATED = false;
+export const PURGE_REPAIR_LIVE_VALIDATED = writerFeatureIsValidated("PURGE_REPAIR");
+
+/** Sync nudges and relaunches need their own live evidence, too. */
+export const SYNC_PUSH_LIVE_VALIDATED = writerFeatureIsValidated("SYNC_PUSH");
 
 export type PrivateWriterUnavailableReason =
   PrivateUnavailableReason | "writes_disabled" | "not_live_validated";
@@ -184,8 +195,11 @@ export interface WriterInstallationReport {
 }
 
 /** Machine dependencies with `sourcePath` pointing at the WRITER source. */
-export function defaultWriterDeps(overrides: Partial<PrivateHelperDeps> = {}): PrivateHelperDeps {
-  return defaultDeps({ sourcePath: join(packageRoot(), WRITER_SOURCE_RELATIVE), ...overrides });
+export function defaultWriterDeps(overrides: Partial<PrivateWriterDeps> = {}): PrivateWriterDeps {
+  return {
+    ...defaultDeps({ sourcePath: join(packageRoot(), WRITER_SOURCE_RELATIVE), ...overrides }),
+    notesRunning: overrides.notesRunning,
+  };
 }
 
 /** Both switches: the private opt-in and this layer's write opt-in. */
@@ -390,6 +404,8 @@ export interface WriterCallOptions {
    * can only lower the classification, never raise a read to a write.
    */
   dryRun?: boolean;
+  /** Read-only process probe; injectable so tests never depend on the user's open apps. */
+  notesRunning?: () => boolean;
 }
 
 /**
@@ -399,7 +415,7 @@ export interface WriterCallOptions {
 export function callPrivateWriter(
   action: string,
   fields: Record<string, unknown> = {},
-  deps: PrivateHelperDeps = defaultWriterDeps(),
+  deps: PrivateWriterDeps = defaultWriterDeps(),
   options: WriterCallOptions = {}
 ): Record<string, unknown> {
   const kind = WRITER_ACTIONS[action];
@@ -435,6 +451,29 @@ export function callPrivateWriter(
         notCommitted
       );
     binaryPath = install.binaryPath;
+  }
+  if (isWrite) {
+    const alwaysRefuseRunning = action === "prune_orphan_table" || action === "repair_purge_flag";
+    if (alwaysRefuseRunning || deps.env[ALLOW_NOTES_RUNNING_ENV] !== "1") {
+      let running: boolean;
+      try {
+        running = (options.notesRunning ?? deps.notesRunning ?? notesRunningForThisUser)();
+      } catch (error) {
+        throw new PrivateWriteError(
+          "notes_app_state_unavailable",
+          `Cannot establish whether Notes.app is running: ${error instanceof Error ? error.message : String(error)}`,
+          false
+        );
+      }
+      if (running)
+        throw new PrivateWriteError(
+          "notes_app_running",
+          alwaysRefuseRunning
+            ? `${action} refuses while Notes.app is running. Quit Notes.app before retrying.`
+            : `Notes.app is running. Quit it before writing, or set ${ALLOW_NOTES_RUNNING_ENV}=1 only for a controlled concurrency experiment.`,
+          false
+        );
+    }
   }
   const timeout = Number.parseInt(deps.env[TIMEOUT_ENV] || "", 10) || DEFAULT_TIMEOUT_MS;
   const result = deps.spawn(binaryPath, [], {
@@ -515,22 +554,26 @@ export function parseWriterResult<T>(schema: z.ZodType<T>, value: unknown, isWri
   return parsed.data;
 }
 
-/**
- * The per-feature live-validation gate: a write that has not passed live
- * end-to-end validation in a release also needs APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.
- */
+/** Require this feature's evidence record or its own explicit testing opt-in. */
 export function requireLiveValidated(
   validated: boolean,
   toolName: string,
   env: NodeJS.ProcessEnv
 ): void {
-  if (!validated && env[ALLOW_UNVERIFIED_ENV] !== "1")
-    throw new PrivateWriteError(
-      "not_live_validated",
-      `${toolName} has not passed live validation in this build. ` +
-        `Set ${ALLOW_UNVERIFIED_ENV}=1 to run it on a disposable note.`,
-      false
-    );
+  const feature = Object.hasOwn(WRITER_VALIDATION_KEYS, toolName)
+    ? WRITER_VALIDATION_KEYS[toolName]
+    : undefined;
+  const optIn = writerUnverifiedEnv(toolName);
+  if (feature && validated && writerFeatureIsValidated(feature)) return;
+  if (optIn && env[optIn] === "1") return;
+  throw new PrivateWriteError(
+    "not_live_validated",
+    `${toolName} has not passed live validation in this build. ` +
+      (optIn
+        ? `Set ${optIn}=1 to run this feature on a disposable note.`
+        : "This feature has no registered validation gate and cannot be enabled."),
+    false
+  );
 }
 
 /** A Notes UUID; a refusal here never reaches the writer, so nothing was committed. */
@@ -1179,7 +1222,7 @@ function assertReplacementFiles(operations: EditOperation[]): void {
 /**
  * Plan (dryRun: true, the writer's read-only plan_edit) or apply
  * (dryRun: false, edit_note, with the plan's revisionBefore as ifRevision
- * and, optionally, its planDigest as ifPlanDigest) literal in-place edits to
+ * and its planDigest as ifPlanDigest) literal in-place edits to
  * one note.
  */
 export function editNote(
@@ -1224,11 +1267,11 @@ export function editNote(
         "and pass its revisionBefore."
     );
   assertRevision(request.ifRevision, "a dry run's revisionBefore");
-  if (request.ifPlanDigest !== undefined) {
-    if (!planDigestToken.safeParse(request.ifPlanDigest).success)
-      throw refuse("ifPlanDigest must be a dry run's planDigest (p2: followed by 64 hex digits)");
-    fields.ifPlanDigest = request.ifPlanDigest;
-  }
+  if (!planDigestToken.safeParse(request.ifPlanDigest).success)
+    throw refuse(
+      "Applying an edit requires ifPlanDigest from the identical dry run (p2: followed by 64 hex digits)"
+    );
+  fields.ifPlanDigest = request.ifPlanDigest;
   requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
   return parseWriterResult(
     editResultSchema,
@@ -1361,12 +1404,17 @@ export function privateWriterCapabilities(
         detail: feature.missing.length ? `missing: ${feature.missing.join(", ")}` : feature.reason,
       };
     }
-    if (!row.liveValidated && deps.env[ALLOW_UNVERIFIED_ENV] !== "1")
-      return {
-        available: false,
-        reason: "not_live_validated",
-        detail: `Not yet live-validated; ${ALLOW_UNVERIFIED_ENV}=1 enables it for testing.`,
-      };
+    if (!row.liveValidated) {
+      const optIn = writerUnverifiedEnv(row.key);
+      if (!optIn || deps.env[optIn] !== "1")
+        return {
+          available: false,
+          reason: "not_live_validated",
+          detail: optIn
+            ? `Not yet live-validated; ${optIn}=1 enables this feature for testing.`
+            : "This feature has no registered live-validation gate.",
+        };
+    }
     return { available: true, reason: null, detail: null };
   });
   return { ...base, probe, features };

@@ -21,6 +21,9 @@
 # Access for the terminal running it. Removes the copy on exit.
 set -euo pipefail
 
+# Explicit test opt-ins for only the write features exercised by this harness.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PAPER=1
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCE="$REPO/native/private-helper/apple-notes-private-writer.m"
 LIVE="$HOME/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
@@ -56,7 +59,7 @@ COPY="$WORK/store/NoteStore.sqlite"
 /usr/bin/sqlite3 -readonly "$LIVE" ".backup '$COPY'"
 echo "copied store: $(/usr/bin/stat -f %z "$COPY") bytes"
 
-run() { printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES "$HELPER" 2>/dev/null; }
+run() { printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES -u APPLE_NOTES_MCP_PRIVATE_STORE "$HELPER" 2>/dev/null; }
 copy_run() {
   printf '%s' "$1" | env -u APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES \
     APPLE_NOTES_MCP_PRIVATE_STORE="$COPY" "$HELPER" 2>/dev/null
@@ -169,6 +172,8 @@ OUT="$(copy_run "$(read_paper "$NOTE" ",\"includePoints\":false")" || true)"
 ACCOUNT_DIR="$(dirname "$(dirname "$(dirname "$(find "$WORK/store/Accounts" -mindepth 4 -maxdepth 4 -path "*/Paper/Bundles/$PAPER_ATT.bundle" -type d)")")")"
 GEN="1_$(uuidgen)"
 mkdir -p "$ACCOUNT_DIR/FallbackPDFs/$PAPER_ATT/$GEN"
+# JavaScript template literals below must be expanded by Node, not the shell.
+# shellcheck disable=SC2016
 node -e '
 const c = "q 1 0 0 1 10 10 cm 1 0 0 RG 2 w 0 0 m 100 50 l S Q\n0 0 1 rg 20 20 50 30 re f\n0.5 g 0 G 200 200 m 250 200 l 225 250 l h B*\n";
 const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",

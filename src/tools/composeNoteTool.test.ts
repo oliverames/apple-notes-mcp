@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
 
@@ -28,7 +31,15 @@ const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
 const REV = `r1:${"a".repeat(64)}`;
 const CD = "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICNote/p11331";
 const BLOCKS = [{ type: "heading" as const, text: "H" }];
-const ALLOW = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const ALLOW = {
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE: "1",
+  APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "1",
+};
+const PLAN = `c1:${"a".repeat(64)}`;
+const temporaryDirectories: string[] = [];
+afterEach(() => {
+  for (const path of temporaryDirectories.splice(0)) rmSync(path, { recursive: true, force: true });
+});
 
 function managerStub(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -40,6 +51,21 @@ function managerStub(overrides: Partial<Record<string, unknown>> = {}) {
 
 function runtime(manager = managerStub(), env: Record<string, string> = ALLOW) {
   return { manager, deps: { env } as never, sleep: vi.fn() };
+}
+
+/** Exercise existing lifecycle cases with a reviewed plan before each apply. */
+function runPlannedComposeNote(
+  args: Parameters<typeof runComposeNote>[0],
+  rt: Parameters<typeof runComposeNote>[1]
+) {
+  if (!args.dryRun && args.mode === "create" && !args.ifPlanDigest) {
+    const plan = runComposeNote({ ...args, dryRun: true }, rt);
+    return runComposeNote({ ...args, ifPlanDigest: String(plan.planDigest) }, rt);
+  }
+  return runComposeNote(
+    !args.dryRun && args.ifRevision && !args.ifPlanDigest ? { ...args, ifPlanDigest: PLAN } : args,
+    rt
+  );
 }
 
 function caught(fn: () => unknown): PrivateWriteError {
@@ -65,7 +91,7 @@ beforeEach(() => {
 
 describe("compose-note append and prepend", () => {
   it("plans with dryRun and forwards the policy fields", () => {
-    const r = runComposeNote(
+    const r = runPlannedComposeNote(
       {
         mode: "append",
         identifier: NOTE,
@@ -92,7 +118,7 @@ describe("compose-note append and prepend", () => {
 
   it("applies with ifRevision, resolving an x-coredata id and echoing it", () => {
     const rt = runtime();
-    const r = runComposeNote(
+    const r = runPlannedComposeNote(
       { mode: "prepend", id: CD, markdown: "- [x] done\n---\n<div>", ifRevision: REV },
       rt
     );
@@ -106,6 +132,7 @@ describe("compose-note append and prepend", () => {
           { kind: "divider" },
         ],
         ifRevision: REV,
+        ifPlanDigest: PLAN,
       },
       { env: ALLOW }
     );
@@ -124,7 +151,7 @@ describe("compose-note append and prepend", () => {
       objectURI: "x-coredata://S/ICNote/p1",
       readBack: [],
     } as never);
-    const r = runComposeNote(
+    const r = runPlannedComposeNote(
       { mode: "append", identifier: NOTE, blocks: BLOCKS, ifRevision: REV },
       runtime()
     );
@@ -179,16 +206,101 @@ describe("compose-note append and prepend", () => {
       },
     ],
   ])("refuses %s before calling the helper", (_label, args) => {
-    const e = caught(() => runComposeNote(args as never, runtime()));
+    const e = caught(() => runPlannedComposeNote(args as never, runtime()));
     expect(e).toMatchObject({ code: "invalid_request", committed: false });
     expect(composeNote).not.toHaveBeenCalled();
   });
 });
 
 describe("compose-note create", () => {
+  it("requires a reviewed digest for every create, append, and prepend apply", () => {
+    const rt = runtime();
+    const requests = [
+      { mode: "create" as const, title: "T", blocks: BLOCKS },
+      { mode: "append" as const, identifier: NOTE, blocks: BLOCKS, ifRevision: REV },
+      { mode: "prepend" as const, identifier: NOTE, blocks: BLOCKS, ifRevision: REV },
+    ];
+    for (const request of requests) {
+      expect(caught(() => runComposeNote(request, rt))).toMatchObject({
+        code: "invalid_request",
+        committed: false,
+      });
+      expect(
+        caught(() => runComposeNote({ ...request, ifPlanDigest: "invalid" }, rt))
+      ).toMatchObject({ code: "invalid_request", committed: false });
+    }
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+    expect(composeNote).not.toHaveBeenCalled();
+  });
+
+  it("binds create title, destination, and content before Notes.app is called", () => {
+    const rt = runtime();
+    const request = {
+      mode: "create" as const,
+      title: "T",
+      folder: "F",
+      account: "iCloud",
+      blocks: BLOCKS,
+    };
+    const plan = runComposeNote({ ...request, dryRun: true }, rt);
+    for (const changed of [
+      { title: "Other" },
+      { folder: "Other" },
+      { account: "Other" },
+      { blocks: [{ type: "heading" as const, text: "Other" }] },
+    ])
+      expect(
+        caught(() =>
+          runComposeNote({ ...request, ...changed, ifPlanDigest: String(plan.planDigest) }, rt)
+        )
+      ).toMatchObject({ code: "plan_mismatch", committed: false });
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+    expect(privateWriterCapabilities).not.toHaveBeenCalled();
+    expect(composeNote).not.toHaveBeenCalled();
+  });
+
+  it("rejects changed file bytes before creating a note, including same-size replacements", () => {
+    const directory = mkdtempSync(join(tmpdir(), "compose-create-plan-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "report.txt");
+    writeFileSync(path, "old");
+    const rt = runtime();
+    const request = {
+      mode: "create" as const,
+      title: "T",
+      blocks: [{ type: "file" as const, path }],
+    };
+    const plan = runComposeNote({ ...request, dryRun: true }, rt);
+    expect(plan.plan).toEqual([
+      {
+        kind: "file",
+        path,
+        filename: "report.txt",
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    ]);
+    writeFileSync(path, "new");
+    expect(
+      caught(() => runComposeNote({ ...request, ifPlanDigest: String(plan.planDigest) }, rt))
+    ).toMatchObject({ code: "plan_mismatch", committed: false });
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+    expect(privateWriterCapabilities).not.toHaveBeenCalled();
+    expect(composeNote).not.toHaveBeenCalled();
+  });
+
+  it("requires the Notes-running experiment opt-in before creating a note", () => {
+    const rt = runtime(managerStub(), { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE: "1" });
+    const request = { mode: "create" as const, title: "T", blocks: BLOCKS };
+    const plan = runComposeNote({ ...request, dryRun: true }, rt);
+    expect(
+      caught(() => runComposeNote({ ...request, ifPlanDigest: String(plan.planDigest) }, rt))
+    ).toMatchObject({ code: "notes_app_running", committed: false });
+    expect(rt.manager.createNote).not.toHaveBeenCalled();
+  });
+
   it("plans a create without touching Notes", () => {
     const rt = runtime();
-    const r = runComposeNote(
+    const r = runPlannedComposeNote(
       {
         mode: "create",
         title: "T",
@@ -203,6 +315,7 @@ describe("compose-note create", () => {
       committed: false,
       mode: "create",
       paragraphs: 2,
+      planDigest: expect.stringMatching(/^c1:[a-f0-9]{64}$/),
       plan: [
         { style: "checklist", indent: 0, blockQuote: false, checked: false, runs: 1 },
         { style: "body", indent: 0, blockQuote: true, runs: 1 },
@@ -215,14 +328,20 @@ describe("compose-note create", () => {
   it("creates through Notes, reads a fresh revision, then composes below the title", () => {
     available();
     const rt = runtime();
-    const r = runComposeNote(
+    const r = runPlannedComposeNote(
       { mode: "create", title: "T", folder: "F", account: "iCloud", blocks: BLOCKS },
       rt
     );
     expect(rt.manager.createNote).toHaveBeenCalledWith("T", "", [], "F", "iCloud", "plaintext");
     expect(readWriterNoteState).toHaveBeenCalledWith(NOTE, { env: ALLOW });
     expect(composeNote).toHaveBeenCalledWith(
-      { identifier: NOTE, mode: "append", paragraphs: expect.any(Array), ifRevision: REV },
+      {
+        identifier: NOTE,
+        mode: "append",
+        paragraphs: expect.any(Array),
+        ifRevision: REV,
+        ifPlanDigest: expect.stringMatching(/^c1:[a-f0-9]{64}$/),
+      },
       { env: ALLOW }
     );
     expect(r).toMatchObject({
@@ -246,14 +365,14 @@ describe("compose-note create", () => {
       })
       .mockReturnValue({ revision: REV } as never);
     const rt = runtime(managerStub({ getNoteLinkById: link }));
-    runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt);
+    runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt);
     expect(rt.sleep).toHaveBeenCalledTimes(2);
   });
 
   it("checks the gate and the live capability before creating anything", () => {
     const rt = runtime(managerStub(), {});
     expect(
-      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt))
+      caught(() => runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt))
     ).toMatchObject({
       code: "not_live_validated",
     });
@@ -261,13 +380,14 @@ describe("compose-note create", () => {
       features: { composeNote: { available: false, reason: "disabled", detail: "off" } },
     } as never);
     expect(
-      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime()))
+      caught(() => runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime()))
     ).toMatchObject({ code: "disabled", committed: false });
     vi.mocked(privateWriterCapabilities).mockReturnValue({
       features: { composeNote: { available: false, reason: null, detail: null } },
     } as never);
     expect(
-      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())).code
+      caught(() => runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime()))
+        .code
     ).toBe("private_api_unavailable");
     expect(rt.manager.createNote).not.toHaveBeenCalled();
   });
@@ -277,13 +397,15 @@ describe("compose-note create", () => {
     ["a target note", { mode: "create", title: "T", identifier: NOTE, blocks: BLOCKS }],
     ["ifRevision", { mode: "create", title: "T", ifRevision: REV, blocks: BLOCKS }],
   ])("refuses %s", (_label, args) => {
-    expect(caught(() => runComposeNote(args as never, runtime())).code).toBe("invalid_request");
+    expect(caught(() => runPlannedComposeNote(args as never, runtime())).code).toBe(
+      "invalid_request"
+    );
   });
 
   it("reports a failed create with nothing created", () => {
     available();
     const e = caught(() =>
-      runComposeNote(
+      runPlannedComposeNote(
         { mode: "create", title: "T", blocks: BLOCKS },
         runtime(managerStub({ createNote: vi.fn(() => null) }))
       )
@@ -294,7 +416,9 @@ describe("compose-note create", () => {
   it("names the created note when its identity cannot be read", () => {
     available();
     const rt = runtime(managerStub({ getNoteLinkById: vi.fn(() => null) }));
-    const e = caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt));
+    const e = caught(() =>
+      runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt)
+    );
     expect(e).toMatchObject({ code: "not_found", details: { noteCreated: true, id: CD } });
     expect(rt.sleep).toHaveBeenCalledTimes(5);
   });
@@ -305,7 +429,7 @@ describe("compose-note create", () => {
       throw new PrivateWriteError("verification_failed", "differs", true, { indeterminate: true });
     });
     const e = caught(() =>
-      runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())
+      runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())
     );
     expect(e).toMatchObject({
       code: "verification_failed",
@@ -323,7 +447,9 @@ describe("compose-note create", () => {
     const deleteNoteByIdIfUnchanged = vi.fn(() => ({ status: "deleted" }));
     const getNoteContentById = vi.fn(() => "<div><h1>T</h1></div>");
     const rt = runtime(managerStub({ deleteNoteByIdIfUnchanged, getNoteContentById }));
-    const e = caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt));
+    const e = caught(() =>
+      runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt)
+    );
     expect(e).toMatchObject({
       code: "invalid_request",
       committed: false,
@@ -341,15 +467,16 @@ describe("compose-note create", () => {
       throw new PrivateWriteError("save_failed", "no", false);
     });
     expect(
-      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager)))
-        .details
+      caught(() =>
+        runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager))
+      ).details
     ).toMatchObject({ createdNote: "kept" });
     vi.mocked(readWriterNoteState)
       .mockReturnValueOnce({ revision: REV } as never)
       .mockReturnValueOnce({ revision: `r1:${"b".repeat(64)}` } as never);
     deleteNoteByIdIfUnchanged.mockClear();
     const changed = caught(() =>
-      runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager))
+      runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager))
     );
     expect(changed.details).toMatchObject({ createdNote: "kept" });
     expect(changed.message).toMatch(/title only; id/);
@@ -358,8 +485,9 @@ describe("compose-note create", () => {
       throw new PrivateWriteError("timeout", "slow", "unknown");
     });
     expect(
-      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager)))
-        .details
+      caught(() =>
+        runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime(manager))
+      ).details
     ).toMatchObject({ createdNote: "kept" });
     expect(deleteNoteByIdIfUnchanged).not.toHaveBeenCalled();
   });
@@ -373,7 +501,7 @@ describe("compose-note create", () => {
     }));
     for (const dryRun of [true, false])
       expect(
-        caught(() => runComposeNote({ mode: "create", title: "T", blocks, dryRun }, rt))
+        caught(() => runPlannedComposeNote({ mode: "create", title: "T", blocks, dryRun }, rt))
       ).toMatchObject({ code: "invalid_request", committed: false });
     expect(rt.manager.createNote).not.toHaveBeenCalled();
   });
@@ -384,7 +512,7 @@ describe("compose-note create", () => {
       throw new PrivateWriteError("not_found", "no");
     });
     const e = caught(() =>
-      runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())
+      runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())
     );
     expect(e).toMatchObject({ code: "not_found", details: { noteCreated: true } });
   });
@@ -395,14 +523,15 @@ describe("compose-note create", () => {
       throw new PrivateWriteError("store_unavailable", "no");
     });
     expect(
-      caught(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())).code
+      caught(() => runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime()))
+        .code
     ).toBe("store_unavailable");
     vi.mocked(readWriterNoteState).mockImplementation(() => {
       throw new TypeError("boom");
     });
-    expect(() => runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())).toThrow(
-      TypeError
-    );
+    expect(() =>
+      runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, runtime())
+    ).toThrow(TypeError);
   });
 });
 
@@ -410,7 +539,7 @@ describe("compose-note objects and note links", () => {
   const OTHER = "11111111-2222-3333-4444-555555555555";
 
   it("plans dividers and tables in a create dry run", () => {
-    const r = runComposeNote(
+    const r = runPlannedComposeNote(
       {
         mode: "create",
         title: "T",
@@ -432,11 +561,11 @@ describe("compose-note objects and note links", () => {
     const rt = runtime();
     expect(
       caught(() =>
-        runComposeNote({ mode: "create", title: "T", blocks: [{ type: "divider" }] }, rt)
+        runPlannedComposeNote({ mode: "create", title: "T", blocks: [{ type: "divider" }] }, rt)
       )
     ).toMatchObject({ code: "private_api_unavailable", committed: false });
     expect(rt.manager.createNote).not.toHaveBeenCalled();
-    runComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt);
+    runPlannedComposeNote({ mode: "create", title: "T", blocks: BLOCKS }, rt);
     expect(rt.manager.createNote).toHaveBeenCalledTimes(1);
   });
 
@@ -445,7 +574,7 @@ describe("compose-note objects and note links", () => {
       { type: "noteLink" as const, identifier: OTHER.toLowerCase(), text: "a" },
       { type: "noteLink" as const, identifier: OTHER, text: "b" },
     ];
-    runComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime());
+    runPlannedComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime());
     expect(readWriterNoteState).toHaveBeenCalledTimes(1);
     expect(readWriterNoteState).toHaveBeenCalledWith(OTHER, { env: ALLOW });
     expect(composeNote).toHaveBeenCalledTimes(1);
@@ -458,7 +587,7 @@ describe("compose-note objects and note links", () => {
     });
     expect(
       caught(() =>
-        runComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime())
+        runPlannedComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime())
       )
     ).toMatchObject({ code: "invalid_request", committed: false });
     vi.mocked(readWriterNoteState).mockImplementationOnce(() => {
@@ -466,7 +595,7 @@ describe("compose-note objects and note links", () => {
     });
     expect(
       caught(() =>
-        runComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime())
+        runPlannedComposeNote({ mode: "append", identifier: NOTE, blocks, dryRun: true }, runtime())
       ).code
     ).toBe("disabled");
     expect(composeNote).not.toHaveBeenCalled();
@@ -482,20 +611,26 @@ describe("compose-note objects and note links", () => {
     vi.mocked(readWriterNoteState).mockReturnValueOnce({ deletedOrInTrash: true } as never);
     expect(
       caught(() =>
-        runComposeNote({ mode: "append", identifier: NOTE, blocks: run, dryRun: true }, runtime())
+        runPlannedComposeNote(
+          { mode: "append", identifier: NOTE, blocks: run, dryRun: true },
+          runtime()
+        )
       ).message
     ).toMatch(/Recently Deleted/);
     vi.mocked(readWriterNoteState).mockReturnValueOnce({ passwordProtected: true } as never);
     const markdown = `See [x](notes://showNote?identifier=${OTHER}).`;
     expect(
       caught(() =>
-        runComposeNote({ mode: "append", identifier: NOTE, markdown, dryRun: true }, runtime())
+        runPlannedComposeNote(
+          { mode: "append", identifier: NOTE, markdown, dryRun: true },
+          runtime()
+        )
       ).message
     ).toMatch(/locked/);
     expect(readWriterNoteState).toHaveBeenLastCalledWith(OTHER, { env: ALLOW });
     expect(
       caught(() =>
-        runComposeNote(
+        runPlannedComposeNote(
           { mode: "append", identifier: NOTE, markdown: "[x](notes://other)", dryRun: true },
           runtime()
         )
@@ -515,14 +650,14 @@ describe("compose-note objects and note links", () => {
     const rt = runtime();
     expect(
       caught(() =>
-        runComposeNote(
+        runPlannedComposeNote(
           { mode: "create", title: "T", blocks: [{ type: "urlCard", url: "https://e.test/" }] },
           rt
         )
       )
     ).toMatchObject({ code: "not_live_validated", committed: false });
     expect(rt.manager.createNote).not.toHaveBeenCalled();
-    const plan = runComposeNote(
+    const plan = runPlannedComposeNote(
       {
         mode: "create",
         title: "T",
@@ -586,6 +721,7 @@ describe("registerComposeNoteTool", () => {
       identifier: NOTE,
       blocks: BLOCKS,
       ifRevision: REV,
+      ifPlanDigest: PLAN,
       nudge: true,
       nudgeWaitSeconds: 5,
     });
@@ -606,6 +742,7 @@ describe("registerComposeNoteTool", () => {
       identifier: NOTE,
       blocks: BLOCKS,
       ifRevision: REV,
+      ifPlanDigest: PLAN,
       nudge: true,
     });
     expect(failed.isError).toBeUndefined();
@@ -618,6 +755,7 @@ describe("registerComposeNoteTool", () => {
       identifier: NOTE,
       blocks: BLOCKS,
       ifRevision: REV,
+      ifPlanDigest: PLAN,
     });
     expect(plain.structuredContent.sync).toBeUndefined();
     expect(nudgeInPlace).toHaveBeenCalledTimes(2);
@@ -633,6 +771,7 @@ describe("registerComposeNoteTool", () => {
       identifier: NOTE,
       blocks: BLOCKS,
       ifRevision: REV,
+      ifPlanDigest: PLAN,
     });
     expect(conflict.structuredContent).toMatchObject({
       code: "revision_conflict",

@@ -8,7 +8,25 @@
 #
 # Usage: APPLE_NOTES_MCP_ENABLE_PRIVATE=1 scripts/test-private-writer-guards-copy-store.sh
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
+#   Quit Notes.app first: purge repair refuses while it runs, including on a copy.
+#   A copied note with synced, pending, or unverifiable cloud state exercises
+#   the refusal path; successful repair is explicitly skipped for that fixture.
 set -euo pipefail
+# Select the write families this script exercises; no blanket opt-in or
+# override of the strict Notes-closed requirement is used.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PURGE_REPAIR=1
+if /usr/bin/pgrep -x -u "$(/usr/bin/id -u)" Notes >/dev/null; then
+  echo "FAIL: quit Notes.app before running the purge-repair copy-store harness" >&2
+  exit 1
+else
+  PROCESS_STATUS=$?
+  if [ "$PROCESS_STATUS" != "1" ]; then
+    echo "FAIL: could not establish whether Notes.app is running" >&2
+    exit 1
+  fi
+fi
 # shellcheck source=scripts/private-writer-copy-store-lib.sh
 . "$(dirname "$0")/private-writer-copy-store-lib.sh"
 
@@ -108,8 +126,10 @@ OUT="$(copy_run "$(repair ',"dryRun":true')")"
 [ "$(field "$OUT" status)" = "scanned" ] || fail "scan failed: $(field "$OUT" code)"
 case "$OUT" in *"$OTHER"*) ;; *) fail "scan did not find the flagged note" ;; esac
 OUT="$(copy_run "$(repair ",\"dryRun\":true,\"identifier\":\"$OTHER\"")")"
-[ "$(field "$OUT" state)" = "purge_flag_outside_recently_deleted" ] && [ "$(field "$OUT" repairable)" = "true" ] ||
-  fail "plan did not find a repairable state: $(field "$OUT" state)"
+[ "$(field "$OUT" state)" = "purge_flag_outside_recently_deleted" ] ||
+  fail "plan did not find the synthetic purge flag in the copy: $(field "$OUT" state)"
+REPAIRABLE="$(field "$OUT" repairable)"
+REPAIR_BLOCKERS="$(field "$OUT" blockers)"
 PREV="$(field "$OUT" revision)"
 TRASH_ID="$(field "$OUT" recentlyDeletedFolderIdentifier)"
 TRASH_PK="$(/usr/bin/sqlite3 "$COPY" "SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT
@@ -119,6 +139,23 @@ OUT="$(copy_run "$(repair ",\"dryRun\":false,\"identifier\":\"$OTHER\",\"ifRevis
   fail "repair without confirm not refused: $(field "$OUT" code)"
 OUT="$(copy_run "$(repair ",\"dryRun\":false,\"identifier\":\"$OTHER\",\"ifRevision\":\"$ZERO\",\"confirm\":true")" || true)"
 [ "$(field "$OUT" code)" = "revision_conflict" ] || fail "stale repair revision not refused"
+if [ "$REPAIRABLE" != "true" ]; then
+  # Keep the copied cloud metadata intact. Synced flagged versions, pending
+  # fetches, unverified server payloads, and missing metadata must fail closed.
+  OUT="$(copy_run "$(repair ",\"dryRun\":false,\"identifier\":\"$OTHER\",\"ifRevision\":\"$PREV\",\"confirm\":true")" || true)"
+  [ "$(field "$OUT" code)" = "unsupported_note" ] && [ "$(field "$OUT" committed)" = "false" ] ||
+    fail "unsafe purge repair was not refused: $(field "$OUT" code)"
+  [ "$(field "$(copy_run "$(read_request "$OTHER")")" revision)" = "$PREV" ] ||
+    fail "refused repair changed the copy note"
+  [ "$(/usr/bin/sqlite3 "$COPY" "SELECT IFNULL(ZMARKEDFORDELETION,0) FROM ZICCLOUDSYNCINGOBJECT WHERE ZIDENTIFIER = '$OTHER';")" = "1" ] ||
+    fail "refused repair cleared the copy's purge flag"
+  echo "ok: purge repair refused the copy's plan blockers; nothing written"
+  echo "SKIP: successful purge repair needs a repairable fixture ($REPAIR_BLOCKERS blockers reported)"
+  assert_live_unchanged "$NOTE" "$LIVE_NOTE"
+  assert_live_unchanged "$OTHER" "$LIVE_OTHER"
+  echo "PASS: scope guards and purge-repair refusal on a store copy; successful repair skipped"
+  exit 0
+fi
 if [ -n "$TRASH_PK" ]; then
   OUT="$(copy_run "$(repair ",\"dryRun\":false,\"identifier\":\"$OTHER\",\"ifRevision\":\"$PREV\",\"confirm\":true,\"forbiddenAncestorFolderIds\":[\"$(folder_uri "$TRASH_PK")\"]")" || true)"
   [ "$(field "$OUT" scopeReason)" = "destination_inside_forbidden_folder" ] ||

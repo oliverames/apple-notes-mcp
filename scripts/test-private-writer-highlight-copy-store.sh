@@ -7,6 +7,10 @@
 #   NOTE_UUID  note to use in the copy. Default: the most recent writable note.
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
 set -euo pipefail
+
+# Explicit test opt-ins for only the write features exercised by this harness.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND=1
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_HIGHLIGHT=1
 # shellcheck source=scripts/private-writer-copy-store-lib.sh
 . "$(dirname "$0")/private-writer-copy-store-lib.sh"
 

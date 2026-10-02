@@ -77,7 +77,7 @@ describe("native-add-paper registration", () => {
     expect(config.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(config.description).toMatch(/ifSvgAnalysis/);
     expect(config.description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
-    expect(config.description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+    expect(config.description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PAPER=1/);
     expect(Object.keys(config.inputSchema)).toEqual(
       expect.arrayContaining(["ifRevision", "drawing", "svgPath", "dryRun", "nudge"])
     );

@@ -4,10 +4,11 @@
  *
  * - append / prepend: one guarded insert into an existing note. Plan with
  *   `dryRun: true`, then apply the identical content with the plan's
- *   `revisionBefore` as `ifRevision`.
- * - create: Notes.app creates the note (AppleScript, so Notes owns the new
- *   record and schedules its upload), then the writer appends the composed
- *   content below the title under a revision guard read immediately after.
+ *   `revisionBefore` as `ifRevision` and `planDigest` as `ifPlanDigest`.
+ * - create: the dry-run digest is checked before Notes.app creates the note
+ *   (AppleScript, so Notes owns the new record and schedules its upload), then
+ *   the writer appends the planned content below the title under a revision
+ *   guard read immediately after.
  *
  * Registered next to the other writer tools (tools/privateWriterTools.ts)
  * through {@link registerWriterTool}, so it shares their error envelope and
@@ -28,14 +29,18 @@ import {
 } from "../services/privateWriter.js";
 import {
   assertComposeWritesAllowed,
+  assertComposePlanDigest,
   assertWriterRequestSize,
+  COMPOSE_PLAN_DIGEST,
   blockSchema,
   blocksToParagraphs,
   composeNote,
+  composePlanDigest,
   crossCheckWithDatabase,
   isObject,
   markdownToBlocks,
   notesLinkTargets,
+  snapshotComposeFiles,
   type WireEntry,
 } from "../services/privateCompose.js";
 import {
@@ -76,6 +81,11 @@ export const composeNoteInput = {
   ifRevision: revisionToken
     .optional()
     .describe("append/prepend apply: revisionBefore from an identical dry run"),
+  ifPlanDigest: z
+    .string()
+    .regex(COMPOSE_PLAN_DIGEST)
+    .optional()
+    .describe("All apply modes: planDigest from an identical dry run, including file contents"),
   dryRun: z.boolean().optional().describe("Validate and plan without writing"),
   requireNonSystemPaper: z
     .boolean()
@@ -139,6 +149,10 @@ function contentFor(args: ComposeArgs): { paragraphs: WireEntry[]; warnings: str
 function checkModeFields(args: ComposeArgs): void {
   const present = (keys: Array<keyof ComposeArgs>) => keys.filter((k) => args[k] !== undefined);
   if (args.dryRun && args.nudge) throw invalid("A dry run does not take nudge");
+  if (args.dryRun && args.ifPlanDigest !== undefined)
+    throw invalid("A dry run does not take ifPlanDigest");
+  if (!args.dryRun && (!args.ifPlanDigest || !COMPOSE_PLAN_DIGEST.test(args.ifPlanDigest)))
+    throw invalid("Applying requires ifPlanDigest: run the identical request with dryRun first");
   if (args.mode === "create") {
     const extra = present([
       "identifier",
@@ -256,11 +270,18 @@ function createAndCompose(
   // the gates, the writer features the content needs, and the request size
   // (blocksToParagraphs already applied every content and character rule).
   assertComposeWritesAllowed(deps.env);
+  if (deps.env.APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING !== "1")
+    throw new PrivateWriteError(
+      "notes_app_running",
+      "Create uses Notes.app. Set APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1 only for a controlled concurrency experiment before applying this plan",
+      false
+    );
   assertWriterRequestSize({
     identifier: PLACEHOLDER_IDENTIFIER,
     mode: "append",
     paragraphs,
     ifRevision: PLACEHOLDER_REVISION,
+    ifPlanDigest: `c1:${"0".repeat(64)}`,
   });
   const features = privateWriterCapabilities(deps).features;
   const kinds = new Set(paragraphs.filter(isObject).map((p) => p.kind));
@@ -314,10 +335,11 @@ function createAndCompose(
     if (!state)
       throw new PrivateWriteError("not_found", "The writer cannot see the new note yet", false);
     revision = state.revision;
-    const result = composeNote(
-      { identifier, mode: "append", paragraphs, ifRevision: state.revision },
-      deps
-    );
+    // The create plan already authorized these exact paragraphs and file hashes.
+    // Bind that plan to the new identity/revision for the native append; the
+    // service and binary both recheck its captured file hashes before saving.
+    const fields = { identifier, mode: "append" as const, paragraphs, ifRevision: state.revision };
+    const result = composeNote({ ...fields, ifPlanDigest: composePlanDigest(fields) }, deps);
     return {
       ...withDatabaseCheck(result, paragraphs),
       mode: "create",
@@ -356,12 +378,22 @@ export function runComposeNote(
   assertNoteLinkTargets(paragraphs, runtime.deps);
   const extra = warnings.length ? { warnings } : {};
   if (args.mode === "create") {
+    const capturedParagraphs = snapshotComposeFiles(paragraphs);
+    const planDigest = composePlanDigest({
+      mode: args.mode,
+      title: args.title,
+      ...(args.folder !== undefined ? { folder: args.folder } : {}),
+      ...(args.account !== undefined ? { account: args.account } : {}),
+      paragraphs: capturedParagraphs,
+    });
+    if (!args.dryRun) assertComposePlanDigest(args.ifPlanDigest, planDigest);
     if (args.dryRun) {
       assertWriterRequestSize({
         identifier: PLACEHOLDER_IDENTIFIER,
         mode: "append",
-        paragraphs,
+        paragraphs: capturedParagraphs,
         ifRevision: PLACEHOLDER_REVISION,
+        ifPlanDigest: `c1:${"0".repeat(64)}`,
       });
       return {
         status: "planned",
@@ -369,13 +401,18 @@ export function runComposeNote(
         committed: false,
         mode: "create",
         paragraphs: paragraphs.length,
-        plan: paragraphs.map((p) =>
+        planDigest,
+        plan: capturedParagraphs.map((p) =>
           isObject(p)
             ? {
                 kind: p.kind,
                 ...(p.kind === "table" ? { rows: p.rows.length, columns: p.rows[0].length } : {}),
                 ...(p.kind === "file"
-                  ? { path: p.path, filename: p.filename ?? basename(p.path) }
+                  ? {
+                      path: p.path,
+                      filename: p.filename ?? basename(p.path),
+                      sha256: p.expectedSha256,
+                    }
                   : {}),
                 ...(p.kind === "url" ? { url: p.url } : {}),
               }
@@ -390,7 +427,7 @@ export function runComposeNote(
         ...extra,
       };
     }
-    return { ...createAndCompose(args, paragraphs, runtime), ...extra };
+    return { ...createAndCompose(args, capturedParagraphs, runtime), ...extra };
   }
   const identifier = resolveIdentifier(runtime.manager, args);
   const result = composeNote(
@@ -398,7 +435,9 @@ export function runComposeNote(
       identifier,
       mode: args.mode,
       paragraphs,
-      ...(args.dryRun ? { dryRun: true } : { ifRevision: args.ifRevision }),
+      ...(args.dryRun
+        ? { dryRun: true }
+        : { ifRevision: args.ifRevision, ifPlanDigest: args.ifPlanDigest }),
       ...(args.requireNonSystemPaper ? { requireNonSystemPaper: true } : {}),
       ...(args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {}),
       scope: scopeGuardFrom(args),
@@ -428,7 +467,7 @@ export function registerComposeNoteTool(
     "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, local files and rich link cards placed in order, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\n" +
       "Returns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider, table, file with its size and SHA-256, or link card), frozenAttachments (existing attachments proven unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\n" +
       "Do not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, still downloading, or has no title line.\n" +
-      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). append/prepend: run with dryRun: true, then send the IDENTICAL request with ifRevision set to the plan's revisionBefore; any change in between refuses with nothing written. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1.",
+      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). All modes: run with dryRun: true, then send the IDENTICAL request with ifPlanDigest set to the plan's planDigest; append/prepend also require ifRevision set to revisionBefore. The digest binds content, target, placement, guards, and attachment file hashes. Changed files or requests refuse before writing; create validates its digest before calling Notes.app. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1. Live writes require Notes.app to be closed unless APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1; create needs this opt-in because it uses Notes.app.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {

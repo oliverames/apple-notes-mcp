@@ -76,7 +76,7 @@ const DRAWING = {
 };
 
 const ON = { APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1" };
-const UNVERIFIED = { ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const UNVERIFIED = { ...ON, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_PAPER: "1" };
 
 let root: string;
 let installDir: string;
@@ -84,6 +84,7 @@ let sourcePath: string;
 
 function deps(env: Record<string, string> = {}): PrivateHelperDeps {
   return defaultWriterDeps({
+    notesRunning: () => false,
     env: { PATH: process.env.PATH, APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: installDir, ...env },
     platform: "darwin",
     sourcePath,
@@ -431,7 +432,10 @@ describe("addPaper capability", SPAWN_TIMEOUT, () => {
       reason: "private_api_unavailable",
     });
     expect(missing.features.addPaper.detail).toMatch(/ICPaperAttachmentCreationHelper/);
-    expect(missing.features.appendPlainText.available).toBe(true);
+    expect(missing.features.appendPlainText).toMatchObject({
+      available: false,
+      reason: "not_live_validated",
+    });
     const old = privateWriterCapabilities(deps({ ...UNVERIFIED, FAKE_MODE: "old-writer" }));
     expect(old.features.addPaper.reason).toBe("private_api_unavailable");
     expect(privateWriterCapabilities(deps()).features.addPaper.reason).toBe("disabled");

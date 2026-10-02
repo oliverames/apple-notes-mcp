@@ -9,6 +9,9 @@
 #              note with a native checklist.
 #   HELPER=/path/to/binary to reuse a built writer instead of compiling.
 set -euo pipefail
+
+# Explicit test opt-ins for only the write features exercised by this harness.
+export APPLE_NOTES_MCP_ALLOW_UNVERIFIED_CHECKLIST=1
 # shellcheck source=scripts/private-writer-copy-store-lib.sh
 . "$(dirname "$0")/private-writer-copy-store-lib.sh"
 

@@ -24,11 +24,14 @@ import {
   assertComposeWritesAllowed,
   blocksToParagraphs,
   composeNote,
+  composePlanDigest,
+  snapshotComposeFiles,
   crossCheckWithDatabase,
   markdownToBlocks,
   noteLinkUrl,
   notesLinkTargets,
   parseInline,
+  type ComposeRequest,
   type WireEntry,
   type WireParagraph,
 } from "./privateCompose.js";
@@ -552,6 +555,8 @@ describe("markdownToBlocks", () => {
 // ---------------------------------------------------------------------------
 
 const FAKE_WRITER = `#!/usr/bin/env node
+const { createHash } = require("node:crypto");
+const stable = (v) => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])])) : v;
 let input = "";
 process.stdin.on("data", (c) => (input += c));
 process.stdin.on("end", () => {
@@ -570,7 +575,10 @@ process.stdin.on("end", () => {
   if (mode === "no-committed") out({ status: "error", code: "store_unavailable", message: "gone" }, 1);
   if (mode === "malformed") out({ status: "updated" });
   const base = { identifier: req.identifier, mode: req.mode, paragraphs: summary.length, insertedUTF16: 9, insertAt: 4, unitStart: 5, objectURI: "x-coredata://S/ICNote/p1", revisionBefore: "r1:" + "a".repeat(64), requiredNonSystemPaper: !!req.requireNonSystemPaper, storeKind: "live", echo: req };
-  if (req.dryRun) out({ ...base, status: "planned", dryRun: true, committed: false, plan: summary });
+  const document = Object.fromEntries(Object.entries(req).filter(([k]) => !["protocol", "action", "dryRun", "ifPlanDigest"].includes(k)));
+  document.ifRevision = base.revisionBefore;
+  const planDigest = "c1:" + createHash("sha256").update(JSON.stringify(stable(document))).digest("hex");
+  if (req.dryRun) out({ ...base, status: "planned", dryRun: true, committed: false, plan: summary, planDigest: mode === "wrong-plan" ? "c1:" + "0".repeat(64) : planDigest });
   out({ ...base, status: "updated", committed: true, verified: true, placementVerified: true, revisionAfter: "r1:" + "c".repeat(64), modificationDate: null, title: "t", readBack: summary, objects, cloudSync: { available: true, inICloudAccount: true, uploadPending: true }, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true });
 });
 `;
@@ -613,14 +621,141 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-const ALLOW = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const ALLOW = {
+  APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE: "1",
+  APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "1",
+};
 const PARAGRAPHS: WireParagraph[] = [
   { style: "heading", runs: [{ text: "H" }] },
   { style: "checklist", checked: true, runs: [{ text: "done" }] },
 ];
 const SPAWN_TIMEOUT = { timeout: 20_000 };
 
+/** Existing apply-path tests start from the same digest an identical plan returns. */
+function plannedApply(request: ComposeRequest): ComposeRequest {
+  return {
+    ...request,
+    ifPlanDigest: composePlanDigest({
+      ...request,
+      scope: undefined,
+      dryRun: undefined,
+      ifPlanDigest: undefined,
+      ...request.scope,
+    }),
+  };
+}
+
+describe("composePlanDigest", () => {
+  it("uses the native canonical JSON representation for Unicode, escaping, and guards", () => {
+    const fields = {
+      identifier: NOTE,
+      mode: "append",
+      ifRevision: REV,
+      paragraphs: [
+        {
+          style: "body",
+          runs: [
+            {
+              text: "Café 東京 🗒️ / \\ \t <>&",
+              bold: true,
+              link: "https://example.com/a/b?q=x&y=1",
+            },
+          ],
+        },
+        { kind: "file", path: "/tmp/Café report.pdf", expectedSha256: "b".repeat(64) },
+      ],
+      requireNonSystemPaper: true,
+      insertBeforeHeading: { text: "Next 🚀", occurrence: 2, expectedCount: 3 },
+      ifFolderId: "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p1",
+      forbiddenAncestorFolderIds: ["x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p2"],
+    };
+    const expected = "c1:4d104337f127f927f903a592d5b19e3f161b6e74c2e799dade427dcee7c541a2";
+    expect(composePlanDigest(fields)).toBe(expected);
+    expect(composePlanDigest(Object.fromEntries(Object.entries(fields).reverse()))).toBe(expected);
+  });
+});
+
 describe("composeNote", SPAWN_TIMEOUT, () => {
+  it("requires a plan digest on every apply, even with a current revision", () => {
+    const base = {
+      identifier: NOTE,
+      mode: "append" as const,
+      paragraphs: PARAGRAPHS,
+      ifRevision: REV,
+    };
+    for (const ifPlanDigest of [undefined, "p2:" + "a".repeat(64), "c1:bad"])
+      expect(caught(() => composeNote({ ...base, ifPlanDigest }, deps(ALLOW)))).toMatchObject({
+        code: "invalid_request",
+        committed: false,
+      });
+    expect(
+      caught(() =>
+        composeNote(
+          { ...base, dryRun: true, ifRevision: undefined, ifPlanDigest: `c1:${"a".repeat(64)}` },
+          deps()
+        )
+      )
+    ).toMatchObject({ code: "invalid_request", committed: false });
+  });
+
+  it("binds the note, revision, text, style, placement, and scope to the plan", () => {
+    const request = { identifier: NOTE, mode: "append" as const, paragraphs: PARAGRAPHS };
+    const plan = composeNote({ ...request, dryRun: true }, deps());
+    const apply = { ...request, ifRevision: REV, ifPlanDigest: String(plan.planDigest) };
+    expect(composeNote(apply, deps(ALLOW))).toMatchObject({ committed: true });
+    const changes: Partial<ComposeRequest>[] = [
+      { identifier: "11111111-2222-3333-4444-555555555555" },
+      { ifRevision: `r1:${"b".repeat(64)}` },
+      { mode: "prepend" },
+      { paragraphs: [{ style: "heading", runs: [{ text: "Other" }] }] },
+      { paragraphs: [{ style: "body", runs: [{ text: "H" }] }, PARAGRAPHS[1]] },
+      { requireNonSystemPaper: true },
+      { insertBeforeHeading: { text: "Next" } },
+      { scope: { ifFolderId: "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p1" } },
+    ];
+    for (const change of changes)
+      expect(
+        caught(() =>
+          composeNote({ ...apply, ...change }, deps({ ...ALLOW, FAKE_MODE: "conflict" }))
+        )
+      ).toMatchObject({ code: "plan_mismatch", committed: false });
+  });
+
+  it("binds same-size attachment bytes and forwards their hash to the native writer", () => {
+    const path = join(root, "report.txt");
+    writeFileSync(path, "old");
+    const request = {
+      identifier: NOTE,
+      mode: "append" as const,
+      paragraphs: [{ kind: "file" as const, path }],
+    };
+    const plan = composeNote({ ...request, dryRun: true }, deps());
+    expect(plan.echo).toMatchObject({
+      paragraphs: [{ kind: "file", path, expectedSha256: sha256Hex("old") }],
+    });
+    const captured = snapshotComposeFiles(request.paragraphs);
+    writeFileSync(path, "new");
+    const apply = { ...request, ifRevision: REV, ifPlanDigest: String(plan.planDigest) };
+    expect(
+      caught(() => composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "conflict" })))
+    ).toMatchObject({ code: "plan_mismatch", committed: false });
+    expect(caught(() => snapshotComposeFiles(captured))).toMatchObject({
+      code: "plan_mismatch",
+      committed: false,
+    });
+  });
+
+  it("refuses a native plan that does not match the exact planned request", () => {
+    expect(
+      caught(() =>
+        composeNote(
+          { identifier: NOTE, mode: "append", paragraphs: PARAGRAPHS, dryRun: true },
+          deps({ FAKE_MODE: "wrong-plan" })
+        )
+      )
+    ).toMatchObject({ code: "invalid_response", committed: false });
+  });
+
   it("plans without the live-validation gate and sends no ifRevision", () => {
     const plan = composeNote(
       { identifier: NOTE, mode: "prepend", paragraphs: PARAGRAPHS, dryRun: true },
@@ -639,14 +774,14 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
 
   it("applies with ifRevision, the Quick Note policy, and a heading anchor", () => {
     const result = composeNote(
-      {
+      plannedApply({
         identifier: NOTE,
         mode: "append",
         paragraphs: PARAGRAPHS,
         ifRevision: REV,
         requireNonSystemPaper: true,
         insertBeforeHeading: { text: "Next", occurrence: 1, expectedCount: 1 },
-      },
+      }),
       deps(ALLOW)
     );
     expect(result).toMatchObject({ committed: true, verified: true, pushScheduled: false });
@@ -668,7 +803,9 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
     expect(caught(() => composeNote({ ...base, ifRevision: "r1:x" }, deps(ALLOW))).code).toBe(
       "invalid_request"
     );
-    expect(caught(() => composeNote({ ...base, ifRevision: REV }, deps()))).toMatchObject({
+    expect(
+      caught(() => composeNote(plannedApply({ ...base, ifRevision: REV }), deps()))
+    ).toMatchObject({
       code: "not_live_validated",
       committed: false,
     });
@@ -689,12 +826,12 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
   });
 
   it("passes conflicts and committed verification failures through", () => {
-    const apply = {
+    const apply = plannedApply({
       identifier: NOTE,
       mode: "append" as const,
       paragraphs: PARAGRAPHS,
       ifRevision: REV,
-    };
+    });
     expect(
       caught(() => composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "conflict" })))
     ).toMatchObject({
@@ -712,7 +849,12 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
       { kind: "url", url: "https://example.com/" },
       { kind: "divider" },
     ];
-    const apply = { identifier: NOTE, mode: "append" as const, paragraphs, ifRevision: REV };
+    const apply = plannedApply({
+      identifier: NOTE,
+      mode: "append" as const,
+      paragraphs,
+      ifRevision: REV,
+    });
     expect(composeNote(apply, deps(ALLOW))).toMatchObject({ committed: true, verified: true });
     const wrongColor = caught(() =>
       composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "wrong-color" }))
@@ -798,12 +940,12 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
   });
 
   it("treats a malformed apply response as indeterminate", () => {
-    const apply = {
+    const apply = plannedApply({
       identifier: NOTE,
       mode: "append" as const,
       paragraphs: PARAGRAPHS,
       ifRevision: REV,
-    };
+    });
     expect(
       caught(() => composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "malformed" })))
     ).toMatchObject({

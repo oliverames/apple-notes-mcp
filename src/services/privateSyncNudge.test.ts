@@ -79,6 +79,7 @@ function fakeWriter(snapshots: Array<Record<string, unknown>>, requests: unknown
     env: {
       APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
       APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES: "1",
+      APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SYNC_PUSH: "1",
       APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: "/fake",
     },
     platform: "darwin",
@@ -213,7 +214,10 @@ describe("nudgeInPlace", () => {
     const report = await nudgeInPlace({ identifiers: [NOTE], waitSeconds: 4 }, nudgeDeps(helper));
     expect(report.targets[0].contentUnchanged).toBe(false);
     expect(report.allUploadsRecorded).toBe(false);
-    expect(report.warnings.join("\n")).toMatch(/revision changed/);
+    expect(report.warnings.join("\n")).toMatch(
+      /revision changed.*the nudge or another save may have changed it/
+    );
+    expect(report.warnings.join("\n")).not.toMatch(/something else/);
     expect(report.warnings.join("\n")).toMatch(/still show a pending upload after 4 s/);
     expect(report.waitedSeconds).toBe(4);
   });
@@ -272,7 +276,9 @@ describe("nudgeInPlace", () => {
     const real = defaultNudgeDeps();
     expect(typeof real.runAppleScript).toBe("function");
     expect(typeof real.launchNotes).toBe("function");
-    expect(typeof real.notesRunning()).toBe("boolean");
+    // The current-user process probe is exercised with injected OS results below.
+    // A default-dependency test must not depend on the runner's process visibility.
+    expect(typeof real.notesRunning).toBe("function");
     expect(real.now()).toBeGreaterThan(0);
     await expect(real.sleep(1)).resolves.toBeUndefined();
   });
@@ -679,5 +685,51 @@ describe("folder adoption", () => {
     await expect(
       checkFolderAdoption([{ identifier: FOLDER, objectURI: FOLDER_URI }], deps, 61)
     ).rejects.toThrow(/0-60/);
+  });
+});
+
+describe("sync mutation live-validation gate", () => {
+  it.each(["nudge", "relaunch"] as const)(
+    "refuses %s before any helper or AppleScript without its own opt-in",
+    async (method) => {
+      const requests: unknown[] = [];
+      const scripts: string[] = [];
+      const helper = fakeWriter([snapshot([noteState()])], requests);
+      delete helper.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SYNC_PUSH;
+      helper.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED = "1";
+      helper.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED_APPEND = "1";
+      const deps = nudgeDeps(helper, scripts);
+      await expect(
+        syncPush({ identifiers: [NOTE], method, confirm: true }, deps)
+      ).rejects.toMatchObject({
+        code: "not_live_validated",
+        committed: false,
+      });
+      expect(requests).toEqual([]);
+      expect(scripts).toEqual([]);
+    }
+  );
+
+  it("keeps status reads available without any mutation opt-in", async () => {
+    const scripts: string[] = [];
+    const helper = fakeWriter([snapshot([noteState()])]);
+    delete helper.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SYNC_PUSH;
+    const report = await syncPush(
+      { identifiers: [NOTE], method: "status" },
+      nudgeDeps(helper, scripts)
+    );
+    expect(report.method).toBe("status");
+    expect(scripts).toEqual([]);
+  });
+
+  it("also gates direct nudge callers", async () => {
+    const requests: unknown[] = [];
+    const helper = fakeWriter([snapshot([noteState()])], requests);
+    delete helper.env.APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SYNC_PUSH;
+    await expect(nudgeInPlace({ identifiers: [NOTE] }, nudgeDeps(helper))).rejects.toMatchObject({
+      code: "not_live_validated",
+      committed: false,
+    });
+    expect(requests).toEqual([]);
   });
 });

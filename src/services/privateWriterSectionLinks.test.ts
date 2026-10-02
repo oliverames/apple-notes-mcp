@@ -4,7 +4,12 @@ vi.mock(import("./privateWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   callPrivateWriter: vi.fn(),
 }));
-import { PrivateWriteError, WRITER_ACTIONS, callPrivateWriter } from "./privateWriter.js";
+import {
+  SECTION_LINKS_LIVE_VALIDATED,
+  PrivateWriteError,
+  WRITER_ACTIONS,
+  callPrivateWriter,
+} from "./privateWriter.js";
 import { addSectionLink, addSectionLinkSchema } from "./privateWriterSectionLinks.js";
 
 const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
@@ -14,7 +19,7 @@ const INLINE = "9A8B7C6D-5E4F-4A3B-9C2D-1E0F9A8B7C6D";
 const REV = `r1:${"a".repeat(64)}`;
 const REV2 = `r1:${"b".repeat(64)}`;
 const URL = `applenotes://showNote?identifier=${NOTE}&paragraphID=${PID}`;
-const UNVERIFIED = { env: { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" } } as never;
+const UNVERIFIED = { env: { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS: "1" } } as never;
 
 const updated = {
   status: "updated",
@@ -55,6 +60,9 @@ function thrown(fn: () => unknown): PrivateWriteError {
 beforeEach(() => vi.clearAllMocks());
 
 describe("addSectionLink", () => {
+  it("keeps section-link writes unvalidated pending recorded live evidence", () => {
+    expect(SECTION_LINKS_LIVE_VALIDATED).toBe(false);
+  });
   it("is a write action in the writer table", () => {
     expect(WRITER_ACTIONS.add_section_link).toBe("write");
   });
@@ -143,7 +151,7 @@ describe("addSectionLink", () => {
     expect(callPrivateWriter).not.toHaveBeenCalled();
   });
 
-  it("needs APPLE_NOTES_MCP_ALLOW_UNVERIFIED until live-validated", () => {
+  it("needs APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS until live-validated", () => {
     expect(
       thrown(() => addSectionLink({ identifier: NOTE, ifRevision: REV }, { env: {} } as never))
     ).toMatchObject({ code: "not_live_validated", committed: false });

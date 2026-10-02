@@ -61,7 +61,7 @@ describe("smart folder writer tools", () => {
       "native-delete-smart-folder",
     ]) {
       expect(config(name).description).toMatch(/APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1/);
-      expect(config(name).description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED=1/);
+      expect(config(name).description).toMatch(/APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SMART_FOLDERS=1/);
     }
     expect(config("native-create-smart-folder").description).toMatch(/smart_folder_destination/);
   });

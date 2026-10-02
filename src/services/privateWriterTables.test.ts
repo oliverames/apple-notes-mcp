@@ -73,6 +73,7 @@ let sourcePath: string;
 
 function deps(env: Record<string, string> = {}): PrivateHelperDeps {
   return defaultWriterDeps({
+    notesRunning: () => false,
     env: {
       PATH: process.env.PATH,
       APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: installDir,
@@ -84,7 +85,7 @@ function deps(env: Record<string, string> = {}): PrivateHelperDeps {
     sourcePath,
   });
 }
-const ALLOW = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1" };
+const ALLOW = { APPLE_NOTES_MCP_ALLOW_UNVERIFIED_TABLES: "1" };
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "private-writer-tables-"));
