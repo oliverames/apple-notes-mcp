@@ -952,9 +952,10 @@ unresolved:
    carried the change into Notes.app, but concurrent-save behaviour beyond one
    optimistic save was not characterised.
 2. **CRDT replica identity.** The helper edits the note's CRDT as its own
-   replica, like a new device. How NotesShared assigns that identity in a
-   process with no bundle identifier was not inspected; repeated edits may
-   add replica entries to the note.
+   replica, like a new device. How NotesShared assigns that identity, and
+   whether repeated edits add replica entries to the note, has not been
+   measured. (This item once said "in a process with no bundle identifier";
+   that premise is out of date, see "Replica identity" under "Private writer".)
 3. **iCloud upload lag.** In the contributor's live test on macOS 27.2 the
    edit appeared in the running Notes.app at once and raised
    `currentLocalVersion` above `latestVersionSyncedToCloud`, but was not
@@ -1986,7 +1987,9 @@ Findings, macOS 27.2, on copy stores:
 - PencilKit traps when building a drawing in a process with no bundle
   identifier. The writer embeds an Info.plist (`__TEXT,__info_plist`) with
   `io.github.apple-notes-mcp.private-writer`; PencilKit keeps its replica
-  identity in that preferences domain.
+  identity in that preferences domain. That concerns the drawing's own CRDT
+  (`add_paper`), not the replica that edits to a note's text carry; see
+  "Replica identity".
 - The monoline ink is serialized as pen and the reed ink is not recognized,
   so the writer offers only inks whose identifier survives a serialization
   round trip, and refuses any stroke that comes back as a different ink.
@@ -2118,12 +2121,73 @@ only a note the user recognizes. Verified on copy stores
 flagged state with sqlite3 on the copy only); not validated live, so
 `PURGE_REPAIR_LIVE_VALIDATED` is false.
 
+### Replica identity
+
+Status: **unverified.** No replica table has been captured from a store. This
+section records what the source shows, what is inferred, and how to measure it.
+
+What the source shows (`native/private-helper/apple-notes-private-writer.m`):
+
+- The writer has carried a bundle identifier since `add_paper` was added: an
+  Info.plist in section `__TEXT,__info_plist` names
+  `io.github.apple-notes-mcp.private-writer` (`.m:61-72`). The earlier premise
+  that the writer runs in "a process with no bundle identifier" is therefore
+  stale for the writer as built from this source. The read-only helper is a
+  separate binary and is not covered by this.
+- The writer never chooses a replica. A search of the file finds no replica
+  identifier, vector timestamp or `ICTTMergeableString` initializer that takes
+  one; the only mention is the comment explaining the Info.plist (`.m:61-64`).
+  Text edits go through `-[ICNote mergeableString]`
+  (`HandleAppendPlainText`, `.m:1159`), then `beginEditing`,
+  `insertAttributedString:atIndex:`, `endEditing` (`.m:1171-1174`) and
+  `-saveNoteData` (`.m:1180`). Which replica those edits carry is decided
+  inside NotesShared.
+- The preferences domain holds PencilKit's replica key and is created when
+  PencilKit builds a `PKDrawing` (`.m:61-64`, `add_paper`). The writer's own
+  append code (`.m:1141-1252`) does not call PencilKit, though NotesShared may. On the Mac used for this review the domain does not exist
+  (`defaults read io.github.apple-notes-mcp.private-writer` reports it not
+  found and `~/Library/Preferences` holds no matching plist, 2026-10-02),
+  which agrees with `README.md` saying the first Paper write creates it.
+- The writer reads one JSON request from stdin and answers once (`.m:12`), so
+  one process cannot make several writes. N writes are N processes.
+
+What is inferred, not shown: that NotesShared derives the text replica from
+something other than that preferences domain (for example a per-store or
+per-device identity), and that repeated writer runs reuse it. Either could be
+wrong, and a per-process random replica would add an entry on every write.
+
+How to measure it. `src/utils/noteReplicaTable.ts` decodes the replica table
+from a note's `ZICNOTEDATA.ZDATA`: the vector timestamp's replica UUIDs and
+clocks, and for each replica the characters its character IDs own. The layout
+(String fields 3 substring, 4 vector timestamp) comes from public
+reverse-engineering notes, not a vendor schema, so the decoder checks itself
+(live substring lengths must equal the text length) and
+`scripts/note-replica-table.ts STORE UUID --shape` prints the raw field
+structure when a check fails. The decoder is covered by a synthetic fixture
+only; it has not been run against a real note.
+
+`scripts/test-private-writer-replica-identity-copy-store.sh` runs the
+experiment on a copy of the store: baseline, 5 appends in 5 processes, 5 more
+from a second copy of the binary at another path, then 2 more with the
+writer's preferences domain removed (exported first, restored after), with the
+live note's table read-only for comparison. It prints a step table and whether
+each step added replicas. It needs Full Disk Access for the terminal and has
+**not been run**:
+
+```bash
+APPLE_NOTES_MCP_ENABLE_PRIVATE=1 scripts/test-private-writer-replica-identity-copy-store.sh [NOTE_UUID]
+```
+
+Until it has run, no claim about which replica the writer's edits carry, about
+reuse across processes, or about the effect of deleting the preferences domain
+is supported.
+
 ### Still open
 
 The three concerns in "Why writes were deferred" are not resolved by this
 layer: it makes writes opt-in, guarded, and verifiable, not proven safe.
-Concurrent saves are handled only by optimistic locking, CRDT replica
-identity in a process without a bundle identifier is uninspected, and upload
+Concurrent saves are handled only by optimistic locking, which replica the
+writer's edits carry has not been measured (see "Replica identity"), and upload
 depends on Notes.app (the nudge works around the observed skip).
 
 ---
