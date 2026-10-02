@@ -502,8 +502,7 @@ common and reported as `mixedParagraphIds`; its first-run UUID is still used.
 
 `src/utils/paragraphAnchors.ts` (matching and resolution, read-only),
 `src/services/anchorRegistry.ts` (the registry file) and
-`src/services/paragraphAnchorOps.ts` (record, resolve with refresh or
-re-mint, prune) back the five anchor tools and the resolver service.
+`src/services/paragraphAnchorOps.ts` (record, resolve with refresh, prune) back the five anchor tools and the resolver service.
 
 **What an anchor stores.** The note's `ZIDENTIFIER` (uppercase; the
 `x-coredata` id is kept only as a hint, since it is local to one Mac), the
@@ -544,16 +543,20 @@ marked for deletion is `note-deleted`, a locked or undecodable body is
 `note-unreadable`, and a purged note is `note-not-found`. None of these
 reaches the matcher.
 
-**Re-minting hook.** Public automation cannot set a paragraph UUID. The
-module exports `setParagraphIdReminter(fn)`; nothing in this package installs
-one. A writer that can set ParagraphStyle field 9 on one block's runs can
-register a function that receives `{ anchorId, noteId, noteIdentifier,
-blockIndex, expectedText, currentParagraphId }`, must refuse when the block's
-text no longer equals `expectedText`, and resolves with the new UUID only
-after its write is committed and verified. `resolve-paragraph-anchor` with
-`remint: true` then reads the note again and resolves as usual, so the new
-link is still checked for uniqueness. Without a writer the tool reports
-`remint.reason: "writer-unavailable"`.
+**No re-minting.** Public automation cannot set a paragraph UUID, so a
+`needs-reminting` match is only reported: the result carries the matched
+block and no `url`. `resolve-paragraph-anchor` takes no `remint` input and
+this package has no hook for one.
+
+**Tool annotations.** `list-note-paragraphs` and `get-paragraph-link` read
+Notes and write nothing by default, but with `recordAnchors` or
+`recordAnchor` they write the registry file. MCP annotations are static per
+tool, so both are registered with `readOnlyHint: false`,
+`destructiveHint: false` and `idempotentHint: true` (recording the same
+paragraph again returns the existing anchor), and their descriptions say
+which parameter writes. `list-paragraph-anchors` and `get-paragraph-anchor`
+read only the registry and stay read-only. `paragraphAnchorAnnotations.test.ts`
+pins all of this.
 
 **Registry.** One JSON file, `{ "version": 1, "anchors": [...] }`, at
 `APPLE_NOTES_MCP_ANCHOR_FILE` or `~/Library/Application

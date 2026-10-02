@@ -29,5 +29,12 @@ This MCP server:
 - Does not transmit data to external servers
 - Does not store credentials or passwords
 - Cannot access password-protected notes
+- Listens on no network port. One optional command-line server does, and only
+  when you start it yourself: the paragraph anchor resolver
+  (`apple-notes-mcp anchors serve`), which stops on Ctrl-C. It binds
+  127.0.0.1 (or, with `--tailnet`, your Tailscale address), requires a token
+  on every request, counts failed tokens per peer, and checks the `Host`
+  header. The MCP server never starts it. See
+  [Paragraph anchor resolver](README.md#paragraph-anchor-resolver-opt-in)
 
 The server requires macOS automation permissions to function. These permissions are managed by macOS and can be revoked at any time in System Settings > Privacy & Security > Automation.

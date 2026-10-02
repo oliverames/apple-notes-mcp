@@ -18,7 +18,6 @@ import {
   noteByIdentifierSql,
   resolutionFor,
   resolveAnchor,
-  setParagraphIdReminter,
   textFingerprint,
   textSimilarity,
 } from "./paragraphAnchors.js";
@@ -364,7 +363,6 @@ describe("resolution against a fixture store (real sqlite3)", { timeout: 60000 }
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   afterEach(() => {
-    setParagraphIdReminter(undefined);
     setBody(10, [TITLE, A, B, C, D]);
   });
 
@@ -399,10 +397,10 @@ describe("resolution against a fixture store (real sqlite3)", { timeout: 60000 }
     );
   });
 
-  it("tracks an edit and refreshes the stored anchor only when confident", async () => {
+  it("tracks an edit and refreshes the stored anchor only when confident", () => {
     const anchor = anchorIn(10, NOTE_UUID);
     setBody(10, [TITLE, A, B, ["Charlie paragraph about cherries and plums\n", null, 0x78], D]);
-    const fuzzy = await resolveStoredAnchor(anchor.anchorId, {
+    const fuzzy = resolveStoredAnchor(anchor.anchorId, {
       registry,
       dbPath: db,
       refresh: true,
@@ -412,7 +410,7 @@ describe("resolution against a fixture store (real sqlite3)", { timeout: 60000 }
     expect(fuzzy.refreshSkipped).toMatch(/below 0.8/);
 
     setBody(10, [TITLE, A, [C[0], null, 0x79], B, D]);
-    const moved = await resolveStoredAnchor(anchor.anchorId, {
+    const moved = resolveStoredAnchor(anchor.anchorId, {
       registry,
       dbPath: db,
       refresh: true,
@@ -427,69 +425,26 @@ describe("resolution against a fixture store (real sqlite3)", { timeout: 60000 }
       updatedAt: "2026-09-25T00:00:00.000Z",
     });
     // The refreshed anchor now resolves by its new ID.
-    expect((await resolveStoredAnchor(anchor.anchorId, { registry, dbPath: db })).method).toBe(
+    expect(resolveStoredAnchor(anchor.anchorId, { registry, dbPath: db }).method).toBe(
       "paragraph-id"
     );
     registry.remove([anchor.anchorId]);
   });
 
-  it("reports writer-unavailable, then uses an installed re-minting writer", async () => {
+  it("reports needs-reminting without a url when the paragraph lost its ID", () => {
     const anchor = anchorIn(10, NOTE_UUID);
     setBody(10, [TITLE, A, B, [C[0]], D]);
-    const without = await resolveStoredAnchor(anchor.anchorId, {
+    const result = resolveStoredAnchor(anchor.anchorId, { registry, dbPath: db });
+    expect(result).toMatchObject({ status: "needs-reminting", needsReminting: true });
+    expect(result.url).toBeUndefined();
+    expect(result).not.toHaveProperty("remint");
+    // A refresh keeps tracking the block, but cannot invent a link for it.
+    const refreshed = resolveStoredAnchor(anchor.anchorId, {
       registry,
       dbPath: db,
-      remint: true,
+      refresh: true,
     });
-    expect(without).toMatchObject({
-      status: "needs-reminting",
-      remint: { attempted: false, reason: "writer-unavailable" },
-    });
-
-    const calls: unknown[] = [];
-    setParagraphIdReminter(async (request) => {
-      calls.push(request);
-      setBody(10, [TITLE, A, B, [C[0], null, 0x5e], D]);
-      return { paragraphId: U(0x5e) };
-    });
-    const healed = await resolveStoredAnchor(anchor.anchorId, {
-      registry,
-      dbPath: db,
-      remint: true,
-    });
-    expect(calls).toEqual([
-      {
-        anchorId: anchor.anchorId,
-        noteId: `x-coredata://${STORE}/ICNote/p10`,
-        noteIdentifier: NOTE_UUID,
-        blockIndex: 3,
-        expectedText: CTEXT,
-        currentParagraphId: null,
-      },
-    ]);
-    expect(healed).toMatchObject({
-      status: "resolved",
-      remint: { attempted: true, paragraphId: U(0x5e) },
-    });
-    expect(healed.url).toContain(U(0x5e));
-
-    setParagraphIdReminter(async () => {
-      throw new Error("revision conflict");
-    });
-    setBody(10, [TITLE, A, B, [C[0]], D]);
-    const failed = await resolveStoredAnchor(anchor.anchorId, {
-      registry,
-      dbPath: db,
-      remint: true,
-    });
-    expect(failed).toMatchObject({
-      status: "needs-reminting",
-      remint: { attempted: true, reason: "writer-failed", message: "revision conflict" },
-    });
-    setBody(10, [TITLE, A, B, C, D]);
-    expect(
-      (await resolveStoredAnchor(anchor.anchorId, { registry, dbPath: db, remint: true })).remint
-    ).toEqual({ attempted: false, reason: "not-needed" });
+    expect(refreshed.url).toBeUndefined();
     registry.remove([anchor.anchorId]);
   });
 

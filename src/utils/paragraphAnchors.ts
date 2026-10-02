@@ -18,9 +18,8 @@
  *
  * Every step fails closed: two equally good candidates are reported as
  * `ambiguous`, never guessed between. A match whose UUID is now shared or
- * missing is reported as `needs-reminting` with the matched block; only a
- * writer that can set a paragraph UUID can make it linkable again, and this
- * module never writes.
+ * missing is reported as `needs-reminting` with the matched block, and no link
+ * is returned. This module never writes to Notes.
  *
  * @module utils/paragraphAnchors
  */
@@ -433,37 +432,3 @@ export const resolveAnchor = (
   anchor: ParagraphAnchor,
   options: { dbPath?: string; minConfidence?: number } = {}
 ): AnchorResolution => resolveAnchorDetailed(anchor, options).resolution;
-
-// --- Re-minting hook ---------------------------------------------------------
-
-/** What a paragraph-ID writer is asked to do: give one paragraph a fresh, unique ID. */
-export interface RemintRequest {
-  anchorId: string;
-  noteId: string;
-  noteIdentifier: string;
-  /** The matched block, as get-note-blocks numbers it. */
-  blockIndex: number;
-  /** The block's current text; a writer must refuse if it no longer matches. */
-  expectedText: string;
-  /** The block's current (shared or missing) paragraph ID. */
-  currentParagraphId: string | null;
-}
-
-/** A writer that sets a new paragraph ID and returns it once committed. */
-export type ParagraphIdReminter = (request: RemintRequest) => Promise<{ paragraphId: string }>;
-
-let reminter: ParagraphIdReminter | undefined;
-
-/**
- * Install (or with undefined, remove) the writer that re-mints paragraph IDs.
- * Nothing in this package installs one: re-minting needs a writer that can set
- * a paragraph's stored UUID, which public automation cannot do.
- */
-export function setParagraphIdReminter(fn: ParagraphIdReminter | undefined): void {
-  reminter = fn;
-}
-
-/** The installed re-minting writer, if any. */
-export function paragraphIdReminter(): ParagraphIdReminter | undefined {
-  return reminter;
-}

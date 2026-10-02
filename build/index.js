@@ -59633,10 +59633,6 @@ function resolveAnchorDetailed(anchor, { dbPath: dbPath2 = NOTES_DB_PATH8, minCo
   }
   return { resolution: resolutionFor(anchor, note, { minConfidence }), note };
 }
-var reminter;
-function paragraphIdReminter() {
-  return reminter;
-}
 
 // src/services/anchorServer.ts
 var MIN_TOKEN_LENGTH = 32;
@@ -60111,48 +60107,16 @@ function recordParagraphAnchors(note, paragraphs, registry2 = new AnchorRegistry
   return candidates.length ? registry2.record(candidates) : [];
 }
 var REFRESH_MIN_CONFIDENCE = 0.8;
-async function resolveStoredAnchor(anchorId, {
+function resolveStoredAnchor(anchorId, {
   registry: registry2 = new AnchorRegistry(),
   dbPath: dbPath2,
   minConfidence,
   refresh = false,
-  remint = false,
   now = () => /* @__PURE__ */ new Date()
 } = {}) {
   const anchor = registry2.get(anchorId);
-  let { resolution, note } = resolveAnchorDetailed(anchor, { dbPath: dbPath2, minConfidence });
+  const { resolution, note } = resolveAnchorDetailed(anchor, { dbPath: dbPath2, minConfidence });
   const out = { ...resolution };
-  if (remint) {
-    const writer = paragraphIdReminter();
-    if (resolution.status !== "needs-reminting")
-      out.remint = { attempted: false, reason: "not-needed" };
-    else if (!writer)
-      out.remint = {
-        attempted: false,
-        reason: "writer-unavailable",
-        message: "Re-minting a paragraph ID needs a writer that can set it; none is installed in this server"
-      };
-    else {
-      try {
-        const { paragraphId } = await writer({
-          anchorId,
-          noteId: resolution.noteId,
-          noteIdentifier: anchor.noteIdentifier,
-          blockIndex: resolution.match.blockIndex,
-          expectedText: resolution.match.text,
-          currentParagraphId: resolution.match.paragraphId
-        });
-        ({ resolution, note } = resolveAnchorDetailed(anchor, { dbPath: dbPath2, minConfidence }));
-        Object.assign(out, resolution, { remint: { attempted: true, paragraphId } });
-      } catch (error2) {
-        out.remint = {
-          attempted: true,
-          reason: "writer-failed",
-          message: error2 instanceof Error ? error2.message : String(error2)
-        };
-      }
-    }
-  }
   if (refresh) {
     if (!out.match || !note || !["resolved", "needs-reminting"].includes(out.status))
       out.refreshSkipped = "nothing was matched";
@@ -61343,7 +61307,7 @@ var paragraphNoteSelector = {
 registerTool(
   "list-note-paragraphs",
   {
-    description: "Use when: you need a note's paragraphs with their style and stored paragraph ID, for example to choose one to link to.\nReturns: one page of non-empty paragraphs in body order, each with blockIndex (as in get-note-blocks), text, style, paragraphId, paragraphIdStatus (unique, shared, missing) and, only when unique, a direct applenotes:// url that opens that paragraph; plus counts per status and page info (call again with offset set to page.nextOffset while page.hasMore is true).\nDo not use when: you need inline formatting (get-note-blocks).\nSafety: read-only; reads the NoteStore database directly and requires Full Disk Access. Paragraph IDs repeat often (Notes copies them when a paragraph is split), so shared IDs get no url. Title lookups ignore Recently Deleted. Password-protected notes are refused.",
+    description: "Use when: you need a note's paragraphs with their style and stored paragraph ID, for example to choose one to link to.\nReturns: one page of non-empty paragraphs in body order, each with blockIndex (as in get-note-blocks), text, style, paragraphId, paragraphIdStatus (unique, shared, missing) and, only when unique, a direct applenotes:// url that opens that paragraph; plus counts per status and page info (call again with offset set to page.nextOffset while page.hasMore is true).\nDo not use when: you need inline formatting (get-note-blocks).\nSafety: never changes Notes; reads the NoteStore database directly and requires Full Disk Access. Without recordAnchors it writes nothing; with recordAnchors it also writes the local anchor registry file (mode 0600), so the tool is not marked read-only. Paragraph IDs repeat often (Notes copies them when a paragraph is split), so shared IDs get no url. Title lookups ignore Recently Deleted. Password-protected notes are refused.",
     inputSchema: {
       ...paragraphNoteSelector,
       linkableOnly: external_exports.boolean().optional().describe("Return only paragraphs that have a direct url (default false)"),
@@ -61359,7 +61323,7 @@ registerTool(
       page: external_exports.record(external_exports.unknown()).optional(),
       anchorsRecorded: external_exports.number().optional()
     },
-    annotations: { readOnlyHint: true }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
   },
   withErrorHandling(({ id: id2, title, folder, linkableOnly, offset, limit, recordAnchors }) => {
     const note = readNoteParagraphs({ id: id2, title, folder });
@@ -61393,7 +61357,7 @@ registerTool(
 registerTool(
   "get-paragraph-link",
   {
-    description: "Use when: you need a link that opens Notes at one paragraph (for example a heading) of a note.\nReturns: a direct applenotes://showNote?identifier=<note>&paragraphID=<paragraph> url and the selected paragraph, only when that paragraph's stored ID is present and appears in no other paragraph of the note. Otherwise an error whose structuredContent.reason says why: paragraph-id-shared, paragraph-id-missing, no-match, ambiguous-paragraph (pass occurrence or a longer snippet), occurrence-out-of-range, ambiguous-note, encrypted.\nDo not use when: you want a link to the whole note (get-note-link).\nSafety: read-only; never creates or changes a paragraph ID, so a paragraph without a unique ID cannot be linked. Requires Full Disk Access. A later edit in Notes can replace the ID and break the link.",
+    description: "Use when: you need a link that opens Notes at one paragraph (for example a heading) of a note.\nReturns: a direct applenotes://showNote?identifier=<note>&paragraphID=<paragraph> url and the selected paragraph, only when that paragraph's stored ID is present and appears in no other paragraph of the note. Otherwise an error whose structuredContent.reason says why: paragraph-id-shared, paragraph-id-missing, no-match, ambiguous-paragraph (pass occurrence or a longer snippet), occurrence-out-of-range, ambiguous-note, encrypted.\nDo not use when: you want a link to the whole note (get-note-link).\nSafety: never changes Notes or a paragraph ID, so a paragraph without a unique ID cannot be linked. Requires Full Disk Access. Without recordAnchor it writes nothing; with recordAnchor it also writes the local anchor registry file (mode 0600), so the tool is not marked read-only. A later edit in Notes can replace the ID and break the link.",
     inputSchema: {
       ...paragraphNoteSelector,
       contains: external_exports.string().min(1).max(MAX.CONTENT).optional().describe(
@@ -61413,7 +61377,7 @@ registerTool(
       paragraph: external_exports.record(external_exports.unknown()).optional(),
       anchorId: external_exports.string().optional()
     },
-    annotations: { readOnlyHint: true }
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
   },
   withErrorHandling(
     ({ id: id2, title, folder, contains, match, blockIndex, occurrence, recordAnchor }) => {
@@ -61470,15 +61434,12 @@ registerTool(
 registerTool(
   "resolve-paragraph-anchor",
   {
-    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); never changes Notes. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists until a writer gives it a new ID; remint asks such a writer only when one is installed (none is by default). refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
+    description: "Use when: you have an anchorId and need the paragraph's current link, or want to check that an anchored paragraph still exists after edits.\nReturns: status (resolved, needs-reminting, ambiguous, low-confidence, not-found, note-not-found, note-deleted, note-unreadable), method (paragraph-id, exact-text, text-and-neighbours), confidence from 0 to 1, the matched block (blockIndex, text, paragraphId, paragraphIdStatus) and what changed. url is present only when status is resolved.\nDo not use when: you have no anchor yet (create-paragraph-anchor, or get-paragraph-link with recordAnchor).\nSafety: reads the NoteStore database (Full Disk Access); never changes Notes. Fails closed: equally good candidates give ambiguous and no url. needs-reminting means the paragraph was found but its stored ID is shared or missing, so no safe link exists for it; this server cannot give it a new ID. refresh rewrites the stored anchor (local registry only) after a match with confidence 0.8 or more.",
     inputSchema: {
       anchorId: anchorIdInput,
       minConfidence: external_exports.number().min(0).max(1).optional().describe(`Lowest confidence accepted as a match (default ${DEFAULT_MIN_CONFIDENCE})`),
       refresh: external_exports.boolean().optional().describe(
         "Update the stored anchor to the matched paragraph as it is now (default false; only at confidence 0.8 or more)"
-      ),
-      remint: external_exports.boolean().optional().describe(
-        "On needs-reminting, ask the installed paragraph-ID writer for a new ID (default false; reports writer-unavailable when none is installed)"
       )
     },
     outputSchema: {
@@ -61495,13 +61456,12 @@ registerTool(
       noteId: external_exports.string().optional(),
       message: external_exports.string().optional(),
       refreshed: external_exports.boolean().optional(),
-      refreshSkipped: external_exports.string().optional(),
-      remint: external_exports.record(external_exports.unknown()).optional()
+      refreshSkipped: external_exports.string().optional()
     },
     annotations: { readOnlyHint: false, destructiveHint: false }
   },
-  withAsyncErrorHandling(async ({ anchorId, minConfidence, refresh, remint }) => {
-    const result = await resolveStoredAnchor(anchorId, { minConfidence, refresh, remint });
+  withErrorHandling(({ anchorId, minConfidence, refresh }) => {
+    const result = resolveStoredAnchor(anchorId, { minConfidence, refresh });
     return successResponse(
       `${result.status}: ${result.message}` + (result.url ? `
 Link: ${result.url}` : ""),

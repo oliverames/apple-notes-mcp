@@ -704,8 +704,10 @@ stable code in brackets, such as `[encrypted]` or `[no-full-disk-access]`.
 
 #### `list-note-paragraphs`
 
-Lists one note's non-empty paragraphs in body order, read-only from the
-NoteStore database. Each paragraph has `blockIndex` (its index in
+Lists one note's non-empty paragraphs in body order, read from the NoteStore
+database. It never changes Notes. With `recordAnchors` it also writes the
+local anchor registry, so the tool is not marked read-only in its MCP
+annotations. Each paragraph has `blockIndex` (its index in
 `get-note-blocks`, where empty paragraphs also count), `text`, `style`,
 `styleType`, `paragraphId` (the UUID Notes stores on the paragraph's first
 text run), and `paragraphIdStatus`:
@@ -757,7 +759,9 @@ Otherwise the result is an error whose `structuredContent` carries the usual
 `no-match`, `ambiguous-paragraph`, `occurrence-out-of-range`, `ambiguous-note`
 (several notes have that title; the message lists their folders), `not-found`,
 `encrypted`, or `no-body`. The tool never creates or changes a paragraph ID,
-and an edit in Notes can later replace the ID and break the link.
+and an edit in Notes can later replace the ID and break the link. With
+`recordAnchor` it also writes the local anchor registry, so the tool is not
+marked read-only in its MCP annotations.
 
 **Requires:** Full Disk Access.
 
@@ -800,8 +804,7 @@ Resolving an anchor tries three steps in order, and every step fails closed:
 A match whose ID is now shared or missing is `needs-reminting`: the paragraph
 is found (the result names its block), but no safe link exists until it gets a
 new ID. Public automation cannot set a paragraph ID, so this server only
-reports it; `remint: true` hands the block to a paragraph-ID writer when one
-is installed (none is by default) and reports `writer-unavailable` otherwise.
+reports it and returns no `url`.
 
 To share anchored links outside Notes, see the
 [paragraph anchor resolver](#paragraph-anchor-resolver-opt-in).
@@ -843,7 +846,6 @@ Finds an anchored paragraph in the note as it is now. The result has `status`
 | `anchorId` | string | Yes | The anchor (`pa_` and 24 hex digits) |
 | `minConfidence` | number | No | Lowest confidence accepted as a match (default 0.6) |
 | `refresh` | boolean | No | After a match with confidence 0.8 or more, store the paragraph as it is now (text, neighbours, block, ID), so later edits are tracked from here. Reports `refreshed` or `refreshSkipped` |
-| `remint` | boolean | No | On `needs-reminting`, ask the installed paragraph-ID writer for a new ID and resolve again. Reports `remint.reason: "writer-unavailable"` when none is installed |
 
 #### `list-paragraph-anchors`
 
