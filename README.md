@@ -2186,7 +2186,7 @@ A recording extended with more takes has several fragments. Their transcripts ar
 
 #### `get-note-drawings`
 
-Decodes a note's classic PencilKit drawings (`com.apple.drawing.2` and the older `com.apple.drawing` attachments) into strokes and SVG. The PencilKit bytes are read read-only from the NoteStore database and decoded by Apple's public `PKDrawing(data:)` in the [public native helper](#public-native-helper). Modern Paper sketches (`com.apple.paper`) are a different format and are not decoded here.
+Decodes a note's classic PencilKit drawings (`com.apple.drawing.2` and the older `com.apple.drawing` attachments) into strokes and SVG. The PencilKit bytes are read read-only from the NoteStore database and decoded by Apple's public `PKDrawing(data:)` in the [public native helper](#public-native-helper). Modern Paper sketches (`com.apple.paper`) are a different format and are not decoded here; the opt-in writer's [`native-read-paper`](#native-read-paper) decodes them, with the same `format` choice.
 
 **Requires:** Full Disk Access for the MCP host process, and the public native helper built once with `apple-notes-mcp setup --public-helper`.
 
@@ -3430,6 +3430,19 @@ layers that each report whether they ran:
   `kind` (`rectangle` or `path`), `d` as SVG path data in PDF page space
   (points, origin at the bottom left), `fillRule`, colors, and `lineWidth`.
   Text, images, and shadings are counted in `skipped`, not decoded.
+
+Set `format` to `"svg"` or `"both"` to also get the pen strokes as a standalone
+SVG document (`svg`, with `svgStrokeCount` and `svgSkippedStrokes`). It draws
+one round-capped path per stroke through its recorded points in drawing
+coordinates, in the stroke's color, alpha, and width, using the renderer
+`get-note-drawings` uses for classic drawings. It is an outline of the recorded
+geometry, not a pixel match for PencilKit's ink. `"svg"` leaves `strokes` out;
+`"both"` keeps them. An SVG always reads the points, whatever `includePoints`
+says. Typed shapes and fallback geometry stay in `shapes` and
+`fallbackGeometry`; they are not drawn, and a warning says so when the drawing
+has any. A warning also names strokes left out because the `maxPoints` budget
+ran out. The `svg` text reads back through `analyze-svg` as a safe document (a test
+checks this), so a saved copy can be examined or re-drawn with `native-add-paper`.
 
 Pass `attachmentIdentifier` when the note has more than one Paper drawing
 (`ambiguous_attachment` lists them). The writer opens the store read-only and

@@ -62,7 +62,17 @@
   markers, text, and an SVG path) on macOS 27 or later, and the painted paths
   of Notes' fallback PDF when the drawing has one. Each layer reports whether
   it ran and why not; `native-writer-status` lists `readPaper` and
-  `readPaperShapes`.
+  `readPaperShapes`. `format: "svg"` or `"both"` also renders the pen strokes
+  as an SVG document (`svg`, `svgStrokeCount`, `svgSkippedStrokes`), drawn from
+  the recorded points with each stroke's transform applied, through the same
+  renderer `get-note-drawings` uses for classic drawings. `"svg"` leaves
+  `strokes` out, and an SVG always asks the writer for points whatever
+  `includePoints` says. It is a faithful outline, not a pixel match for
+  PencilKit's ink. Typed shapes and fallback geometry are not drawn; a warning
+  says so when the drawing has any, and another when the `maxPoints` budget
+  left strokes without points. The SVG is built in the server from the same
+  read, so it needs no new writer action and sits behind the same two writer
+  switches as `native-read-paper`.
 - Opt-in private **writer**, a separate layer over the read-only helper.
   `native/private-helper/apple-notes-private-writer.m` is its own
   program with its own binary, checksum manifest (`writer-manifest.json`), and

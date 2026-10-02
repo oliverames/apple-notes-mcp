@@ -2049,6 +2049,21 @@ the live bundle. The result has three layers, each with its own availability:
   generateFallbackPDFDataForAttachment:]` needs Notes' shared context, which
   the writer does not start, so the writer reads the stored file only.
 
+**SVG output.** `format: "svg"` or `"both"` renders the stroke layer in the
+server, not in the writer: `src/utils/paperSvg.ts` moves each stroke's points
+into drawing space with its `[a, b, c, d, tx, ty]` transform, scales the width
+by the square root of the transform's determinant, and calls `drawingToSvg`,
+the renderer `get-note-drawings` uses for classic drawings. The writer action
+is unchanged (an SVG request only forces `includePoints`), so no feature-table
+row, binary, or manifest change is involved, and the output is gated exactly
+like `read_paper`. Colors are the stroke's sRGB value as `rgb()` plus
+`stroke-opacity`; an ink with no sRGB form draws black. The output is a
+polyline through the recorded points, so it does not reproduce PencilKit's
+width variation or ink texture. Typed shapes and fallback paths are not drawn
+(the render would have to interleave them with strokes in an order the read
+does not give), and a warning reports them. The SVG parses back through
+`analyze-svg` as `safe`.
+
 Findings, macOS 27.2, 2026-09-24: on the live library (read-only) a Paper
 drawing decoded to 19 strokes, and PaperKit's element list reported the same
 19 strokes and no shapes. On a store copy, a bundle written with PaperKit's

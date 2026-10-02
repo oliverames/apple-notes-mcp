@@ -41076,12 +41076,12 @@ var Decoder = class {
         const verb = key.startsWith("creation") ? "created" : "edited";
         if (value.type === 6) {
           const amount = value.customAmount;
-          const unit2 = typeof value.customUnit === "number" ? CUSTOM_UNITS[value.customUnit] : null;
-          if (typeof amount !== "number" || !unit2) return null;
+          const unit3 = typeof value.customUnit === "number" ? CUSTOM_UNITS[value.customUnit] : null;
+          if (typeof amount !== "number" || !unit3) return null;
           return {
             type: key,
             value,
-            description: `${verb} in the last ${amount} ${unit2}`
+            description: `${verb} in the last ${amount} ${unit3}`
           };
         }
         const range = RELATIVE_RANGES[value.type];
@@ -56979,8 +56979,8 @@ function parseLength(value, percentOf) {
   );
   if (!m) return null;
   const n = Number(m[1]);
-  const unit2 = (m[2] ?? "").toLowerCase();
-  const px = unit2 === "%" ? n / 100 * percentOf : n * UNITS[unit2];
+  const unit3 = (m[2] ?? "").toLowerCase();
+  const px = unit3 === "%" ? n / 100 * percentOf : n * UNITS[unit3];
   return Number.isFinite(px) ? px : null;
 }
 function parseOpacity(value) {
@@ -64722,6 +64722,56 @@ function readPaper(request, deps = defaultWriterDeps()) {
   return parseWriterResult(paperReadSchema, callPrivateWriter("read_paper", fields, deps), false);
 }
 
+// src/utils/paperSvg.ts
+var unit = (value) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+function toDrawingStroke(stroke, points) {
+  const [a, b, c, d, tx, ty] = stroke.transform ?? [1, 0, 0, 1, 0, 0];
+  const scale = Math.sqrt(Math.abs(a * d - b * c)) || 1;
+  const moved = points.map((p) => ({
+    x: a * p[0] + c * p[1] + tx,
+    y: b * p[0] + d * p[1] + ty,
+    width: (p[2] ?? stroke.width) * scale,
+    opacity: p[4] ?? 1,
+    force: p[5] ?? 0
+  }));
+  const xs = moved.map((p) => p.x);
+  const ys = moved.map((p) => p.y);
+  const [r, g, bl, alpha] = stroke.color ?? [0, 0, 0, 1];
+  return {
+    inkType: stroke.ink,
+    color: {
+      red: unit(r) * 255,
+      green: unit(g) * 255,
+      blue: unit(bl) * 255,
+      alpha: unit(alpha)
+    },
+    width: Math.max(stroke.width * scale, 0),
+    pointCount: moved.length,
+    bounds: {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys)
+    },
+    points: moved,
+    transformApplied: true
+  };
+}
+function paperToSvg(input) {
+  const drawable = [];
+  let skippedStrokes = 0;
+  for (const stroke of input.strokes) {
+    if (!stroke.points || stroke.points.length === 0) skippedStrokes++;
+    else drawable.push(toDrawingStroke(stroke, stroke.points));
+  }
+  const fallback = input.bounds ? { x: input.bounds[0], y: input.bounds[1], width: input.bounds[2], height: input.bounds[3] } : void 0;
+  return {
+    svg: drawingToSvg(drawable, fallback) + "\n",
+    strokeCount: drawable.length,
+    skippedStrokes
+  };
+}
+
 // src/utils/paperAuthoring.ts
 var AUTHOR_INKS = [
   "pen",
@@ -64945,12 +64995,12 @@ function authorizeSvgDrawing(result, options) {
 }
 
 // src/tools/privatePaperWriterTools.ts
-var unit = () => external_exports.number().min(0).max(1);
+var unit2 = () => external_exports.number().min(0).max(1);
 var coordinate = () => external_exports.number().finite().min(-1e6).max(1e6);
 var xy = () => external_exports.array(coordinate()).length(2);
 var paintFields = () => ({
   ink: external_exports.enum(AUTHOR_INKS).optional().describe("PencilKit ink (default pen)"),
-  color: external_exports.array(unit()).length(4).optional().describe("sRGB [r, g, b, a], each 0..1 (default opaque black)")
+  color: external_exports.array(unit2()).length(4).optional().describe("sRGB [r, g, b, a], each 0..1 (default opaque black)")
 });
 var strokeWidth = () => external_exports.number().positive().max(8192).optional().describe("Stroke width (default 2)");
 var positive3 = () => external_exports.number().positive().max(1e6);
@@ -65166,28 +65216,60 @@ function registerPrivatePaperWriterTools(server2, manager, depsFactory = default
     server2,
     depsFactory,
     "native-read-paper",
-    "Use when: you need the vector content of one Paper drawing (com.apple.paper) in a note: its pen strokes, its typed shapes (rectangles, ellipses, lines and arrows, stars, polygons, speech bubbles, text boxes), and the painted geometry of the fallback PDF Notes keeps for older devices.\nReturns: `strokes` (ink, sRGB color, width, transform, pointCount, renderBounds, and compact `points` in `pointFields` order until `maxPoints` is used up); `shapes` (kind, frame, rotation in radians, lineWidth, opacity, fillColor, strokeColor, line markers, `path` as SVG path data in drawing coordinates, pathBounds, and `text`) with `shapeDecode` saying whether that layer ran and why not; `fallbackGeometry` (each painted path as SVG path data in PDF page space, with paint, fill rule, colors, and line width) or its `reason` (usually no_fallback_pdf); the note `revision`; `truncated` and `warnings`.\nDo not use when: you only need a picture (export-paper-image), the drawing is a classic drawing (get-note-drawings), or you want to change the drawing (native-add-paper adds a new one).\nSafety: read-only. The writer opens the store with Core Data's read-only option and decodes a private copy of the drawing's bundle, never the live one. Typed shapes come from PaperKit through internal entry points and are offered only on macOS 27 or later (shapeDecode.reason requires_macos_27 or private_api_unavailable elsewhere). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
+    "Use when: you need the vector content of one Paper drawing (com.apple.paper) in a note: its pen strokes, its typed shapes (rectangles, ellipses, lines and arrows, stars, polygons, speech bubbles, text boxes), and the painted geometry of the fallback PDF Notes keeps for older devices; `format` svg or both also renders the pen strokes as an SVG document.\nReturns: `strokes` (ink, sRGB color, width, transform, pointCount, renderBounds, and compact `points` in `pointFields` order until `maxPoints` is used up); `shapes` (kind, frame, rotation in radians, lineWidth, opacity, fillColor, strokeColor, line markers, `path` as SVG path data in drawing coordinates, pathBounds, and `text`) with `shapeDecode` saying whether that layer ran and why not; `fallbackGeometry` (each painted path as SVG path data in PDF page space, with paint, fill rule, colors, and line width) or its `reason` (usually no_fallback_pdf); the note `revision`; `truncated` and `warnings`. With `format` svg or both: `svg` (pen strokes only, in drawing coordinates, one round-capped path per stroke through its recorded points; an outline, not a pixel match for PencilKit's ink), `svgStrokeCount` and `svgSkippedStrokes`; `svg` alone leaves `strokes` out.\nDo not use when: you only need a picture (export-paper-image), the drawing is a classic drawing (get-note-drawings), or you want to change the drawing (native-add-paper adds a new one).\nSafety: read-only. The writer opens the store with Core Data's read-only option and decodes a private copy of the drawing's bundle, never the live one. Typed shapes come from PaperKit through internal entry points and are offered only on macOS 27 or later (shapeDecode.reason requires_macos_27 or private_api_unavailable elsewhere). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
     {
       identifier: notesUuid2.optional().describe("Notes UUID of the note that holds the drawing"),
       id: coreDataId3.optional().describe("x-coredata note id; resolved to a UUID via the database"),
       attachmentIdentifier: notesUuid2.optional().describe("The drawing's attachment UUID; required when the note has more than one"),
-      includePoints: external_exports.boolean().optional().describe("Include each stroke's points (default true)"),
+      format: external_exports.enum(["json", "svg", "both"]).optional().describe(
+        '"json" (default) returns the decoded layers, "svg" replaces `strokes` with an SVG document of them, "both" returns both'
+      ),
+      includePoints: external_exports.boolean().optional().describe(
+        "Include each stroke's points (default true); an SVG is drawn from the points either way"
+      ),
       maxPoints: external_exports.number().int().min(1).max(MAX_PAPER_READ_POINTS).optional().describe("Most points to return across all strokes (default 20000)"),
       includeShapes: external_exports.boolean().optional().describe("Decode typed shapes through PaperKit (default true; macOS 27 or later)")
     },
     { readOnlyHint: true, openWorldHint: false },
-    (args, deps) => ({
-      ...readPaper(
+    (args, deps) => {
+      const format = args.format ?? "json";
+      const read = readPaper(
         {
           identifier: resolveIdentifier(manager, args),
           attachmentIdentifier: args.attachmentIdentifier,
-          includePoints: args.includePoints,
+          // An SVG is drawn from the points, so it always asks for them.
+          includePoints: format === "json" ? args.includePoints : true,
           maxPoints: args.maxPoints,
           includeShapes: args.includeShapes
         },
         deps.writer
-      )
-    })
+      );
+      if (format === "json") return { ...read };
+      const rendered = paperToSvg(read);
+      const warnings = [...read.warnings];
+      if (rendered.skippedStrokes > 0)
+        warnings.push(
+          `SVG omits ${rendered.skippedStrokes} stroke(s) whose points were not returned (maxPoints budget or no points)`
+        );
+      if (read.shapes.length > 0 || read.fallbackGeometry.paths?.length)
+        warnings.push(
+          "SVG draws pen strokes only; typed shapes and fallback geometry are in `shapes` and `fallbackGeometry`"
+        );
+      const { strokes, ...rest } = read;
+      return {
+        ...rest,
+        warnings,
+        svg: rendered.svg,
+        svgStrokeCount: rendered.strokeCount,
+        svgSkippedStrokes: rendered.skippedStrokes,
+        ...format === "both" ? {
+          strokes: args.includePoints === false ? strokes.map(({ points: _points, ...stroke }) => ({
+            ...stroke,
+            pointsOmitted: true
+          })) : strokes
+        } : {}
+      };
+    }
   );
 }
 

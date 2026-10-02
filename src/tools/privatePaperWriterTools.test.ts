@@ -339,6 +339,7 @@ describe("native-read-paper", () => {
     expect(Object.keys(config.inputSchema)).toEqual(
       expect.arrayContaining([
         "attachmentIdentifier",
+        "format",
         "includePoints",
         "maxPoints",
         "includeShapes",
@@ -359,6 +360,105 @@ describe("native-read-paper", () => {
       includePoints: undefined,
       maxPoints: 5,
       includeShapes: undefined,
+    });
+  });
+
+  describe("format", () => {
+    const STROKE = {
+      ink: "com.apple.ink.pen",
+      inkIdentifier: "com.apple.ink.pen",
+      color: [0, 0, 1, 1],
+      width: 2,
+      transform: [1, 0, 0, 1, 0, 0],
+      pointCount: 2,
+      renderBounds: null,
+      masked: false,
+      points: [
+        [0, 0, 2, 2, 1, 0.5, 0, 0, 0],
+        [10, 10, 2, 2, 1, 0.5, 0, 0, 0],
+      ],
+    };
+    const WITH_STROKES = {
+      ...READ,
+      bounds: [0, 0, 20, 20],
+      strokes: [STROKE, { ...STROKE, pointsOmitted: true, points: undefined }],
+      warnings: ["existing warning"],
+      fallbackGeometry: { available: false, reason: "no_fallback_pdf" },
+    };
+
+    it("leaves a json read untouched and passes the caller's includePoints through", async () => {
+      vi.mocked(readPaper).mockReturnValue(WITH_STROKES as never);
+      const { call } = fixture(undefined, "native-read-paper");
+      const r = await call({ identifier: NOTE, includePoints: false });
+      expect(r.structuredContent.svg).toBeUndefined();
+      expect(r.structuredContent.strokes).toHaveLength(2);
+      expect(vi.mocked(readPaper).mock.calls[0][0]).toMatchObject({ includePoints: false });
+    });
+
+    it("renders the strokes and drops them from an svg-only result, asking for points", async () => {
+      vi.mocked(readPaper).mockReturnValue(WITH_STROKES as never);
+      const { call } = fixture(undefined, "native-read-paper");
+      const r = await call({ identifier: NOTE, format: "svg", includePoints: false });
+      const out = r.structuredContent;
+      expect(vi.mocked(readPaper).mock.calls[0][0]).toMatchObject({ includePoints: true });
+      expect(out.strokes).toBeUndefined();
+      expect(out.svg).toContain('d="M0 0 L10 10"');
+      expect(out.svg).toContain('stroke="rgb(0,0,255)"');
+      expect(out).toMatchObject({ ok: true, svgStrokeCount: 1, svgSkippedStrokes: 1 });
+      expect(out.shapes).toBeDefined();
+      expect(out.warnings).toEqual(
+        expect.arrayContaining([
+          "existing warning",
+          expect.stringMatching(/omits 1 stroke/),
+          expect.stringMatching(/pen strokes only/),
+        ])
+      );
+    });
+
+    it("returns strokes and svg for both, stripping points only when asked", async () => {
+      vi.mocked(readPaper).mockReturnValue(WITH_STROKES as never);
+      const { call } = fixture(undefined, "native-read-paper");
+      const withPoints = (await call({ identifier: NOTE, format: "both" })).structuredContent;
+      expect((withPoints.strokes as unknown[])[0]).toHaveProperty("points");
+      const bare = (await call({ identifier: NOTE, format: "both", includePoints: false }))
+        .structuredContent;
+      expect((bare.strokes as Array<Record<string, unknown>>)[0]).toMatchObject({
+        pointsOmitted: true,
+      });
+      expect((bare.strokes as Array<Record<string, unknown>>)[0]).not.toHaveProperty("points");
+      expect(bare.svg).toContain("<path");
+    });
+
+    it("does not warn about shapes when the drawing has none and every stroke drew", async () => {
+      vi.mocked(readPaper).mockReturnValue({
+        ...WITH_STROKES,
+        shapes: [],
+        strokes: [STROKE],
+        warnings: [],
+      } as never);
+      const { call } = fixture(undefined, "native-read-paper");
+      const r = await call({ identifier: NOTE, format: "svg" });
+      expect(r.structuredContent.warnings).toEqual([]);
+      expect(r.structuredContent.svgSkippedStrokes).toBe(0);
+    });
+
+    it("warns when the fallback PDF has painted paths the SVG leaves out", async () => {
+      vi.mocked(readPaper).mockReturnValue({
+        ...WITH_STROKES,
+        shapes: [],
+        strokes: [STROKE],
+        warnings: [],
+        fallbackGeometry: { available: true, reason: null, paths: [{ d: "M0 0" }] },
+      } as never);
+      const { call } = fixture(undefined, "native-read-paper");
+      const r = await call({ identifier: NOTE, format: "svg" });
+      expect(r.structuredContent.warnings).toEqual([expect.stringMatching(/pen strokes only/)]);
+    });
+
+    it("refuses an unknown format", () => {
+      const { config } = fixture(undefined, "native-read-paper");
+      expect(config.inputSchema.format.safeParse("png").success).toBe(false);
+      expect(config.inputSchema.format.safeParse("both").success).toBe(true);
     });
   });
 

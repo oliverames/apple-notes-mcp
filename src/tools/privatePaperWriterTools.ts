@@ -35,6 +35,7 @@ import {
 } from "../services/privatePaperWriter.js";
 import { PrivateWriteError } from "../services/privateWriter.js";
 import { readAllowedFile } from "../utils/attachmentFs.js";
+import { paperToSvg } from "../utils/paperSvg.js";
 import {
   AUTHOR_INKS,
   PaperAuthoringError,
@@ -355,8 +356,8 @@ export function registerPrivatePaperWriterTools(
     server,
     depsFactory,
     "native-read-paper",
-    "Use when: you need the vector content of one Paper drawing (com.apple.paper) in a note: its pen strokes, its typed shapes (rectangles, ellipses, lines and arrows, stars, polygons, speech bubbles, text boxes), and the painted geometry of the fallback PDF Notes keeps for older devices.\n" +
-      "Returns: `strokes` (ink, sRGB color, width, transform, pointCount, renderBounds, and compact `points` in `pointFields` order until `maxPoints` is used up); `shapes` (kind, frame, rotation in radians, lineWidth, opacity, fillColor, strokeColor, line markers, `path` as SVG path data in drawing coordinates, pathBounds, and `text`) with `shapeDecode` saying whether that layer ran and why not; `fallbackGeometry` (each painted path as SVG path data in PDF page space, with paint, fill rule, colors, and line width) or its `reason` (usually no_fallback_pdf); the note `revision`; `truncated` and `warnings`.\n" +
+    "Use when: you need the vector content of one Paper drawing (com.apple.paper) in a note: its pen strokes, its typed shapes (rectangles, ellipses, lines and arrows, stars, polygons, speech bubbles, text boxes), and the painted geometry of the fallback PDF Notes keeps for older devices; `format` svg or both also renders the pen strokes as an SVG document.\n" +
+      "Returns: `strokes` (ink, sRGB color, width, transform, pointCount, renderBounds, and compact `points` in `pointFields` order until `maxPoints` is used up); `shapes` (kind, frame, rotation in radians, lineWidth, opacity, fillColor, strokeColor, line markers, `path` as SVG path data in drawing coordinates, pathBounds, and `text`) with `shapeDecode` saying whether that layer ran and why not; `fallbackGeometry` (each painted path as SVG path data in PDF page space, with paint, fill rule, colors, and line width) or its `reason` (usually no_fallback_pdf); the note `revision`; `truncated` and `warnings`. With `format` svg or both: `svg` (pen strokes only, in drawing coordinates, one round-capped path per stroke through its recorded points; an outline, not a pixel match for PencilKit's ink), `svgStrokeCount` and `svgSkippedStrokes`; `svg` alone leaves `strokes` out.\n" +
       "Do not use when: you only need a picture (export-paper-image), the drawing is a classic drawing (get-note-drawings), or you want to change the drawing (native-add-paper adds a new one).\n" +
       "Safety: read-only. The writer opens the store with Core Data's read-only option and decodes a private copy of the drawing's bundle, never the live one. Typed shapes come from PaperKit through internal entry points and are offered only on macOS 27 or later (shapeDecode.reason requires_macos_27 or private_api_unavailable elsewhere). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
     {
@@ -365,7 +366,18 @@ export function registerPrivatePaperWriterTools(
       attachmentIdentifier: notesUuid
         .optional()
         .describe("The drawing's attachment UUID; required when the note has more than one"),
-      includePoints: z.boolean().optional().describe("Include each stroke's points (default true)"),
+      format: z
+        .enum(["json", "svg", "both"])
+        .optional()
+        .describe(
+          '"json" (default) returns the decoded layers, "svg" replaces `strokes` with an SVG document of them, "both" returns both'
+        ),
+      includePoints: z
+        .boolean()
+        .optional()
+        .describe(
+          "Include each stroke's points (default true); an SVG is drawn from the points either way"
+        ),
       maxPoints: z
         .number()
         .int()
@@ -379,17 +391,49 @@ export function registerPrivatePaperWriterTools(
         .describe("Decode typed shapes through PaperKit (default true; macOS 27 or later)"),
     },
     { readOnlyHint: true, openWorldHint: false },
-    (args, deps) => ({
-      ...readPaper(
+    (args, deps) => {
+      const format = args.format ?? "json";
+      const read = readPaper(
         {
           identifier: resolveIdentifier(manager, args),
           attachmentIdentifier: args.attachmentIdentifier,
-          includePoints: args.includePoints,
+          // An SVG is drawn from the points, so it always asks for them.
+          includePoints: format === "json" ? args.includePoints : true,
           maxPoints: args.maxPoints,
           includeShapes: args.includeShapes,
         },
         deps.writer
-      ),
-    })
+      );
+      if (format === "json") return { ...read };
+      const rendered = paperToSvg(read);
+      const warnings = [...read.warnings];
+      if (rendered.skippedStrokes > 0)
+        warnings.push(
+          `SVG omits ${rendered.skippedStrokes} stroke(s) whose points were not returned (maxPoints budget or no points)`
+        );
+      if (read.shapes.length > 0 || read.fallbackGeometry.paths?.length)
+        warnings.push(
+          "SVG draws pen strokes only; typed shapes and fallback geometry are in `shapes` and `fallbackGeometry`"
+        );
+      const { strokes, ...rest } = read;
+      return {
+        ...rest,
+        warnings,
+        svg: rendered.svg,
+        svgStrokeCount: rendered.strokeCount,
+        svgSkippedStrokes: rendered.skippedStrokes,
+        ...(format === "both"
+          ? {
+              strokes:
+                args.includePoints === false
+                  ? strokes.map(({ points: _points, ...stroke }) => ({
+                      ...stroke,
+                      pointsOmitted: true as const,
+                    }))
+                  : strokes,
+            }
+          : {}),
+      };
+    }
   );
 }
