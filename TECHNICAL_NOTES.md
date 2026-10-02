@@ -241,7 +241,7 @@ stores. The sources below were checked against a live store on macOS 27.2 on
 | Folder, path | note `ZFOLDER` → folder `ZTITLE2`, walked up `ZPARENT` |
 | Account | folder `ZOWNER` (inherited from the parent) → account `ZNAME` |
 | Recently Deleted | folder `ZFOLDERTYPE = 1` (identifier `TrashFolder-…`); also `ZMARKEDFORDELETION` and `ZFOLDER IS NULL` |
-| `pinned`, `locked` | `ZISPINNED`, `ZISPASSWORDPROTECTED` |
+| `pinned`, `locked`, `quicknote` | `ZISPINNED`, `ZISPASSWORDPROTECTED`, `ZISSYSTEMPAPER` (the flag `list-special-notes` reads for Quick Notes) |
 | `shared` | `ZSERVERSHAREDATA IS NOT NULL` on the note or any ancestor folder. On the live store this set equalled AppleScript's `shared` set exactly |
 | Text, words, links, checklists, attachments | The gzipped `ZICNOTEDATA.ZDATA` document, decoded per note: text (field 2), attribute-run links (field 9), `AttachmentInfo` type UTIs (field 12.2), checklist style 103 with done state (field 2.5.2) |
 | `tag:` | `ICInlineAttachment` rows with `ZTYPEUTI1 = 'com.apple.notes.inlinetextattachment.hashtag'`, `ZNOTE1` = note, `ZALTTEXT` = `#tag`, counted only when their `ZIDENTIFIER` is still an object in the body |
@@ -250,7 +250,8 @@ Facets come from the body's `AttachmentInfo` types rather than from `ICAttachmen
 rows, because rows outlive their objects: on the live store, some top-level
 attachment rows (tables and URL previews) were no longer referenced by any note
 body, while every referenced row's UTI equalled the body's UTI. The UTI mapping is
-`public.url` and inline note links → `has:link` (as are attribute-run links);
+`public.url` and inline note links → `has:link` (as are attribute-run links), and
+`public.url` alone also → `has:url`, so a link preview card matches both; `com.apple.mapkit.map` → `has:map`;
 `com.apple.notes.table` → `has:table`; `com.apple.paper.doc.scan` and the legacy
 `com.apple.notes.gallery` → `has:scan`; `com.adobe.pdf` and `com.apple.paper.doc.pdf`
 → `has:pdf`; `com.apple.paper` and the legacy `com.apple.drawing*` /
@@ -277,7 +278,7 @@ AST directly — the caller's text is one literal `text` term, never tokenized, 
 `title:`, `OR`, `-` and quotes in it are searched literally — plus `folder:`,
 `account:` and a `modified >=` node for the other parameters. With no `account`,
 it scopes to Notes.app's default account, as the AppleScript path does. It scans
-the 5000 most recently modified notes (`QUERY_SCAN.MAX`) and discloses a truncated
+the 5000 most recently modified notes (`SEARCH_CONTENT_SCAN_LIMIT`, fixed below query-notes' own `QUERY_SCAN.MAX` of 10000, because search-notes has no scan parameter) and discloses a truncated
 window; `limit` is applied as given, not capped at query-notes' 500.
 
 Differences from the AppleScript path, by design: text is matched against the
