@@ -187,7 +187,20 @@ import {
   transcribeNoteAudio,
 } from "@/services/noteTranscription.js";
 import { buildPrivateHelper, formatHelperBuild } from "@/services/privateHelperBuild.js";
+import {
+  defaultPermissionsCliDeps,
+  openSettingsPane,
+  parsePermissionsArgs,
+  runPermissionsCli,
+} from "@/services/permissions.js";
+import {
+  buildPermissionsWindow,
+  formatPermissionsWindowBuild,
+  inspectPermissionsWindow,
+  runPermissionsWindow,
+} from "@/services/permissionsWindow.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
+import { runTemplatesCommand } from "@/services/templateEditorCli.js";
 import { runAnchorsCli } from "@/services/anchorServer.js";
 import { AnchorRegistry } from "@/services/anchorRegistry.js";
 import {
@@ -220,10 +233,40 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-help
   process.stdout.write(formatHelperBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions-window")) {
+  // Optional checklist window, compiled locally like the public helper.
+  const report = buildPermissionsWindow(process.argv.slice(3).includes("--check"));
+  process.stdout.write(formatPermissionsWindowBuild(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions")) {
+  // Guided permissions check; opens System Settings panes only with --open.
+  const args = process.argv.slice(3);
+  const options = parsePermissionsArgs(args);
+  const cli = defaultPermissionsCliDeps(options);
+  let code: number;
+  const window = args.includes("--window") ? inspectPermissionsWindow() : null;
+  if (window?.ready) {
+    code = await runPermissionsWindow(window.binaryPath, {
+      check: cli.check,
+      open: (item) => openSettingsPane(item),
+      log: cli.write,
+    });
+  } else {
+    if (window) cli.write(`${window.detail} Showing the checklist here instead.\n\n`);
+    code = await runPermissionsCli(options, cli);
+  }
+  cli.close();
+  process.exit(code);
+}
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
   process.exit(report.ready || !report.checkOnly ? 0 : 1);
+}
+if (process.argv[2] === "templates") {
+  // Local template editor (templates edit): a token-gated web page on loopback.
+  process.exit(await runTemplatesCommand(process.argv.slice(3)));
 }
 if (process.argv[2] === "anchors") {
   // Opt-in paragraph anchor resolver (loopback by default, token-gated).
@@ -1164,7 +1207,7 @@ registerTool(
   {
     description:
       "Use when: finding notes with a boolean expression over text and metadata — e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\n" +
-      'Syntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\n' +
+      'Syntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag (has:url is a link preview card, has:map a map); checklist:open|done; flags pinned, locked, shared, quicknote (or is:pinned); quote a flag word such as "quicknote" to search it as text; words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\n' +
       "Returns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\n" +
       "Do not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\n" +
       "Safety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.",
@@ -4675,7 +4718,7 @@ registerTool(
   "export-notes-html",
   {
     description:
-      "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.",
+      "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.\nDrawings: by default every drawing keeps Notes' PNG. With vectorDrawings true, classic PencilKit drawings are rendered as SVG through the public native helper (setup --public-helper); Paper drawings keep the PNG. A drawing that cannot be decoded falls back to the PNG and is counted in vectorDrawings.fallbackReasons; it never fails the export.",
     inputSchema: {
       id: noteIdInput.optional(),
       folder: z
@@ -4712,6 +4755,12 @@ registerTool(
       assetsDir: exportPathInput(
         "Sidecar directory when embedAssets is false (default <stem>.assets)"
       ),
+      vectorDrawings: z
+        .boolean()
+        .optional()
+        .describe(
+          "Render classic PencilKit drawings as SVG via the public native helper (default false). When false or omitted, Notes' PNG rendering is kept and the helper never runs"
+        ),
     },
     outputSchema: {
       format: z.string().optional(),
@@ -4721,6 +4770,13 @@ registerTool(
       output: z.string().optional(),
       assets: z.object({ dir: z.string(), files: z.number() }).optional(),
       embedded: z.number().optional(),
+      vectorDrawings: z
+        .object({
+          rendered: z.number(),
+          fallback: z.number(),
+          fallbackReasons: z.record(z.string(), z.number()).optional(),
+        })
+        .optional(),
       stats: exportStatsSchema.optional(),
       skipped: z.array(z.object({ id: z.string(), code: z.string() })).optional(),
     },
@@ -4748,8 +4804,17 @@ registerTool(
     const skipped =
       (receipt.skipped.length ? `; skipped ${receipt.skipped.length}` : "") +
       (receipt.truncated ? "; the folder has more notes than limit, pass a higher limit" : "");
+    const vector = receipt.vectorDrawings;
+    const drawings = vector
+      ? `; ${vector.rendered} drawing(s) as SVG` +
+        (vector.fallback
+          ? `, ${vector.fallback} as PNG (${Object.entries(vector.fallbackReasons ?? {})
+              .map(([code, n]) => `${code}: ${n}`)
+              .join(", ")})`
+          : "")
+      : "";
     return successResponse(
-      `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${skipped}.`,
+      `Wrote ${receipt.count} note(s) as HTML (${receipt.bytes} bytes) to ${receipt.output}${assets}${drawings}${skipped}.`,
       { ...receipt }
     );
   }, "Error exporting HTML")

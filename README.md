@@ -2,7 +2,7 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that lets Claude (Claude Code and Claude Desktop), Codex, and other MCP clients read, search, create, edit, organize, and export notes in Apple Notes on macOS. It runs locally on your Mac and talks to Notes through AppleScript, Apple Shortcuts, and read-only access to the Notes database.
 
-Beyond creating and editing notes, it manages folders and accounts, native tags, checklists, tables, pinned notes, links, and attachments. It can also export notes as Markdown, HTML, or JSON, read audio transcripts and drawings, and run a query language across your whole library.
+Beyond creating and editing notes, it manages folders and accounts, native tags, checklists, tables, pinned notes, links, and attachments. It can also export notes as Markdown (through templates you can edit in a local web editor), HTML (with classic drawings as SVG), or JSON, read audio transcripts and drawings, link to single paragraphs with anchors that survive edits, and run a query language across your whole library.
 
 [![npm version](https://img.shields.io/npm/v/apple-notes-mcp)](https://www.npmjs.com/package/apple-notes-mcp)
 [![npm downloads](https://img.shields.io/npm/dm/apple-notes-mcp)](https://www.npmjs.com/package/apple-notes-mcp)
@@ -521,7 +521,7 @@ can match titles and bodies together.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Query expression (syntax below), at most 2000 characters |
 | `limit` | number | No | Maximum notes to return. Defaults to 50, maximum 500. The response reports the total match count. |
-| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 5000. The response says when older notes were left unscanned. |
+| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 10000. The response says when older notes were left unscanned. A large scan decodes more bodies, so it takes longer. |
 | `includeDeleted` | boolean | No | Also scan notes in Recently Deleted, notes pending deletion, and folderless notes. Defaults to `false`. |
 | `includeWordCount` | boolean | No | Add `wordCount` to each returned note, the same count `words:` filters on (`null` when locked or unreadable). Free when the query already reads bodies; a metadata-only query (for example `pinned`) reads just the returned notes' bodies in one extra read-only query. Defaults to `false`. |
 
@@ -534,9 +534,9 @@ can match titles and bodies together.
 | `folder:Work`, `folder:"Work/Clients"` | The note's own folder, by name or full path, case-insensitive (notes in subfolders are not included); a literal `/` in a name can be written `\/` as in `list-folders` |
 | `account:iCloud` | Account name, case-insensitive |
 | `tag:finance` | Native Notes tag (with or without `#`); textual hashtags are ordinary words |
-| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:tag` | The note body contains that kind of object |
+| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:url`, `has:map`, `has:tag` | The note body contains that kind of object. `has:url` is a link preview card (it also counts as `has:link`, as inline links do); `has:map` is a map attachment |
 | `checklist:open`, `checklist:done` | At least one unchecked item; or items present and all checked |
-| `pinned`, `locked`, `shared` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder |
+| `pinned`, `locked`, `shared`, `quicknote` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder, and `quicknote` is a note created as a Quick Note (the same flag `list-special-notes kind=quick-notes` reads) |
 | `words:>250` | Word count, with `=`, `>`, `>=`, `<`, `<=` |
 | `created:>=2026-07-01`, `modified:<2026-09-01` | Dates as `YYYY-MM-DD` in local time, with the same operators; `=` means that whole day |
 | `a b`, `a AND b`, `a OR b`, `NOT a`, `-a`, `( … )` | AND is implicit and binds tighter than OR |
@@ -1929,7 +1929,7 @@ disabled checkboxes, block quotes and monospaced paragraphs become
 `blockquote` and `pre`, and inline runs keep bold, italic, underline,
 strikethrough, highlight, superscript, subscript, text color and safe links.
 Tables are semantic `<table>` elements with a header row. Images, drawings
-(Notes' fallback image, or its preview), scans (PDF with preview), audio,
+(Notes' fallback image by default, SVG with `vectorDrawings: true`; see below), scans (PDF with preview), audio,
 video, files and link cards (title, domain and preview thumbnail) appear in
 body order. Attachments with no body marker are appended in creation order.
 An attachment with no usable source renders a visible
@@ -1938,6 +1938,22 @@ An attachment with no usable source renders a visible
 
 A folder export is one presentation document with notes separated by
 `<hr class="note-separator">`. It is not a backup or restore format.
+
+By default every drawing keeps Notes' own fallback image, a fixed-size PNG.
+With `vectorDrawings: true`, classic PencilKit drawings (`com.apple.drawing.2`
+and `com.apple.drawing`) are rendered as SVG instead, decoded through the
+public native helper exactly as [`get-note-drawings`](#get-note-drawings)
+does. The option is off by default because decoding runs the helper and costs
+extra time per note. The SVG is embedded as a data
+URL, or written to the sidecar directory with `embedAssets: false`, and it is
+subject to the same size limits as any other asset. It stays sharp at any
+zoom. Paper drawings
+(`com.apple.paper`) have no public decoder and keep Notes' fallback image or
+preview. If the helper is not built (`apple-notes-mcp setup --public-helper`),
+a drawing does not decode, the helper stopped at its stroke limit, or the SVG
+is too large, that drawing falls back to the PNG; the export never fails for
+it. The SVG traces each stroke's points with its color and mean width, so
+pencil grain and marker blending are approximated.
 
 **Requires:** Full Disk Access. Password-protected notes are skipped in a
 folder export and refused for a single note.
@@ -1951,6 +1967,7 @@ folder export and refused for a single note.
 | `outputPath` | string | Yes | Absolute HTML file to create. Create-only: an existing file is refused with `[output_exists]` |
 | `embedAssets` | boolean | No | Embed assets as data URLs (default `true`). Each asset is capped at 10 MiB and a document at 256 MiB of embedded assets; a larger one renders as unavailable with a hint to use `embedAssets: false` |
 | `assetsDir` | string | No | With `embedAssets: false`, the sidecar directory (default `<output stem>.assets` beside the file). Existing files are never replaced; a taken name gets `-2`, `-3`, ... |
+| `vectorDrawings` | boolean | No | Render classic drawings as SVG through the public native helper (default `false`). When `false` or omitted, every drawing keeps Notes' PNG and the helper never runs |
 
 The HTML is always written to a file, because an embedded document is too
 large for an MCP message. Paths follow the `save-attachment` rules and may not
@@ -1958,8 +1975,14 @@ point inside the Notes library container. Sidecar URLs are relative to the
 HTML file, so the file and its `.assets` directory can be moved together.
 
 **Returns:** `format`, `count`, `bytes`, `output`, either `embedded` (assets
-embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. Nothing
-already written is deleted if a later step fails.
+embedded) or `assets` (`dir`, `files`), `stats`, and `skipped`. When the notes
+contain classic drawings and `vectorDrawings` is `true`, `vectorDrawings` reports
+`rendered` (drawings placed as SVG), `fallback` (drawings left as PNG), and
+`fallbackReasons`, a count per code such as `helper_not_installed`,
+`undecodable`, `truncated`, `timeout`, or `too-large`. After one helper
+timeout, or when the helper is not usable, the remaining drawings in the
+export are not decoded. Nothing already written is deleted if a later step
+fails.
 
 ---
 
@@ -2042,6 +2065,21 @@ be deleted.
 | `name` | string | Yes | The saved template to delete |
 
 **Returns:** `name`, `path`, and `deleted: true`.
+
+#### Template editor (command line)
+
+`apple-notes-mcp templates edit [name]` starts a local web editor for
+templates: edit the JSON on one side and see it validated and rendered
+against built-in sample notes on the other, then save it to the library
+(create-only unless you tick "replace"). It prints one address with a
+per-run token, listens on `127.0.0.1` only, refuses cross-origin requests,
+and stops on Ctrl-C or after 30 idle minutes (`--idle-minutes`). It reads a
+real note only when you pass `--note <id>`, and then read-only. `--tailnet`
+listens on this Mac's Tailscale address instead, so another device on your
+tailnet can open it; it never changes Tailscale or firewall settings. With
+`--tailnet`, `--note` exposes the full note body to anyone who has the URL. See
+[docs/markdown-templates.md](docs/markdown-templates.md#editing-in-a-browser)
+for options and exactly what it exposes.
 
 ---
 
@@ -2213,7 +2251,10 @@ On macOS 27, Notes' AppleScript does not list PDF attachments, so it cannot see
 a PDF this tool just added. When that happens and the server has Full Disk
 Access, it verifies through the read-only NoteStore database instead: success
 requires exactly one new attachment row on the note whose media file matches
-the source bytes, and the result carries `verifiedBy: "database"`. Without Full
+the source bytes, whose type fits the file's extension, and, when the decoded
+note body lists attachments, that the body references. The check repeats for
+about two seconds while Notes' database catches up, and `contentHash` is read
+after it finishes. The result carries `verifiedBy: "database"`. Without Full
 Disk Access a PDF attach reports "insertion outcome uncertain"; read the note
 before retrying, because the attachment was probably created.
 
@@ -2978,6 +3019,45 @@ Every tool that does not read the Notes database works normally without Full Dis
 
 ---
 
+## Permissions check
+
+`apple-notes-mcp setup --permissions` checks, in one report, the four grants that decide what the server can do on this Mac:
+
+| Item | How it is checked | Needed for |
+|------|-------------------|------------|
+| Full Disk Access | one read-only `SELECT 1` against `NoteStore.sqlite` | every database-backed tool (see [Full Disk Access](#full-disk-access)) |
+| Automation of Notes.app | one read-only Apple event (the first account's name), sent only with `--probe-automation` | every AppleScript tool |
+| Shortcut bridges (optional) | `shortcuts list`, like `setup --check` | the native-write tools |
+| Speech Recognition (optional) | the public helper's `speech_status`, read without prompting | `transcribe-note-audio` before macOS 26 |
+
+```bash
+apple-notes-mcp setup --permissions          # report, then press Enter to check again
+apple-notes-mcp setup --permissions --open   # also open the System Settings pane of each missing grant
+apple-notes-mcp setup --permissions --once   # report once and exit (also --json)
+apple-notes-mcp setup --permissions --probe-automation   # also check Automation (sends one Apple event)
+```
+
+For each missing grant the report names the System Settings pane and its URL, for example `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles` (the `com.apple.preference.security` form before macOS 13). Panes open only with `--open`, each once per run. The command never changes a setting or a grant: you make the change in System Settings, then press Enter to check again. Type `q` to stop. It exits 1 when a required grant is missing or could not be verified, and 0 otherwise, so a run that did not probe Automation exits 0 if Full Disk Access is granted.
+
+Automation is the one item that cannot be read without talking to Notes.app, so it is opt-in. By default the command sends no Apple event, and the Automation line reads `unknown` (not probed) with the command that checks it. Add `--probe-automation` to send one read-only event; the first time, macOS may ask whether the app may control Notes, and **Allow** is the only way to add an Automation grant. The probe never runs under `--check` (which reports state only) or when `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt. In those cases the line reads `unknown` even if `--probe-automation` was passed. An unprobed Automation line does not change the exit code and the report says Automation was not checked, so run the probe from a terminal on the Mac itself when you need to know. A probe that runs and fails (denied, or no answer) does exit 1.
+
+macOS attributes these grants to the app that launched the process, so the report names it (for example `/Applications/iTerm.app`). Run the check from the app you use as the MCP host when you can. Claude Desktop launches servers as their own responsible process, so for it use the `doctor` tool inside Claude Desktop, and add the Node binary it names to Full Disk Access. The Speech item reads `unknown` until the [public native helper](#public-native-helper) is built.
+
+### Optional checklist window
+
+The same checklist is also available in a small window with **Open Settings** and **Re-check** buttons. Like the public helper, it is built on your Mac from the packaged Swift source, never shipped as a binary:
+
+```bash
+apple-notes-mcp setup --permissions-window           # compile, ad-hoc sign, verify, install
+apple-notes-mcp setup --permissions-window --check   # report the installed state only
+apple-notes-mcp setup --permissions --window         # open the window
+apple-notes-mcp setup --permissions --window --probe-automation   # the window's checks include Automation
+```
+
+Setup compiles `native/permissions-window/apple-notes-permissions-window.swift`, signs it ad hoc, runs its `hello` handshake (which shows no window), and installs it in `~/Library/Application Support/apple-notes-mcp/permissions-window/` with a manifest of source and binary SHA-256 digests; `APPLE_NOTES_MCP_PERMISSIONS_WINDOW_DIR` overrides the folder. The window probes nothing itself. The command runs every check and sends the results to it, and opens a pane only for an item it reported. The window shows an unprobed Automation item as "Not checked", with the command that checks it, and gives it no Open Settings button. If the window is not built, is stale after an upgrade, or was modified, `--window` says so and shows the checklist in the terminal instead. The server never uses the window.
+
+---
+
 ## Public native helper
 
 `get-note-drawings` needs Apple's PencilKit framework and `transcribe-note-audio` needs the Speech framework; neither has an AppleScript or command-line interface. For them, the server uses a small Swift helper that links public Apple frameworks only (AppKit, PencilKit, AVFoundation, and Speech). No prebuilt binary ships with the package. Build it once on your Mac:
@@ -3124,6 +3204,7 @@ In a JSON string literal the two characters `\\` denote **one** literal backslas
 - macOS needs automation permission
 - Go to System Settings > Privacy & Security > Automation
 - Ensure your terminal/Claude has permission to control Notes
+- `apple-notes-mcp setup --permissions --open --probe-automation` checks every grant and opens the pane of each missing one ([Permissions check](#permissions-check))
 
 ### Native writes time out or report an uncertain outcome
 - Symptom: `add-native-tags`, `set-note-pinned`, `append-native` or another native write fails with "Shortcuts timed out waiting for …", "Operation outcome uncertain" or "readback was not verified", while `doctor` and `get-capabilities` report the bridges installed

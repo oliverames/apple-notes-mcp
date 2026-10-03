@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-## [2.14.0] - 2026-10-02
+## [2.14.0] - 2026-10-03
 
 Split out of #262 per review: paragraph anchors and the opt-in anchor
 resolver, without the private writer.
@@ -42,6 +42,131 @@ resolver, without the private writer.
   anchor registry, and MCP annotations are static per tool. Without those
   parameters they still write nothing, and their descriptions say which
   parameter writes.
+
+## [2.13.0] - 2026-10-03
+
+Split out of #262 per review: the local template editor, on its own.
+
+### Added
+
+- `apple-notes-mcp templates edit [name]` starts a local web editor for
+  Markdown export templates. It validates the template JSON as you type with
+  the same validator as `validate-markdown-template`, previews it with the
+  export renderer against built-in sample notes, and saves through the
+  template library (create-only unless "replace" is ticked). A real note is
+  read only with `--note <id>`, once and read-only. The server listens on
+  `127.0.0.1` on a free port, requires a per-run token on every request,
+  refuses foreign `Host` headers and cross-origin requests, serves one page
+  with no external resources, and stops on Ctrl-C or after 30 idle minutes
+  (`--idle-minutes`). It is a command-line tool: the MCP server never starts
+  it and registers no new tool.
+- `templates edit --tailnet` listens on this Mac's Tailscale IPv4 address
+  instead, with the same token and origin checks, so the editor can be used
+  from another device on the tailnet. It is off unless the flag is given,
+  refuses to start without a Tailscale address, and never changes Tailscale,
+  Serve/Funnel or firewall settings. The startup warning, `--help`, the docs
+  and `SECURITY.md` say that `--note` with `--tailnet` exposes the full note
+  body to anyone who has the URL.
+- `src/utils/localServer.ts`: the Tailscale address scan, per-run token,
+  Bearer parsing, constant-time token comparison, Host authority and
+  cross-origin check that the editor uses, kept in one module so a second
+  local server can share them.
+
+## [2.12.0] - 2026-10-03
+
+### Added
+
+- `apple-notes-mcp setup --permissions` checks Full Disk Access, Automation of
+  Notes.app, the Shortcut bridges, and Speech Recognition for the app that
+  launched it, with the same read-only probes as `doctor` and
+  `get-capabilities`. For each missing grant it names the System Settings pane
+  and its `x-apple.systempreferences:` URL, opens the pane only with `--open`,
+  and checks again each time the user presses Enter (`--once` and `--json` for
+  scripts). It never changes a setting or a grant.
+- The Automation check is opt-in. It sends one read-only Apple event to
+  Notes.app, which can raise macOS's consent prompt, so it runs only with
+  `--probe-automation`. By default the Automation item reports `unknown` (not
+  probed) with the command that checks it, and it does not count as a pending
+  item and does not change the exit code. It also reports `unknown` under
+  `--check`, which reports state only and never sends an Apple event, and
+  whenever `SSH_CONNECTION` is set, because nobody at the remote shell can
+  answer the prompt. The exit code is 1 only when a required grant is missing
+  or a probe that ran could not verify it.
+- An optional checklist window with Open Settings and Re-check buttons:
+  `apple-notes-mcp setup --permissions-window` compiles it from the packaged
+  Swift source, signs it ad hoc and installs it in Application Support like the
+  public helper; `setup --permissions --window` opens it (add
+  `--probe-automation` to include the Automation check; otherwise the window
+  shows Automation as "Not checked" with no Open Settings button). The window
+  probes nothing itself, and the server never uses it.
+- The public native helper gains a `speech_status` action that reads the Speech
+  Recognition status without prompting. Changing the helper source means an
+  installed helper reports stale until `apple-notes-mcp setup --public-helper`
+  runs again: until then `get-note-drawings` and `transcribe-note-audio` stop
+  with `helper_stale`, and `export-notes-html` with `vectorDrawings: true`
+  keeps every drawing's PNG (`fallbackReasons: { helper_stale }`).
+
+## [2.11.0] - 2026-10-03
+
+### Added
+
+- `export-notes-html` can render classic PencilKit drawings as SVG. Pass
+  `vectorDrawings: true` to decode them through the public native helper, as
+  `get-note-drawings` does, instead of using Notes' fixed-size PNG. The SVG is
+  embedded or written to the sidecar directory under the same size limits as
+  other assets. The option is off by default: without it every drawing keeps
+  the PNG and the helper never runs. Paper drawings keep the PNG either way. A
+  drawing that cannot be decoded (helper not built, decode error, stroke limit,
+  too large) falls back to the PNG without failing the export, and the new
+  receipt field `vectorDrawings` counts SVG and PNG drawings with the fallback
+  reasons.
+
+## [2.10.0] - 2026-10-02
+
+Split out of #262 per the maintainer's review.
+
+### Added
+
+- `query-notes` has two more `has:` facets. `has:url` matches a link preview
+  card (a `public.url` attachment), which still counts as `has:link`, as
+  inline links do. `has:map` matches a map attachment
+  (`com.apple.mapkit.map`).
+- `query-notes` has a `quicknote` flag, also written `is:quicknote`. It reads
+  the database's Quick Note flag (`ZISSYSTEMPAPER`), the same one
+  `list-special-notes kind=quick-notes` uses. On a store without that column
+  it matches nothing, like the other metadata flags.
+
+### Changed
+
+- **Behavior change in `query-notes`:** a bare `quicknote` (or `-quicknote`)
+  in a query used to be an ordinary word that matched a note's title or body.
+  It is now the Quick Note flag, so those queries return different notes.
+  Quote the word (`"quicknote"`) to search it as text, as with `"pinned"`.
+  `search-notes` is not affected: it passes the caller's text as one literal
+  term and never parses query syntax.
+- `query-notes` `scanLimit` now goes up to 10000 (it was 5000). The default
+  stays 500. A larger scan decodes more note bodies, so it takes longer.
+  `search-notes`' database body search keeps its 5000-note window, now a
+  fixed `SEARCH_CONTENT_SCAN_LIMIT` rather than following the query ceiling,
+  because `search-notes` has no scan parameter.
+
+## [2.9.35] - 2026-10-02
+
+### Fixed
+
+- `add-attachment`'s NoteStore verification of a PDF on macOS 27 (#236) now
+  checks more than the new row's bytes. The row's type must fit the file's
+  extension, and when the decoded note body lists attachments it must
+  reference the new one, so a stray row or a file Notes has not placed in the
+  note is no longer reported as success. A row that fails either check is an
+  error that names the attachment and says not to attach the file again. The
+  existing poll for database lag now also waits for the body to reference the
+  row, and the returned `contentHash` is read after verification finishes
+  instead of right after insertion, so it matches the note when Notes writes
+  the body late and the next guarded write does not fail with a revision
+  conflict. Follow-up to #240. Only the database path changed. A note whose
+  body lists no attachment yet cannot be checked against the body, and that
+  part of the check is skipped.
 
 ## [2.9.34] - 2026-10-02
 
