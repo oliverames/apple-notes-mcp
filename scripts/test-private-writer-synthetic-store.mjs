@@ -9,7 +9,6 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -26,6 +25,7 @@ import {
   noteIdentifier,
   replicaIdentifier,
 } from "./lib/synthetic-note-payload.mjs";
+import { readSingleLinkFile } from "./lib/synthetic-fixture-files.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("This fixture test accepts no paths or private input");
@@ -141,6 +141,7 @@ try {
   writeFileSync(join(root, "generator.stderr"), generated.stderr, { mode: 0o600 });
   report.generator = JSON.parse(generated.stdout);
   report.generatorSourceSha256 = hash(generatorBytes);
+  const initialStoreBytes = readSingleLinkFile(store);
   const sqlite = (query) => command("/usr/bin/sqlite3", ["-readonly", store, query]).stdout.trim();
   const body = () => Buffer.from(sqlite("SELECT hex(ZDATA) FROM ZICNOTEDATA;"), "hex");
   test("one synthetic note, account and folder; no attachments; exact baseline", () => {
@@ -159,13 +160,12 @@ try {
       "0"
     );
     assert.equal(hash(body()), hash(payload));
-    assert.equal(lstatSync(store).nlink, 1);
     assert.ok(!existsSync(store + "-wal") && !existsSync(store + "-shm"));
-    assert.ok(!readFileSync(store).includes(Buffer.from(process.env.HOME ?? "/Users/")));
-    assert.ok(!readFileSync(store).includes(Buffer.from("group.com.apple.notes")));
+    assert.ok(!initialStoreBytes.includes(Buffer.from(process.env.HOME ?? "/Users/")));
+    assert.ok(!initialStoreBytes.includes(Buffer.from("group.com.apple.notes")));
   });
   // The generator has closed the journal-free database and no writer has run.
-  report.initialStoreSha256 = hash(readFileSync(store));
+  report.initialStoreSha256 = hash(initialStoreBytes);
   const decoder = join(root, "decoder.mjs");
   // Import only pure decoders. No store reader or Notes.app API is called;
   // their input is the fresh synthetic store's explicitly selected ZDATA.

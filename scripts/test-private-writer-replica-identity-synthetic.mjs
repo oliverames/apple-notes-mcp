@@ -23,7 +23,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  renameSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +34,7 @@ import {
   assertReplicaTable,
   evaluateReplicaIdentity,
 } from "./lib/replica-identity-evidence.mjs";
+import { archiveIsolatedPreference } from "./lib/synthetic-fixture-files.mjs";
 
 const stop = (message) => {
   throw new Error(message);
@@ -392,17 +392,12 @@ for (const [phase, count, build] of [
         )
           continue;
         const path = join(directory, name);
-        if (
-          !lstatSync(path).isFile() ||
-          lstatSync(path).isSymbolicLink() ||
-          lstatSync(path).nlink !== 1
-        )
-          stop("Unsafe isolated preference path");
-        const bytes = readFileSync(path);
-        copyFileSync(path, join(archived, name));
-        chmodSync(join(archived, name), 0o600);
-        renameSync(path, join(archived, `${name}.removed`));
-        removedFiles.push({ relativePath: relative(prefsRoot, path), sha256: hash(bytes) });
+        const { archivePath, bytes } = archiveIsolatedPreference(path, archived);
+        removedFiles.push({
+          relativePath: relative(prefsRoot, path),
+          archivePath: relative(runRoot, archivePath),
+          sha256: hash(bytes),
+        });
       }
     }
     evidence.preferencesReset = { isolatedOnly: true, beforeStep: "C1", removedFiles };

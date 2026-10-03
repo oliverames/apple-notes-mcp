@@ -95,3 +95,10 @@ model hash was `24070002f26ccff5d326c8487e71cd86c18ca1008acf5fd97853261f1f7bb0af
 The report records generator/source/binary hashes and the initial SQLite
 hash; generated database bytes remain private. Hosted CI is a separate
 check and is not inferred from this local result.
+
+The harness also passes 54 pure fixture/evidence/filesystem tests and 20
+existing decoder tests. File validation and reads use the same open
+descriptor, rejecting symlinks and hard links. Preference archival moves
+the isolated entry into a fresh private directory before reading it; an
+unsafe entry remains recoverable there. These five filesystem regressions
+were added after hosted CodeQL identified three check/reopen races.
