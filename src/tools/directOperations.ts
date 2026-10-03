@@ -22,7 +22,12 @@ import {
 import { classifyError, CodedError, errorResult } from "../utils/errorCodes.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { readAllowedFile } from "../utils/attachmentFs.js";
-import { attachmentCoreDataId, type AttachmentAssetRecord } from "../utils/attachmentAssets.js";
+import {
+  attachmentCoreDataId,
+  type AttachmentAssetRecord,
+  type AttachmentKind,
+  type NoteAttachmentAssets,
+} from "../utils/attachmentAssets.js";
 import {
   enrichNoteRead,
   linkSignature,
@@ -435,32 +440,67 @@ function storedAttachmentIds(manager: AppleNotesManager, id: string): Set<string
 }
 
 /**
+ * The attachment kind a file name implies, for the extensions Notes records a
+ * stable type for. Unknown extensions are not checked.
+ */
+const KIND_BY_EXTENSION: Record<string, AttachmentKind> = {
+  ".pdf": "pdf",
+  ".png": "image",
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".heic": "image",
+  ".tif": "image",
+  ".tiff": "image",
+  ".gif": "image",
+};
+
+/**
+ * Whether the note body references a stored attachment: true or false when the
+ * decoded body gave the order, undefined when it did not (a note whose body
+ * did not decode, or that holds no attachment the body references).
+ */
+function referencedByBody(assets: NoteAttachmentAssets, row: AttachmentAssetRecord) {
+  return assets.orderSource === "body" ? row.bodyIndex !== null : undefined;
+}
+
+/**
  * Find the one attachment row this insertion added to the note in NoteStore
- * and check its media file against the source bytes (#236). Notes' AppleScript
- * on macOS 27 never lists PDF attachments, so this is the only way to see a
- * new PDF. Returns null when no new row appears; throws when a row appears but
- * its bytes cannot be verified, so the caller does not attach a duplicate.
+ * and check it against the source file (#236). Notes' AppleScript on macOS 27
+ * never lists PDF attachments, so this is the only way to see a new PDF.
+ *
+ * Besides the media bytes, the row's type must fit the file's extension and
+ * the decoded note body must reference the row, so a stray row or an orphaned
+ * file is not reported as an attachment the note shows. The database can lag
+ * the write, so the read repeats until the row has its file and its place in
+ * the body. Returns null when no new row appears; throws when a row appears
+ * but cannot be verified, so the caller does not attach a duplicate.
  */
 function storedInsertion(
   manager: AppleNotesManager,
   id: string,
   before: Set<string>,
   bytes: Buffer,
+  name: string,
   returnedId: string | undefined
 ): { attachmentId: string; name: string | null } | null {
   let added: AttachmentAssetRecord[] = [];
+  let assets: NoteAttachmentAssets | undefined;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) pause(250);
     try {
-      added = manager
-        .getAttachmentAssetsById(id)
-        .attachments.filter(
-          (item) => item.parentIdentifier === null && !before.has(item.identifier.toLowerCase())
-        );
+      assets = manager.getAttachmentAssetsById(id);
+      added = assets.attachments.filter(
+        (item) => item.parentIdentifier === null && !before.has(item.identifier.toLowerCase())
+      );
     } catch {
       added = [];
     }
-    if (added.length === 1 && added[0].assetPaths.length > 0) break;
+    if (
+      added.length === 1 &&
+      added[0].assetPaths.length > 0 &&
+      referencedByBody(assets!, added[0]) !== false
+    )
+      break;
   }
   if (added.length === 0) return null;
   if (added.length > 1) throw new Error(UNCERTAIN);
@@ -468,6 +508,15 @@ function storedInsertion(
   const attachmentId = attachmentCoreDataId(id, row.pk);
   if (returnedId && /\/ICAttachment\/p\d+$/.test(returnedId) && returnedId !== attachmentId)
     throw new Error(UNCERTAIN);
+  const expectedKind = KIND_BY_EXTENSION[extname(name).toLowerCase()];
+  if (expectedKind && row.kind !== expectedKind)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but its type (${row.uti ?? "unknown"}) does not fit ${name}; read the exact note and do not attach the file again`
+    );
+  if (referencedByBody(assets!, row) === false)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but the note body does not reference it; read the exact note and do not attach the file again`
+    );
   const expected = sha256(bytes);
   const matches = row.assetPaths.some((path) => fileMatches(path, bytes.length, expected));
   if (!matches)
@@ -550,7 +599,7 @@ function attachFile(
       // attachment, so check the read-only NoteStore database instead.
       const stored =
         inserted.length === 0 && beforeStored
-          ? storedInsertion(manager, id, beforeStored, bytes, returnedId)
+          ? storedInsertion(manager, id, beforeStored, bytes, name, returnedId)
           : null;
       if (!stored)
         throw new Error(
@@ -563,11 +612,20 @@ function attachFile(
       verifiedBy = "database";
     }
     const nameVerified = reportedName === name;
+    // The database path can wait seconds for Notes to write the new file into
+    // the body, so `after` may predate that. Return the revision the note has
+    // now, which the next guarded write needs.
+    let contentHash = after.hash;
+    if (verifiedBy === "database") {
+      const final = readSnapshot(manager, id);
+      assertExistingContentPreserved(before, final);
+      contentHash = final.hash;
+    }
     return {
       ok: true,
       id,
       attachmentId,
-      contentHash: after.hash,
+      contentHash,
       bytes: bytes.length,
       name: reportedName,
       ...(verifiedBy === "database" ? { verifiedBy } : {}),
