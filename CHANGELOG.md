@@ -1,5 +1,48 @@
 ## [Unreleased]
 
+## [2.14.0] - 2026-10-03
+
+Split out of #262 per review: paragraph anchors and the opt-in anchor
+resolver, without the private writer.
+
+### Added
+
+- Paragraph anchors, so a paragraph can be found again after it is edited,
+  moved, or given a new ID by Notes. `create-paragraph-anchor`, or
+  `get-paragraph-link` with `recordAnchor` and `list-note-paragraphs` with
+  `recordAnchors`, record the note's UUID, the paragraph ID, the normalized
+  text and its fingerprint, the neighbouring paragraphs' fingerprints and the
+  block index in a local registry file (0600, replaced atomically under a
+  lock). `resolve-paragraph-anchor` finds the paragraph by its ID, then its
+  exact text, then similar text between its neighbours, with a confidence
+  score. It returns the current `applenotes://` link only when the match is
+  certain and the ID is unique, reports `ambiguous` rather than guessing, and
+  reports `needs-reminting` with the matched block when the paragraph's ID is
+  shared or missing. `list-paragraph-anchors`, `get-paragraph-anchor` and
+  `prune-paragraph-anchors` (a dry run by default) manage the registry. None
+  of these tools changes Notes. `resolve-paragraph-anchor` has no `remint`
+  input: this package cannot set a paragraph ID.
+- `apple-notes-mcp anchors serve`, an opt-in resolver that answers
+  `GET /a/<anchor-id>` with a redirect to the paragraph's current link. It
+  binds 127.0.0.1 unless `--tailnet` is given, needs a token on every
+  request, checks the Host header, and never changes Tailscale or firewall
+  settings. After 20 failed token checks in a minute from one peer address,
+  that peer gets 429. The count is per peer, so one bad client cannot lock
+  out another, and requests refused for their method or Host never count.
+  `APPLE_NOTES_MCP_ANCHOR_FILE` and `APPLE_NOTES_MCP_ANCHORS_TOKEN` configure
+  the registry path and a stable token.
+- `src/utils/localServer.ts`: the tailnet address scan, token generation,
+  Bearer parsing, constant-time comparison and Host authority the resolver
+  uses, kept in one module so another opt-in local server can share them.
+
+### Changed
+
+- `list-note-paragraphs` and `get-paragraph-link` are no longer annotated
+  read-only. With `recordAnchors` or `recordAnchor` they write the local
+  anchor registry, and MCP annotations are static per tool. Without those
+  parameters they still write nothing, and their descriptions say which
+  parameter writes.
+
 ## [2.13.0] - 2026-10-03
 
 Split out of #262 per review: the local template editor, on its own.
