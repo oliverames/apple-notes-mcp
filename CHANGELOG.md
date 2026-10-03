@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+## [2.11.0] - 2026-10-03
+
+### Added
+
+- `export-notes-html` can render classic PencilKit drawings as SVG. Pass
+  `vectorDrawings: true` to decode them through the public native helper, as
+  `get-note-drawings` does, instead of using Notes' fixed-size PNG. The SVG is
+  embedded or written to the sidecar directory under the same size limits as
+  other assets. The option is off by default: without it every drawing keeps
+  the PNG and the helper never runs. Paper drawings keep the PNG either way. A
+  drawing that cannot be decoded (helper not built, decode error, stroke limit,
+  too large) falls back to the PNG without failing the export, and the new
+  receipt field `vectorDrawings` counts SVG and PNG drawings with the fallback
+  reasons.
+
 ## [2.10.0] - 2026-10-02
 
 Split out of #262 per the maintainer's review.
