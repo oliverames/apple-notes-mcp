@@ -441,6 +441,10 @@ Every error result (`isError: true`) also carries `structuredContent.code`: `not
 
 Every result that has `structuredContent` also ends with a text block `structuredContent: {…}` holding the same JSON on one line (#264), because some clients (Claude Desktop) give the model only text. Read `contentHash`, ids, `code`/`committed`/`indeterminate` and `page.nextOffset` from there when `structuredContent` is not visible. A value the text already shows in full is `"[shown in full above]"`; fields dropped for size are named in `_omitted`. The wrapper is `src/utils/structuredText.ts`, installed on the server before any tool registers, so new tools get it automatically.
 
+## Guided permissions check (CLI, for the user)
+
+When a user is setting up the server or reports permission errors, you can suggest they run `apple-notes-mcp setup --permissions` in their terminal. It reports Full Disk Access, Automation of Notes.app, the Shortcut bridges, and Speech Recognition for the app that launched it, names the System Settings pane for each missing grant, opens panes only with `--open`, and re-checks when they press Enter. It sends no Apple event unless they add `--probe-automation` (never under `--check` or over SSH), so Automation reads `unknown` until then. `setup --permissions --window` shows the same checklist in a small window, once built with `setup --permissions-window`. It is a user-run command, not an MCP tool: the grants it sees belong to the app it runs in, which may differ from your MCP host. Inside the host, use `doctor`. Never tell the user a grant was changed; only they can change it in System Settings.
+
 ## Recurring macOS permission prompts → offer the official-Node fix
 
 If a user reports being **repeatedly** prompted for Full Disk Access or

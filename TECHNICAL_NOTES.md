@@ -10,6 +10,7 @@ This document contains research findings on Apple Notes internals, programmatic 
 - [Protobuf Data Format](#protobuf-data-format)
 - [Alternative Approaches](#alternative-approaches)
 - [Private helper (NotesShared)](#private-helper-notesshared)
+- [Permissions check](#permissions-check)
 - [Known Issues & Limitations](#known-issues--limitations)
 - [Related Tools & Projects](#related-tools--projects)
 - [Sources](#sources)
@@ -858,6 +859,43 @@ A future write PR needs evidence on all three first.
   (`store_unavailable`) rather than migrate.
 - Reads go through a private model; a field's meaning can change without
   notice. Treat `native-note-state` as diagnostic, not as a contract.
+
+---
+
+## Permissions check
+
+`apple-notes-mcp setup --permissions` (`src/services/permissions.ts`) is a setup aid, not part of the server. It reuses the probes the server already trusts and adds nothing that writes.
+
+### Probes
+
+| Item | Probe | Status values |
+|------|-------|---------------|
+| Full Disk Access | `hasFullDiskAccess()`: `sqlite3 -readonly NoteStore.sqlite "SELECT 1;"` | granted, missing, unknown (probe threw) |
+| Automation of Notes.app | only with `--probe-automation`: `tell application "Notes" to get name of account 1`, one attempt, 60 s | granted; missing when `isPermissionDenied` matches (-1743); unknown for any other failure, and unknown (`notProbed`) when the probe is not allowed to run |
+| Shortcut bridges | `setupShortcuts(true)`, the `setup --check` path | granted, missing, unknown (the `shortcuts` command failed) |
+| Speech Recognition | public helper `speech_status`: `SFSpeechRecognizer.authorizationStatus()`, never `requestAuthorization` | granted; missing for denied or restricted, and for notDetermined before macOS 26; not_needed for notDetermined on macOS 26+; unknown while the helper is not built |
+
+Automation cannot be read without an Apple event: `get-capabilities` reports it as `unverified` for that reason. An Apple event can also raise macOS's "wants to control Notes" prompt, which is the only way to create an Automation grant (the Automation pane has no + button), and can launch Notes.app. A report-only command must not do either, so the probe is opt-in (`automationSkipReason` in `permissions.ts`) and does not run when:
+
+- `--probe-automation` was not passed (the default);
+- `--check` was passed, which reports state only; or
+- `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt.
+
+In each case the item is `unknown` with `notProbed: true` and its detail names the reason. A not-probed item is not pending and does not fail the run: the loop does not wait on it, `--open` does not open its pane, and `report.ready` (which sets the exit code) counts it as satisfied, since checking again would not change it. The window reads the same `notProbed` field: it draws the item as "Not checked" with the item's `fix` text, gives it no Open Settings button, and the command ignores an `open` request for it. With the probe allowed, the 60-second timeout leaves time to answer the prompt. `permissionsCliProbe.test.ts` mocks the AppleScript layer to pin that the real CLI wiring sends zero events in the three cases above and exactly one with the flag.
+
+On macOS 26 and later the helper transcribes with SpeechAnalyzer, which needs no grant, so only an explicit refusal blocks it (see `checkSpeechAccess` in the helper). `speech_status` reports `requiresGrant` from the same `#available(macOS 26, *)` test, so the check and `transcribe` cannot disagree.
+
+### Whose grants
+
+TCC attributes a grant to the responsible process. A terminal passes responsibility to its children; Claude Desktop does not (see `fdaRemediation`). The check therefore walks up the process tree with `ps` to the nearest ancestor inside an `.app` bundle and names it. The result describes the process running the check. It can differ from the MCP host's, which is why the report says so and the agent guidance points to `doctor` inside the host.
+
+### Settings URLs
+
+Apple documents the Full Disk Access URL in `EndpointSecurity/ESClient.h`: `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles` on macOS 13 and later, and `x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles` until macOS 12. The Automation (`Privacy_Automation`) and Speech Recognition (`Privacy_SpeechRecognition`) anchors are not in a public header. They follow the same naming and appear in the anchor list of `/System/Library/ExtensionKit/Extensions/SecurityPrivacyExtension.appex` (checked on macOS 27.2, 2026-09-24). A future macOS could rename them; the report also prints the pane's path, so the user can still find it by hand. `openSettingsPane` opens only a URL that starts with `x-apple.systempreferences:` and belongs to a reported item.
+
+### Window
+
+The optional window (`native/permissions-window/apple-notes-permissions-window.swift`, `src/services/permissionsWindow.ts`) is built, signed, verified and installed exactly like the public helper, in its own Application Support folder with its own manifest. It speaks JSON lines: the command sends `{"type":"report","report":{...}}`, and the window sends `{"type":"open","id":...}` or `{"type":"recheck"}`. Anything else is ignored. The window holds no probe code and no URLs, so a report and its buttons cannot disagree with the terminal output, and a compromised window can at most ask to open one of the reported panes. It runs as a child of the command, so it shares the command's launching app. A `hello` line makes it answer and exit without creating a window, which is how setup and the tests verify it without showing UI.
 
 ---
 

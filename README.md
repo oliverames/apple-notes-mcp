@@ -2886,6 +2886,45 @@ Every tool that does not read the Notes database works normally without Full Dis
 
 ---
 
+## Permissions check
+
+`apple-notes-mcp setup --permissions` checks, in one report, the four grants that decide what the server can do on this Mac:
+
+| Item | How it is checked | Needed for |
+|------|-------------------|------------|
+| Full Disk Access | one read-only `SELECT 1` against `NoteStore.sqlite` | every database-backed tool (see [Full Disk Access](#full-disk-access)) |
+| Automation of Notes.app | one read-only Apple event (the first account's name), sent only with `--probe-automation` | every AppleScript tool |
+| Shortcut bridges (optional) | `shortcuts list`, like `setup --check` | the native-write tools |
+| Speech Recognition (optional) | the public helper's `speech_status`, read without prompting | `transcribe-note-audio` before macOS 26 |
+
+```bash
+apple-notes-mcp setup --permissions          # report, then press Enter to check again
+apple-notes-mcp setup --permissions --open   # also open the System Settings pane of each missing grant
+apple-notes-mcp setup --permissions --once   # report once and exit (also --json)
+apple-notes-mcp setup --permissions --probe-automation   # also check Automation (sends one Apple event)
+```
+
+For each missing grant the report names the System Settings pane and its URL, for example `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles` (the `com.apple.preference.security` form before macOS 13). Panes open only with `--open`, each once per run. The command never changes a setting or a grant: you make the change in System Settings, then press Enter to check again. Type `q` to stop. It exits 1 when a required grant is missing or could not be verified, and 0 otherwise, so a run that did not probe Automation exits 0 if Full Disk Access is granted.
+
+Automation is the one item that cannot be read without talking to Notes.app, so it is opt-in. By default the command sends no Apple event, and the Automation line reads `unknown` (not probed) with the command that checks it. Add `--probe-automation` to send one read-only event; the first time, macOS may ask whether the app may control Notes, and **Allow** is the only way to add an Automation grant. The probe never runs under `--check` (which reports state only) or when `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt. In those cases the line reads `unknown` even if `--probe-automation` was passed. An unprobed Automation line does not change the exit code and the report says Automation was not checked, so run the probe from a terminal on the Mac itself when you need to know. A probe that runs and fails (denied, or no answer) does exit 1.
+
+macOS attributes these grants to the app that launched the process, so the report names it (for example `/Applications/iTerm.app`). Run the check from the app you use as the MCP host when you can. Claude Desktop launches servers as their own responsible process, so for it use the `doctor` tool inside Claude Desktop, and add the Node binary it names to Full Disk Access. The Speech item reads `unknown` until the [public native helper](#public-native-helper) is built.
+
+### Optional checklist window
+
+The same checklist is also available in a small window with **Open Settings** and **Re-check** buttons. Like the public helper, it is built on your Mac from the packaged Swift source, never shipped as a binary:
+
+```bash
+apple-notes-mcp setup --permissions-window           # compile, ad-hoc sign, verify, install
+apple-notes-mcp setup --permissions-window --check   # report the installed state only
+apple-notes-mcp setup --permissions --window         # open the window
+apple-notes-mcp setup --permissions --window --probe-automation   # the window's checks include Automation
+```
+
+Setup compiles `native/permissions-window/apple-notes-permissions-window.swift`, signs it ad hoc, runs its `hello` handshake (which shows no window), and installs it in `~/Library/Application Support/apple-notes-mcp/permissions-window/` with a manifest of source and binary SHA-256 digests; `APPLE_NOTES_MCP_PERMISSIONS_WINDOW_DIR` overrides the folder. The window probes nothing itself. The command runs every check and sends the results to it, and opens a pane only for an item it reported. The window shows an unprobed Automation item as "Not checked", with the command that checks it, and gives it no Open Settings button. If the window is not built, is stale after an upgrade, or was modified, `--window` says so and shows the checklist in the terminal instead. The server never uses the window.
+
+---
+
 ## Public native helper
 
 `get-note-drawings` needs Apple's PencilKit framework and `transcribe-note-audio` needs the Speech framework; neither has an AppleScript or command-line interface. For them, the server uses a small Swift helper that links public Apple frameworks only (AppKit, PencilKit, AVFoundation, and Speech). No prebuilt binary ships with the package. Build it once on your Mac:
@@ -2990,6 +3029,7 @@ In a JSON string literal the two characters `\\` denote **one** literal backslas
 - macOS needs automation permission
 - Go to System Settings > Privacy & Security > Automation
 - Ensure your terminal/Claude has permission to control Notes
+- `apple-notes-mcp setup --permissions --open --probe-automation` checks every grant and opens the pane of each missing one ([Permissions check](#permissions-check))
 
 ### Native writes time out or report an uncertain outcome
 - Symptom: `add-native-tags`, `set-note-pinned`, `append-native` or another native write fails with "Shortcuts timed out waiting for …", "Operation outcome uncertain" or "readback was not verified", while `doctor` and `get-capabilities` report the bridges installed

@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+## [2.12.0] - 2026-10-03
+
+### Added
+
+- `apple-notes-mcp setup --permissions` checks Full Disk Access, Automation of
+  Notes.app, the Shortcut bridges, and Speech Recognition for the app that
+  launched it, with the same read-only probes as `doctor` and
+  `get-capabilities`. For each missing grant it names the System Settings pane
+  and its `x-apple.systempreferences:` URL, opens the pane only with `--open`,
+  and checks again each time the user presses Enter (`--once` and `--json` for
+  scripts). It never changes a setting or a grant.
+- The Automation check is opt-in. It sends one read-only Apple event to
+  Notes.app, which can raise macOS's consent prompt, so it runs only with
+  `--probe-automation`. By default the Automation item reports `unknown` (not
+  probed) with the command that checks it, and it does not count as a pending
+  item and does not change the exit code. It also reports `unknown` under
+  `--check`, which reports state only and never sends an Apple event, and
+  whenever `SSH_CONNECTION` is set, because nobody at the remote shell can
+  answer the prompt. The exit code is 1 only when a required grant is missing
+  or a probe that ran could not verify it.
+- An optional checklist window with Open Settings and Re-check buttons:
+  `apple-notes-mcp setup --permissions-window` compiles it from the packaged
+  Swift source, signs it ad hoc and installs it in Application Support like the
+  public helper; `setup --permissions --window` opens it (add
+  `--probe-automation` to include the Automation check; otherwise the window
+  shows Automation as "Not checked" with no Open Settings button). The window
+  probes nothing itself, and the server never uses it.
+- The public native helper gains a `speech_status` action that reads the Speech
+  Recognition status without prompting. Changing the helper source means an
+  installed helper reports stale until `apple-notes-mcp setup --public-helper`
+  runs again: until then `get-note-drawings` and `transcribe-note-audio` stop
+  with `helper_stale`, and `export-notes-html` with `vectorDrawings: true`
+  keeps every drawing's PNG (`fallbackReasons: { helper_stale }`).
+
 ## [2.11.0] - 2026-10-03
 
 ### Added
