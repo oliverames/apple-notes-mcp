@@ -193,12 +193,13 @@ Action: Use query-notes with query='words:>250 has:pdf -folder:Archive'
 
 Bare words and "quoted phrases" match title or body. Fields are `title:`,
 `body:`, `text:`, `folder:`, `account:`, and `tag:`; facets are
-`has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`;
-`checklist:open|done`; flags `pinned`, `locked`, `shared`; and `words:`,
+`has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag`
+(`has:url` is a link preview card, `has:map` a map);
+`checklist:open|done`; flags `pinned`, `locked`, `shared`, `quicknote`; and `words:`,
 `created:`, `modified:` take `=`, `>`, `>=`, `<`, `<=` with `YYYY-MM-DD` local
 dates. AND is implicit; use `OR`, `NOT` or a leading `-`, and parentheses.
 Quote an operator word (`"and"`) to search it literally. It scans the 500 most
-recently modified notes unless `scanLimit` is raised (max 5000), and the
+recently modified notes unless `scanLimit` is raised (max 10000), and the
 response says when older notes were left out. Recently Deleted is excluded
 unless `includeDeleted` is true. Locked notes match on title and metadata only.
 The returned ids work with every id-based tool.

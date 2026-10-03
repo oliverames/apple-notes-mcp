@@ -1,5 +1,34 @@
 ## [Unreleased]
 
+## [2.10.0] - 2026-10-02
+
+Split out of #262 per the maintainer's review.
+
+### Added
+
+- `query-notes` has two more `has:` facets. `has:url` matches a link preview
+  card (a `public.url` attachment), which still counts as `has:link`, as
+  inline links do. `has:map` matches a map attachment
+  (`com.apple.mapkit.map`).
+- `query-notes` has a `quicknote` flag, also written `is:quicknote`. It reads
+  the database's Quick Note flag (`ZISSYSTEMPAPER`), the same one
+  `list-special-notes kind=quick-notes` uses. On a store without that column
+  it matches nothing, like the other metadata flags.
+
+### Changed
+
+- **Behavior change in `query-notes`:** a bare `quicknote` (or `-quicknote`)
+  in a query used to be an ordinary word that matched a note's title or body.
+  It is now the Quick Note flag, so those queries return different notes.
+  Quote the word (`"quicknote"`) to search it as text, as with `"pinned"`.
+  `search-notes` is not affected: it passes the caller's text as one literal
+  term and never parses query syntax.
+- `query-notes` `scanLimit` now goes up to 10000 (it was 5000). The default
+  stays 500. A larger scan decodes more note bodies, so it takes longer.
+  `search-notes`' database body search keeps its 5000-note window, now a
+  fixed `SEARCH_CONTENT_SCAN_LIMIT` rather than following the query ceiling,
+  because `search-notes` has no scan parameter.
+
 ## [2.9.35] - 2026-10-02
 
 ### Fixed
