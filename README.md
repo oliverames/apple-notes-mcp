@@ -521,7 +521,7 @@ can match titles and bodies together.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Query expression (syntax below), at most 2000 characters |
 | `limit` | number | No | Maximum notes to return. Defaults to 50, maximum 500. The response reports the total match count. |
-| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 5000. The response says when older notes were left unscanned. |
+| `scanLimit` | number | No | How many of the most recently modified notes to examine. Defaults to 500, maximum 10000. The response says when older notes were left unscanned. A large scan decodes more bodies, so it takes longer. |
 | `includeDeleted` | boolean | No | Also scan notes in Recently Deleted, notes pending deletion, and folderless notes. Defaults to `false`. |
 | `includeWordCount` | boolean | No | Add `wordCount` to each returned note, the same count `words:` filters on (`null` when locked or unreadable). Free when the query already reads bodies; a metadata-only query (for example `pinned`) reads just the returned notes' bodies in one extra read-only query. Defaults to `false`. |
 
@@ -534,9 +534,9 @@ can match titles and bodies together.
 | `folder:Work`, `folder:"Work/Clients"` | The note's own folder, by name or full path, case-insensitive (notes in subfolders are not included); a literal `/` in a name can be written `\/` as in `list-folders` |
 | `account:iCloud` | Account name, case-insensitive |
 | `tag:finance` | Native Notes tag (with or without `#`); textual hashtags are ordinary words |
-| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:tag` | The note body contains that kind of object |
+| `has:link`, `has:attachment`, `has:checklist`, `has:drawing`, `has:image`, `has:video`, `has:audio`, `has:pdf`, `has:table`, `has:scan`, `has:url`, `has:map`, `has:tag` | The note body contains that kind of object. `has:url` is a link preview card (it also counts as `has:link`, as inline links do); `has:map` is a map attachment |
 | `checklist:open`, `checklist:done` | At least one unchecked item; or items present and all checked |
-| `pinned`, `locked`, `shared` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder |
+| `pinned`, `locked`, `shared`, `quicknote` (or `is:pinned` …) | Note flags; `shared` includes notes in a shared folder, and `quicknote` is a note created as a Quick Note (the same flag `list-special-notes kind=quick-notes` reads) |
 | `words:>250` | Word count, with `=`, `>`, `>=`, `<`, `<=` |
 | `created:>=2026-07-01`, `modified:<2026-09-01` | Dates as `YYYY-MM-DD` in local time, with the same operators; `=` means that whole day |
 | `a b`, `a AND b`, `a OR b`, `NOT a`, `-a`, `( … )` | AND is implicit and binds tighter than OR |
@@ -2120,7 +2120,10 @@ On macOS 27, Notes' AppleScript does not list PDF attachments, so it cannot see
 a PDF this tool just added. When that happens and the server has Full Disk
 Access, it verifies through the read-only NoteStore database instead: success
 requires exactly one new attachment row on the note whose media file matches
-the source bytes, and the result carries `verifiedBy: "database"`. Without Full
+the source bytes, whose type fits the file's extension, and, when the decoded
+note body lists attachments, that the body references. The check repeats for
+about two seconds while Notes' database catches up, and `contentHash` is read
+after it finishes. The result carries `verifiedBy: "database"`. Without Full
 Disk Access a PDF attach reports "insertion outcome uncertain"; read the note
 before retrying, because the attachment was probably created.
 

@@ -47162,9 +47162,11 @@ var FACETS = [
   "pdf",
   "table",
   "scan",
+  "url",
+  "map",
   "tag"
 ];
-var FLAGS = ["pinned", "locked", "shared"];
+var FLAGS = ["pinned", "locked", "shared", "quicknote"];
 var NoteQueryError = class extends Error {
   constructor(message, position) {
     super(position === void 0 ? message : `${message} (at position ${position + 1})`);
@@ -47649,7 +47651,7 @@ var NOTES_DB_PATH10 = path8.join(
   os8.homedir(),
   "Library/Group Containers/group.com.apple.notes/NoteStore.sqlite"
 );
-var QUERY_SCAN = { DEFAULT: 500, MAX: 5e3 };
+var QUERY_SCAN = { DEFAULT: 500, MAX: 1e4 };
 var QUERY_RESULTS = { DEFAULT: 50, MAX: 500 };
 var CORE_DATA_EPOCH_MS2 = Date.UTC(2001, 0, 1);
 var SNIPPET_BEFORE = 60;
@@ -47670,7 +47672,8 @@ function facetsForAttachmentType(uti) {
   if (type.startsWith("com.apple.notes.inlinetextattachment.")) return [];
   if (type === "com.apple.notes.table") return ["table"];
   const facets = ["attachment"];
-  if (type === "public.url") facets.push("link");
+  if (type === "public.url") facets.push("link", "url");
+  else if (type === "com.apple.mapkit.map") facets.push("map");
   else if (type === "com.apple.paper.doc.scan" || type === "com.apple.notes.gallery")
     facets.push("scan");
   else if (type === "com.adobe.pdf" || type === "com.apple.paper.doc.pdf") facets.push("pdf");
@@ -47771,7 +47774,7 @@ function buildScanSql(available, options) {
   const folderRow = `SELECT json_object('k', 'folder', 'pk', f.Z_PK, 'name', ${col2(available, "f", "ZTITLE2")}, 'parent', ${col2(available, "f", "ZPARENT")}, 'type', ${col2(available, "f", "ZFOLDERTYPE")}, 'owner', ${col2(available, "f", "ZOWNER")}, 'shared', ${notNull("f", "ZSERVERSHAREDATA")}) FROM ZICCLOUDSYNCINGOBJECT f WHERE f.Z_ENT = ${entity2("ICFolder")};`;
   const accountRow = `SELECT json_object('k', 'account', 'pk', a.Z_PK, 'name', ${col2(available, "a", "ZNAME")}) FROM ZICCLOUDSYNCINGOBJECT a WHERE a.Z_ENT = ${entity2("ICAccount")};`;
   const dataExpr = options.withBodies ? "(SELECT hex(d.ZDATA) FROM ZICNOTEDATA d WHERE d.ZNOTE = n.Z_PK ORDER BY d.Z_PK DESC LIMIT 1)" : "NULL";
-  const noteRow = `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'title', n.ZTITLE1, 'folder', n.ZFOLDER, 'created', ${createdExpr}, 'modified', n.ZMODIFICATIONDATE1, 'pinned', ${bool("ZISPINNED")}, 'locked', ${bool("ZISPASSWORDPROTECTED")}, 'shared', ${notNull("n", "ZSERVERSHAREDATA")}, 'snippet', ${col2(available, "n", "ZSNIPPET")}, 'data', ${dataExpr}, 'tags', ${tagsExpr}) FROM ZICCLOUDSYNCINGOBJECT n WHERE ${whereSql} ORDER BY n.ZMODIFICATIONDATE1 DESC, n.Z_PK DESC LIMIT ${scan};`;
+  const noteRow = `SELECT json_object('k', 'note', 'pk', n.Z_PK, 'title', n.ZTITLE1, 'folder', n.ZFOLDER, 'created', ${createdExpr}, 'modified', n.ZMODIFICATIONDATE1, 'pinned', ${bool("ZISPINNED")}, 'locked', ${bool("ZISPASSWORDPROTECTED")}, 'shared', ${notNull("n", "ZSERVERSHAREDATA")}, 'quicknote', ${bool("ZISSYSTEMPAPER")}, 'snippet', ${col2(available, "n", "ZSNIPPET")}, 'data', ${dataExpr}, 'tags', ${tagsExpr}) FROM ZICCLOUDSYNCINGOBJECT n WHERE ${whereSql} ORDER BY n.ZMODIFICATIONDATE1 DESC, n.Z_PK DESC LIMIT ${scan};`;
   return [
     "BEGIN;",
     "SELECT json_object('k', 'meta', 'uuid', (SELECT Z_UUID FROM Z_METADATA LIMIT 1));",
@@ -47972,6 +47975,7 @@ function runNoteQuery(ast, options = {}) {
       pinned: Boolean(row.pinned),
       locked,
       shared: Boolean(row.shared) || Boolean(folder?.shared),
+      quicknote: Boolean(row.quicknote),
       created: coreDataMs(row.created),
       modified: coreDataMs(row.modified),
       content: () => {
@@ -48038,6 +48042,7 @@ function runNoteQuery(ast, options = {}) {
 }
 
 // src/utils/searchContentDb.ts
+var SEARCH_CONTENT_SCAN_LIMIT = 5e3;
 function buildSearchContentQuery(options) {
   const children = [{ type: "text", field: "any", value: options.query }];
   const folder = options.folder?.trim();
@@ -48062,7 +48067,7 @@ function buildSearchContentQuery(options) {
 function searchContentViaDatabase(options) {
   const result = runNoteQuery(buildSearchContentQuery(options), {
     limit: options.limit,
-    scanLimit: QUERY_SCAN.MAX,
+    scanLimit: SEARCH_CONTENT_SCAN_LIMIT,
     includeWordCount: options.includeWordCount,
     dbPath: options.dbPath
   });
@@ -54930,18 +54935,34 @@ function storedAttachmentIds(manager, id2) {
     return null;
   }
 }
-function storedInsertion(manager, id2, before, bytes, returnedId) {
+var KIND_BY_EXTENSION = {
+  ".pdf": "pdf",
+  ".png": "image",
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".heic": "image",
+  ".tif": "image",
+  ".tiff": "image",
+  ".gif": "image"
+};
+function referencedByBody(assets, row) {
+  return assets.orderSource === "body" ? row.bodyIndex !== null : void 0;
+}
+function storedInsertion(manager, id2, before, bytes, name, returnedId) {
   let added = [];
+  let assets;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) pause(250);
     try {
-      added = manager.getAttachmentAssetsById(id2).attachments.filter(
+      assets = manager.getAttachmentAssetsById(id2);
+      added = assets.attachments.filter(
         (item) => item.parentIdentifier === null && !before.has(item.identifier.toLowerCase())
       );
     } catch {
       added = [];
     }
-    if (added.length === 1 && added[0].assetPaths.length > 0) break;
+    if (added.length === 1 && added[0].assetPaths.length > 0 && referencedByBody(assets, added[0]) !== false)
+      break;
   }
   if (added.length === 0) return null;
   if (added.length > 1) throw new Error(UNCERTAIN);
@@ -54949,6 +54970,15 @@ function storedInsertion(manager, id2, before, bytes, returnedId) {
   const attachmentId = attachmentCoreDataId(id2, row.pk);
   if (returnedId && /\/ICAttachment\/p\d+$/.test(returnedId) && returnedId !== attachmentId)
     throw new Error(UNCERTAIN);
+  const expectedKind = KIND_BY_EXTENSION[extname7(name).toLowerCase()];
+  if (expectedKind && row.kind !== expectedKind)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but its type (${row.uti ?? "unknown"}) does not fit ${name}; read the exact note and do not attach the file again`
+    );
+  if (referencedByBody(assets, row) === false)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but the note body does not reference it; read the exact note and do not attach the file again`
+    );
   const expected = sha256(bytes);
   const matches = row.assetPaths.some((path10) => fileMatches(path10, bytes.length, expected));
   if (!matches)
@@ -55000,7 +55030,7 @@ function attachFile(manager, args, checked, progress = { insertionStarted: false
       if (!saved.success || !fileMatches(saved.savedPath ?? verifyPath, bytes.length, sha256(bytes)))
         throw new Error("Attachment bytes were not verified; read the exact note before retrying");
     } else {
-      const stored = inserted.length === 0 && beforeStored ? storedInsertion(manager, id2, beforeStored, bytes, returnedId) : null;
+      const stored = inserted.length === 0 && beforeStored ? storedInsertion(manager, id2, beforeStored, bytes, name, returnedId) : null;
       if (!stored)
         throw new Error(
           inserted.length === 0 && !beforeStored ? `${UNCERTAIN}. Notes' AppleScript does not list some attachments (PDFs on macOS 27); grant Full Disk Access so the server can verify through the Notes database` : UNCERTAIN
@@ -55010,11 +55040,17 @@ function attachFile(manager, args, checked, progress = { insertionStarted: false
       verifiedBy = "database";
     }
     const nameVerified = reportedName === name;
+    let contentHash = after.hash;
+    if (verifiedBy === "database") {
+      const final = readSnapshot(manager, id2);
+      assertExistingContentPreserved(before, final);
+      contentHash = final.hash;
+    }
     return {
       ok: true,
       id: id2,
       attachmentId,
-      contentHash: after.hash,
+      contentHash,
       bytes: bytes.length,
       name: reportedName,
       ...verifiedBy === "database" ? { verifiedBy } : {},
@@ -60031,7 +60067,7 @@ ${noteList}${truncationNote}${scanNote}${wordCountNote}${syncNote}`,
 registerTool(
   "query-notes",
   {
-    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag; checklist:open|done; flags pinned, locked, shared (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.',
+    description: 'Use when: finding notes with a boolean expression over text and metadata \u2014 e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\nSyntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag (has:url is a link preview card, has:map a map); checklist:open|done; flags pinned, locked, shared, quicknote (or is:pinned); quote a flag word such as "quicknote" to search it as text; words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\nReturns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\nDo not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500); raise it for older notes.\nSafety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.',
     inputSchema: {
       query: external_exports.string().min(1, "A query expression is required").max(MAX.QUERY).describe(
         'Boolean query expression, e.g. `folder:"Work Projects" has:checklist -checklist:done`'
