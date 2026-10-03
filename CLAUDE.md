@@ -200,8 +200,8 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 
 ### query-notes
 - Boolean search read straight from the NoteStore database (read-only, needs Full Disk Access). Prefer it over `search-notes` when Full Disk Access is available: one call matches title **or** body, and it returns in well under a second instead of ~200ms per result
-- Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|tag`; `checklist:open|done`; `pinned`, `locked`, `shared`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
-- Scans the 500 most recently modified notes by default (`scanLimit` up to 5000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
+- Syntax: bare words / `"phrases"`; `title:`, `body:`, `text:`, `folder:`, `account:`, `tag:`; `has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag` (`has:url` is a link preview card and also counts as `has:link`); `checklist:open|done`; `pinned`, `locked`, `shared`, `quicknote`; `words:>250`; `created:>=2026-07-01`, `modified:<2026-09-01`. AND is implicit; `OR`, `NOT`, leading `-`, and parentheses work. Quote an operator word to search it literally
+- Scans the 500 most recently modified notes by default (`scanLimit` up to 10000). When `scanTruncated` is true, older notes were not examined — raise `scanLimit` before concluding a note does not exist
 - Excludes Recently Deleted and folderless notes unless `includeDeleted: true`
 - Locked notes match on title and metadata only; body predicates never match them, negated or not (`-body:x` does not match a locked or undecodable note)
 - Each hit has `matchedIn` (where the positive text terms occur: `title`, `body`, or both) when the query has a text term and the body is readable; a `title:` term only counts toward the title and a `body:` term only toward the body. An empty list means the note matched through a non-text branch (`pinned OR x`)
@@ -248,7 +248,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 ### add-attachment / create-note-with-attachment
 - `path` follows the same read scope as `create-note`'s `contentPath`: a regular file in home, temp, or `/Volumes`; hidden paths (`~/.ssh`, `~/.config`, a project `.env`) and `~/Library` other than iCloud Drive and `~/Library/CloudStorage` are refused unless the server sets `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS=1`. Do not try to work around a refusal by copying the file; ask the user.
 - `filename` sets the name the attachment shows in Notes. It must keep the source file's extension and be a single path component.
-- macOS 27: Notes' AppleScript never lists PDF attachments. When AppleScript shows no new attachment, the tool verifies through the read-only NoteStore rows (needs Full Disk Access) and returns `verifiedBy: "database"`; without FDA a PDF attach reports "outcome uncertain", and the PDF was probably created, so read the note before retrying.
+- macOS 27: Notes' AppleScript never lists PDF attachments. When AppleScript shows no new attachment, the tool verifies through the read-only NoteStore rows (needs Full Disk Access): one new row, a type that fits the file extension, a note body that references it (when the body lists attachments), and matching bytes, polled for about two seconds, with `contentHash` re-read afterward. It returns `verifiedBy: "database"`; without FDA a PDF attach reports "outcome uncertain", and the PDF was probably created, so read the note before retrying.
 - `create-note-with-attachment` creates the note, then attaches. If the attach step fails before the file is inserted, the error names the new note's id: call `add-attachment` on that id rather than repeating the tool, which would create a second note. If the error says the attachment outcome is uncertain (`indeterminate: true`), the file may already be attached: run `list-attachments` on that id before attaching again.
 
 ### add-attachment-from-pasteboard
@@ -351,6 +351,7 @@ This works in: `create-note` (folder param), `create-folder`, `search-notes`, `l
 - Same selection as `export-notes-markdown`; `outputPath` is required (the HTML is never returned inline) and create-only
 - Assets are embedded as data URLs by default. Use `embedAssets: false` (optionally with `assetsDir`) for large media: embedded assets over 10 MiB render as an unavailable marker
 - A sidecar directory defaults to `<output stem>.assets`; keep it next to the HTML when moving the file
+- Drawings keep Notes' PNG by default. `vectorDrawings: true` (opt-in, default `false`) renders classic PencilKit drawings as SVG through the public native helper; Paper drawings keep Notes' PNG. A drawing that cannot be decoded falls back to the PNG and is counted in `vectorDrawings.fallbackReasons`; report `helper_not_installed` as "run `apple-notes-mcp setup --public-helper` for vector drawings", not as a failed export. Without `vectorDrawings: true` the helper is never run
 - Presentation format only: not a backup and not something to import back
 
 ### Batch operations
