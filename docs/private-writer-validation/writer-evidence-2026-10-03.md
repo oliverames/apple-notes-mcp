@@ -5,6 +5,22 @@ generated synthetic stores. They are not release validation. No private writer
 feature flag has been promoted. The production writer source SHA-256 was
 `3fff29256539f7a7751db82298c956c8a54f260a28cb5bffc27ef397576f38cb`.
 
+## Contributor closeout
+
+On 2026-10-03 the contributor accepted the current work and stopped the
+remaining experiments. No further user testing or phone response is
+requested. All three continuation fixtures were moved through the guarded
+Recently Deleted route after fresh exact-content/folder checks; the empty
+test folder and private evidence are retained. The earlier three fixtures
+were already recoverably removed.
+
+The missing dirty-editor, independent-device, preference-reset and
+prune/purge evidence remains **unverified**, not passing. This closes the
+contributor task; it does not waive the maintainer's review criteria or
+authorize release. The writer remains draft under the existing hold, with
+release-validation gates unchanged. Acceptance of the evidence and the
+requested staged return are now explicit owner review decisions.
+
 ## Replica ownership (Q2)
 
 A controlled insertion through the actual Notes.app editor added 34 UTF-16
@@ -53,7 +69,7 @@ does not measure when the GUI first adopted the change.
 
 The baseline had been confirmed on an independent iPhone. Its first reported
 post-write observation showed only the baseline. A fresh phone observation
-is pending after the Mac GUI check. Local status at 00:08:48 UTC still showed
+was not collected before the contributor stopped the experiments. Local status at 00:08:48 UTC still showed
 version 4 pending against cloud version 1. At 01:05:44 UTC it reported cloud
 version 4, with the target upload recorded. The wide polling interval does
 not establish an exact upload time. Opening the Mac fixture is itself a
@@ -71,7 +87,7 @@ stops on cancellation or uncertainty. It does not suspend Notes, disable
 autosave, or infer a dirty editor from a running application.
 
 The first coordination trial reached its two-minute limit without a GUI
-signal: no append was attempted. A fresh coordinated trial remains pending.
+signal: no append was attempted. Further trials were stopped at contributor closeout; no fresh trial is requested.
 Even a sampled dirty window does not by itself prove that the editor was
 dirty at the exact native commit instant. The default running-Notes refusal
 remains in place.
