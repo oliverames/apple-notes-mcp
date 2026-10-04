@@ -321,10 +321,10 @@ describe("pageNoteBlocks", () => {
   });
 
   it("reads the byte cap from the environment", () => {
-    expect(blocksMaxResponseBytes({})).toBe(4 * 1024 * 1024);
+    expect(blocksMaxResponseBytes({})).toBe(3 * 1024 * 1024);
     expect(blocksMaxResponseBytes({ APPLE_NOTES_MCP_BLOCKS_MAX_BYTES: "1000" })).toBe(1000);
     expect(blocksMaxResponseBytes({ APPLE_NOTES_MCP_BLOCKS_MAX_BYTES: "nope" })).toBe(
-      4 * 1024 * 1024
+      3 * 1024 * 1024
     );
   });
 });

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   installStructuredText,
-  MAX_MIRROR_CHARS,
   SHOWN_ABOVE,
   STRUCTURED_TEXT_PREFIX,
   structuredTextLine,
@@ -48,7 +47,7 @@ describe("withStructuredText", () => {
   });
 });
 
-describe("structuredTextLine size bounds", () => {
+describe("structuredTextLine content preservation", () => {
   it("elides a long string the text already shows, at any depth", () => {
     const body = "x".repeat(500);
     const m = parse(structuredTextLine({ content: body, nested: [{ body }], hash: "h" }, body));
@@ -59,19 +58,17 @@ describe("structuredTextLine size bounds", () => {
     expect(parse(structuredTextLine({ id: "n1" }, "id n1"))).toEqual({ id: "n1" });
   });
 
-  it("over budget, drops only large top-level fields and names them", () => {
+  it("keeps large fields that are absent from the original text", () => {
     const notes = Array.from({ length: 2000 }, (_, i) => ({ id: `note-${i}`, title: "T" }));
-    const line = structuredTextLine(
-      { notes, count: 2000, page: { hasMore: true, nextOffset: 50 }, contentHash: "sha256:x" },
-      ""
-    );
-    expect(line.length).toBeLessThan(MAX_MIRROR_CHARS);
-    expect(parse(line)).toEqual({
+    const structured = {
+      notes,
       count: 2000,
       page: { hasMore: true, nextOffset: 50 },
       contentHash: "sha256:x",
-      _omitted: ["notes"],
-    });
+    };
+    const line = structuredTextLine(structured, "Found 2000 notes");
+    expect(line.length).toBeGreaterThan(16_384);
+    expect(parse(line)).toEqual(structured);
   });
 });
 

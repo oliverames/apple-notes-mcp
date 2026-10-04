@@ -578,11 +578,12 @@ export function decodeCompressedNoteBlocks(compressed: Uint8Array): NoteBlocksDo
 
 /**
  * Default ceiling on the serialized blocks in one get-note-blocks response:
- * 4 MiB, well under the 10 MiB per-message limit of the MCP SDK stdio reader.
+ * 3 MiB leaves room under the MCP SDK stdio reader's 10 MiB message limit
+ * for both structuredContent and its text mirror, including JSON escaping.
  */
-const DEFAULT_BLOCKS_MAX_BYTES = 4 * 1024 * 1024;
+const DEFAULT_BLOCKS_MAX_BYTES = 3 * 1024 * 1024;
 
-/** APPLE_NOTES_MCP_BLOCKS_MAX_BYTES when it is a positive number, else 4 MiB. */
+/** APPLE_NOTES_MCP_BLOCKS_MAX_BYTES when it is a positive number, else 3 MiB. */
 export function blocksMaxResponseBytes(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.APPLE_NOTES_MCP_BLOCKS_MAX_BYTES;
   if (raw !== undefined) {

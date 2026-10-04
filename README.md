@@ -212,11 +212,11 @@ That line carries every token a follow-up call needs: the `contentHash`
 revision token for `expectedContentHash`, new ids, `nativeTags`, `writable`,
 `page.nextOffset`, and an error's `code`, `committed` and `indeterminate`. A
 long value the text above already shows in full, such as the body from
-`get-note-content`, appears as `"[shown in full above]"` instead of twice. If
-the line would still exceed 16 KB, fields larger than 1 KB (usually a list
-already printed above) are left out and named in `_omitted`. Tools whose text
-already is that JSON get no extra block. `structuredContent` itself is
-unchanged.
+`get-note-content`, appears as `"[shown in full above]"` instead of twice.
+Every other field is retained, including large block arrays and native
+object IDs. Individual tools control response limits and pagination; the
+mirror never drops fields because of their size. Tools whose text already
+is that JSON get no extra block. `structuredContent` itself is unchanged.
 
 ### MCP resources & prompts
 
@@ -697,7 +697,8 @@ numbers the decoder deliberately does not interpret.
 | `limit` | number | No | Maximum blocks per page (default 500, max 5000) |
 
 A page also stops early to stay under `APPLE_NOTES_MCP_BLOCKS_MAX_BYTES`
-(default 4 MB). `paragraphUuid` is not unique: Notes copies it when a paragraph
+(default 3 MiB, leaving room for the structured response and its text mirror).
+`paragraphUuid` is not unique: Notes copies it when a paragraph
 is split. Link URLs are returned as stored, and `linkSafe` is false for schemes
 other than http(s), `notes:`, `applenotes:` and `mailto:`. Errors carry a
 stable code in brackets, such as `[encrypted]` or `[no-full-disk-access]`.
@@ -2790,7 +2791,7 @@ All configuration is optional — the server works out of the box. Override beha
 | `APPLE_NOTES_MCP_TIMEOUT_MS` | `30000` (30 s) | Total AppleScript operation timeout, including retry attempts and delays. Raise it if full-library operations (large searches, exports) time out on a big Notes library. Per-call `timeoutMs` options still win, and a write tool's `timeoutSeconds` argument overrides it for that call. |
 | `APPLE_NOTES_MCP_TEMPLATE_DIR` | `~/Library/Application Support/apple-notes-mcp/templates` | Absolute directory of the saved Markdown template library (`save-markdown-template` and friends). |
 | `APPLE_NOTES_MCP_EXPORT_MAX_BYTES` | `8388608` (8 MB) | Largest response `export-notes-json` sends; a page closes early to stay under it. `export-notes-markdown` returns inline Markdown up to half of it. The default sits below the 10 MB per-message limit of MCP SDK stdio clients, which drop the connection on anything larger. Raise it only if your MCP client accepts bigger messages. |
-| `APPLE_NOTES_MCP_BLOCKS_MAX_BYTES` | `4194304` (4 MB) | Largest block payload one [`get-note-blocks`](#get-note-blocks) page returns; the page closes early to stay under it, and a single oversized paragraph comes back with `textOmitted: true`. [`get-note-structure`](#get-note-structure) also omits note text larger than this. A [`list-note-paragraphs`](#list-note-paragraphs) or [`list-note-links`](#list-note-links) page also stops early to stay under it. |
+| `APPLE_NOTES_MCP_BLOCKS_MAX_BYTES` | `3145728` (3 MiB) | Largest block payload one [`get-note-blocks`](#get-note-blocks) page returns; the page closes early to stay under it, and a single oversized paragraph comes back with `textOmitted: true`. [`get-note-structure`](#get-note-structure) also omits note text larger than this. A [`list-note-paragraphs`](#list-note-paragraphs) or [`list-note-links`](#list-note-links) page also stops early to stay under it. |
 | `APPLE_NOTES_MCP_MAX_RETRIES` | `2` | Maximum attempts for a read-only AppleScript call that fails with a **transient** error (Notes.app busy / not responding / lost connection). `2` means one retry; set `1` to fail fast with no retries. Retries share the single `APPLE_NOTES_MCP_TIMEOUT_MS` budget rather than each getting a fresh one, and a retry is skipped when under a second of that budget remains — so this is a ceiling, not a guarantee. In particular a call that exhausts the budget with a **timeout** has no time left to retry by construction. Mutating operations run once because a timeout can occur after Notes.app applied the change. Non-transient errors (e.g. "note not found") never retry. |
 | `APPLE_NOTES_MCP_RETRY_DELAY_MS` | `1000` (1 s) | Base delay before the first retry; subsequent retries back off exponentially (1s, 2s, 4s, ...). |
 | `APPLE_NOTES_MCP_ENABLE_PRIVATE` | unset | Set to `1` to allow the opt-in [private helper](#private-helper-opt-in-unsupported-apple-api). Any other value keeps it off. |

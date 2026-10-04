@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+## [2.9.35] - 2026-10-04
+
+### Fixed
+
+- Preserve large structured response fields in the text mirror used by clients
+  that cannot expose `structuredContent`. Block pages, native object IDs and
+  checklist IDs are no longer omitted when the JSON exceeds 16 KB. Long strings
+  already present verbatim in the original text remain deduplicated, and each
+  tool retains its pagination. Lower the shared default block/page budget to
+  3 MiB to leave room for both structured data and its JSON-escaped text mirror
+  within the SDK's 10 MiB stdio message limit. Explicit configured limits remain
+  supported.
+
 ## [2.9.34] - 2026-10-02
 
 ### Security

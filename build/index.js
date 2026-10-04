@@ -46671,7 +46671,7 @@ function decodeCompressedNoteBlocks(compressed) {
   }
   return decodeNoteBlocks(data);
 }
-var DEFAULT_BLOCKS_MAX_BYTES = 4 * 1024 * 1024;
+var DEFAULT_BLOCKS_MAX_BYTES = 3 * 1024 * 1024;
 function blocksMaxResponseBytes(env = process.env) {
   const raw = env.APPLE_NOTES_MCP_BLOCKS_MAX_BYTES;
   if (raw !== void 0) {
@@ -53503,8 +53503,6 @@ import { isDeepStrictEqual } from "node:util";
 var STRUCTURED_TEXT_PREFIX = "structuredContent: ";
 var SHOWN_ABOVE = "[shown in full above]";
 var MIN_ELIDED_CHARS = 64;
-var MAX_MIRROR_CHARS = 16384;
-var MAX_FIELD_CHARS = 1024;
 function textOf(content) {
   return content.map(
     (item) => item && typeof item === "object" && item.type === "text" ? String(item.text ?? "") : ""
@@ -53540,17 +53538,7 @@ function textIsTheJson(content, structured) {
 }
 function structuredTextLine(structured, text2) {
   const elided = elide(structured, text2);
-  let json2 = JSON.stringify(elided);
-  if (json2.length > MAX_MIRROR_CHARS) {
-    const kept = {};
-    const omitted = [];
-    for (const [key, value] of Object.entries(elided)) {
-      if (JSON.stringify(value).length > MAX_FIELD_CHARS) omitted.push(key);
-      else kept[key] = value;
-    }
-    json2 = JSON.stringify({ ...kept, _omitted: omitted });
-  }
-  return STRUCTURED_TEXT_PREFIX + json2;
+  return STRUCTURED_TEXT_PREFIX + JSON.stringify(elided);
 }
 function withStructuredText(result) {
   const r = result;
@@ -60458,7 +60446,7 @@ ${result.markdown}`;
 registerTool(
   "get-note-blocks",
   {
-    description: "Use when: you need a note's structure, not just its text: paragraph styles (title, heading, subheading, body, monospaced, bulleted/dashed/numbered list, checklist with done state), indent, alignment, block quote, inline formatting (bold, italic, underline, strikethrough, superscript, subscript, color, highlight, links) and attachment positions, by exact id.\nReturns: one page of blocks in body order (default 500, stopped early under APPLE_NOTES_MCP_BLOCKS_MAX_BYTES, default 4 MB), whole-note summary counts, undecodedFields, and page info; while page.hasMore is true, call again with offset set to page.nextOffset. Offsets and lengths count UTF-16 code units.\nDo not use when: you want the editable HTML body (get-note-content) or Markdown (get-note-markdown).\nSafety: read-only; decodes the NoteStore database directly and requires Full Disk Access. Password-protected notes are refused. Link URLs are returned as stored; linkSafe is false for schemes other than http(s), notes, applenotes and mailto.",
+    description: "Use when: you need a note's structure, not just its text: paragraph styles (title, heading, subheading, body, monospaced, bulleted/dashed/numbered list, checklist with done state), indent, alignment, block quote, inline formatting (bold, italic, underline, strikethrough, superscript, subscript, color, highlight, links) and attachment positions, by exact id.\nReturns: one page of blocks in body order (default 500, stopped early under APPLE_NOTES_MCP_BLOCKS_MAX_BYTES, default 3 MiB), whole-note summary counts, undecodedFields, and page info; while page.hasMore is true, call again with offset set to page.nextOffset. Offsets and lengths count UTF-16 code units.\nDo not use when: you want the editable HTML body (get-note-content) or Markdown (get-note-markdown).\nSafety: read-only; decodes the NoteStore database directly and requires Full Disk Access. Password-protected notes are refused. Link URLs are returned as stored; linkSafe is false for schemes other than http(s), notes, applenotes and mailto.",
     inputSchema: {
       id: noteIdInput,
       offset: external_exports.number().int().min(0).optional().describe("Index of the first block to return (default 0); use page.nextOffset"),

@@ -19,14 +19,12 @@
  * every tool and every future field without a per-tool list that would drift,
  * and because it keeps nested data (page info, envelopes) unambiguous.
  *
- * Size is bounded two ways, so a large body is never sent twice:
- * - a long string that already appears verbatim in the tool's own text (the
- *   note body of get-note-content, a Markdown export) is replaced by
- *   {@link SHOWN_ABOVE};
- * - if the line would still exceed {@link MAX_MIRROR_CHARS}, each top-level
- *   field larger than {@link MAX_FIELD_CHARS} is left out and named in
- *   `_omitted`. Scalars (hashes, ids, codes, flags, counts) are always far
- *   below that, so they are never the ones dropped.
+ * A long string already present verbatim in the tool's own text (the note
+ * body of get-note-content, a Markdown export) is replaced by
+ * {@link SHOWN_ABOVE}. Every other value is retained, including large arrays
+ * of blocks and native object IDs that appear only in structuredContent.
+ * Response limits and pagination belong to the individual tool; the mirror
+ * must not discard data that a text-only client cannot recover elsewhere.
  *
  * No block is added when the tool's text already is that JSON document.
  * `structuredContent` itself is never modified.
@@ -43,12 +41,6 @@ export const SHOWN_ABOVE = "[shown in full above]";
 
 /** A string at least this long is elided when the text already contains it. */
 export const MIN_ELIDED_CHARS = 64;
-
-/** Target upper bound for the appended block. */
-export const MAX_MIRROR_CHARS = 16_384;
-
-/** Over budget, top-level fields whose JSON is longer than this are omitted. */
-export const MAX_FIELD_CHARS = 1_024;
 
 interface ToolResultLike {
   content?: unknown;
@@ -104,17 +96,7 @@ function textIsTheJson(content: unknown[], structured: unknown): boolean {
  */
 export function structuredTextLine(structured: Record<string, unknown>, text: string): string {
   const elided = elide(structured, text) as Record<string, unknown>;
-  let json = JSON.stringify(elided);
-  if (json.length > MAX_MIRROR_CHARS) {
-    const kept: Record<string, unknown> = {};
-    const omitted: string[] = [];
-    for (const [key, value] of Object.entries(elided)) {
-      if (JSON.stringify(value).length > MAX_FIELD_CHARS) omitted.push(key);
-      else kept[key] = value;
-    }
-    json = JSON.stringify({ ...kept, _omitted: omitted });
-  }
-  return STRUCTURED_TEXT_PREFIX + json;
+  return STRUCTURED_TEXT_PREFIX + JSON.stringify(elided);
 }
 
 /**

@@ -1,5 +1,16 @@
 # Worklog
 
+## 2026-10-04 - Preserve large text-only tool responses in fork PR #6
+
+**What changed**: Fixed the unresolved P2 review on fork PR #6. The structured-content mirror now retains every field after existing duplicate-string elision, so large block pages, native object IDs and checklist IDs remain available to text-only clients. The shared default page budget is 3 MiB, leaving room for both representations and JSON escaping under the SDK's 10 MiB stdio limit. Explicit configured limits remain supported. Updated response documentation, version 2.9.35 manifests, changelog and committed bundle.
+
+**Validation**: Three regression cases failed against the original omission behavior. All 2,551 tests in 119 files now pass with coverage thresholds, including actual registered-handler data retention and a quote/backslash-heavy multi-page response round-tripped through the SDK serializer and default reader. Lint, TypeScript, formatting, build, manifest/skill synchronization and diff checks pass. Tests use mocks and disposable fixtures; no live Notes test or personal data access was needed. Node 26.10.0 and pinned pnpm 11.9.0 were used locally; CI covers Node 22/24.
+
+**Decisions made**: Keep this proposal based on the previously reviewed upstream 2.9.34 snapshot plus this focused correction. The fork publishing guard and dependency lockfile are unchanged. The six upstream split PRs #270–#275 have merged. Writer #262 retains its maintainer evidence/staging hold and its unverified outcomes; its new merge conflicts are for that staged return. No waived GUI/phone trial was restarted.
+
+**Left off at**: The delivery target is the existing fork-sync feature branch and PR #6, whose checks and review thread record delivery status. Default branch integration remains a separate decision; no merge, release or tag is authorized by this follow-up.
+
+
 ## 2026-10-02 - Fork version guard permits published upstream syncs
 
 **Problem**: Fork PR #6 correctly raised 2.9.30 to upstream's already-published 2.9.34, but `version-guard.yml` rejected that version's npm registry entry. This fork cannot publish because `publish.yml` requires the exact upstream repository.

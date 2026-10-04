@@ -7,6 +7,12 @@
  * src/index.ts and the tool modules register (manager and database mocked).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ReadBuffer,
+  serializeMessage,
+  STDIO_DEFAULT_MAX_BUFFER_SIZE,
+} from "@modelcontextprotocol/sdk/shared/stdio.js";
+import { summarize, type NoteBlock } from "./utils/noteBlocks.js";
 
 const registered = vi.hoisted(() => new Map<string, (args: unknown) => Promise<unknown>>());
 const manager = vi.hoisted(() => ({
@@ -18,6 +24,7 @@ const manager = vi.hoisted(() => ({
   updateNoteByIdIfUnchanged: vi.fn(),
 }));
 const readRichNote = vi.hoisted(() => vi.fn());
+const readNoteBlocks = vi.hoisted(() => vi.fn());
 const OLD_HASH = `sha256:${"a".repeat(64)}`;
 const NEW_HASH = `sha256:${"b".repeat(64)}`;
 const OLD_BODY = `<div><h1>Groceries</h1></div><div>${"Milk, eggs, bread and butter. ".repeat(20)}</div>`;
@@ -62,6 +69,10 @@ vi.mock("@/utils/noteRichText.js", async (importOriginal) => ({
     revision: "r1",
   })),
   richContentHash: vi.fn((body: string) => (body === OLD_BODY ? OLD_HASH : NEW_HASH)),
+}));
+vi.mock(import("@/utils/noteBlocks.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readNoteBlocks,
 }));
 
 type Response = {
@@ -129,6 +140,37 @@ describe("get-note-content text carries the revision token (#264)", () => {
 });
 
 describe("get-native-objects text carries the rich content hash (#264)", () => {
+  it("retains every object and checklist ID when the result exceeds 16 KB", async () => {
+    const objects = Array.from({ length: 250 }, (_, i) => ({
+      id: `object-${i}`,
+      type: "checklist",
+      start: i * 100,
+      length: 100,
+    }));
+    const checklistItems = objects.map((object, i) => ({
+      id: `checklist-${i}`,
+      start: object.start,
+      text: `Item ${i}: ${"synthetic text ".repeat(8)}`,
+      done: false,
+    }));
+    readRichNote.mockReturnValue({
+      objects,
+      checklistItems,
+      links: [],
+      nativeTags: ["synthetic"],
+      hasNativeObjects: true,
+      hasChecklist: true,
+      revision: "r1",
+      objectData: [],
+    });
+    const r = await call("get-native-objects", { id: ID });
+    expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toBe("Native objects read from the exact note");
+    expect(JSON.stringify(r.structuredContent).length).toBeGreaterThan(16_384);
+    expect(mirrored(r)).toEqual(r.structuredContent);
+    expect(mirrored(r)).toMatchObject({ contentHash: OLD_HASH, objects, checklistItems });
+  });
+
   it("puts contentHash, nativeTags and object ids in the text", async () => {
     readRichNote.mockReturnValue({
       text: "Buy milk",
@@ -152,6 +194,114 @@ describe("get-native-objects text carries the rich content hash (#264)", () => {
       id: ID,
       nativeTags: ["groceries"],
       checklistItems: [{ id: "aa", done: false }],
+    });
+  });
+});
+
+describe("get-note-blocks text preserves large paginated results", () => {
+  it("keeps escaped block pages within the SDK stdio limit without losing blocks", async () => {
+    // Quotes and backslashes expand twice: in the mirror's JSON and again in
+    // the enclosing JSON-RPC string. Count the complete wire response, not
+    // only the structuredContent payload.
+    const text = '"\\'.repeat(1050);
+    const blocks: NoteBlock[] = Array.from({ length: 500 }, (_, index) => ({
+      index,
+      start: index * (text.length + 1),
+      length: text.length,
+      text,
+      style: "body",
+      styleType: null,
+      indent: 0,
+      alignment: "left",
+      blockQuote: false,
+      runs: [{ start: index * (text.length + 1), length: text.length, text }],
+      attachments: [],
+    }));
+    readNoteBlocks.mockReturnValue({
+      text: blocks.map((block) => block.text).join("\n"),
+      textLength: blocks.length * (text.length + 1) - 1,
+      blocks,
+      attachments: [],
+      summary: summarize(blocks, []),
+      undecodedFields: { attributeRun: {}, paragraphStyle: {} },
+    });
+
+    vi.stubEnv("APPLE_NOTES_MCP_BLOCKS_MAX_BYTES", undefined);
+    try {
+      const received: NoteBlock[] = [];
+      let pages = 0;
+      let offset = 0;
+      while (offset < blocks.length) {
+        const result = await call("get-note-blocks", { id: ID, offset });
+        expect(result.isError).toBeFalsy();
+        const wire = Buffer.from(serializeMessage({ jsonrpc: "2.0", id: pages, result }));
+        const reader = new ReadBuffer();
+        reader.append(wire);
+        const message = reader.readMessage();
+        if (!message || !("result" in message)) throw new Error("expected a tool response");
+        expect(wire.length).toBeLessThanOrEqual(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+        const response = message.result as Response;
+        const mirror = mirrored(response);
+        expect(mirror).toEqual(response.structuredContent);
+        const page = mirror.page as {
+          offset: number;
+          returned: number;
+          hasMore: boolean;
+          nextOffset?: number;
+        };
+        expect(page.offset).toBe(offset);
+        expect(page.returned).toBeGreaterThan(0);
+        expect(mirror.blocks).toEqual(blocks.slice(offset, offset + page.returned));
+        received.push(...(mirror.blocks as NoteBlock[]));
+        offset += page.returned;
+        expect(page.hasMore).toBe(offset < blocks.length);
+        expect(page.nextOffset).toBe(page.hasMore ? offset : undefined);
+        pages++;
+      }
+      expect(pages).toBeGreaterThan(1);
+      expect(received).toEqual(blocks);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("returns the full default page and continuation offset through text alone", async () => {
+    const blocks: NoteBlock[] = Array.from({ length: 501 }, (_, index) => ({
+      index,
+      start: index * 81,
+      length: 80,
+      text: `${index}: ${"x".repeat(80)}`.slice(0, 80),
+      style: "body",
+      styleType: null,
+      indent: 0,
+      alignment: "left",
+      blockQuote: false,
+      runs: [],
+      attachments: [],
+    }));
+    readNoteBlocks.mockReturnValue({
+      text: blocks.map((block) => block.text).join("\n"),
+      textLength: 501 * 81 - 1,
+      blocks,
+      attachments: [],
+      summary: summarize(blocks, []),
+      undecodedFields: { attributeRun: {}, paragraphStyle: {} },
+    });
+    const first = await call("get-note-blocks", { id: ID });
+    expect(first.isError).toBeFalsy();
+    expect(first.content[0].text).toContain("returned 500 from offset 0");
+    expect(JSON.stringify(first.structuredContent).length).toBeGreaterThan(16_384);
+    const firstText = mirrored(first);
+    expect(firstText).toEqual(first.structuredContent);
+    expect(firstText.blocks).toEqual(blocks.slice(0, 500));
+    expect(firstText.page).toMatchObject({ hasMore: true, nextOffset: 500 });
+
+    const nextOffset = (firstText.page as { nextOffset: number }).nextOffset;
+    const second = await call("get-note-blocks", { id: ID, offset: nextOffset });
+    expect(second.isError).toBeFalsy();
+    expect(mirrored(second)).toMatchObject({
+      blocks: blocks.slice(500),
+      page: { offset: 500, returned: 1, hasMore: false },
     });
   });
 });
