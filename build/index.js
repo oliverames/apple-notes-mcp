@@ -24090,10 +24090,10 @@ var require_turndown_cjs = __commonJS({
         if (!content) return "";
         content = content.replace(/\r?\n|\r/g, " ");
         var extraSpace = /^`|^ .*?[^ ].* $|`$/.test(content) ? " " : "";
-        var delimiter = "`";
+        var delimiter2 = "`";
         var matches = content.match(/`+/gm) || [];
-        while (matches.indexOf(delimiter) !== -1) delimiter = delimiter + "`";
-        return delimiter + extraSpace + content + extraSpace + delimiter;
+        while (matches.indexOf(delimiter2) !== -1) delimiter2 = delimiter2 + "`";
+        return delimiter2 + extraSpace + content + extraSpace + delimiter2;
       }
     };
     rules.image = {
@@ -24477,14 +24477,14 @@ var require_turndown_cjs = __commonJS({
         } else if (node.nodeType === 1) {
           replacement = replacementForNode.call(self, node);
         }
-        return join33(output, replacement);
+        return join34(output, replacement);
       }, "");
     }
     function postProcess(output) {
       var self = this;
       this.rules.forEach(function(rule) {
         if (typeof rule.append === "function") {
-          output = join33(output, rule.append(self.options));
+          output = join34(output, rule.append(self.options));
         }
       });
       return output.replace(/^[\t\r\n]+/, "").replace(/[\t\r\n\s]+$/, "");
@@ -24496,7 +24496,7 @@ var require_turndown_cjs = __commonJS({
       if (whitespace.leading || whitespace.trailing) content = content.trim();
       return whitespace.leading + rule.replacement(content, node, this.options) + whitespace.trailing;
     }
-    function join33(output, replacement) {
+    function join34(output, replacement) {
       var s1 = trimTrailingNewlines(output);
       var s2 = trimLeadingNewlines(replacement);
       var nls = Math.max(output.length - s1.length, replacement.length - s2.length);
@@ -49380,7 +49380,9 @@ function runDoctor(manager, capabilityMatrix = getCapabilityMatrix) {
   }
   return matrix ? { healthy, checks, runtimeOS: matrix.runtimeOS, features: matrix.features } : { healthy, checks };
 }
-function fdaRemediation(execPath = process.execPath) {
+function fdaRemediation(execPath = process.execPath, env = process.env) {
+  if (env.APPLE_NOTES_MCP_BROKERED === "1")
+    return `This server runs under the permission broker, so the grant belongs to the broker app, not to Node or the MCP host. In System Settings > Privacy & Security > Full Disk Access, click + and add ${env.APPLE_NOTES_MCP_BROKER_APP || "Apple Notes MCP Broker.app"} (press Cmd+Shift+G in the file picker to paste the path), turn it on, and re-run doctor. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`;
   const versioned = /\/(\.nvm|\.fnm|\.volta|\.asdf|\.local\/share\/mise|\.nodenv|n\/versions)\//.test(execPath);
   return `In System Settings > Privacy & Security > Full Disk Access, click + and add the Node binary running this server: ${execPath} (press Cmd+Shift+G in the file picker to paste the path). Under Claude Desktop that entry is required: Claude Desktop launches servers as their own responsible process, so a grant on Claude.app does not reach them. When the server runs from a terminal (Terminal, iTerm2) or an editor, granting that app is enough. Then fully quit (Cmd+Q) and relaunch the host app and re-run doctor; if it still reports not granted, restart the Mac. ` + (versioned ? "This Node lives under a version manager, so the path changes with each Node version and the grant has to be added again after switching; pointing the MCP config at one fixed Node path avoids that. " : "") + `Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`;
 }
@@ -52889,16 +52891,16 @@ var NOTE_PLACEHOLDERS = [
   "exportStem"
 ];
 var PLACEHOLDER_MODIFIERS = ["raw", "yaml"];
-var wrap2 = (before, after = "", join33) => ({
+var wrap2 = (before, after = "", join34) => ({
   mode: "wrap",
   before,
   after,
-  ...join33 ? { join: join33 } : {}
+  ...join34 ? { join: join34 } : {}
 });
-var pattern = (value, join33) => ({
+var pattern = (value, join34) => ({
   mode: "pattern",
   value,
-  ...join33 ? { join: join33 } : {}
+  ...join34 ? { join: join34 } : {}
 });
 var STANDARD = {
   schemaVersion: 1,
@@ -58018,6 +58020,658 @@ function registerNativeTagsBridge(server2, manager) {
   );
 }
 
+// src/services/broker.ts
+import { spawnSync as spawnSync3 } from "node:child_process";
+import {
+  chmodSync as chmodSync2,
+  existsSync as existsSync14,
+  mkdirSync as mkdirSync9,
+  mkdtempSync as mkdtempSync8,
+  readFileSync as readFileSync5,
+  realpathSync as realpathSync4,
+  renameSync as renameSync3,
+  rmSync as rmSync8,
+  writeFileSync as writeFileSync7
+} from "node:fs";
+import { homedir as homedir21 } from "node:os";
+import { delimiter, join as join28 } from "node:path";
+
+// src/services/brokerClient.ts
+import { connect as netConnect } from "node:net";
+var BrokerUnreachableError = class extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+    this.name = "BrokerUnreachableError";
+  }
+  code;
+};
+var MAX_ANSWER_BYTES = 65536;
+function requestBroker(socketPath, request, timeoutMs, connect = (path10) => netConnect(path10)) {
+  return new Promise((resolve10, reject) => {
+    const socket = connect(socketPath);
+    let buffered = Buffer.alloc(0);
+    let settled = false;
+    const fail = (message, code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new BrokerUnreachableError(message, code));
+    };
+    const timer = setTimeout(
+      () => fail(`The broker did not answer within ${timeoutMs} ms.`, "timeout"),
+      timeoutMs
+    );
+    socket.once("connect", () => {
+      socket.write(JSON.stringify(request) + "\n");
+    });
+    socket.on(
+      "error",
+      (error2) => fail(`Could not reach the broker at ${socketPath}: ${error2.message}`, error2.code ?? "error")
+    );
+    socket.on("close", () => fail("The broker closed the connection without answering.", "closed"));
+    const onData = (chunk) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const newline = buffered.indexOf(10);
+      if (newline < 0) {
+        if (buffered.length > MAX_ANSWER_BYTES)
+          fail("The broker's answer was too long.", "bad_answer");
+        return;
+      }
+      let answer;
+      try {
+        answer = JSON.parse(buffered.subarray(0, newline).toString("utf8"));
+      } catch {
+        fail("The broker's answer was not JSON.", "bad_answer");
+        return;
+      }
+      if (!answer || typeof answer !== "object") {
+        fail("The broker's answer was not a JSON object.", "bad_answer");
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.removeAllListeners("close");
+      socket.removeAllListeners("error");
+      socket.pause();
+      resolve10({
+        answer,
+        socket,
+        leftover: buffered.subarray(newline + 1)
+      });
+    };
+    socket.on("data", onData);
+  });
+}
+async function pingBroker(socketPath, timeoutMs = 1500) {
+  try {
+    const { answer, socket } = await requestBroker(socketPath, { type: "ping" }, timeoutMs);
+    socket.destroy();
+    return answer.type === "pong";
+  } catch {
+    return false;
+  }
+}
+
+// src/services/broker.ts
+var BROKER_PROTOCOL = 1;
+var BROKER_BUNDLE_ID = "apple-notes-mcp.broker";
+var BROKER_LABEL = BROKER_BUNDLE_ID;
+var BROKER_APP_NAME = "Apple Notes MCP Broker.app";
+var BROKER_EXECUTABLE = "apple-notes-mcp-broker";
+var BROKER_SOURCE = "native/broker/apple-notes-mcp-broker.swift";
+var BROKER_MANIFEST = "manifest.json";
+var BROKER_SOCKET = "broker.sock";
+var BROKER_SETUP_COMMAND = "apple-notes-mcp setup --broker";
+var BROKERED_ENV = "APPLE_NOTES_MCP_BROKERED";
+var BROKER_APP_ENV = "APPLE_NOTES_MCP_BROKER_APP";
+var BROKER_MODE_ENV = "APPLE_NOTES_MCP_BROKER";
+var BROKER_DIR_ENV = "APPLE_NOTES_MCP_BROKER_DIR";
+var BROKER_APP_DIR_ENV = "APPLE_NOTES_MCP_BROKER_APP_DIR";
+var BROKER_AGENT_DIR_ENV = "APPLE_NOTES_MCP_BROKER_AGENT_DIR";
+var BROKER_SIGN_IDENTITY_ENV = "APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY";
+var MAX_SOCKET_PATH_BYTES = 103;
+var brokerManifestSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  protocolVersion: external_exports.number().int(),
+  packageVersion: external_exports.string(),
+  sourceSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  binarySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  appPath: external_exports.string(),
+  agentPath: external_exports.string(),
+  socketPath: external_exports.string(),
+  logPath: external_exports.string(),
+  nodePath: external_exports.string(),
+  entryPath: external_exports.string(),
+  signing: external_exports.object({
+    identity: external_exports.string(),
+    teamId: external_exports.string().nullable(),
+    stable: external_exports.boolean()
+  }),
+  builtAt: external_exports.string(),
+  compiler: external_exports.string()
+});
+function brokerPaths(env = process.env) {
+  const home = homedir21();
+  const stateDir = env[BROKER_DIR_ENV]?.trim() || join28(home, "Library", "Application Support", "apple-notes-mcp", "broker");
+  const appDir = env[BROKER_APP_DIR_ENV]?.trim() || join28(home, "Applications");
+  const agentDir = env[BROKER_AGENT_DIR_ENV]?.trim() || join28(home, "Library", "LaunchAgents");
+  const appPath = join28(appDir, BROKER_APP_NAME);
+  return {
+    stateDir,
+    manifestPath: join28(stateDir, BROKER_MANIFEST),
+    socketPath: join28(stateDir, BROKER_SOCKET),
+    appDir,
+    appPath,
+    executablePath: join28(appPath, "Contents", "MacOS", BROKER_EXECUTABLE),
+    agentPath: join28(agentDir, `${BROKER_LABEL}.plist`),
+    logPath: join28(home, "Library", "Logs", "apple-notes-mcp-broker.log")
+  };
+}
+function defaultBrokerDeps(overrides = {}) {
+  const root = packageRoot();
+  let packageVersion = "0.0.0";
+  try {
+    packageVersion = JSON.parse(readFileSync5(join28(root, "package.json"), "utf8")).version ?? packageVersion;
+  } catch {
+  }
+  return {
+    env: process.env,
+    platform: process.platform,
+    sourcePath: join28(root, BROKER_SOURCE),
+    entryPath: join28(root, "build", "index.js"),
+    execPath: process.execPath,
+    packageVersion,
+    uid: process.getuid?.() ?? -1,
+    exists: existsSync14,
+    readFile: (path10) => readFileSync5(path10),
+    realpath: (path10) => realpathSync4(path10),
+    spawn: spawnSync3,
+    ping: (socketPath) => pingBroker(socketPath),
+    sleep: (ms) => new Promise((resolve10) => setTimeout(resolve10, ms)),
+    now: () => /* @__PURE__ */ new Date(),
+    ...overrides
+  };
+}
+function inspectBroker(deps = defaultBrokerDeps()) {
+  const paths = brokerPaths(deps.env);
+  const result = (reason, detail, manifest2) => ({
+    installed: manifest2 !== null,
+    ready: reason === null,
+    reason,
+    detail,
+    paths,
+    manifest: manifest2
+  });
+  if (deps.platform !== "darwin") return result("unsupported_platform", "macOS only", null);
+  const rebuild = `Run \`${BROKER_SETUP_COMMAND}\` again.`;
+  if (!deps.exists(paths.manifestPath))
+    return result("broker_not_installed", "The permission broker is not installed.", null);
+  let manifest;
+  try {
+    manifest = brokerManifestSchema.parse(
+      JSON.parse(deps.readFile(paths.manifestPath).toString("utf8"))
+    );
+  } catch {
+    return result("broker_manifest_invalid", `The broker manifest is unreadable. ${rebuild}`, null);
+  }
+  if (!deps.exists(manifest.appPath) || !deps.exists(paths.executablePath))
+    return result(
+      "broker_not_installed",
+      `The broker app is missing from ${manifest.appPath}. ${rebuild}`,
+      manifest
+    );
+  if (!deps.exists(deps.sourcePath) || manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) || manifest.protocolVersion !== BROKER_PROTOCOL)
+    return result(
+      "broker_stale",
+      `The installed broker was built from a different source than this version ships. ${rebuild}`,
+      manifest
+    );
+  if (sha256Hex(deps.readFile(paths.executablePath)) !== manifest.binarySha256)
+    return result(
+      "broker_modified",
+      `The broker binary no longer matches the checksum recorded when it was built. ${rebuild}`,
+      manifest
+    );
+  if (!deps.exists(manifest.agentPath))
+    return result(
+      "broker_agent_missing",
+      `The broker's LaunchAgent is missing (${manifest.agentPath}). ${rebuild}`,
+      manifest
+    );
+  if (!deps.exists(manifest.nodePath))
+    return result(
+      "broker_node_missing",
+      `The Node binary the broker launches is gone (${manifest.nodePath}). ${rebuild} Your grants stay with the broker app.`,
+      manifest
+    );
+  if (!deps.exists(manifest.entryPath))
+    return result(
+      "broker_entry_missing",
+      `The server entry point the broker launches is gone (${manifest.entryPath}). ${rebuild}`,
+      manifest
+    );
+  return result(null, null, manifest);
+}
+function brokerInfoPlist(packageVersion) {
+  const escape3 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>CFBundleIdentifier</key>",
+    `  <string>${BROKER_BUNDLE_ID}</string>`,
+    "  <key>CFBundleName</key>",
+    "  <string>Apple Notes MCP Broker</string>",
+    "  <key>CFBundleDisplayName</key>",
+    "  <string>Apple Notes MCP Broker</string>",
+    "  <key>CFBundleExecutable</key>",
+    `  <string>${BROKER_EXECUTABLE}</string>`,
+    "  <key>CFBundlePackageType</key>",
+    "  <string>APPL</string>",
+    "  <key>CFBundleInfoDictionaryVersion</key>",
+    "  <string>6.0</string>",
+    "  <key>CFBundleShortVersionString</key>",
+    `  <string>${escape3(packageVersion)}</string>`,
+    "  <key>CFBundleVersion</key>",
+    `  <string>${escape3(packageVersion)}</string>`,
+    "  <key>LSUIElement</key>",
+    "  <true/>",
+    "  <key>NSAppleEventsUsageDescription</key>",
+    "  <string>apple-notes-mcp reads and organizes your notes through Notes when an MCP client asks it to.</string>",
+    "</dict>",
+    "</plist>",
+    ""
+  ].join("\n");
+}
+function brokerCompileArguments(sourcePath, digestPath, outputPath) {
+  return ["swiftc", "-O", "-parse-as-library", sourcePath, digestPath, "-o", outputPath];
+}
+function brokerLaunchAgentPlist(args) {
+  const escape3 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const programArguments = [
+    args.executablePath,
+    "serve",
+    "--socket",
+    args.socketPath,
+    "--node",
+    args.nodePath,
+    "--entry",
+    args.entryPath,
+    "--log",
+    args.logPath
+  ];
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>Label</key>",
+    `  <string>${BROKER_LABEL}</string>`,
+    "  <key>AssociatedBundleIdentifiers</key>",
+    "  <array>",
+    `    <string>${BROKER_BUNDLE_ID}</string>`,
+    "  </array>",
+    "  <key>ProgramArguments</key>",
+    "  <array>",
+    ...programArguments.map((arg) => `    <string>${escape3(arg)}</string>`),
+    "  </array>",
+    "  <key>RunAtLoad</key>",
+    "  <true/>",
+    "  <key>KeepAlive</key>",
+    "  <true/>",
+    "  <key>StandardErrorPath</key>",
+    `  <string>${escape3(args.logPath)}</string>`,
+    "</dict>",
+    "</plist>",
+    ""
+  ].join("\n");
+}
+function chooseSigningIdentity(securityOutput, explicit) {
+  if (explicit && explicit.trim()) {
+    const value = explicit.trim();
+    return { identity: value, name: value === "-" ? "ad-hoc" : value };
+  }
+  const identities = [...securityOutput.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/gm)].map(
+    (m) => ({ identity: m[1], name: m[2] })
+  );
+  for (const prefix of ["Developer ID Application:", "Apple Development:"]) {
+    const found = identities.find((id2) => id2.name.startsWith(prefix));
+    if (found) return found;
+  }
+  return { identity: "-", name: "ad-hoc" };
+}
+function parseTeamId(codesignOutput) {
+  if (/Signature=adhoc/.test(codesignOutput)) return null;
+  const match = codesignOutput.match(/^TeamIdentifier=(.+)$/m);
+  const team = match?.[1]?.trim();
+  return team && team !== "not set" ? team : null;
+}
+function chooseNodePath(deps) {
+  let target;
+  try {
+    target = deps.realpath(deps.execPath);
+  } catch {
+    return deps.execPath;
+  }
+  for (const dir of (deps.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join28(dir, "node");
+    try {
+      if (deps.exists(candidate) && deps.realpath(candidate) === target) return candidate;
+    } catch {
+    }
+  }
+  return deps.execPath;
+}
+function parseBrokerArgs(args) {
+  const index = args.indexOf("--sign-identity");
+  return {
+    checkOnly: args.includes("--check"),
+    uninstall: args.includes("--uninstall"),
+    signIdentity: index >= 0 ? args[index + 1] : void 0
+  };
+}
+function launchctl(deps, args) {
+  return deps.spawn("/bin/launchctl", args, { encoding: "utf8", timeout: 3e4 });
+}
+async function waitForBroker(deps, socketPath) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (await deps.ping(socketPath)) return true;
+    await deps.sleep(250);
+  }
+  return false;
+}
+async function setupBroker(options, deps = defaultBrokerDeps()) {
+  const steps = [];
+  const warnings = [];
+  const paths = brokerPaths(deps.env);
+  const mode = options.uninstall ? "uninstall" : options.checkOnly ? "check" : "install";
+  const finish = async () => {
+    const installation = inspectBroker(deps);
+    const running = mode !== "uninstall" && installation.installed ? await deps.ping(paths.socketPath) : false;
+    const ok2 = steps.every((s) => s.ok) && (mode === "uninstall" ? !installation.installed : installation.ready && running);
+    return { ok: ok2, mode, steps, installation, running, warnings };
+  };
+  const domain = `gui/${deps.uid}`;
+  if (deps.platform !== "darwin") {
+    steps.push({ step: "platform", ok: false, detail: "macOS only" });
+    return finish();
+  }
+  if (mode === "check") {
+    const installation = inspectBroker(deps);
+    steps.push({
+      step: "inspect installed broker",
+      ok: installation.ready,
+      detail: installation.ready ? installation.paths.appPath : installation.detail ?? void 0
+    });
+    if (installation.manifest && !installation.manifest.signing.stable)
+      warnings.push(adHocWarning());
+    return finish();
+  }
+  if (mode === "uninstall") {
+    launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
+    steps.push({ step: "stop LaunchAgent", ok: true });
+    rmSync8(paths.agentPath, { force: true });
+    rmSync8(paths.appPath, { recursive: true, force: true });
+    rmSync8(paths.manifestPath, { force: true });
+    rmSync8(paths.socketPath, { force: true });
+    steps.push({ step: "remove broker", ok: true, detail: paths.appPath });
+    warnings.push(
+      `The Full Disk Access and Automation entries for "Apple Notes MCP Broker" stay in System Settings until you remove them, or run \`tccutil reset All ${BROKER_BUNDLE_ID}\`.`
+    );
+    return finish();
+  }
+  if (Buffer.byteLength(paths.socketPath) > MAX_SOCKET_PATH_BYTES) {
+    steps.push({
+      step: "socket path",
+      ok: false,
+      detail: `${paths.socketPath} is longer than ${MAX_SOCKET_PATH_BYTES} bytes. Set ${BROKER_DIR_ENV} to a shorter directory.`
+    });
+    return finish();
+  }
+  if (!deps.exists(deps.sourcePath)) {
+    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
+    return finish();
+  }
+  if (!deps.exists(deps.entryPath)) {
+    steps.push({
+      step: "locate server entry point",
+      ok: false,
+      detail: `${deps.entryPath} is missing. Build the package first.`
+    });
+    return finish();
+  }
+  if (/[\\/]_npx[\\/]/.test(deps.entryPath))
+    warnings.push(
+      "This copy runs from the npx cache, which npx may clear or replace. For the broker, install the package globally (`npm i -g apple-notes-mcp`) and run setup from that copy."
+    );
+  const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
+  steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
+  const version3 = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
+  if (version3.status !== 0) {
+    steps.push({
+      step: "find compiler",
+      ok: false,
+      detail: "No Swift compiler found. Install the Command Line Tools with `xcode-select --install`."
+    });
+    return finish();
+  }
+  const compiler = String(version3.stdout || version3.stderr || "").split("\n").find((line) => line.includes("Swift version"))?.trim() || "swiftc";
+  steps.push({ step: "find compiler", ok: true, detail: compiler });
+  mkdirSync9(paths.stateDir, { recursive: true, mode: 448 });
+  chmodSync2(paths.stateDir, 448);
+  mkdirSync9(paths.appDir, { recursive: true });
+  const staging = mkdtempSync8(join28(paths.appDir, ".apple-notes-mcp-broker-staging-"));
+  try {
+    const stagedApp = join28(staging, BROKER_APP_NAME);
+    const macosDir = join28(stagedApp, "Contents", "MacOS");
+    mkdirSync9(macosDir, { recursive: true });
+    const stagedBinary = join28(macosDir, BROKER_EXECUTABLE);
+    const digestPath = join28(staging, "source-digest.swift");
+    writeFileSync7(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
+    writeFileSync7(join28(stagedApp, "Contents", "Info.plist"), brokerInfoPlist(deps.packageVersion));
+    const compile = deps.spawn(
+      "/usr/bin/xcrun",
+      brokerCompileArguments(deps.sourcePath, digestPath, stagedBinary),
+      { encoding: "utf8", timeout: 3e5 }
+    );
+    if (compile.status !== 0) {
+      steps.push({
+        step: "compile",
+        ok: false,
+        detail: String(compile.stderr || compile.error?.message || "swiftc failed").slice(0, 4e3)
+      });
+      return finish();
+    }
+    rmSync8(digestPath, { force: true });
+    steps.push({ step: "compile", ok: true });
+    const identities = deps.spawn(
+      "/usr/bin/security",
+      ["find-identity", "-v", "-p", "codesigning"],
+      { encoding: "utf8" }
+    );
+    const signing = chooseSigningIdentity(
+      String(identities.stdout ?? ""),
+      options.signIdentity ?? deps.env[BROKER_SIGN_IDENTITY_ENV]
+    );
+    const sign = deps.spawn(
+      "/usr/bin/codesign",
+      [
+        "--force",
+        "--sign",
+        signing.identity,
+        "--identifier",
+        BROKER_BUNDLE_ID,
+        "--timestamp=none",
+        stagedApp
+      ],
+      { encoding: "utf8", timeout: 6e4 }
+    );
+    if (sign.status !== 0) {
+      steps.push({
+        step: "sign",
+        ok: false,
+        detail: `${signing.name}: ${String(sign.stderr || "codesign failed").trim()}`
+      });
+      return finish();
+    }
+    const described = deps.spawn("/usr/bin/codesign", ["-dv", "--verbose=2", stagedApp], {
+      encoding: "utf8"
+    });
+    const teamId = parseTeamId(String(described.stderr ?? "") + String(described.stdout ?? ""));
+    const stable = teamId !== null;
+    steps.push({
+      step: "sign",
+      ok: true,
+      detail: stable ? `${signing.name} (team ${teamId})` : "ad-hoc"
+    });
+    if (!stable) warnings.push(adHocWarning());
+    const hello = deps.spawn(stagedBinary, [], {
+      input: JSON.stringify({ type: "hello" }) + "\n",
+      encoding: "utf8",
+      timeout: 1e4,
+      killSignal: "SIGKILL"
+    });
+    let handshake = null;
+    try {
+      handshake = JSON.parse(String(hello.stdout ?? "").trim());
+    } catch {
+      handshake = null;
+    }
+    if (handshake?.protocolVersion !== BROKER_PROTOCOL || handshake?.sourceSha256 !== sourceSha) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: handshake ? `broker reported protocol ${String(handshake.protocolVersion)}, source ${String(handshake.sourceSha256)}` : `no valid hello (exit ${hello.status})`
+      });
+      return finish();
+    }
+    steps.push({ step: "handshake", ok: true });
+    launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
+    rmSync8(paths.appPath, { recursive: true, force: true });
+    renameSync3(stagedApp, paths.appPath);
+    const nodePath = chooseNodePath(deps);
+    const manifest = {
+      schemaVersion: 1,
+      protocolVersion: BROKER_PROTOCOL,
+      packageVersion: deps.packageVersion,
+      sourceSha256: sourceSha,
+      binarySha256: sha256Hex(deps.readFile(paths.executablePath)),
+      appPath: paths.appPath,
+      agentPath: paths.agentPath,
+      socketPath: paths.socketPath,
+      logPath: paths.logPath,
+      nodePath,
+      entryPath: deps.entryPath,
+      signing: { identity: signing.name, teamId, stable },
+      builtAt: deps.now().toISOString(),
+      compiler
+    };
+    writeFileSync7(paths.manifestPath, JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
+    steps.push({ step: "install app", ok: true, detail: paths.appPath });
+    mkdirSync9(join28(paths.agentPath, ".."), { recursive: true });
+    writeFileSync7(
+      paths.agentPath,
+      brokerLaunchAgentPlist({
+        executablePath: paths.executablePath,
+        socketPath: paths.socketPath,
+        nodePath,
+        entryPath: deps.entryPath,
+        logPath: paths.logPath
+      }),
+      { mode: 420 }
+    );
+    const bootstrap = launchctl(deps, ["bootstrap", domain, paths.agentPath]);
+    if (bootstrap.status !== 0) {
+      steps.push({
+        step: "start LaunchAgent",
+        ok: false,
+        detail: String(bootstrap.stderr || bootstrap.stdout || "launchctl bootstrap failed").trim()
+      });
+      return finish();
+    }
+    steps.push({ step: "start LaunchAgent", ok: true, detail: paths.agentPath });
+  } finally {
+    rmSync8(staging, { recursive: true, force: true });
+  }
+  const answered = await waitForBroker(deps, paths.socketPath);
+  steps.push({
+    step: "broker answers",
+    ok: answered,
+    detail: answered ? paths.socketPath : `no answer on ${paths.socketPath}; see ${paths.logPath}`
+  });
+  return finish();
+}
+function adHocWarning() {
+  return "The broker is ad-hoc signed, so macOS ties its grants to this exact build: after every rebuild, grant Full Disk Access and Automation again. A Developer ID or Apple Development identity in the keychain (or --sign-identity) keeps grants across rebuilds.";
+}
+function formatBrokerSetup(report) {
+  const lines = ["Apple Notes MCP permission broker", ""];
+  for (const step of report.steps)
+    lines.push(`${step.ok ? "\u2713" : "\u2717"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
+  for (const warning of report.warnings) lines.push(`! ${warning}`);
+  lines.push("");
+  const app = report.installation.paths.appPath;
+  if (report.mode === "uninstall") {
+    lines.push(
+      report.ok ? "The broker is removed. MCP clients now run the server in-process again." : "The broker was not fully removed. Fix the failed step above and run it again."
+    );
+  } else if (report.ok) {
+    lines.push(
+      `The broker is ${report.mode === "check" ? "installed and" : "installed and"} running. MCP clients that launch apple-notes-mcp now reach it through the broker.`,
+      "",
+      "Grant it access once:",
+      `  1. System Settings > Privacy & Security > Full Disk Access: click +, add ${app}, and turn it on.`,
+      "  2. The first Notes request through the broker asks to let Apple Notes MCP Broker control Notes. Click Allow.",
+      "",
+      "Restart your MCP client so it starts a fresh apple-notes-mcp process."
+    );
+  } else if (report.mode === "check") {
+    lines.push(
+      report.installation.installed && !report.running && report.installation.ready ? `The broker is installed but not answering. Check ${report.installation.paths.logPath}, or run \`${BROKER_SETUP_COMMAND}\` again.` : `Run \`${BROKER_SETUP_COMMAND}\` to install it.`
+    );
+  } else {
+    lines.push("The broker was not installed. Fix the failed step above and run setup again.");
+  }
+  return lines.join("\n");
+}
+var proxyFallbackReason = null;
+function recordBrokerFallback(reason) {
+  proxyFallbackReason = reason;
+}
+function brokerStatus(deps = defaultBrokerDeps()) {
+  const inUse = deps.env[BROKERED_ENV] === "1";
+  let installation = null;
+  try {
+    installation = inspectBroker(deps);
+  } catch {
+    installation = null;
+  }
+  const manifest = installation?.manifest ?? null;
+  const base = {
+    inUse,
+    installed: installation?.installed ?? false,
+    ready: installation?.ready ?? false,
+    appPath: inUse ? deps.env[BROKER_APP_ENV] ?? manifest?.appPath ?? null : manifest?.appPath ?? null,
+    stableSigning: manifest ? manifest.signing.stable : null,
+    fallbackReason: inUse ? null : proxyFallbackReason
+  };
+  let detail;
+  if (inUse)
+    detail = `In use: this server runs under ${base.appPath ?? "the broker app"}, which holds the Full Disk Access and Automation grants.`;
+  else if (!base.installed)
+    detail = `Not installed. Grants apply to the app or Node binary that launches this server. \`${BROKER_SETUP_COMMAND}\` moves them to one signed app.`;
+  else if (deps.env[BROKER_MODE_ENV] === "off")
+    detail = `Installed but turned off with ${BROKER_MODE_ENV}=off; running in-process.`;
+  else
+    detail = `Installed but not in use; running in-process.${base.fallbackReason ? ` ${base.fallbackReason}` : ""}${installation?.detail ? ` ${installation.detail}` : ""}`;
+  return { ...base, detail };
+}
+
 // src/tools/nativeOperations.ts
 var VERIFIED_BACKGROUND = /* @__PURE__ */ new Set([
   "append-native",
@@ -58236,7 +58890,9 @@ function registerNativeOperations(server2, manager) {
           ])
         ),
         unavailable: UNAVAILABLE,
-        ...getCapabilityMatrix()
+        ...getCapabilityMatrix(),
+        // Whether this process runs under the permission broker (#40).
+        broker: brokerStatus()
       };
     },
     true
@@ -58464,8 +59120,8 @@ function registerNativeOperations(server2, manager) {
 }
 
 // src/setupShortcuts.ts
-import { spawnSync as spawnSync3 } from "node:child_process";
-import { existsSync as existsSync14 } from "node:fs";
+import { spawnSync as spawnSync4 } from "node:child_process";
+import { existsSync as existsSync15 } from "node:fs";
 import { release as release3 } from "node:os";
 import { dirname as dirname8, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -58485,9 +59141,9 @@ var shortcutFiles = [
 ];
 function setupShortcuts(checkOnly, dependencies = {}) {
   const status = dependencies.status || nativeTagsStatus;
-  const exists = dependencies.exists || existsSync14;
+  const exists = dependencies.exists || existsSync15;
   const open = dependencies.open || ((path10) => {
-    const result = spawnSync3("/usr/bin/open", [path10], { encoding: "utf8" });
+    const result = spawnSync4("/usr/bin/open", [path10], { encoding: "utf8" });
     return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
   });
   const baseDirectory = dependencies.baseDirectory || resolve7(dirname8(fileURLToPath2(import.meta.url)), "../shortcuts");
@@ -58554,7 +59210,7 @@ function formatShortcutSetup(report) {
 
 // src/utils/noteAudio.ts
 import { readdirSync as readdirSync5, statSync as statSync5 } from "node:fs";
-import { join as join28 } from "node:path";
+import { join as join29 } from "node:path";
 var EXTRA_AUDIO_UTIS = [
   "public.mp3",
   "public.aiff-audio",
@@ -58579,7 +59235,7 @@ function accountDirsFor(containerDir, accountIdentifier) {
   if (own) return [own];
   let names;
   try {
-    names = readdirSync5(join28(containerDir, "Accounts")).sort();
+    names = readdirSync5(join29(containerDir, "Accounts")).sort();
   } catch {
     return [];
   }
@@ -58591,8 +59247,8 @@ function resolveMediaPath(media, accountIdentifier = null, containerDir = NOTES_
   if (!id2 || !filename) return null;
   const generation = safeComponent(media?.generation);
   for (const dir of accountDirsFor(containerDir, accountIdentifier)) {
-    const base = join28(dir, "Media", id2);
-    const candidates = generation ? [join28(base, generation, filename), join28(base, filename)] : [join28(base, filename)];
+    const base = join29(dir, "Media", id2);
+    const candidates = generation ? [join29(base, generation, filename), join29(base, filename)] : [join29(base, filename)];
     for (const candidate of candidates) {
       const real = realInside(candidate, dir);
       if (real && isFile2(real)) return real;
@@ -58863,25 +59519,25 @@ function formatTranscription(result) {
 }
 
 // src/services/privateHelperBuild.ts
-import { spawnSync as spawnSync5 } from "node:child_process";
+import { spawnSync as spawnSync6 } from "node:child_process";
 import {
-  chmodSync as chmodSync2,
-  existsSync as existsSync16,
-  mkdirSync as mkdirSync9,
-  mkdtempSync as mkdtempSync8,
-  renameSync as renameSync3,
-  rmSync as rmSync8,
-  writeFileSync as writeFileSync7
+  chmodSync as chmodSync3,
+  existsSync as existsSync17,
+  mkdirSync as mkdirSync10,
+  mkdtempSync as mkdtempSync9,
+  renameSync as renameSync4,
+  rmSync as rmSync9,
+  writeFileSync as writeFileSync8
 } from "node:fs";
 import { release as release4 } from "node:os";
-import { join as join30 } from "node:path";
+import { join as join31 } from "node:path";
 
 // src/services/privateHelper.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
+import { spawnSync as spawnSync5 } from "node:child_process";
 import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync15, readFileSync as readFileSync5 } from "node:fs";
-import { homedir as homedir21 } from "node:os";
-import { dirname as dirname9, join as join29, resolve as resolve8 } from "node:path";
+import { existsSync as existsSync16, readFileSync as readFileSync6 } from "node:fs";
+import { homedir as homedir22 } from "node:os";
+import { dirname as dirname9, join as join30, resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var PRIVATE_HELPER_PROTOCOL = 1;
 var ENABLE_ENV = "APPLE_NOTES_MCP_ENABLE_PRIVATE";
@@ -58909,10 +59565,10 @@ var manifestSchema = external_exports.object({
 function packageRoot2(fromDir = dirname9(fileURLToPath3(import.meta.url))) {
   let dir = fromDir;
   for (; ; ) {
-    const candidate = join29(dir, "package.json");
-    if (existsSync15(candidate)) {
+    const candidate = join30(dir, "package.json");
+    if (existsSync16(candidate)) {
       try {
-        const pkg = JSON.parse(readFileSync5(candidate, "utf8"));
+        const pkg = JSON.parse(readFileSync6(candidate, "utf8"));
         if (pkg.name === "apple-notes-mcp") return dir;
       } catch {
       }
@@ -58926,10 +59582,10 @@ function defaultDeps2(overrides = {}) {
   return {
     env: process.env,
     platform: process.platform,
-    sourcePath: join29(packageRoot2(), HELPER_SOURCE_RELATIVE),
-    exists: existsSync15,
-    readFile: (path10) => readFileSync5(path10),
-    spawn: spawnSync4,
+    sourcePath: join30(packageRoot2(), HELPER_SOURCE_RELATIVE),
+    exists: existsSync16,
+    readFile: (path10) => readFileSync6(path10),
+    spawn: spawnSync5,
     ...overrides
   };
 }
@@ -58939,14 +59595,14 @@ function privateHelperEnabled(env = process.env) {
 function helperInstallDir(env = process.env) {
   const override = env[HELPER_DIR_ENV]?.trim();
   if (override) return override;
-  return join29(homedir21(), "Library", "Application Support", "apple-notes-mcp", "private-helper");
+  return join30(homedir22(), "Library", "Application Support", "apple-notes-mcp", "private-helper");
 }
 function sha256Hex2(data) {
   return createHash7("sha256").update(data).digest("hex");
 }
 function inspectInstallation(deps = defaultDeps2()) {
   const installDir = helperInstallDir(deps.env);
-  const binaryPath = join29(installDir, HELPER_BINARY_NAME);
+  const binaryPath = join30(installDir, HELPER_BINARY_NAME);
   const base = {
     installDir,
     binaryPath,
@@ -58964,7 +59620,7 @@ function inspectInstallation(deps = defaultDeps2()) {
   if (!deps.exists(deps.sourcePath))
     return fail("helper_not_installed", `Packaged helper source is missing: ${deps.sourcePath}`);
   base.expectedSourceSha256 = sha256Hex2(deps.readFile(deps.sourcePath));
-  const manifestPath = join29(installDir, MANIFEST_NAME);
+  const manifestPath = join30(installDir, MANIFEST_NAME);
   if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
     return fail(
       "helper_not_installed",
@@ -59222,7 +59878,7 @@ function defaultBuildDeps() {
   return {
     ...defaultDeps2(),
     osVersion: () => {
-      const r = spawnSync5("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" });
+      const r = spawnSync6("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" });
       return r.status === 0 ? r.stdout.trim() : `Darwin ${release4()}`;
     },
     now: () => /* @__PURE__ */ new Date()
@@ -59292,10 +59948,10 @@ function buildPrivateHelper(checkOnly, deps = defaultBuildDeps()) {
   const compiler = String(clangVersion.stdout || "").split("\n")[0] || "clang";
   steps.push({ step: "find compiler", ok: true, detail: compiler });
   const installDir = helperInstallDir(deps.env);
-  mkdirSync9(installDir, { recursive: true, mode: 448 });
-  const staging = mkdtempSync8(join30(installDir, ".staging-"));
+  mkdirSync10(installDir, { recursive: true, mode: 448 });
+  const staging = mkdtempSync9(join31(installDir, ".staging-"));
   try {
-    const stagedBinary = join30(staging, HELPER_BINARY_NAME);
+    const stagedBinary = join31(staging, HELPER_BINARY_NAME);
     const compile = deps.spawn(
       "/usr/bin/xcrun",
       compileArguments(deps.sourcePath, stagedBinary, sourceSha),
@@ -59371,14 +60027,14 @@ function buildPrivateHelper(checkOnly, deps = defaultBuildDeps()) {
       osVersion: deps.osVersion(),
       compiler
     };
-    chmodSync2(stagedBinary, 448);
-    renameSync3(stagedBinary, join30(installDir, HELPER_BINARY_NAME));
-    writeFileSync7(join30(installDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", {
+    chmodSync3(stagedBinary, 448);
+    renameSync4(stagedBinary, join31(installDir, HELPER_BINARY_NAME));
+    writeFileSync8(join31(installDir, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", {
       mode: 384
     });
     steps.push({ step: "install", ok: true, detail: installDir });
   } finally {
-    if (existsSync16(staging)) rmSync8(staging, { recursive: true, force: true });
+    if (existsSync17(staging)) rmSync9(staging, { recursive: true, force: true });
   }
   const installation = inspectInstallation(deps);
   steps.push({
@@ -59407,7 +60063,7 @@ function formatHelperBuild(report) {
 }
 
 // src/services/permissions.ts
-import { spawnSync as spawnSync6 } from "node:child_process";
+import { spawnSync as spawnSync7 } from "node:child_process";
 import { createInterface } from "node:readline";
 var PRIVACY = "System Settings > Privacy & Security";
 var PANE_ANCHORS = {
@@ -59651,7 +60307,7 @@ function findLaunchingApp(startPid = process.ppid, readProcess = readProcessEntr
   return null;
 }
 function readProcessEntry(pid) {
-  const result = spawnSync6("/bin/ps", ["-o", "ppid=", "-o", "comm=", "-p", String(pid)], {
+  const result = spawnSync7("/bin/ps", ["-o", "ppid=", "-o", "comm=", "-p", String(pid)], {
     encoding: "utf8",
     timeout: 3e3
   });
@@ -59692,7 +60348,7 @@ function openSettingsPane(item, open = openUrl) {
   return open(item.settingsUrl);
 }
 function openUrl(url) {
-  const result = spawnSync6("/usr/bin/open", [url], { encoding: "utf8" });
+  const result = spawnSync7("/usr/bin/open", [url], { encoding: "utf8" });
   return result.status === 0 ? { ok: true } : { ok: false, error: result.stderr || result.error?.message || "open failed" };
 }
 function pendingItems(report) {
@@ -59804,19 +60460,19 @@ function defaultPermissionsCliDeps(options) {
 }
 
 // src/services/permissionsWindow.ts
-import { spawn as spawn2, spawnSync as spawnSync7 } from "node:child_process";
+import { spawn as spawn2, spawnSync as spawnSync8 } from "node:child_process";
 import {
-  chmodSync as chmodSync3,
-  existsSync as existsSync17,
-  mkdirSync as mkdirSync10,
-  mkdtempSync as mkdtempSync9,
-  readFileSync as readFileSync6,
-  renameSync as renameSync4,
-  rmSync as rmSync9,
-  writeFileSync as writeFileSync8
+  chmodSync as chmodSync4,
+  existsSync as existsSync18,
+  mkdirSync as mkdirSync11,
+  mkdtempSync as mkdtempSync10,
+  readFileSync as readFileSync7,
+  renameSync as renameSync5,
+  rmSync as rmSync10,
+  writeFileSync as writeFileSync9
 } from "node:fs";
-import { homedir as homedir22 } from "node:os";
-import { join as join31 } from "node:path";
+import { homedir as homedir23 } from "node:os";
+import { join as join32 } from "node:path";
 import { createInterface as createInterface2 } from "node:readline";
 var PERMISSIONS_WINDOW_PROTOCOL = 1;
 var PERMISSIONS_WINDOW_DIR_ENV = "APPLE_NOTES_MCP_PERMISSIONS_WINDOW_DIR";
@@ -59837,10 +60493,10 @@ function defaultPermissionsWindowDeps(overrides = {}) {
   return {
     env: process.env,
     platform: process.platform,
-    sourcePath: join31(packageRoot(), PERMISSIONS_WINDOW_SOURCE),
-    exists: existsSync17,
-    readFile: (path10) => readFileSync6(path10),
-    spawn: spawnSync7,
+    sourcePath: join32(packageRoot(), PERMISSIONS_WINDOW_SOURCE),
+    exists: existsSync18,
+    readFile: (path10) => readFileSync7(path10),
+    spawn: spawnSync8,
     now: () => /* @__PURE__ */ new Date(),
     ...overrides
   };
@@ -59848,17 +60504,17 @@ function defaultPermissionsWindowDeps(overrides = {}) {
 function permissionsWindowInstallDir(env = process.env) {
   const override = env[PERMISSIONS_WINDOW_DIR_ENV]?.trim();
   if (override) return override;
-  return join31(homedir22(), "Library", "Application Support", "apple-notes-mcp", "permissions-window");
+  return join32(homedir23(), "Library", "Application Support", "apple-notes-mcp", "permissions-window");
 }
 function inspectPermissionsWindow(deps = defaultPermissionsWindowDeps()) {
   const installDir = permissionsWindowInstallDir(deps.env);
-  const binaryPath = join31(installDir, PERMISSIONS_WINDOW_BINARY);
+  const binaryPath = join32(installDir, PERMISSIONS_WINDOW_BINARY);
   const fail = (reason, detail) => ({ ready: false, reason, detail, installDir, binaryPath });
   if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
   const rebuild = `Run \`${PERMISSIONS_WINDOW_SETUP_COMMAND}\`.`;
   if (!deps.exists(deps.sourcePath))
     return fail("window_not_installed", `Packaged window source is missing: ${deps.sourcePath}`);
-  const manifestPath = join31(installDir, PERMISSIONS_WINDOW_MANIFEST);
+  const manifestPath = join32(installDir, PERMISSIONS_WINDOW_MANIFEST);
   if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
     return fail("window_not_installed", `The permissions window is not built. ${rebuild}`);
   let manifest;
@@ -59966,14 +60622,14 @@ function buildPermissionsWindow(checkOnly, deps = defaultPermissionsWindowDeps()
   const compiler = String(version3.stdout || version3.stderr || "").split("\n").find((line) => line.includes("Swift version"))?.trim() || "swiftc";
   steps.push({ step: "find compiler", ok: true, detail: compiler });
   const installDir = permissionsWindowInstallDir(deps.env);
-  mkdirSync10(installDir, { recursive: true, mode: 448 });
-  const staging = mkdtempSync9(join31(installDir, ".staging-"));
+  mkdirSync11(installDir, { recursive: true, mode: 448 });
+  const staging = mkdtempSync10(join32(installDir, ".staging-"));
   try {
-    const stagedBinary = join31(staging, PERMISSIONS_WINDOW_BINARY);
-    const digestPath = join31(staging, "source-digest.swift");
-    const plistPath = join31(staging, "Info.plist");
-    writeFileSync8(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
-    writeFileSync8(plistPath, permissionsWindowInfoPlist(), { mode: 384 });
+    const stagedBinary = join32(staging, PERMISSIONS_WINDOW_BINARY);
+    const digestPath = join32(staging, "source-digest.swift");
+    const plistPath = join32(staging, "Info.plist");
+    writeFileSync9(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
+    writeFileSync9(plistPath, permissionsWindowInfoPlist(), { mode: 384 });
     const compile = deps.spawn(
       "/usr/bin/xcrun",
       permissionsWindowCompileArguments(deps.sourcePath, digestPath, plistPath, stagedBinary),
@@ -60027,16 +60683,16 @@ function buildPermissionsWindow(checkOnly, deps = defaultPermissionsWindowDeps()
       builtAt: deps.now().toISOString(),
       compiler
     };
-    chmodSync3(stagedBinary, 448);
-    renameSync4(stagedBinary, join31(installDir, PERMISSIONS_WINDOW_BINARY));
-    writeFileSync8(
-      join31(installDir, PERMISSIONS_WINDOW_MANIFEST),
+    chmodSync4(stagedBinary, 448);
+    renameSync5(stagedBinary, join32(installDir, PERMISSIONS_WINDOW_BINARY));
+    writeFileSync9(
+      join32(installDir, PERMISSIONS_WINDOW_MANIFEST),
       JSON.stringify(manifest, null, 2) + "\n",
       { mode: 384 }
     );
     steps.push({ step: "install", ok: true, detail: installDir });
   } finally {
-    rmSync9(staging, { recursive: true, force: true });
+    rmSync10(staging, { recursive: true, force: true });
   }
   const installation = inspectPermissionsWindow(deps);
   steps.push({
@@ -60108,6 +60764,92 @@ function runPermissionsWindow(binaryPath, session) {
     });
     child2.on("close", () => resolveExit(report.ready ? 0 : 1));
   });
+}
+
+// src/services/brokerProxy.ts
+var BROKER_CONNECT_TIMEOUT_MS = 5e3;
+function defaultBrokerProxyDeps(overrides = {}) {
+  return {
+    env: process.env,
+    inspect: () => inspectBroker(),
+    request: requestBroker,
+    stdin: process.stdin,
+    stdout: process.stdout,
+    exit: (code) => process.exit(code),
+    log: (message) => process.stderr.write(`[apple-notes-mcp] ${message}
+`),
+    ...overrides
+  };
+}
+function passedEnvironment(env) {
+  const passed = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value === void 0) continue;
+    if (!key.startsWith("APPLE_NOTES_MCP_") || key.startsWith("APPLE_NOTES_MCP_BROKER")) continue;
+    passed[key] = value;
+  }
+  return passed;
+}
+async function startBrokerProxy(deps = defaultBrokerProxyDeps()) {
+  if (deps.env[BROKERED_ENV] === "1" || deps.env[BROKER_MODE_ENV] === "off") return false;
+  let installation;
+  try {
+    installation = deps.inspect();
+  } catch {
+    return false;
+  }
+  if (!installation.installed) return false;
+  const fallBack = (reason) => {
+    recordBrokerFallback(reason);
+    deps.log(`Permission broker not used, running in-process: ${reason}`);
+    return false;
+  };
+  if (!installation.ready) return fallBack(installation.detail ?? "the broker is not ready.");
+  let socket;
+  let leftover;
+  try {
+    const result = await deps.request(
+      installation.paths.socketPath,
+      {
+        type: "connect",
+        protocolVersion: BROKER_PROTOCOL,
+        env: passedEnvironment(deps.env)
+      },
+      BROKER_CONNECT_TIMEOUT_MS
+    );
+    if (result.answer.type !== "ready") {
+      result.socket.destroy();
+      const message = typeof result.answer.message === "string" ? result.answer.message : "no reason given";
+      return fallBack(`the broker refused the connection (${message})`);
+    }
+    socket = result.socket;
+    leftover = result.leftover;
+  } catch (error2) {
+    return fallBack(
+      error2 instanceof BrokerUnreachableError ? error2.message : `unexpected error: ${String(error2)}`
+    );
+  }
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    if ((deps.stdout.writableLength ?? 0) > 0) {
+      const timer = setTimeout(() => deps.exit(0), 2e3);
+      deps.stdout.once("drain", () => {
+        clearTimeout(timer);
+        deps.exit(0);
+      });
+    } else {
+      deps.exit(0);
+    }
+  };
+  if (leftover.length > 0) deps.stdout.write(leftover);
+  socket.pipe(deps.stdout, { end: false });
+  deps.stdin.pipe(socket);
+  socket.on("error", (error2) => deps.log(`Broker connection error: ${error2.message}`));
+  socket.on("close", finish);
+  socket.resume();
+  return true;
 }
 
 // src/tools/privateHelperTools.ts
@@ -61363,16 +62105,16 @@ import {
   fstatSync as fstatSync9,
   fsyncSync,
   lstatSync as lstatSync6,
-  mkdirSync as mkdirSync11,
+  mkdirSync as mkdirSync12,
   openSync as openSync9,
   readSync as readSync7,
-  renameSync as renameSync5,
+  renameSync as renameSync6,
   statSync as statSync6,
   unlinkSync as unlinkSync5,
   writeSync as writeSync6
 } from "node:fs";
-import { homedir as homedir23 } from "node:os";
-import { dirname as dirname10, isAbsolute as isAbsolute6, join as join32, resolve as resolve9 } from "node:path";
+import { homedir as homedir24 } from "node:os";
+import { dirname as dirname10, isAbsolute as isAbsolute6, join as join33, resolve as resolve9 } from "node:path";
 var MAX_ANCHORS = 2e4;
 var MAX_REGISTRY_BYTES = 32 * 1024 * 1024;
 var LOCK_WAIT_MS = 3e3;
@@ -61403,7 +62145,7 @@ function anchorRegistryPath(env = process.env) {
       );
     return resolve9(override);
   }
-  return join32(homedir23(), "Library/Application Support/apple-notes-mcp/paragraph-anchors.json");
+  return join33(homedir24(), "Library/Application Support/apple-notes-mcp/paragraph-anchors.json");
 }
 var STRING_OR_NULL = (v) => v === null || typeof v === "string";
 function isAnchor(v) {
@@ -61433,7 +62175,7 @@ var AnchorRegistry = class _AnchorRegistry {
         );
     } catch (error2) {
       if (error2 instanceof AnchorRegistryError) throw error2;
-      mkdirSync11(dir, { recursive: true, mode: 448 });
+      mkdirSync12(dir, { recursive: true, mode: 448 });
     }
   }
   /** Every anchor in the file, in the order recorded. A missing file is an empty registry. */
@@ -61531,7 +62273,7 @@ var AnchorRegistry = class _AnchorRegistry {
     } catch (error2) {
       if (error2 instanceof AnchorRegistryError) throw error2;
     }
-    const temp = join32(
+    const temp = join33(
       dirname10(this.path),
       `.paragraph-anchors.${randomBytes5(6).toString("hex")}.tmp`
     );
@@ -61552,7 +62294,7 @@ var AnchorRegistry = class _AnchorRegistry {
     }
     closeSync9(fd);
     try {
-      renameSync5(temp, this.path);
+      renameSync6(temp, this.path);
     } catch (error2) {
       unlinkSync5(temp);
       throw error2;
@@ -61747,6 +62489,11 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
   cli.close();
   process.exit(code);
 }
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--broker")) {
+  const report = await setupBroker(parseBrokerArgs(process.argv.slice(3)));
+  process.stdout.write(formatBrokerSetup(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
@@ -61759,6 +62506,10 @@ if (process.argv[2] === "anchors") {
   process.exit(
     await runAnchorsCli(process.argv.slice(3), { resolve: registryLookup(new AnchorRegistry()) })
   );
+}
+if (await startBrokerProxy()) {
+  await new Promise(() => {
+  });
 }
 var server = new McpServer({
   name: "apple-notes",
@@ -64181,12 +64932,19 @@ registerTool(
       healthy: external_exports.boolean().optional(),
       checks: external_exports.array(external_exports.object({}).passthrough()).optional(),
       runtimeOS: external_exports.object({}).passthrough().optional(),
-      features: external_exports.record(external_exports.string(), external_exports.object({}).passthrough()).optional()
+      features: external_exports.record(external_exports.string(), external_exports.object({}).passthrough()).optional(),
+      broker: external_exports.object({}).passthrough().optional()
     }
   },
   withErrorHandling(() => {
     const report = runDoctor(notesManager);
-    return successResponse(formatDoctorReport(report), { ...report });
+    const broker = brokerStatus();
+    return successResponse(`${formatDoctorReport(report)}
+
+Permission broker: ${broker.detail}`, {
+      ...report,
+      broker
+    });
   }, "Error running doctor")
 );
 registerTool(

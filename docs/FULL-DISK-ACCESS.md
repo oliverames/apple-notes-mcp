@@ -87,6 +87,12 @@ ever **reads** this database; it never writes to it.)
 > an ad-hoc-signed one (typically Homebrew's) does not. See
 > [Node runtime and TCC permissions](NODE-RUNTIME-AND-TCC-PERMISSIONS.md).
 
+> **A grant that survives Node updates.** `apple-notes-mcp setup --broker`
+> installs an opt-in, signed "Apple Notes MCP Broker" app that runs the server
+> for every MCP client. Grant Full Disk Access to that app instead of Node, and
+> the grant no longer depends on which Node binary or host app launches the
+> server. See [Permission broker](../README.md#permission-broker-opt-in).
+
 ## Verifying it worked
 
 Run the **`doctor`** tool. It reports a dedicated **Full Disk Access** check as

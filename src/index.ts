@@ -199,6 +199,13 @@ import {
   inspectPermissionsWindow,
   runPermissionsWindow,
 } from "@/services/permissionsWindow.js";
+import {
+  brokerStatus,
+  formatBrokerSetup,
+  parseBrokerArgs,
+  setupBroker,
+} from "@/services/broker.js";
+import { startBrokerProxy } from "@/services/brokerProxy.js";
 import { registerPrivateHelperTools } from "@/tools/privateHelperTools.js";
 import { runTemplatesCommand } from "@/services/templateEditorCli.js";
 import { runAnchorsCli } from "@/services/anchorServer.js";
@@ -259,6 +266,12 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
   cli.close();
   process.exit(code);
 }
+if (process.argv[2] === "setup" && process.argv.slice(3).includes("--broker")) {
+  // Opt-in permission broker (#40): a signed LaunchAgent app that owns the grants.
+  const report = await setupBroker(parseBrokerArgs(process.argv.slice(3)));
+  process.stdout.write(formatBrokerSetup(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
 if (process.argv[2] === "setup") {
   const report = setupShortcuts(process.argv.slice(3).includes("--check"));
   process.stdout.write(formatShortcutSetup(report) + "\n");
@@ -273,6 +286,11 @@ if (process.argv[2] === "anchors") {
   process.exit(
     await runAnchorsCli(process.argv.slice(3), { resolve: registryLookup(new AnchorRegistry()) })
   );
+}
+// With an installed, answering permission broker (#40), this process only
+// relays stdio to a server the broker starts, and never initializes its own.
+if (await startBrokerProxy()) {
+  await new Promise<never>(() => {});
 }
 // =============================================================================
 // Server Initialization
@@ -3755,13 +3773,18 @@ registerTool(
       checks: z.array(z.object({}).passthrough()).optional(),
       runtimeOS: z.object({}).passthrough().optional(),
       features: z.record(z.string(), z.object({}).passthrough()).optional(),
+      broker: z.object({}).passthrough().optional(),
     },
   },
   withErrorHandling(() => {
     // Richer than health-check: Notes.app permission, account state, and Full
     // Disk Access with actionable messages + structuredContent (#22).
     const report = runDoctor(notesManager);
-    return successResponse(formatDoctorReport(report), { ...report });
+    const broker = brokerStatus();
+    return successResponse(`${formatDoctorReport(report)}\n\nPermission broker: ${broker.detail}`, {
+      ...report,
+      broker,
+    });
   }, "Error running doctor")
 );
 

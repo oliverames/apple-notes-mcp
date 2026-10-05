@@ -118,6 +118,18 @@ describe("runDoctor (#22)", () => {
     expect(msg).toMatch(/version manager/);
   });
 
+  it("fdaRemediation points at the broker app under the permission broker (#40)", () => {
+    const msg = fdaRemediation("/opt/node/bin/node", {
+      APPLE_NOTES_MCP_BROKERED: "1",
+      APPLE_NOTES_MCP_BROKER_APP: "/Users/x/Applications/Apple Notes MCP Broker.app",
+    });
+    expect(msg).toContain("/Users/x/Applications/Apple Notes MCP Broker.app");
+    expect(msg).not.toContain("/opt/node/bin/node");
+    expect(fdaRemediation("/n", { APPLE_NOTES_MCP_BROKERED: "1" })).toContain(
+      "Apple Notes MCP Broker.app"
+    );
+  });
+
   it("is unhealthy when a Notes.app check fails", () => {
     const r = runDoctor(
       fakeMgr({

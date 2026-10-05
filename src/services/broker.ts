@@ -1,0 +1,797 @@
+/**
+ * The optional permission broker: build, install, inspect, and remove.
+ *
+ * macOS checks Full Disk Access and Automation against the *responsible
+ * process* of whatever reads the Notes database or sends Notes an Apple event.
+ * Without the broker that is the MCP host app, or (under hosts that disclaim
+ * responsibility for their children, like Claude Desktop) the Node binary the
+ * host launched, so a grant breaks whenever Node moves or updates (#220).
+ *
+ * `apple-notes-mcp setup --broker` builds a small signed app bundle,
+ * "Apple Notes MCP Broker.app", and runs it as a per-user LaunchAgent. The
+ * broker listens on a same-user Unix socket and starts this package's own
+ * entry point as its child for each client, so the bundle is the responsible
+ * process and the grants belong to it. The stdio process a host launches
+ * becomes a thin proxy to that socket (see {@link module:services/brokerProxy}).
+ *
+ * Nothing changes for anyone who does not run `setup --broker`: without an
+ * installed broker the server runs in-process exactly as before.
+ *
+ * Signing: a grant is tied to the bundle's designated requirement. With a
+ * Developer ID or Apple Development identity in the keychain, that requirement
+ * is the bundle identifier plus the team, so rebuilding or updating keeps the
+ * grant. An ad-hoc signature is tied to the exact binary, so every rebuild
+ * needs the grants again; setup says so when that is the only option.
+ *
+ * @module services/broker
+ */
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
+import { z } from "zod";
+import { pingBroker } from "@/services/brokerClient.js";
+import { packageRoot, sha256Hex, sourceDigestSwift } from "@/services/publicHelper.js";
+
+export const BROKER_PROTOCOL = 1;
+export const BROKER_BUNDLE_ID = "apple-notes-mcp.broker";
+export const BROKER_LABEL = BROKER_BUNDLE_ID;
+export const BROKER_APP_NAME = "Apple Notes MCP Broker.app";
+export const BROKER_EXECUTABLE = "apple-notes-mcp-broker";
+export const BROKER_SOURCE = "native/broker/apple-notes-mcp-broker.swift";
+export const BROKER_MANIFEST = "manifest.json";
+export const BROKER_SOCKET = "broker.sock";
+export const BROKER_SETUP_COMMAND = "apple-notes-mcp setup --broker";
+/** Set by the broker on its children. */
+export const BROKERED_ENV = "APPLE_NOTES_MCP_BROKERED";
+export const BROKER_APP_ENV = "APPLE_NOTES_MCP_BROKER_APP";
+/** `off` keeps the server in-process even when a broker is installed. */
+export const BROKER_MODE_ENV = "APPLE_NOTES_MCP_BROKER";
+/** Directory overrides (tests, or a custom location). */
+export const BROKER_DIR_ENV = "APPLE_NOTES_MCP_BROKER_DIR";
+export const BROKER_APP_DIR_ENV = "APPLE_NOTES_MCP_BROKER_APP_DIR";
+export const BROKER_AGENT_DIR_ENV = "APPLE_NOTES_MCP_BROKER_AGENT_DIR";
+export const BROKER_SIGN_IDENTITY_ENV = "APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY";
+/** Longest path a macOS sockaddr_un holds (104 bytes including the terminator). */
+export const MAX_SOCKET_PATH_BYTES = 103;
+
+export const brokerManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  protocolVersion: z.number().int(),
+  packageVersion: z.string(),
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  binarySha256: z.string().regex(/^[a-f0-9]{64}$/),
+  appPath: z.string(),
+  agentPath: z.string(),
+  socketPath: z.string(),
+  logPath: z.string(),
+  nodePath: z.string(),
+  entryPath: z.string(),
+  signing: z.object({
+    identity: z.string(),
+    teamId: z.string().nullable(),
+    stable: z.boolean(),
+  }),
+  builtAt: z.string(),
+  compiler: z.string(),
+});
+export type BrokerManifest = z.infer<typeof brokerManifestSchema>;
+
+export interface BrokerPaths {
+  stateDir: string;
+  manifestPath: string;
+  socketPath: string;
+  appDir: string;
+  appPath: string;
+  executablePath: string;
+  agentPath: string;
+  logPath: string;
+}
+
+/** Where everything lives, honoring the directory overrides. */
+export function brokerPaths(env: NodeJS.ProcessEnv = process.env): BrokerPaths {
+  const home = homedir();
+  const stateDir =
+    env[BROKER_DIR_ENV]?.trim() ||
+    join(home, "Library", "Application Support", "apple-notes-mcp", "broker");
+  const appDir = env[BROKER_APP_DIR_ENV]?.trim() || join(home, "Applications");
+  const agentDir = env[BROKER_AGENT_DIR_ENV]?.trim() || join(home, "Library", "LaunchAgents");
+  const appPath = join(appDir, BROKER_APP_NAME);
+  return {
+    stateDir,
+    manifestPath: join(stateDir, BROKER_MANIFEST),
+    socketPath: join(stateDir, BROKER_SOCKET),
+    appDir,
+    appPath,
+    executablePath: join(appPath, "Contents", "MacOS", BROKER_EXECUTABLE),
+    agentPath: join(agentDir, `${BROKER_LABEL}.plist`),
+    logPath: join(home, "Library", "Logs", "apple-notes-mcp-broker.log"),
+  };
+}
+
+export type BrokerUnavailable =
+  | "unsupported_platform"
+  | "broker_not_installed"
+  | "broker_manifest_invalid"
+  | "broker_stale"
+  | "broker_modified"
+  | "broker_agent_missing"
+  | "broker_node_missing"
+  | "broker_entry_missing";
+
+export interface BrokerInstallation {
+  installed: boolean;
+  ready: boolean;
+  reason: BrokerUnavailable | null;
+  detail: string | null;
+  paths: BrokerPaths;
+  manifest: BrokerManifest | null;
+}
+
+/** Everything that touches the machine, injectable for tests. */
+export interface BrokerDeps {
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  sourcePath: string;
+  entryPath: string;
+  execPath: string;
+  packageVersion: string;
+  uid: number;
+  exists: (path: string) => boolean;
+  readFile: (path: string) => Buffer;
+  realpath: (path: string) => string;
+  spawn: typeof spawnSync;
+  /** Ask the running broker for a pong; resolves false when it does not answer. */
+  ping: (socketPath: string) => Promise<boolean>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => Date;
+}
+
+export function defaultBrokerDeps(overrides: Partial<BrokerDeps> = {}): BrokerDeps {
+  const root = packageRoot();
+  let packageVersion = "0.0.0";
+  try {
+    packageVersion =
+      (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version?: string })
+        .version ?? packageVersion;
+  } catch {
+    // keep the placeholder; it is informational only
+  }
+  return {
+    env: process.env,
+    platform: process.platform,
+    sourcePath: join(root, BROKER_SOURCE),
+    entryPath: join(root, "build", "index.js"),
+    execPath: process.execPath,
+    packageVersion,
+    uid: process.getuid?.() ?? -1,
+    exists: existsSync,
+    readFile: (path) => readFileSync(path),
+    realpath: (path) => realpathSync(path),
+    spawn: spawnSync,
+    ping: (socketPath) => pingBroker(socketPath),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => new Date(),
+    ...overrides,
+  };
+}
+
+/** Inspect the installed broker against the packaged source (fail closed). */
+export function inspectBroker(deps: BrokerDeps = defaultBrokerDeps()): BrokerInstallation {
+  const paths = brokerPaths(deps.env);
+  const result = (
+    reason: BrokerUnavailable | null,
+    detail: string | null,
+    manifest: BrokerManifest | null
+  ): BrokerInstallation => ({
+    installed: manifest !== null,
+    ready: reason === null,
+    reason,
+    detail,
+    paths,
+    manifest,
+  });
+  if (deps.platform !== "darwin") return result("unsupported_platform", "macOS only", null);
+  const rebuild = `Run \`${BROKER_SETUP_COMMAND}\` again.`;
+  if (!deps.exists(paths.manifestPath))
+    return result("broker_not_installed", "The permission broker is not installed.", null);
+  let manifest: BrokerManifest;
+  try {
+    manifest = brokerManifestSchema.parse(
+      JSON.parse(deps.readFile(paths.manifestPath).toString("utf8"))
+    );
+  } catch {
+    return result("broker_manifest_invalid", `The broker manifest is unreadable. ${rebuild}`, null);
+  }
+  if (!deps.exists(manifest.appPath) || !deps.exists(paths.executablePath))
+    return result(
+      "broker_not_installed",
+      `The broker app is missing from ${manifest.appPath}. ${rebuild}`,
+      manifest
+    );
+  if (
+    !deps.exists(deps.sourcePath) ||
+    manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) ||
+    manifest.protocolVersion !== BROKER_PROTOCOL
+  )
+    return result(
+      "broker_stale",
+      `The installed broker was built from a different source than this version ships. ${rebuild}`,
+      manifest
+    );
+  if (sha256Hex(deps.readFile(paths.executablePath)) !== manifest.binarySha256)
+    return result(
+      "broker_modified",
+      `The broker binary no longer matches the checksum recorded when it was built. ${rebuild}`,
+      manifest
+    );
+  if (!deps.exists(manifest.agentPath))
+    return result(
+      "broker_agent_missing",
+      `The broker's LaunchAgent is missing (${manifest.agentPath}). ${rebuild}`,
+      manifest
+    );
+  if (!deps.exists(manifest.nodePath))
+    return result(
+      "broker_node_missing",
+      `The Node binary the broker launches is gone (${manifest.nodePath}). ${rebuild} Your grants stay with the broker app.`,
+      manifest
+    );
+  if (!deps.exists(manifest.entryPath))
+    return result(
+      "broker_entry_missing",
+      `The server entry point the broker launches is gone (${manifest.entryPath}). ${rebuild}`,
+      manifest
+    );
+  return result(null, null, manifest);
+}
+
+/** Info.plist for the app bundle. LSUIElement keeps it out of the Dock. */
+export function brokerInfoPlist(packageVersion: string): string {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>CFBundleIdentifier</key>",
+    `  <string>${BROKER_BUNDLE_ID}</string>`,
+    "  <key>CFBundleName</key>",
+    "  <string>Apple Notes MCP Broker</string>",
+    "  <key>CFBundleDisplayName</key>",
+    "  <string>Apple Notes MCP Broker</string>",
+    "  <key>CFBundleExecutable</key>",
+    `  <string>${BROKER_EXECUTABLE}</string>`,
+    "  <key>CFBundlePackageType</key>",
+    "  <string>APPL</string>",
+    "  <key>CFBundleInfoDictionaryVersion</key>",
+    "  <string>6.0</string>",
+    "  <key>CFBundleShortVersionString</key>",
+    `  <string>${escape(packageVersion)}</string>`,
+    "  <key>CFBundleVersion</key>",
+    `  <string>${escape(packageVersion)}</string>`,
+    "  <key>LSUIElement</key>",
+    "  <true/>",
+    "  <key>NSAppleEventsUsageDescription</key>",
+    "  <string>apple-notes-mcp reads and organizes your notes through Notes when an MCP client asks it to.</string>",
+    "</dict>",
+    "</plist>",
+    "",
+  ].join("\n");
+}
+
+/** The exact compiler argument vector (after `/usr/bin/xcrun`). Exported so tests pin it. */
+export function brokerCompileArguments(
+  sourcePath: string,
+  digestPath: string,
+  outputPath: string
+): string[] {
+  return ["swiftc", "-O", "-parse-as-library", sourcePath, digestPath, "-o", outputPath];
+}
+
+/** The LaunchAgent that keeps the broker running for this user. */
+export function brokerLaunchAgentPlist(args: {
+  executablePath: string;
+  socketPath: string;
+  nodePath: string;
+  entryPath: string;
+  logPath: string;
+}): string {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const programArguments = [
+    args.executablePath,
+    "serve",
+    "--socket",
+    args.socketPath,
+    "--node",
+    args.nodePath,
+    "--entry",
+    args.entryPath,
+    "--log",
+    args.logPath,
+  ];
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>Label</key>",
+    `  <string>${BROKER_LABEL}</string>`,
+    "  <key>AssociatedBundleIdentifiers</key>",
+    "  <array>",
+    `    <string>${BROKER_BUNDLE_ID}</string>`,
+    "  </array>",
+    "  <key>ProgramArguments</key>",
+    "  <array>",
+    ...programArguments.map((arg) => `    <string>${escape(arg)}</string>`),
+    "  </array>",
+    "  <key>RunAtLoad</key>",
+    "  <true/>",
+    "  <key>KeepAlive</key>",
+    "  <true/>",
+    "  <key>StandardErrorPath</key>",
+    `  <string>${escape(args.logPath)}</string>`,
+    "</dict>",
+    "</plist>",
+    "",
+  ].join("\n");
+}
+
+export interface SigningIdentity {
+  /** What codesign is given: a SHA-1 hash, a name, or `-` for ad-hoc. */
+  identity: string;
+  /** The human-readable name, or "ad-hoc". */
+  name: string;
+}
+
+/**
+ * Pick a signing identity: the explicit choice, else the first Developer ID
+ * Application identity, else the first Apple Development identity, else ad-hoc.
+ */
+export function chooseSigningIdentity(
+  securityOutput: string,
+  explicit: string | undefined
+): SigningIdentity {
+  if (explicit && explicit.trim()) {
+    const value = explicit.trim();
+    return { identity: value, name: value === "-" ? "ad-hoc" : value };
+  }
+  const identities = [...securityOutput.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/gm)].map(
+    (m) => ({ identity: m[1], name: m[2] })
+  );
+  for (const prefix of ["Developer ID Application:", "Apple Development:"]) {
+    const found = identities.find((id) => id.name.startsWith(prefix));
+    if (found) return found;
+  }
+  return { identity: "-", name: "ad-hoc" };
+}
+
+/** Read the team identifier from `codesign -dv` output; null when ad-hoc or absent. */
+export function parseTeamId(codesignOutput: string): string | null {
+  if (/Signature=adhoc/.test(codesignOutput)) return null;
+  const match = codesignOutput.match(/^TeamIdentifier=(.+)$/m);
+  const team = match?.[1]?.trim();
+  return team && team !== "not set" ? team : null;
+}
+
+/**
+ * The Node path the broker should launch. Prefer the first `node` on PATH
+ * that resolves to the running binary (for example Homebrew's
+ * `/opt/homebrew/bin/node` rather than its versioned Cellar path), so a
+ * routine Node update does not strand the broker. The grants live on the
+ * broker either way; this only spares a re-run of setup.
+ */
+export function chooseNodePath(
+  deps: Pick<BrokerDeps, "env" | "execPath" | "exists" | "realpath">
+): string {
+  let target: string;
+  try {
+    target = deps.realpath(deps.execPath);
+  } catch {
+    return deps.execPath;
+  }
+  for (const dir of (deps.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, "node");
+    try {
+      if (deps.exists(candidate) && deps.realpath(candidate) === target) return candidate;
+    } catch {
+      // unreadable PATH entry; keep looking
+    }
+  }
+  return deps.execPath;
+}
+
+export interface BrokerSetupOptions {
+  checkOnly: boolean;
+  uninstall: boolean;
+  signIdentity?: string;
+}
+
+export function parseBrokerArgs(args: readonly string[]): BrokerSetupOptions {
+  const index = args.indexOf("--sign-identity");
+  return {
+    checkOnly: args.includes("--check"),
+    uninstall: args.includes("--uninstall"),
+    signIdentity: index >= 0 ? args[index + 1] : undefined,
+  };
+}
+
+export interface BrokerSetupReport {
+  ok: boolean;
+  mode: "check" | "install" | "uninstall";
+  steps: Array<{ step: string; ok: boolean; detail?: string }>;
+  installation: BrokerInstallation;
+  running: boolean;
+  warnings: string[];
+}
+
+function launchctl(deps: BrokerDeps, args: string[]) {
+  return deps.spawn("/bin/launchctl", args, { encoding: "utf8", timeout: 30_000 });
+}
+
+async function waitForBroker(deps: BrokerDeps, socketPath: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (await deps.ping(socketPath)) return true;
+    await deps.sleep(250);
+  }
+  return false;
+}
+
+/**
+ * `setup --broker`: build, sign, and install the broker, then start it.
+ * With `checkOnly`, only report; with `uninstall`, stop and remove it.
+ */
+export async function setupBroker(
+  options: BrokerSetupOptions,
+  deps: BrokerDeps = defaultBrokerDeps()
+): Promise<BrokerSetupReport> {
+  const steps: BrokerSetupReport["steps"] = [];
+  const warnings: string[] = [];
+  const paths = brokerPaths(deps.env);
+  const mode = options.uninstall ? "uninstall" : options.checkOnly ? "check" : "install";
+  const finish = async (): Promise<BrokerSetupReport> => {
+    const installation = inspectBroker(deps);
+    const running =
+      mode !== "uninstall" && installation.installed ? await deps.ping(paths.socketPath) : false;
+    const ok =
+      steps.every((s) => s.ok) &&
+      (mode === "uninstall" ? !installation.installed : installation.ready && running);
+    return { ok, mode, steps, installation, running, warnings };
+  };
+  const domain = `gui/${deps.uid}`;
+
+  if (deps.platform !== "darwin") {
+    steps.push({ step: "platform", ok: false, detail: "macOS only" });
+    return finish();
+  }
+
+  if (mode === "check") {
+    const installation = inspectBroker(deps);
+    steps.push({
+      step: "inspect installed broker",
+      ok: installation.ready,
+      detail: installation.ready ? installation.paths.appPath : (installation.detail ?? undefined),
+    });
+    if (installation.manifest && !installation.manifest.signing.stable)
+      warnings.push(adHocWarning());
+    return finish();
+  }
+
+  if (mode === "uninstall") {
+    launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
+    steps.push({ step: "stop LaunchAgent", ok: true });
+    rmSync(paths.agentPath, { force: true });
+    rmSync(paths.appPath, { recursive: true, force: true });
+    rmSync(paths.manifestPath, { force: true });
+    rmSync(paths.socketPath, { force: true });
+    steps.push({ step: "remove broker", ok: true, detail: paths.appPath });
+    warnings.push(
+      `The Full Disk Access and Automation entries for "Apple Notes MCP Broker" stay in System Settings until you remove them, or run \`tccutil reset All ${BROKER_BUNDLE_ID}\`.`
+    );
+    return finish();
+  }
+
+  // --- install ---
+  if (Buffer.byteLength(paths.socketPath) > MAX_SOCKET_PATH_BYTES) {
+    steps.push({
+      step: "socket path",
+      ok: false,
+      detail: `${paths.socketPath} is longer than ${MAX_SOCKET_PATH_BYTES} bytes. Set ${BROKER_DIR_ENV} to a shorter directory.`,
+    });
+    return finish();
+  }
+  if (!deps.exists(deps.sourcePath)) {
+    steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
+    return finish();
+  }
+  if (!deps.exists(deps.entryPath)) {
+    steps.push({
+      step: "locate server entry point",
+      ok: false,
+      detail: `${deps.entryPath} is missing. Build the package first.`,
+    });
+    return finish();
+  }
+  if (/[\\/]_npx[\\/]/.test(deps.entryPath))
+    warnings.push(
+      "This copy runs from the npx cache, which npx may clear or replace. For the broker, install the package globally (`npm i -g apple-notes-mcp`) and run setup from that copy."
+    );
+  const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
+  steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
+
+  const version = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
+  if (version.status !== 0) {
+    steps.push({
+      step: "find compiler",
+      ok: false,
+      detail:
+        "No Swift compiler found. Install the Command Line Tools with `xcode-select --install`.",
+    });
+    return finish();
+  }
+  const compiler =
+    String(version.stdout || version.stderr || "")
+      .split("\n")
+      .find((line) => line.includes("Swift version"))
+      ?.trim() || "swiftc";
+  steps.push({ step: "find compiler", ok: true, detail: compiler });
+
+  mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+  chmodSync(paths.stateDir, 0o700);
+  mkdirSync(paths.appDir, { recursive: true });
+  // Stage beside the final app so the rename stays on one volume.
+  const staging = mkdtempSync(join(paths.appDir, ".apple-notes-mcp-broker-staging-"));
+  try {
+    const stagedApp = join(staging, BROKER_APP_NAME);
+    const macosDir = join(stagedApp, "Contents", "MacOS");
+    mkdirSync(macosDir, { recursive: true });
+    const stagedBinary = join(macosDir, BROKER_EXECUTABLE);
+    const digestPath = join(staging, "source-digest.swift");
+    writeFileSync(digestPath, sourceDigestSwift(sourceSha), { mode: 0o600 });
+    writeFileSync(join(stagedApp, "Contents", "Info.plist"), brokerInfoPlist(deps.packageVersion));
+    const compile = deps.spawn(
+      "/usr/bin/xcrun",
+      brokerCompileArguments(deps.sourcePath, digestPath, stagedBinary),
+      { encoding: "utf8", timeout: 300_000 }
+    );
+    if (compile.status !== 0) {
+      steps.push({
+        step: "compile",
+        ok: false,
+        detail: String(compile.stderr || compile.error?.message || "swiftc failed").slice(0, 4000),
+      });
+      return finish();
+    }
+    rmSync(digestPath, { force: true });
+    steps.push({ step: "compile", ok: true });
+
+    const identities = deps.spawn(
+      "/usr/bin/security",
+      ["find-identity", "-v", "-p", "codesigning"],
+      { encoding: "utf8" }
+    );
+    const signing = chooseSigningIdentity(
+      String(identities.stdout ?? ""),
+      options.signIdentity ?? deps.env[BROKER_SIGN_IDENTITY_ENV]
+    );
+    const sign = deps.spawn(
+      "/usr/bin/codesign",
+      [
+        "--force",
+        "--sign",
+        signing.identity,
+        "--identifier",
+        BROKER_BUNDLE_ID,
+        "--timestamp=none",
+        stagedApp,
+      ],
+      { encoding: "utf8", timeout: 60_000 }
+    );
+    if (sign.status !== 0) {
+      steps.push({
+        step: "sign",
+        ok: false,
+        detail: `${signing.name}: ${String(sign.stderr || "codesign failed").trim()}`,
+      });
+      return finish();
+    }
+    const described = deps.spawn("/usr/bin/codesign", ["-dv", "--verbose=2", stagedApp], {
+      encoding: "utf8",
+    });
+    const teamId = parseTeamId(String(described.stderr ?? "") + String(described.stdout ?? ""));
+    const stable = teamId !== null;
+    steps.push({
+      step: "sign",
+      ok: true,
+      detail: stable ? `${signing.name} (team ${teamId})` : "ad-hoc",
+    });
+    if (!stable) warnings.push(adHocWarning());
+
+    const hello = deps.spawn(stagedBinary, [], {
+      input: JSON.stringify({ type: "hello" }) + "\n",
+      encoding: "utf8",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    type Handshake = { protocolVersion?: unknown; sourceSha256?: unknown };
+    let handshake: Handshake | null = null;
+    try {
+      handshake = JSON.parse(String(hello.stdout ?? "").trim()) as Handshake | null;
+    } catch {
+      handshake = null;
+    }
+    if (handshake?.protocolVersion !== BROKER_PROTOCOL || handshake?.sourceSha256 !== sourceSha) {
+      steps.push({
+        step: "handshake",
+        ok: false,
+        detail: handshake
+          ? `broker reported protocol ${String(handshake.protocolVersion)}, source ${String(handshake.sourceSha256)}`
+          : `no valid hello (exit ${hello.status})`,
+      });
+      return finish();
+    }
+    steps.push({ step: "handshake", ok: true });
+
+    // Stop the old broker before replacing its bundle.
+    launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
+    rmSync(paths.appPath, { recursive: true, force: true });
+    renameSync(stagedApp, paths.appPath);
+    const nodePath = chooseNodePath(deps);
+    const manifest: BrokerManifest = {
+      schemaVersion: 1,
+      protocolVersion: BROKER_PROTOCOL,
+      packageVersion: deps.packageVersion,
+      sourceSha256: sourceSha,
+      binarySha256: sha256Hex(deps.readFile(paths.executablePath)),
+      appPath: paths.appPath,
+      agentPath: paths.agentPath,
+      socketPath: paths.socketPath,
+      logPath: paths.logPath,
+      nodePath,
+      entryPath: deps.entryPath,
+      signing: { identity: signing.name, teamId, stable },
+      builtAt: deps.now().toISOString(),
+      compiler,
+    };
+    writeFileSync(paths.manifestPath, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
+    steps.push({ step: "install app", ok: true, detail: paths.appPath });
+
+    mkdirSync(join(paths.agentPath, ".."), { recursive: true });
+    writeFileSync(
+      paths.agentPath,
+      brokerLaunchAgentPlist({
+        executablePath: paths.executablePath,
+        socketPath: paths.socketPath,
+        nodePath,
+        entryPath: deps.entryPath,
+        logPath: paths.logPath,
+      }),
+      { mode: 0o644 }
+    );
+    const bootstrap = launchctl(deps, ["bootstrap", domain, paths.agentPath]);
+    if (bootstrap.status !== 0) {
+      steps.push({
+        step: "start LaunchAgent",
+        ok: false,
+        detail: String(bootstrap.stderr || bootstrap.stdout || "launchctl bootstrap failed").trim(),
+      });
+      return finish();
+    }
+    steps.push({ step: "start LaunchAgent", ok: true, detail: paths.agentPath });
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+
+  const answered = await waitForBroker(deps, paths.socketPath);
+  steps.push({
+    step: "broker answers",
+    ok: answered,
+    detail: answered ? paths.socketPath : `no answer on ${paths.socketPath}; see ${paths.logPath}`,
+  });
+  return finish();
+}
+
+function adHocWarning(): string {
+  return "The broker is ad-hoc signed, so macOS ties its grants to this exact build: after every rebuild, grant Full Disk Access and Automation again. A Developer ID or Apple Development identity in the keychain (or --sign-identity) keeps grants across rebuilds.";
+}
+
+/** Terminal summary for `setup --broker`. */
+export function formatBrokerSetup(report: BrokerSetupReport): string {
+  const lines = ["Apple Notes MCP permission broker", ""];
+  for (const step of report.steps)
+    lines.push(`${step.ok ? "✓" : "✗"} ${step.step}${step.detail ? `: ${step.detail}` : ""}`);
+  for (const warning of report.warnings) lines.push(`! ${warning}`);
+  lines.push("");
+  const app = report.installation.paths.appPath;
+  if (report.mode === "uninstall") {
+    lines.push(
+      report.ok
+        ? "The broker is removed. MCP clients now run the server in-process again."
+        : "The broker was not fully removed. Fix the failed step above and run it again."
+    );
+  } else if (report.ok) {
+    lines.push(
+      `The broker is ${report.mode === "check" ? "installed and" : "installed and"} running. MCP clients that launch apple-notes-mcp now reach it through the broker.`,
+      "",
+      "Grant it access once:",
+      `  1. System Settings > Privacy & Security > Full Disk Access: click +, add ${app}, and turn it on.`,
+      "  2. The first Notes request through the broker asks to let Apple Notes MCP Broker control Notes. Click Allow.",
+      "",
+      "Restart your MCP client so it starts a fresh apple-notes-mcp process."
+    );
+  } else if (report.mode === "check") {
+    lines.push(
+      report.installation.installed && !report.running && report.installation.ready
+        ? `The broker is installed but not answering. Check ${report.installation.paths.logPath}, or run \`${BROKER_SETUP_COMMAND}\` again.`
+        : `Run \`${BROKER_SETUP_COMMAND}\` to install it.`
+    );
+  } else {
+    lines.push("The broker was not installed. Fix the failed step above and run setup again.");
+  }
+  return lines.join("\n");
+}
+
+/** What doctor and get-capabilities report about the broker. */
+export interface BrokerStatus {
+  /** True when this server process was started by the broker. */
+  inUse: boolean;
+  installed: boolean;
+  ready: boolean;
+  appPath: string | null;
+  stableSigning: boolean | null;
+  /** Why this process runs in-process although a broker is installed. */
+  fallbackReason: string | null;
+  detail: string;
+}
+
+let proxyFallbackReason: string | null = null;
+
+/** Recorded by the proxy when it could not reach an installed broker. */
+export function recordBrokerFallback(reason: string | null): void {
+  proxyFallbackReason = reason;
+}
+
+/** Synchronous broker status for this process. Never touches the socket. */
+export function brokerStatus(deps: BrokerDeps = defaultBrokerDeps()): BrokerStatus {
+  const inUse = deps.env[BROKERED_ENV] === "1";
+  let installation: BrokerInstallation | null = null;
+  try {
+    installation = inspectBroker(deps);
+  } catch {
+    installation = null;
+  }
+  const manifest = installation?.manifest ?? null;
+  const base = {
+    inUse,
+    installed: installation?.installed ?? false,
+    ready: installation?.ready ?? false,
+    appPath: inUse
+      ? (deps.env[BROKER_APP_ENV] ?? manifest?.appPath ?? null)
+      : (manifest?.appPath ?? null),
+    stableSigning: manifest ? manifest.signing.stable : null,
+    fallbackReason: inUse ? null : proxyFallbackReason,
+  };
+  let detail: string;
+  if (inUse)
+    detail = `In use: this server runs under ${base.appPath ?? "the broker app"}, which holds the Full Disk Access and Automation grants.`;
+  else if (!base.installed)
+    detail = `Not installed. Grants apply to the app or Node binary that launches this server. \`${BROKER_SETUP_COMMAND}\` moves them to one signed app.`;
+  else if (deps.env[BROKER_MODE_ENV] === "off")
+    detail = `Installed but turned off with ${BROKER_MODE_ENV}=off; running in-process.`;
+  else
+    detail = `Installed but not in use; running in-process.${base.fallbackReason ? ` ${base.fallbackReason}` : ""}${installation?.detail ? ` ${installation.detail}` : ""}`;
+  return { ...base, detail };
+}

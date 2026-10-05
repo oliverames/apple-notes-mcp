@@ -145,7 +145,18 @@ export function runDoctor(
  * makes the Node binary itself the responsible process: a grant on Claude.app
  * never reaches it, and the Node binary needs its own entry.
  */
-export function fdaRemediation(execPath: string = process.execPath): string {
+export function fdaRemediation(
+  execPath: string = process.execPath,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  // Under the permission broker (#40) the grant belongs to the broker app.
+  if (env.APPLE_NOTES_MCP_BROKERED === "1")
+    return (
+      "This server runs under the permission broker, so the grant belongs to the broker app, not to Node or the MCP host. " +
+      "In System Settings > Privacy & Security > Full Disk Access, click + and add " +
+      `${env.APPLE_NOTES_MCP_BROKER_APP || "Apple Notes MCP Broker.app"} (press Cmd+Shift+G in the file picker to paste the path), ` +
+      `turn it on, and re-run doctor. Setup guide: ${FULL_DISK_ACCESS_GUIDE_URL}`
+    );
   const versioned =
     /\/(\.nvm|\.fnm|\.volta|\.asdf|\.local\/share\/mise|\.nodenv|n\/versions)\//.test(execPath);
   return (

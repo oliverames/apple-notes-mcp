@@ -1,5 +1,37 @@
 ## [Unreleased]
 
+## [2.15.0] - 2026-10-05
+
+### Added
+
+- Opt-in permission broker (#40, #220). `apple-notes-mcp setup --broker`
+  builds `native/broker/apple-notes-mcp-broker.swift` into
+  `~/Applications/Apple Notes MCP Broker.app`, signs it, and runs it as the
+  per-user LaunchAgent `apple-notes-mcp.broker`. The broker starts this
+  package's server as its child for each client, so macOS attributes Full Disk
+  Access and Notes Automation to the broker app instead of the MCP host or the
+  Node binary. Grants then survive Node updates and work under Claude Desktop,
+  which disclaims responsibility for the servers it launches. The
+  `apple-notes-mcp` process a client starts becomes a byte-for-byte stdio relay
+  to the broker's Unix socket (created `0600` in a `0700` folder; connections
+  from other users are refused with `getpeereid`). Only `APPLE_NOTES_MCP_*`
+  settings travel with a connection. `--check` reports the installed state,
+  `--uninstall` removes it, and `--sign-identity` picks the signing identity.
+- Setup signs with the first Developer ID Application identity in the
+  keychain, then an Apple Development one, so grants persist across rebuilds.
+  With neither it signs ad hoc and warns that every rebuild needs the grants
+  again.
+- `doctor` and `get-capabilities` report a `broker` field: whether this server
+  runs under the broker, and if a broker is installed but not used, why.
+  Under the broker, doctor's Full Disk Access advice names the broker app.
+
+### Unchanged by default
+
+- Nothing changes unless `setup --broker` is run. Without an installed broker,
+  or when it does not answer within five seconds, the server runs in-process
+  as before. `APPLE_NOTES_MCP_BROKER=off` keeps it in-process with a broker
+  installed.
+
 ## [2.14.0] - 2026-10-03
 
 Split out of #262 per review: paragraph anchors and the opt-in anchor
