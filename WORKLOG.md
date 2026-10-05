@@ -1,5 +1,24 @@
 # Worklog
 
+## 2026-10-05 - #262 status comment; #40 permission broker as #276 (Mac) - START HERE
+
+**What changed**:
+- Posted a status comment on sweetrb/apple-notes-mcp#262 tagging sweetrb (replica identity R14/R15 question, unverified items, asks whether the evidence is enough for the staged (a) to (d) return).
+- Built #40: the opt-in signed permission broker (`setup --broker`), branch `feat/permission-broker` (`4b661c9`, 2.15.0), draft **#276** upstream. The 2026-09-24 gap analysis file no longer exists, so it follows the default design: Swift app bundle in `~/Applications`, LaunchAgent `apple-notes-mcp.broker`, `0600` socket with `getpeereid`, stdio proxy, `broker` field in doctor and get-capabilities.
+- On this Mac: the broker is installed, signed with Oliver's Developer ID, granted Full Disk Access and Notes Automation, and targets a global 2.15.0 install (`npm i -g` of a tarball packed from the branch). Revert with `apple-notes-mcp setup --broker --uninstall`, then `npm rm -g apple-notes-mcp`. Home-Server is untouched (Oliver: only apple-core work goes there).
+
+**Decisions made**:
+- Oliver (2026-10-05): no MCP client switch to the broker build. Wait for #276 to merge and ship, then use the official plugin version.
+- Per-tool Full Disk Access error strings still name the Node binary under the broker; noted in #276 as a follow-up, not changed.
+
+**Left off at**:
+- [ ] #276: CI pending at open; wait for sweetrb's review. Re-bump if another PR claims 2.15.0 first.
+- [ ] #262: wait for sweetrb's answer on replica identity and the unverified items.
+- [ ] After #276 ships: update the plugin, rerun `setup --broker` from the official install, and remove the global 2.15.0 dev install.
+- [ ] Worktree `.claude/worktrees/permission-broker` stays until #276 merges.
+
+**Verification**: lint, typecheck, format check, sync-skills, `test:coverage` 2805 passed with none skipped, bundle rebuilt. Live: a launchd-started Node client without FDA ran `query-notes` (458 notes) and `list-folders` (48 folders) through the broker; system TCC shows `kTCCServiceSystemPolicyAllFiles` allowed for `apple-notes-mcp.broker`; grants survived a Developer ID rebuild. `test:integration` was not run.
+
 ## 2026-10-02 - #262 split per sweetrb's review; PDF follow-up; branch cleanup (Mac) - START HERE
 
 **What changed**:
