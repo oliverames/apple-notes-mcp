@@ -52,6 +52,7 @@
 #include <unistd.h>
 #include "attachment-evidence.h"
 #include "content-preservation.h"
+#include "attachment-evidence.h"
 
 #define PROTOCOL_VERSION 1
 #define MAX_INPUT_BYTES (1024 * 1024)
@@ -1005,14 +1006,14 @@ static const ActionSpec kActions[] = {
      HandleSetParagraphId},
     {"add_section_link", "identifier,target,blockIndex,expectedText,paragraphId,heading,position,clearExistingSectionLinks,ifRevision,ifTargetRevision,targetScope", HandleAddSectionLink},
     {"read_tables", "identifier", HandleReadTables},
-    {"delete_table_row", "identifier,tableIdentifier,rowIdentifier,dryRun,ifRevision,ifTableDigest",
+    {"delete_table_row", "identifier,tableIdentifier,rowIdentifier,dryRun,ifRevision,ifTableDigest,ifAttachmentSnapshot",
      HandleDeleteTableRow},
-    {"insert_table_row", "identifier,tableIdentifier,afterRowIdentifier,cells,ifRevision,ifTableDigest",
+    {"insert_table_row", "identifier,tableIdentifier,afterRowIdentifier,cells,ifRevision,ifTableDigest,ifAttachmentSnapshot",
      HandleInsertTableRow},
     {"set_table_cell",
-     "identifier,tableIdentifier,rowIdentifier,columnIdentifier,text,ifRevision,ifTableDigest",
+     "identifier,tableIdentifier,rowIdentifier,columnIdentifier,text,ifRevision,ifTableDigest,ifAttachmentSnapshot",
      HandleSetTableCell},
-    {"prune_orphan_table", "identifier,tableIdentifier,dryRun,ifRevision,ifTableDigest",
+    {"prune_orphan_table", "identifier,tableIdentifier,dryRun,ifRevision,ifTableDigest,ifAttachmentSnapshot",
      HandlePruneOrphanTable},
     {"read_smart_folder", "identifier", HandleReadSmartFolder},
     {"create_smart_folder", "title,queryJSON,account,parentIdentifier", HandleCreateSmartFolder},
@@ -7018,6 +7019,39 @@ static NSDictionary *TableSnapshot(id table, NSString **reason) {
   return @{@"columnIdentifiers" : columnIds, @"rows" : rowList};
 }
 
+// Separate from the public plain-text summary: every supported cell attribute,
+// refusing unknown keys/classes/layouts, keyed by stable native identities.
+static NSDictionary *TableContentSnapshot(id table, NSString **reason) {
+  NSDictionary *plain = TableSnapshot(table, reason);
+  if (!plain) return nil;
+  NSMutableArray *rows = [NSMutableArray array];
+  NSArray *columns = plain[@"columnIdentifiers"];
+  NSArray *plainRows = plain[@"rows"];
+  for (NSUInteger r = 0; r < plainRows.count; r++) {
+    NSMutableArray *cells = [NSMutableArray array];
+    for (NSUInteger c = 0; c < columns.count; c++) {
+      id value = ((id(*)(id, SEL, NSUInteger, NSUInteger))objc_msgSend)(
+          table, sel_registerName("stringForColumnIndex:rowIndex:"), c, r);
+      NSAttributedString *text = [value isKindOfClass:NSAttributedString.class] ? value : nil;
+      if (!text && [value respondsToSelector:sel_registerName("attributedString")]) {
+        id candidate = Send(value, "attributedString");
+        if ([candidate isKindOfClass:NSAttributedString.class]) text = candidate;
+      }
+      // A string-only fallback cannot prove that no stored cell attributes
+      // were omitted. It is safe for the reader, but refuses a write.
+      if (!text) {
+        if (reason) *reason = @"A table cell cannot expose its full attributed text";
+        return nil;
+      }
+      NSDictionary *cell = ANMContentSnapshot(text, NSMakeRange(0, text.length), reason);
+      if (!cell) return nil;
+      [cells addObject:cell];
+    }
+    [rows addObject:@{ @"identifier" : plainRows[r][@"identifier"], @"cells" : [cells copy] }];
+  }
+  return @{ @"columnIdentifiers" : columns, @"rows" : [rows copy] };
+}
+
 static NSUInteger IndexOfRow(NSDictionary *snapshot, NSString *rowIdentifier) {
   NSArray *rows = snapshot[@"rows"];
   for (NSUInteger i = 0; i < rows.count; i++)
@@ -7064,6 +7098,8 @@ static NSDictionary *HandleReadTables(NSDictionary *request) {
     @"status" : @"ok",
     @"identifier" : identifier,
     @"revision" : RevisionToken(note),
+    @"attachmentSnapshot" : ANMAttachmentSnapshotToken(FrozenAttachments(note, body, [NSSet set], NULL)),
+    @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
     @"deletedOrInTrash" : @(SendBool(note, "isDeletedOrInTrash")),
     @"sharedViaICloud" : @(SendBool(note, "isSharedViaICloud")),
     @"tableCount" : @(tables.count),
@@ -7101,8 +7137,8 @@ static NSString *RequireToken(NSDictionary *request, NSString *key, NSString *pr
 static BOOL RequireGuards(NSDictionary *request, BOOL dryRun, NSString **ifRevision,
                           NSString **ifTableDigest) {
   if (dryRun) {
-    if (request[@"ifRevision"] || request[@"ifTableDigest"])
-      Fail(@"invalid_request", @"`ifRevision` and `ifTableDigest` are only accepted with dryRun false",
+    if (request[@"ifRevision"] || request[@"ifTableDigest"] || request[@"ifAttachmentSnapshot"])
+      Fail(@"invalid_request", @"Revision, table and attachment snapshot guards are only accepted with dryRun false",
            nil);
     return NO;
   }
@@ -7127,6 +7163,9 @@ typedef struct {
   NSString *revision;
   NSString *tableDigest;
   NSString *bodyText;
+  NSDictionary *bodySnapshot;
+  NSDictionary *unrelatedAttachments;
+  NSString *attachmentSnapshot;
 } TableTarget;
 
 // Resolves the note and one of its table attachments, applying the same note
@@ -7146,6 +7185,26 @@ static TableTarget ResolveTableTarget(NSDictionary *request, BOOL readOnly, BOOL
   NSAttributedString *body = BodyAttributedString(target.note);
   if (!body) Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
   target.bodyText = [body.string copy];
+  NSString *preservationReason = nil;
+  target.bodySnapshot = ANMContentSnapshot(body, NSMakeRange(0, body.length), &preservationReason);
+  if (!target.bodySnapshot)
+    Fail(@"unsupported_note", preservationReason ?: @"The existing body cannot be fully compared",
+         @{@"committed" : @NO});
+  // Preview receipt covers every attachment, including the selected table,
+  // before any tableModel or other mutation-capable private API is called.
+  target.attachmentSnapshot = ANMAttachmentSnapshotToken(FrozenAttachments(target.note, body, [NSSet set], NULL));
+  if (!readOnly) {
+    NSString *receipt = RequireToken(request, @"ifAttachmentSnapshot", @"a1:");
+    NSCharacterSet *invalid = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+    if ([[receipt substringFromIndex:3] rangeOfCharacterFromSet:invalid].location != NSNotFound)
+      Fail(@"invalid_request", @"`ifAttachmentSnapshot` must be a complete a1 receipt", @{@"committed" : @NO});
+    if (![receipt isEqual:target.attachmentSnapshot])
+      Fail(@"attachment_snapshot_mismatch", @"Existing attachment evidence changed since the table preview",
+           @{@"committed" : @NO});
+    if (![receipt isEqual:ANMAttachmentSnapshotToken(FreshFrozenAttachments(target.store, identifier, [NSSet set]))])
+      Fail(@"attachment_snapshot_mismatch", @"Fresh persisted attachment evidence changed before the table mutation",
+           @{@"committed" : @NO});
+  }
   target.attachment = nil;
   for (NSManagedObject *attachment in [target.note valueForKey:@"attachments"]) {
     NSString *candidate = [attachment valueForKey:@"identifier"];
@@ -7169,6 +7228,8 @@ static TableTarget ResolveTableTarget(NSDictionary *request, BOOL readOnly, BOOL
          @{@"glyphCount" : @(glyphs)});
   target.revision = RevisionToken(target.note);
   target.tableDigest = TableDigest(target.attachment);
+  target.unrelatedAttachments = FrozenAttachments(target.note, body,
+      [NSSet setWithObject:[[target.attachment valueForKey:@"identifier"] lowercaseString]], NULL);
   return target;
 }
 
@@ -7193,7 +7254,8 @@ static NSManagedObject *AttachmentNamed(NSManagedObject *note, NSString *identif
 // proves through a brand-new Core Data stack that the body is untouched and
 // the table now equals `expected` exactly.
 static NSDictionary *CommitTableEdit(TableTarget target, id model, NSString *reason,
-                                     NSDictionary *expected) {
+                                     NSDictionary *expected, NSDictionary *untouchedCells,
+                                     NSString *changedRow, NSString *changedColumn) {
   NSString *tableIdentifier = [target.attachment valueForKey:@"identifier"];
   NSString *noteIdentifier = [target.note valueForKey:@"identifier"];
   SendVoid(model, "writeMergeableData");
@@ -7207,6 +7269,26 @@ static NSDictionary *CommitTableEdit(TableTarget target, id model, NSString *rea
   [target.note setValue:now forKey:@"modificationDate"];
   ((void (*)(id, SEL, id))objc_msgSend)(target.note, sel_registerName("updateChangeCountWithReason:"),
                                         reason);
+  NSString *preservationReason = nil;
+  NSAttributedString *beforeSaveBody = BodyAttributedString(target.note);
+  if (!ANMContentMatches(target.bodySnapshot, beforeSaveBody, &preservationReason))
+    Fail(@"content_drift", preservationReason, @{@"committed" : @NO});
+  NSDictionary *beforeSaveCells = TableContentSnapshot(TableOf(target.attachment, NULL), &preservationReason);
+  if (!beforeSaveCells || !ANMTableContentMatches(untouchedCells, beforeSaveCells, expected,
+                                                 changedRow, changedColumn, &preservationReason))
+    Fail(@"content_drift", preservationReason ?: @"The table cell attributes cannot be compared",
+         @{@"committed" : @NO});
+  NSSet *excluded = [NSSet setWithObject:tableIdentifier.lowercaseString];
+  NSArray *attachmentDrift = FrozenDrift(target.unrelatedAttachments,
+      FrozenAttachments(target.note, beforeSaveBody, excluded, NULL), nil);
+  if (attachmentDrift.count)
+    Fail(@"attachment_drift", @"An unrelated attachment would change during the table edit",
+         @{@"committed" : @NO, @"attachmentDrift" : attachmentDrift});
+  attachmentDrift = FrozenDrift(target.unrelatedAttachments,
+      FreshFrozenAttachments(target.store, noteIdentifier, excluded), nil);
+  if (attachmentDrift.count)
+    Fail(@"attachment_drift", @"Fresh persisted unrelated attachments changed before the table save",
+         @{@"committed" : @NO, @"attachmentDrift" : attachmentDrift});
   RequireExpectedChanges(target.context, @[ target.note, target.attachment ], [NSSet set]);
   SaveOrFail(target.context);
 
@@ -7220,14 +7302,22 @@ static NSDictionary *CommitTableEdit(TableTarget target, id model, NSString *rea
     NSManagedObject *attachment = AttachmentNamed(note, tableIdentifier);
     NSString *reasonText = nil;
     NSDictionary *snapshot = attachment ? TableSnapshot(TableOf(attachment, NULL), &reasonText) : nil;
-    if (![body.string isEqualToString:target.bodyText])
-      verifyDetail = @"The note body changed during a table-only edit";
+    NSDictionary *cellSnapshot = attachment ? TableContentSnapshot(TableOf(attachment, NULL), &reasonText) : nil;
+    if (!ANMContentMatches(target.bodySnapshot, body, &verifyDetail))
+      verifyDetail = verifyDetail ?: @"The note body changed during a table-only edit";
     else if (GlyphCountFor(body, tableIdentifier) != 1)
       verifyDetail = @"The table glyph is no longer present exactly once";
     else if (!snapshot)
       verifyDetail = reasonText ?: @"The table could not be re-read";
     else if (![snapshot isEqual:expected])
       verifyDetail = @"The persisted table does not equal the planned result";
+    else if (!cellSnapshot || !ANMTableContentMatches(untouchedCells, cellSnapshot, expected,
+                                                     changedRow, changedColumn, &verifyDetail))
+      verifyDetail = verifyDetail ?: reasonText ?: @"The persisted cell attributes cannot be compared";
+    if (!verifyDetail) {
+      attachmentDrift = FrozenDrift(target.unrelatedAttachments, FrozenAttachments(note, body, excluded, NULL), nil);
+      if (attachmentDrift.count) verifyDetail = @"An unrelated attachment changed during the table edit";
+    }
     if (!verifyDetail) {
       digestAfter = TableDigest(attachment);
       after = NoteState(note);
@@ -7238,12 +7328,15 @@ static NSDictionary *CommitTableEdit(TableTarget target, id model, NSString *rea
   }
   if (verifyDetail)
     Fail(@"verification_failed", verifyDetail,
-         @{@"committed" : @YES, @"revisionBefore" : target.revision});
+         @{@"committed" : @YES, @"indeterminate" : @YES, @"revisionBefore" : target.revision});
   NSMutableDictionary *result = [@{
     @"status" : @"updated",
     @"dryRun" : @NO,
     @"committed" : @YES,
     @"verified" : @YES,
+    @"untouchedContentVerified" : @YES,
+    @"unrelatedAttachmentsVerified" : @YES,
+    @"contentEvidencePolicy" : ANMContentEvidencePolicy,
     @"identifier" : noteIdentifier,
     @"tableIdentifier" : tableIdentifier,
     @"revisionBefore" : target.revision,
@@ -7270,6 +7363,17 @@ static NSDictionary *LoadedSnapshot(TableTarget target, id *tableOut, id *modelO
   return snapshot;
 }
 
+static NSDictionary *RequireTableContentSnapshot(id table, NSString *allowedRow, NSString *allowedColumn) {
+  NSString *reason = nil;
+  NSDictionary *snapshot = TableContentSnapshot(table, &reason);
+  if (!snapshot)
+    Fail(@"unsupported_attachment", reason ?: @"The full table cell attributes cannot be compared",
+         @{@"committed" : @NO});
+  if (!ANMTableExistingCellsVerifiable(snapshot, allowedRow, allowedColumn, &reason))
+    Fail(@"unsupported_attachment", reason, @{@"committed" : @NO});
+  return snapshot;
+}
+
 static NSDictionary *HandleDeleteTableRow(NSDictionary *request) {
   gWriteRequest = YES;
   BOOL dryRun = RequireBool(request, @"dryRun");
@@ -7285,6 +7389,7 @@ static NSDictionary *HandleDeleteTableRow(NSDictionary *request) {
   if (index == NSNotFound) Fail(@"not_found", @"The table has no row with that rowIdentifier", nil);
   NSArray *rows = snapshot[@"rows"];
   if (rows.count < 2) Fail(@"unsupported_attachment", @"A table's only row cannot be deleted", nil);
+  NSDictionary *untouchedCells = RequireTableContentSnapshot(table, rows[index][@"identifier"], nil);
   NSMutableArray *remaining = [rows mutableCopy];
   [remaining removeObjectAtIndex:index];
   NSDictionary *expected = @{@"columnIdentifiers" : snapshot[@"columnIdentifiers"], @"rows" : remaining};
@@ -7306,12 +7411,15 @@ static NSDictionary *HandleDeleteTableRow(NSDictionary *request) {
       @"committed" : @NO,
       @"revision" : target.revision,
       @"tableDigest" : target.tableDigest,
+      @"attachmentSnapshot" : target.attachmentSnapshot,
+      @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
     }];
     return result;
   }
   ((void (*)(id, SEL, NSUInteger))objc_msgSend)(table, sel_registerName("removeRowAtIndex:"), index);
   NSMutableDictionary *result =
-      [CommitTableEdit(target, model, @"apple-notes-mcp delete_table_row", expected) mutableCopy];
+      [CommitTableEdit(target, model, @"apple-notes-mcp delete_table_row", expected,
+                       untouchedCells, nil, nil) mutableCopy];
   [result addEntriesFromDictionary:plan];
   return result;
 }
@@ -7334,6 +7442,7 @@ static NSDictionary *HandleInsertTableRow(NSDictionary *request) {
   CompareTableGuards(target, ifRevision, ifTableDigest);
   id table = nil, model = nil;
   NSDictionary *snapshot = LoadedSnapshot(target, &table, &model);
+  NSDictionary *untouchedCells = RequireTableContentSnapshot(table, nil, nil);
   NSArray *columns = snapshot[@"columnIdentifiers"];
   NSArray *rows = snapshot[@"rows"];
   if (cells.count > columns.count)
@@ -7366,7 +7475,8 @@ static NSDictionary *HandleInsertTableRow(NSDictionary *request) {
   [expectedRows insertObject:@{@"identifier" : newRow, @"cells" : newCells} atIndex:index];
   NSMutableDictionary *result =
       [CommitTableEdit(target, model, @"apple-notes-mcp insert_table_row",
-                       @{@"columnIdentifiers" : columns, @"rows" : expectedRows}) mutableCopy];
+                       @{@"columnIdentifiers" : columns, @"rows" : expectedRows},
+                       untouchedCells, nil, nil) mutableCopy];
   result[@"rowIdentifier"] = newRow;
   result[@"rowIndex"] = @(index);
   return result;
@@ -7394,6 +7504,7 @@ static NSDictionary *HandleSetTableCell(NSDictionary *request) {
   for (NSUInteger c = 0; c < columns.count; c++)
     if ([columns[c] caseInsensitiveCompare:columnIdentifier] == NSOrderedSame) column = c;
   if (column == NSNotFound) Fail(@"not_found", @"The table has no column with that columnIdentifier", nil);
+  NSDictionary *untouchedCells = RequireTableContentSnapshot(table, snapshot[@"rows"][row][@"identifier"], columns[column]);
 
   NSString *previous = snapshot[@"rows"][row][@"cells"][column];
   ((void (*)(id, SEL, id, NSUInteger, NSUInteger))objc_msgSend)(
@@ -7405,7 +7516,8 @@ static NSDictionary *HandleSetTableCell(NSDictionary *request) {
   rows[row] = @{@"identifier" : rows[row][@"identifier"], @"cells" : cells};
   NSMutableDictionary *result =
       [CommitTableEdit(target, model, @"apple-notes-mcp set_table_cell",
-                       @{@"columnIdentifiers" : columns, @"rows" : rows}) mutableCopy];
+                       @{@"columnIdentifiers" : columns, @"rows" : rows},
+                       untouchedCells, rows[row][@"identifier"], columns[column]) mutableCopy];
   result[@"rowIdentifier"] = rows[row][@"identifier"];
   result[@"columnIdentifier"] = columns[column];
   result[@"previousText"] = previous;
