@@ -447,7 +447,11 @@ try {
       unchanged(`${kind}: missing digest`, afterAppend, () =>
         call(
           "edit_note",
-          { ...reviewed, ifRevision: reviewedPlan.revisionBefore, ifAttachmentSnapshot: reviewedPlan.attachmentSnapshot },
+          {
+            ...reviewed,
+            ifRevision: reviewedPlan.revisionBefore,
+            ifAttachmentSnapshot: reviewedPlan.attachmentSnapshot,
+          },
           "EDIT",
           "invalid_request"
         )
@@ -465,9 +469,16 @@ try {
       const fields = applyFields(reviewed, reviewedPlan);
       const { ifAttachmentSnapshot, ...missing } = fields;
       unchanged(`${kind}: missing attachment receipt`, afterAppend, () =>
-        call("edit_note", missing, "EDIT", "invalid_request"));
+        call("edit_note", missing, "EDIT", "invalid_request")
+      );
       unchanged(`${kind}: mismatched attachment receipt`, afterAppend, () =>
-        call("edit_note", { ...fields, ifAttachmentSnapshot: "a1:" + "0".repeat(64) }, "EDIT", "attachment_snapshot_mismatch"));
+        call(
+          "edit_note",
+          { ...fields, ifAttachmentSnapshot: "a1:" + "0".repeat(64) },
+          "EDIT",
+          "attachment_snapshot_mismatch"
+        )
+      );
     });
     if (!wouldChange) {
       noOpControl = { fields: reviewed, plan: reviewedPlan };
@@ -493,14 +504,25 @@ try {
     const before = read();
     const beforeBody = hash(body());
     mutationInvocation++;
-    const result = sandbox(generator, [store, payloadPath, noteIdentifier, replicaIdentifier, mode]);
+    const result = sandbox(generator, [
+      store,
+      payloadPath,
+      noteIdentifier,
+      replicaIdentifier,
+      mode,
+    ]);
     const name = `generated-mutation-${mutationInvocation}`;
     evidenceFiles.add(`${name}.stderr`);
     evidenceFiles.add(`${name}.json`);
     writeFileSync(join(root, `${name}.stderr`), result.stderr, { mode: 0o600 });
     const response = JSON.parse(result.stdout);
     persist(`${name}.json`, response);
-    assert.deepEqual(response, { mutated: true, frameworkLoaded: false, bodyPreserved: true, modificationDatePreserved: true });
+    assert.deepEqual(response, {
+      mutated: true,
+      frameworkLoaded: false,
+      bodyPreserved: true,
+      modificationDatePreserved: true,
+    });
     assert.equal(hash(body()), beforeBody);
     assert.equal(read().revision, before.revision);
     checkDecoded(afterAppend);
@@ -516,24 +538,40 @@ try {
       const beforeBody = hash(body());
       mutateInline(mode);
       const fresh = unchanged(`${label}: fresh read-only plan`, afterAppend, () =>
-        call("plan_edit", changingControl.fields));
+        call("plan_edit", changingControl.fields)
+      );
       assert.equal(fresh.revisionBefore, before.revision);
       assert.equal(hash(body()), beforeBody);
       assert.equal(fresh.frozenAttachments.inlineAttachments, rows);
       assert.notEqual(fresh.attachmentSnapshot, changingControl.plan.attachmentSnapshot);
       assert.notEqual(fresh.planDigest, changingControl.plan.planDigest);
-      for (const [kind, reviewed] of [["changing edit", changingControl], ["no-op edit", noOpControl]]) {
+      for (const [kind, reviewed] of [
+        ["changing edit", changingControl],
+        ["no-op edit", noOpControl],
+      ]) {
         unchanged(`${label}: stale a1 ${kind} before materialization`, afterAppend, () =>
-          call("edit_note", applyFields(reviewed.fields, reviewed.plan), "EDIT", "attachment_snapshot_mismatch"));
+          call(
+            "edit_note",
+            applyFields(reviewed.fields, reviewed.plan),
+            "EDIT",
+            "attachment_snapshot_mismatch"
+          )
+        );
       }
       report.attachmentDrift.push({
-        kind: label, revisionUnchanged: true, bodyUnchanged: true, operationsUnchanged: true,
-        ownedInlineRows: rows, priorReceiptSha256: hash(changingControl.plan.attachmentSnapshot),
-        freshReceiptSha256: hash(fresh.attachmentSnapshot), staleChangingAndNoOpRefused: true,
+        kind: label,
+        revisionUnchanged: true,
+        bodyUnchanged: true,
+        operationsUnchanged: true,
+        ownedInlineRows: rows,
+        priorReceiptSha256: hash(changingControl.plan.attachmentSnapshot),
+        freshReceiptSha256: hash(fresh.attachmentSnapshot),
+        staleChangingAndNoOpRefused: true,
       });
       mutateInline("--inline-restore");
       const restored = unchanged(`${label}: restored public row plan`, afterAppend, () =>
-        call("plan_edit", changingControl.fields));
+        call("plan_edit", changingControl.fields)
+      );
       assert.equal(restored.attachmentSnapshot, changingControl.plan.attachmentSnapshot);
       assert.equal(restored.planDigest, changingControl.plan.planDigest);
     });
@@ -578,124 +616,158 @@ try {
     ],
   };
   const plan = unchanged("ordinary-body compose: strict read-only capability", afterAppend, () =>
-    call("compose_note", { ...compose, dryRun: true }, undefined, ["unsupported_note"]));
-  report.ordinaryBodyCompose = { supported: plan.status !== "error", refusalCode: plan.status === "error" ? plan.code : null };
+    call("compose_note", { ...compose, dryRun: true }, undefined, ["unsupported_note"])
+  );
+  report.ordinaryBodyCompose = {
+    supported: plan.status !== "error",
+    refusalCode: plan.status === "error" ? plan.code : null,
+  };
   if (plan.status === "error") {
     test("strict c2 refuses unsupported ordinary native content layout without mutation", () => {
       unchanged("ordinary-body compose: strict apply refusal", afterAppend, () =>
-        call("compose_note", { ...compose, ifRevision: state.revision, ifPlanDigest: "c2:" + "0".repeat(64), ifAttachmentSnapshot: "a1:" + "0".repeat(64) }, "COMPOSE", "unsupported_note"));
+        call(
+          "compose_note",
+          {
+            ...compose,
+            ifRevision: state.revision,
+            ifPlanDigest: "c2:" + "0".repeat(64),
+            ifAttachmentSnapshot: "a1:" + "0".repeat(64),
+          },
+          "COMPOSE",
+          "unsupported_note"
+        )
+      );
     });
   } else {
-  test("compose dry run returns digest and leaves revision unchanged", () => {
-    assert.equal(plan.status, "planned");
-    assert.match(plan.planDigest, /^c2:[0-9a-f]{64}$/);
-    assert.equal(read().revision, state.revision);
-    checkDecoded(afterAppend);
-  });
-  test("compose refuses missing/mismatched digest and preserves revision", () => {
-    unchanged("compose: missing digest", afterAppend, () =>
-      call("compose_note", { ...compose, ifRevision: state.revision, ifAttachmentSnapshot: plan.attachmentSnapshot }, "COMPOSE", "invalid_request")
+    test("compose dry run returns digest and leaves revision unchanged", () => {
+      assert.equal(plan.status, "planned");
+      assert.match(plan.planDigest, /^c2:[0-9a-f]{64}$/);
+      assert.equal(read().revision, state.revision);
+      checkDecoded(afterAppend);
+    });
+    test("compose refuses missing/mismatched digest and preserves revision", () => {
+      unchanged("compose: missing digest", afterAppend, () =>
+        call(
+          "compose_note",
+          { ...compose, ifRevision: state.revision, ifAttachmentSnapshot: plan.attachmentSnapshot },
+          "COMPOSE",
+          "invalid_request"
+        )
+      );
+      unchanged("compose: mismatched digest", afterAppend, () =>
+        call(
+          "compose_note",
+          {
+            ...compose,
+            ifRevision: state.revision,
+            ifPlanDigest: "c2:" + "0".repeat(64),
+            ifAttachmentSnapshot: plan.attachmentSnapshot,
+          },
+          "COMPOSE",
+          "plan_mismatch"
+        )
+      );
+    });
+    const prospectiveFilePath = join(root, "public-materialization-control.pdf");
+    const prospectiveFile = Buffer.from(
+      "%PDF-1.4\n% PUBLIC SYNTHETIC DIGEST REFUSAL CONTROL\n%%EOF\n"
     );
-    unchanged("compose: mismatched digest", afterAppend, () =>
-      call(
-        "compose_note",
-        { ...compose, ifRevision: state.revision, ifPlanDigest: "c2:" + "0".repeat(64), ifAttachmentSnapshot: plan.attachmentSnapshot },
-        "COMPOSE",
-        "plan_mismatch"
-      )
-    );
-  });
-  const prospectiveFilePath = join(root, "public-materialization-control.pdf");
-  const prospectiveFile = Buffer.from(
-    "%PDF-1.4\n% PUBLIC SYNTHETIC DIGEST REFUSAL CONTROL\n%%EOF\n"
-  );
-  writeFileSync(prospectiveFilePath, prospectiveFile, { mode: 0o600 });
-  const fileCompose = {
-    identifier: noteIdentifier,
-    mode: "append",
-    paragraphs: [
-      { kind: "file", path: prospectiveFilePath, expectedSha256: hash(prospectiveFile) },
-    ],
-  };
-  test("compose file plan and digest refusals leave exact objects, store and files unchanged", () => {
-    const filePlan = unchanged("file compose: read-only plan", afterAppend, () =>
-      call("compose_note", { ...fileCompose, dryRun: true })
-    );
-    assert.equal(filePlan.status, "planned");
-    assert.equal(filePlan.committed, false);
-    assert.equal(filePlan.objects.length, 1);
-    unchanged("file compose: missing digest before materialization", afterAppend, () =>
-      call(
-        "compose_note",
-        { ...fileCompose, ifRevision: filePlan.revisionBefore, ifAttachmentSnapshot: filePlan.attachmentSnapshot },
-        "COMPOSE",
-        "invalid_request"
-      )
-    );
-    unchanged("file compose: mismatched digest before materialization", afterAppend, () =>
-      call(
+    writeFileSync(prospectiveFilePath, prospectiveFile, { mode: 0o600 });
+    const fileCompose = {
+      identifier: noteIdentifier,
+      mode: "append",
+      paragraphs: [
+        { kind: "file", path: prospectiveFilePath, expectedSha256: hash(prospectiveFile) },
+      ],
+    };
+    test("compose file plan and digest refusals leave exact objects, store and files unchanged", () => {
+      const filePlan = unchanged("file compose: read-only plan", afterAppend, () =>
+        call("compose_note", { ...fileCompose, dryRun: true })
+      );
+      assert.equal(filePlan.status, "planned");
+      assert.equal(filePlan.committed, false);
+      assert.equal(filePlan.objects.length, 1);
+      unchanged("file compose: missing digest before materialization", afterAppend, () =>
+        call(
+          "compose_note",
+          {
+            ...fileCompose,
+            ifRevision: filePlan.revisionBefore,
+            ifAttachmentSnapshot: filePlan.attachmentSnapshot,
+          },
+          "COMPOSE",
+          "invalid_request"
+        )
+      );
+      unchanged("file compose: mismatched digest before materialization", afterAppend, () =>
+        call(
+          "compose_note",
+          {
+            ...fileCompose,
+            ifRevision: filePlan.revisionBefore,
+            ifPlanDigest: "c2:" + "0".repeat(64),
+            ifAttachmentSnapshot: filePlan.attachmentSnapshot,
+          },
+          "COMPOSE",
+          "plan_mismatch"
+        )
+      );
+      assert.equal(hash(readSingleLinkFile(prospectiveFilePath)), hash(prospectiveFile));
+      assert.equal(
+        sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
+        "1"
+      );
+    });
+    const afterCompose = afterAppend + "\nSynthetic heading\nSynthetic rich text";
+    test("real rich compose preserves prior text and stores exact heading and bold runs", () => {
+      const changed = call(
         "compose_note",
         {
-          ...fileCompose,
-          ifRevision: filePlan.revisionBefore,
-          ifPlanDigest: "c2:" + "0".repeat(64),
-          ifAttachmentSnapshot: filePlan.attachmentSnapshot,
+          ...compose,
+          ifRevision: state.revision,
+          ifPlanDigest: plan.planDigest,
+          ifAttachmentSnapshot: plan.attachmentSnapshot,
         },
-        "COMPOSE",
-        "plan_mismatch"
-      )
-    );
-    assert.equal(hash(readSingleLinkFile(prospectiveFilePath)), hash(prospectiveFile));
-    assert.equal(
-      sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
-      "1"
-    );
-  });
-  const afterCompose = afterAppend + "\nSynthetic heading\nSynthetic rich text";
-  test("real rich compose preserves prior text and stores exact heading and bold runs", () => {
-    const changed = call(
-      "compose_note",
-      { ...compose, ifRevision: state.revision, ifPlanDigest: plan.planDigest, ifAttachmentSnapshot: plan.attachmentSnapshot },
-      "COMPOSE"
-    );
-    assert.equal(changed.committed, true);
-    assert.equal(changed.verified, true);
-    assert.notEqual(read().revision, state.revision);
-    const { blocks } = checkDecoded(afterCompose);
-    const added = blocks.blocks.filter((block) => block.start >= afterAppend.length + 1);
-    assert.equal(added.length, 2, "exactly two composed paragraphs");
-    const [heading, rich] = added;
-    assert.deepEqual(
-      [heading.text, heading.start, heading.length, heading.style, heading.styleType],
-      ["Synthetic heading", afterAppend.length + 1, "Synthetic heading".length, "heading", 1]
-    );
-    assert.deepEqual(
-      [rich.text, rich.start, rich.length, rich.style],
-      [
-        "Synthetic rich text",
-        afterAppend.length + 1 + "Synthetic heading\n".length,
-        "Synthetic rich text".length,
-        "body",
-      ]
-    );
-    for (const block of added) {
-      assert.ok(block.runs.length > 0, "composed paragraph has stored attribute runs");
-      assert.equal(
-        block.runs.map((run) => run.text).join(""),
-        block.text,
-        "runs cover exactly the requested text"
+        "COMPOSE"
       );
-      let next = block.start;
-      for (const run of block.runs) {
-        assert.equal(run.start, next, "no missing or overlapping styled characters");
-        assert.equal(run.length, run.text.length);
-        if (block === rich)
-          assert.equal(run.bold, true, "every rich-text character is stored bold");
-        next += run.length;
+      assert.equal(changed.committed, true);
+      assert.equal(changed.verified, true);
+      assert.notEqual(read().revision, state.revision);
+      const { blocks } = checkDecoded(afterCompose);
+      const added = blocks.blocks.filter((block) => block.start >= afterAppend.length + 1);
+      assert.equal(added.length, 2, "exactly two composed paragraphs");
+      const [heading, rich] = added;
+      assert.deepEqual(
+        [heading.text, heading.start, heading.length, heading.style, heading.styleType],
+        ["Synthetic heading", afterAppend.length + 1, "Synthetic heading".length, "heading", 1]
+      );
+      assert.deepEqual(
+        [rich.text, rich.start, rich.length, rich.style],
+        [
+          "Synthetic rich text",
+          afterAppend.length + 1 + "Synthetic heading\n".length,
+          "Synthetic rich text".length,
+          "body",
+        ]
+      );
+      for (const block of added) {
+        assert.ok(block.runs.length > 0, "composed paragraph has stored attribute runs");
+        assert.equal(
+          block.runs.map((run) => run.text).join(""),
+          block.text,
+          "runs cover exactly the requested text"
+        );
+        let next = block.start;
+        for (const run of block.runs) {
+          assert.equal(run.start, next, "no missing or overlapping styled characters");
+          assert.equal(run.length, run.text.length);
+          if (block === rich)
+            assert.equal(run.bold, true, "every rich-text character is stored bold");
+          next += run.length;
+        }
+        assert.equal(next, block.start + block.length);
       }
-      assert.equal(next, block.start + block.length);
-    }
-  });
+    });
   }
   test("final store integrity and exact synthetic population remain intact", () => {
     assert.equal(sqlite("PRAGMA integrity_check;"), "ok");
