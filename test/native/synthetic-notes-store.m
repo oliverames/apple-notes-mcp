@@ -89,6 +89,14 @@ int main(int argc, const char **argv) {
       // Receipt/drift modes may only consume the deterministic public seed.
       // Mutation modes never apply these bytes to the existing note body.
       if ((receiptFixture || mutate) && !IsFixedPublicPayload(payload)) return 4;
+      if (mutate) {
+        NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:storePath];
+        NSData *header = [file readDataOfLength:20];
+        [file closeFile];
+        const unsigned char *bytes = header.bytes;
+        if (header.length != 20 || memcmp(bytes, "SQLite format 3\0", 16) != 0 || bytes[18] != 2 || bytes[19] != 2)
+          return 14; // Refuse any store not already in the writer's WAL mode.
+      }
       NSManagedObjectModel *model = [[NSManagedObjectModel alloc] initWithContentsOfURL:
           [NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks/NotesShared.framework/Resources/NoteData.mom"]];
       if (!model) return 5;
