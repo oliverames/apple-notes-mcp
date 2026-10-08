@@ -100,7 +100,10 @@ int main(int argc, const char **argv) {
         NSMigratePersistentStoresAutomaticallyOption: @NO,
         NSInferMappingModelAutomaticallyOption: @NO,
         NSPersistentHistoryTrackingKey: @YES,
-        NSSQLitePragmasOption: @{ @"journal_mode": @"DELETE" },
+        // Fresh generation closes a journal-free baseline. Fixed drift must
+        // retain the WAL mode already established by the production writer,
+        // rather than make its next refusal reopen/convert the database.
+        NSSQLitePragmasOption: @{ @"journal_mode": mutate ? @"WAL" : @"DELETE" },
       };
       NSError *error = nil;
       NSPersistentStore *store = [coordinator addPersistentStoreWithType:NSSQLiteStoreType configuration:nil
