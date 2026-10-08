@@ -3,7 +3,7 @@
  *
  * When `setup --broker` has installed a broker and it answers, the process an
  * MCP host launches does not run the server itself. It forwards its stdin and
- * stdout to a server the broker starts, so macOS attributes that server's
+ * stdout and stderr to a server the broker starts, so macOS attributes that server's
  * Notes database reads and Apple events to the broker app instead of the host
  * or this Node binary. The proxy never parses MCP traffic; it moves bytes.
  *
@@ -26,6 +26,9 @@ import { BrokerUnreachableError, requestBroker } from "@/services/brokerClient.j
 
 /** How long the proxy waits for the broker before running in-process. */
 export const BROKER_CONNECT_TIMEOUT_MS = 5000;
+const MAX_FRAME_BYTES = 65_536;
+const OUTPUT_FLUSH_TIMEOUT_MS = 2000;
+const OUTPUT_STALL_TIMEOUT_MS = 30_000;
 
 /**
  * Only numeric resource and timing limits may cross the socket. Keep this
@@ -55,6 +58,7 @@ export interface BrokerProxyDeps {
   request: typeof requestBroker;
   stdin: NodeJS.ReadableStream;
   stdout: NodeJS.WritableStream & { writableLength?: number };
+  stderr: NodeJS.WritableStream & { writableLength?: number };
   exit: (code: number) => void;
   log: (message: string) => void;
 }
@@ -66,6 +70,7 @@ export function defaultBrokerProxyDeps(overrides: Partial<BrokerProxyDeps> = {})
     request: requestBroker,
     stdin: process.stdin,
     stdout: process.stdout,
+    stderr: process.stderr,
     exit: (code) => process.exit(code),
     log: (message) => process.stderr.write(`[apple-notes-mcp] ${message}\n`),
     ...overrides,
@@ -98,7 +103,7 @@ export function passedEnvironment(env: NodeJS.ProcessEnv): Record<string, string
 /**
  * Hand this process's stdio to the broker when one is installed and answers.
  * Resolves true once the proxy is running (the process then lives until
- * either side closes), or false to run the server in-process.
+ * the brokered session ends), or false to run the server in-process.
  */
 export async function startBrokerProxy(
   deps: BrokerProxyDeps = defaultBrokerProxyDeps()
@@ -158,26 +163,206 @@ export async function startBrokerProxy(
     );
   }
 
-  let finished = false;
-  const finish = () => {
-    if (finished) return;
-    finished = true;
-    // Let a pending response reach the client before exiting.
-    if ((deps.stdout.writableLength ?? 0) > 0) {
-      const timer = setTimeout(() => deps.exit(0), 2000);
-      deps.stdout.once("drain", () => {
-        clearTimeout(timer);
-        deps.exit(0);
-      });
-    } else {
-      deps.exit(0);
+  relayBroker(socket, leftover, deps);
+  return true;
+}
+
+/** Protocol 3: a channel byte, uint32 BE length, then a bounded binary payload. */
+function relayBroker(socket: Socket, leftover: Buffer, deps: BrokerProxyDeps): void {
+  const header = Buffer.allocUnsafe(5);
+  let headerBytes = 0;
+  let payload: Buffer | null = null;
+  let payloadBytes = 0;
+  let channel = 0;
+  let initialBytes = leftover;
+  let initialOffset = 0;
+  let pendingWrites = 0;
+  let exitCode: number | null = null;
+  let finishingCode: number | null = null;
+  let exited = false;
+  let failing = false;
+  let pumping = false;
+  let remoteEnded = false;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  let stallDeadline: ReturnType<typeof setTimeout> | undefined;
+  const blocked = new Set<NodeJS.WritableStream>();
+  const log = (message: string) => {
+    try {
+      deps.log(message);
+    } catch {
+      // A broken stderr must not prevent transport cleanup and a failure exit.
     }
   };
-  if (leftover.length > 0) deps.stdout.write(leftover);
-  socket.pipe(deps.stdout, { end: false });
+
+  const stopInput = () => {
+    deps.stdin.unpipe(socket);
+    deps.stdin.pause();
+  };
+  const exit = () => {
+    if (exited || finishingCode === null || pendingWrites > 0) return;
+    exited = true;
+    clearTimeout(deadline);
+    clearTimeout(stallDeadline);
+    socket.off("readable", pump);
+    deps.stdout.off("drain", stdoutDrained);
+    deps.stderr.off("drain", stderrDrained);
+    deps.exit(finishingCode);
+  };
+  const startDeadline = () => {
+    if (deadline) return;
+    deadline = setTimeout(() => {
+      if (exited) return;
+      log("Broker output did not finish within 2000 ms.");
+      finishingCode = 1;
+      pendingWrites = 0;
+      stopInput();
+      socket.destroy();
+      exit();
+    }, OUTPUT_FLUSH_TIMEOUT_MS);
+  };
+  const finish = (code: number) => {
+    if (exited) return;
+    // A later stream error must still turn an otherwise successful exit into failure.
+    if (finishingCode === null || code !== 0) finishingCode = code;
+    stopInput();
+    socket.destroy();
+    startDeadline();
+    exit();
+  };
+  const fail = (message: string) => {
+    if (exited || failing) return;
+    failing = true;
+    log(message);
+    finish(1);
+  };
+  const updateStallDeadline = (progress = false) => {
+    if (progress || (pendingWrites === 0 && blocked.size === 0)) {
+      clearTimeout(stallDeadline);
+      stallDeadline = undefined;
+    }
+    if (exited || stallDeadline || (pendingWrites === 0 && blocked.size === 0)) return;
+    stallDeadline = setTimeout(() => {
+      if (exited) return;
+      log("Broker output stalled for 30000 ms.");
+      pendingWrites = 0;
+      finish(1);
+    }, OUTPUT_STALL_TIMEOUT_MS);
+  };
+  const writeOutput = (stream: NodeJS.WritableStream, bytes: Buffer) => {
+    pendingWrites++;
+    try {
+      const accepted = stream.write(bytes, (error?: Error | null) => {
+        if (exited) return;
+        pendingWrites--;
+        updateStallDeadline(true);
+        if (error) fail(`Broker output error: ${error.message}`);
+        else exit();
+      });
+      if (!accepted) blocked.add(stream);
+      updateStallDeadline();
+    } catch (error) {
+      pendingWrites--;
+      fail(`Broker output error: ${String(error)}`);
+    }
+  };
+  const read = (length: number): Buffer | null => {
+    if (initialOffset < initialBytes.length) {
+      const end = Math.min(initialBytes.length, initialOffset + length);
+      const bytes = initialBytes.subarray(initialOffset, end);
+      initialOffset = end;
+      if (initialOffset === initialBytes.length) initialBytes = Buffer.alloc(0);
+      return bytes;
+    }
+    const available = socket.readableLength;
+    return socket.read(Math.min(length, available)) as Buffer | null;
+  };
+  function pump() {
+    if (pumping || finishingCode !== null || exited) return;
+    pumping = true;
+    try {
+      // Read explicitly instead of using flowing mode, so a blocked output never
+      // accumulates frames in an application queue. Only one payload is allocated.
+      while (blocked.size === 0 && finishingCode === null) {
+        if (exitCode !== null) {
+          if (read(1)) fail("The broker sent bytes after its exit frame.");
+          break;
+        }
+        if (payload === null) {
+          const bytes = read(header.length - headerBytes);
+          if (!bytes) break;
+          headerBytes += bytes.copy(header, headerBytes);
+          if (headerBytes !== header.length) continue;
+          channel = header[0];
+          const length = header.readUInt32BE(1);
+          if (
+            (channel !== 1 && channel !== 2 && channel !== 3) ||
+            length === 0 ||
+            length > MAX_FRAME_BYTES ||
+            (channel === 3 && length !== 4)
+          ) {
+            fail("The broker sent an invalid output frame.");
+            break;
+          }
+          payload = Buffer.allocUnsafe(length);
+          payloadBytes = 0;
+        }
+        const bytes = read(payload.length - payloadBytes);
+        if (!bytes) break;
+        payloadBytes += bytes.copy(payload, payloadBytes);
+        if (payloadBytes !== payload.length) continue;
+        const complete = payload;
+        payload = null;
+        headerBytes = 0;
+        if (channel === 3) {
+          const code = complete.readUInt32BE(0);
+          if (code > 255) {
+            fail("The broker sent an invalid exit status.");
+            break;
+          }
+          exitCode = code;
+          stopInput();
+          // Require EOF as well, so a duplicate exit or trailing bytes cannot be
+          // mistaken for a successful session. A peer cannot hold this open forever.
+          startDeadline();
+        } else {
+          writeOutput(channel === 1 ? deps.stdout : deps.stderr, complete);
+        }
+      }
+      if (remoteEnded && blocked.size === 0 && finishingCode === null) {
+        if (exitCode === null || headerBytes !== 0 || payload !== null)
+          fail("The broker closed without a complete exit frame.");
+        else finish(exitCode);
+      }
+    } finally {
+      pumping = false;
+    }
+  }
+  const drained = (stream: NodeJS.WritableStream) => {
+    blocked.delete(stream);
+    updateStallDeadline(true);
+    pump();
+  };
+  const stdoutDrained = () => drained(deps.stdout);
+  const stderrDrained = () => drained(deps.stderr);
+  deps.stdout.on("drain", stdoutDrained);
+  deps.stderr.on("drain", stderrDrained);
+  // Keep error listeners through exit: a failed write can invoke its callback
+  // before emitting error, including after an injected test exit returns.
+  deps.stdout.on("error", (error: Error) => fail(`Broker stdout error: ${error.message}`));
+  deps.stderr.on("error", (error: Error) => fail(`Broker stderr error: ${error.message}`));
+  deps.stdout.on("close", () => fail("Broker stdout closed before the session finished."));
+  deps.stderr.on("close", () => fail("Broker stderr closed before the session finished."));
+  deps.stdin.on("error", (error: Error) => fail(`Broker stdin error: ${error.message}`));
+  socket.on("error", (error: Error) => fail(`Broker connection error: ${error.message}`));
+  socket.on("readable", pump);
+  socket.on("end", () => {
+    remoteEnded = true;
+    pump();
+  });
+  socket.on("close", () => {
+    if (finishingCode === null && !remoteEnded)
+      fail("The broker connection closed before the session finished.");
+  });
   deps.stdin.pipe(socket);
-  socket.on("error", (error) => deps.log(`Broker connection error: ${error.message}`));
-  socket.on("close", finish);
-  socket.resume();
-  return true;
+  pump();
 }

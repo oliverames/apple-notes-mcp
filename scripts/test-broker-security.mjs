@@ -15,6 +15,7 @@ import { once } from "node:events";
 import {
   appendFileSync,
   copyFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -172,10 +173,12 @@ function compileFixtures() {
     String.raw`
 #include <limits.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <unistd.h>
 extern char **environ;
 extern int csops(pid_t, unsigned int, void *, size_t);
@@ -188,13 +191,52 @@ static void json_string(const char *s) {
   }
   putchar('"');
 }
+static int write_bytes(int fd, const unsigned char *bytes, size_t length) {
+  while (length) {
+    ssize_t count = write(fd, bytes, length);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) return 0;
+    bytes += count; length -= count;
+  }
+  return 1;
+}
 int main(int argc, char **argv) {
+  if (fcntl(STDIN_FILENO, F_GETFL) & O_NONBLOCK) return 6;
   char marker[PATH_MAX], cwd[PATH_MAX], line[1024];
   if (snprintf(marker, sizeof(marker), "%s.spawned", argv[0]) >= sizeof(marker)) return 2;
   FILE *f = fopen(marker, "a");
   if (!f) return 3;
   fputs("spawn\n", f); fclose(f);
   if (!fgets(line, sizeof(line), stdin)) return 0;
+  if (strstr(line, "signal-exit")) { raise(SIGTERM); return 99; }
+  if (strstr(line, "halfclose")) {
+    while (getchar() != EOF) {}
+    fputs("final stdout after stdin EOF\n", stdout);
+    fputs("final stderr after stdin EOF\n", stderr);
+    return 7;
+  }
+  if (strstr(line, "binary") || strstr(line, "stderr-only") || strstr(line, "flood")) {
+    unsigned char out[4096], err[4096];
+    for (int i = 0; i < 4096; ++i) { out[i] = i % 256; err[i] = 255 - (i % 256); }
+    if (strstr(line, "stderr-only")) {
+      close(STDOUT_FILENO);
+      if (!write_bytes(STDERR_FILENO, err, sizeof(err))) return 4;
+      return 17;
+    }
+    for (int i = 0; i < 64 || strstr(line, "flood"); ++i) {
+      if (!write_bytes(STDOUT_FILENO, out, sizeof(out)) ||
+          !write_bytes(STDERR_FILENO, err, sizeof(err))) return 4;
+    }
+    return 23;
+  }
+  if (strstr(line, "hold") || strstr(line, "orphan")) {
+    pid_t descendant = fork();
+    if (descendant < 0) return 5;
+    if (descendant == 0) { for (;;) pause(); }
+    printf("{\"child\":%d,\"grandchild\":%d}\n", getpid(), descendant); fflush(stdout);
+    if (strstr(line, "orphan")) return 0;
+    for (;;) pause();
+  }
   fputs("{\"argv\":[", stdout);
   for (int i = 0; i < argc; i++) { if (i) putchar(','); json_string(argv[i]); }
   fputs("],\"cwd\":", stdout);
@@ -368,33 +410,56 @@ function assertRefusedStartup(fx, label, args = []) {
 }
 
 async function openConnection(path) {
-  const socket = createConnection(path);
+  const socket = createConnection({ path, allowHalfOpen: true });
   connections.add(socket);
-  socket.setEncoding("utf8");
-  let buffer = "";
+  let buffer = Buffer.alloc(0);
+  let framed = false;
   let ended;
-  const lines = [];
+  const messages = [];
   const waiting = [];
   const finish = (error) => {
     ended ??= error;
     for (const waiter of waiting.splice(0)) waiter.reject(ended);
   };
+  const deliver = (value) => {
+    const waiter = waiting.shift();
+    if (waiter) waiter.resolve(value);
+    else messages.push(value);
+  };
   socket.on("data", (data) => {
-    buffer += data;
+    buffer = Buffer.concat([buffer, data]);
     if (buffer.length > 1024 * 1024) {
       socket.destroy(new Error("fixture response exceeded 1 MiB"));
       return;
     }
-    let newline;
-    while ((newline = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      const waiter = waiting.shift();
-      if (waiter) waiter.resolve(line);
-      else lines.push(line);
+    try {
+      while (buffer.length) {
+        if (!framed) {
+          const newline = buffer.indexOf(10);
+          if (newline < 0) return;
+          const answer = JSON.parse(buffer.subarray(0, newline).toString());
+          buffer = buffer.subarray(newline + 1);
+          framed = answer.type === "ready";
+          deliver(answer);
+        } else {
+          if (buffer.length < 5) return;
+          const channel = buffer[0],
+            length = buffer.readUInt32BE(1);
+          assert.ok(channel >= 1 && channel <= 3, "unknown native output channel");
+          assert.ok(length > 0 && length <= 65536, "unbounded native output frame");
+          if (channel === 3) assert.equal(length, 4);
+          if (buffer.length < 5 + length) return;
+          const payload = Buffer.from(buffer.subarray(5, 5 + length));
+          buffer = buffer.subarray(5 + length);
+          deliver({ channel, payload });
+        }
+      }
+    } catch (error) {
+      socket.destroy(error);
     }
   });
   socket.on("error", finish);
+  socket.on("end", () => finish(new Error("broker ended before the expected response")));
   socket.on("close", () => {
     connections.delete(socket);
     finish(new Error("broker closed the socket before the expected response"));
@@ -406,12 +471,13 @@ async function openConnection(path) {
       socket.write(`${JSON.stringify(value)}\n`);
     },
     async read() {
-      if (lines.length) return JSON.parse(lines.shift());
+      if (messages.length) return messages.shift();
       if (ended) throw ended;
-      const line = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          socket.destroy(new Error("timed out waiting for a broker response"));
-        }, 10_000);
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => socket.destroy(new Error("timed out waiting for a broker response")),
+          10_000
+        );
         waiting.push({
           resolve(value) {
             clearTimeout(timer);
@@ -423,9 +489,33 @@ async function openConnection(path) {
           },
         });
       });
-      return JSON.parse(line);
     },
   };
+}
+
+async function outputUntilExit(connection) {
+  const stdout = [],
+    stderr = [];
+  while (true) {
+    const frame = await connection.read();
+    if (frame.channel === 3) {
+      const status = frame.payload.readUInt32BE();
+      assert.ok(status <= 255);
+      return { stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), status };
+    }
+    (frame.channel === 1 ? stdout : stderr).push(frame.payload);
+  }
+}
+
+async function readyConnection(fx) {
+  const connection = await openConnection(fx.socket);
+  connection.write(connectRequest(fx));
+  const answer = await connection.read();
+  assert.equal(answer.type, "ready", JSON.stringify(answer));
+  assert.equal(answer.protocolVersion, 3);
+  assert.equal(answer.packageVersion, "fixture");
+  assert.equal(answer.entrySha256, fx.config.entrySha256);
+  return { ...connection, pid: answer.pid };
 }
 
 async function request(fx, value, echo = false) {
@@ -435,20 +525,63 @@ async function request(fx, value, echo = false) {
     const answer = await connection.read();
     if (!echo) return answer;
     assert.equal(answer.type, "ready", JSON.stringify(answer));
-    assert.equal(answer.protocolVersion, 2);
+    assert.equal(answer.protocolVersion, 3);
     assert.equal(answer.packageVersion, "fixture");
     assert.equal(answer.entrySha256, fx.config.entrySha256);
     connection.write({ echo: true });
-    return await connection.read();
+    const output = await outputUntilExit(connection);
+    assert.equal(output.status, 0);
+    assert.equal(output.stderr.length, 0);
+    return JSON.parse(output.stdout.toString());
   } finally {
     connection.socket.destroy();
   }
 }
 
+async function waitFor(condition, label, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  while (!(await condition())) {
+    assert.ok(Date.now() < deadline, `timed out: ${label}`);
+    await delay(20);
+  }
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function heldProcesses(connection, mode) {
+  connection.write({ mode });
+  let line = Buffer.alloc(0);
+  while (!line.includes(10)) {
+    const frame = await connection.read();
+    assert.equal(frame.channel, 1);
+    line = Buffer.concat([line, frame.payload]);
+  }
+  const pids = JSON.parse(line.toString());
+  assert.equal(pids.child, connection.pid);
+  assert.ok(pids.grandchild > 1);
+  return pids;
+}
+
+async function assertProcessesGone(pids) {
+  await waitFor(
+    () => Object.values(pids).every((pid) => !processExists(pid)),
+    "fixture children reaped",
+    5000
+  );
+}
+
 function connectRequest(fx, env = {}, overrides = {}) {
   return {
     type: "connect",
-    protocolVersion: 2,
+    protocolVersion: 3,
     packageVersion: "fixture",
     entrySha256: fx.config.entrySha256,
     env,
@@ -498,7 +631,7 @@ async function start(fx, environment = cleanEnvironment) {
     await delay(25);
   }
   assert.equal(pong.type, "pong");
-  assert.equal(pong.protocolVersion, 2);
+  assert.equal(pong.protocolVersion, 3);
   assert.equal(pong.sourceSha256, sourceSha256);
   assert.equal(pong.packageVersion, "fixture");
   assert.equal(pong.entrySha256, fx.config.entrySha256);
@@ -506,8 +639,8 @@ async function start(fx, environment = cleanEnvironment) {
 }
 
 async function stop(broker) {
-  // Every broker has its own process group; its harmless fixture children are
-  // killed with it even if a test fails halfway through a socket exchange.
+  // Ask the broker to cancel and reap its separate session process groups.
+  // The outer process-group kill is only an emergency fixture cleanup.
   function signal(name) {
     if (!broker.child.pid) return;
     try {
@@ -772,13 +905,13 @@ try {
   });
 
   const base = fixture();
-  await check("sealed, hardened bundle returns a protocol 2 build fingerprint", () => {
+  await check("sealed, hardened bundle returns a protocol 3 build fingerprint", () => {
     const result = hello(base);
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), {
       type: "hello",
-      protocolVersion: 2,
+      protocolVersion: 3,
       sourceSha256,
       packageVersion: "fixture",
       entrySha256: base.config.entrySha256,
@@ -878,12 +1011,181 @@ try {
         connectRequest(base, {}, { entrySha256: "0".repeat(64) }),
         "version_mismatch"
       );
-      await assertNoSpawn(base, { type: "connect", protocolVersion: 2 }, "version_mismatch");
+      await assertNoSpawn(base, { type: "connect", protocolVersion: 3 }, "version_mismatch");
     });
   } finally {
     assertNoUnexpectedExecution();
     await stop(running);
   }
+
+  const streams = fixture();
+  const streamBroker = await start(streams);
+  try {
+    await check(
+      "binary stdout and stderr remain exact and isolated for concurrent clients",
+      async () => {
+        const binary = await readyConnection(streams);
+        const errors = await readyConnection(streams);
+        try {
+          binary.write({ mode: "binary" });
+          errors.write({ mode: "stderr-only" });
+          const [first, second] = await Promise.all([
+            outputUntilExit(binary),
+            outputUntilExit(errors),
+          ]);
+          assert.deepEqual(
+            first.stdout,
+            Buffer.from(Array.from({ length: 64 * 4096 }, (_, i) => i % 256))
+          );
+          assert.deepEqual(
+            first.stderr,
+            Buffer.from(Array.from({ length: 64 * 4096 }, (_, i) => 255 - (i % 256)))
+          );
+          assert.equal(first.status, 23);
+          assert.equal(second.stdout.length, 0);
+          assert.deepEqual(
+            second.stderr,
+            Buffer.from(Array.from({ length: 4096 }, (_, i) => 255 - (i % 256)))
+          );
+          assert.equal(second.status, 17);
+        } finally {
+          binary.socket.destroy();
+          errors.socket.destroy();
+        }
+      }
+    );
+    await check(
+      "stdin half-close preserves final stdout, stderr and child exit status",
+      async () => {
+        const connection = await readyConnection(streams);
+        try {
+          connection.socket.end('{"mode":"halfclose"}\n');
+          const result = await outputUntilExit(connection);
+          assert.equal(result.stdout.toString(), "final stdout after stdin EOF\n");
+          assert.equal(result.stderr.toString(), "final stderr after stdin EOF\n");
+          assert.equal(result.status, 7);
+          assert.equal(
+            streamBroker.output.includes("final stderr"),
+            false,
+            "child stderr entered the broker diagnostic log"
+          );
+        } finally {
+          connection.socket.destroy();
+        }
+      }
+    );
+    await check("signal exits are normalized without corrupting output frames", async () => {
+      const connection = await readyConnection(streams);
+      try {
+        connection.write({ mode: "signal-exit" });
+        const result = await outputUntilExit(connection);
+        assert.equal(result.status, 143);
+      } finally {
+        connection.socket.destroy();
+      }
+    });
+    await check("slow readers apply backpressure and resume with exact output", async () => {
+      const connection = await readyConnection(streams);
+      try {
+        connection.socket.pause();
+        connection.write({ mode: "binary" });
+        await delay(300);
+        connection.socket.resume();
+        const result = await outputUntilExit(connection);
+        assert.equal(result.stdout.length, 64 * 4096);
+        assert.equal(result.stderr.length, 64 * 4096);
+        assert.equal(result.status, 23);
+      } finally {
+        connection.socket.destroy();
+      }
+    });
+    await check(
+      "disconnect during an output flood releases the child and session slot",
+      async () => {
+        const connection = await readyConnection(streams);
+        connection.socket.pause();
+        connection.write({ mode: "flood" });
+        await delay(300);
+        connection.socket.destroy();
+        await assertProcessesGone({ child: connection.pid });
+        await waitFor(
+          async () => (await request(streams, { type: "ping" })).activeChildren === 0,
+          "session slot released"
+        );
+      }
+    );
+    await check("a client that never reads output reaches the bounded stall deadline", async () => {
+      const connection = await readyConnection(streams);
+      try {
+        connection.socket.pause();
+        connection.write({ mode: "flood" });
+        await delay(300);
+        assert.equal(processExists(connection.pid), true, "fixture must first block on output");
+        await waitFor(
+          () => !processExists(connection.pid),
+          "stalled output child terminated",
+          35_000
+        );
+        assert.equal((await request(streams, { type: "ping" })).activeChildren, 0);
+      } finally {
+        connection.socket.destroy();
+      }
+    });
+    await check(
+      "full disconnect terminates the owned child and grandchild process group",
+      async () => {
+        const connection = await readyConnection(streams);
+        const pids = await heldProcesses(connection, "hold");
+        connection.socket.destroy();
+        await assertProcessesGone(pids);
+      }
+    );
+    await check(
+      "inherited pipe holders cannot keep a completed session alive indefinitely",
+      async () => {
+        const connection = await readyConnection(streams);
+        const pids = await heldProcesses(connection, "orphan");
+        try {
+          await assert.rejects(outputUntilExit(connection), /ended|closed/);
+          await assertProcessesGone(pids);
+        } finally {
+          connection.socket.destroy();
+        }
+      }
+    );
+  } finally {
+    await stop(streamBroker);
+  }
+
+  await check("broker SIGTERM cancels sessions and reaps their owned process groups", async () => {
+    const fx = fixture();
+    const broker = await start(fx);
+    const connection = await readyConnection(fx);
+    const pids = await heldProcesses(connection, "hold");
+    const partial = await openConnection(fx.socket);
+    partial.socket.write('{"type":');
+    broker.child.kill("SIGTERM");
+    await waitFor(() => broker.exited, "broker stopped after cancelling sessions", 3000);
+    await assertProcessesGone(pids);
+    connection.socket.destroy();
+    partial.socket.destroy();
+    brokers.delete(broker);
+  });
+
+  await check("failed runtime spawn releases pipes and child capacity", async () => {
+    const fx = fixture();
+    chmodSync(fx.runtime, 0o600);
+    const broker = await start(fx);
+    try {
+      for (let i = 0; i < 20; i++) {
+        assert.equal((await request(fx, connectRequest(fx))).code, "spawn_failed");
+      }
+      assert.equal((await request(fx, { type: "ping" })).activeChildren, 0);
+      assert.equal(existsSync(fx.marker), false);
+    } finally {
+      await stop(broker);
+    }
+  });
 
   const mutations = [
     ["sealed broker config", (fx) => appendFileSync(fx.configPath, " ")],

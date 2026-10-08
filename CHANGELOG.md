@@ -14,7 +14,8 @@
   must be renewed after rebuilding.
 - `doctor` and `get-capabilities` report whether the broker is in use and why
   an installed broker was bypassed. Doctor names the broker app when advising
-  a brokered client about Full Disk Access.
+  a brokered client about Full Disk Access. Per-tool permission failures also
+  identify the broker app when the request runs in a brokered session.
 - Native security regression harness (`pnpm run test:broker-security`) tests
   direct socket requests and signed fixture bundles without accessing Notes
   or granting permissions. CI runs it on macOS.
@@ -34,8 +35,9 @@
   entry digest, so another installation cannot silently serve stale code.
 - Broker signing enables the hardened runtime without library-validation or
   DYLD-injection exceptions. Node and server paths are no longer accepted in
-  LaunchAgent arguments. Child stderr inherits its already-open descriptor
-  instead of opening a caller-selected path under the broker's permissions.
+  LaunchAgent arguments. Child stderr travels back to its own client's stderr
+  over the existing socket, separate from MCP stdout; no caller-selected log
+  path is opened under the broker's permissions.
 - Documented the same-user trust boundary: the owner-only socket excludes
   other users, but every process running as its owner can use the server's
   Notes capabilities with the broker's grants. It does not authenticate MCP
@@ -43,6 +45,14 @@
 
 ### Changed
 
+- Reinstall and uninstall confirm that launchd has removed the old service
+  before replacing or deleting installed files. Stop and cleanup failures are
+  reported; uninstall removes the legacy log and empty state directory while
+  preserving unrelated files.
+- Broker protocol 3 carries separate stdout, stderr and exit status with bounded
+  frames and backpressure. Broker diagnostics use macOS unified logging instead
+  of an unbounded shared file; child diagnostics return to the originating MCP
+  client.
 - Nothing changes unless `setup --broker` is run. Without an available,
   matching broker the server runs in-process. `APPLE_NOTES_MCP_BROKER=off`
   bypasses it for one client; uninstall stops the service for all clients.

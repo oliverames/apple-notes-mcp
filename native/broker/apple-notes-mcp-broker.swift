@@ -8,18 +8,18 @@
 //
 // It does not read the Notes database or talk to Notes itself. For each
 // accepted connection it starts the server's own Node entry point as a child,
-// with the connection as the child's stdin and stdout. Children inherit the
+// with raw socket stdin and framed stdout/stderr pipes. Children inherit the
 // bundle as their responsible process.
 //
 // Listening socket: a Unix socket created 0600 inside a 0700 directory. Every
 // connection is checked with getpeereid() and refused unless the peer runs as
 // this user. The first line on a connection is a JSON request:
 //   {"type": "ping"}
-//     -> {"type": "pong", "protocolVersion": 2, "sourceSha256": "...", ...}
-//   {"type": "connect", "protocolVersion": 2, "packageVersion": "...",
+//     -> {"type": "pong", "protocolVersion": 3, "sourceSha256": "...", ...}
+//   {"type": "connect", "protocolVersion": 3, "packageVersion": "...",
 //    "entrySha256": "...", "env": {"APPLE_NOTES_MCP_TIMEOUT_MS": "30000"}}
-//     -> {"type": "ready", "protocolVersion": 2, "pid": <child>, ...}, then the
-//        connection carries the MCP stdio stream until either side closes.
+//     -> {"type": "ready", "protocolVersion": 3, "pid": <child>, ...}, then the
+//        connection carries raw stdin and framed stdout/stderr/exit output.
 //   anything else -> {"type": "error", "code": "...", "message": "..."}
 // Only the numeric limits in passedEnvironmentKeys pass through. Paths,
 // helpers, shortcuts, safety overrides, and loader settings are never trusted.
@@ -39,11 +39,16 @@ import Darwin
 import Foundation
 import CryptoKit
 import Security
+import os.log
 
-let protocolVersion = 2
+let protocolVersion = 3
 let maxRequestBytes = 65_536
 let maxChildren = 16
 let maxVariableBytes = 8_192
+let maxFrameBytes = 65_536
+let outputStallSeconds = 30.0
+let finalDrainSeconds = 5.0
+let brokerLog = OSLog(subsystem: "apple-notes-mcp.broker", category: "broker")
 
 // Keep in sync with BROKER_PASSED_ENV_KEYS in brokerProxy.ts. This is also
 // enforced here because any same-user process can speak the socket protocol.
@@ -101,9 +106,13 @@ func readRequestLine(_ fd: Int32) -> Data? {
     return nil
 }
 
-func log(_ message: String) {
-    let stamp = ISO8601DateFormatter().string(from: Date())
-    FileHandle.standardError.write(Data("[\(stamp)] \(message)\n".utf8))
+func log(_ message: String, details: String = "") {
+    // OS-managed retention, never an append-only file or child output. Paths
+    // in diagnostic details stay private in collected unified logs.
+    os_log("%{public}@ %{private}@", log: brokerLog, type: .default, message as NSString, details as NSString)
+    // launchd points stderr at /dev/null; a direct CLI caller still gets its
+    // own diagnostic stream without the broker opening a destination path.
+    FileHandle.standardError.write(Data("[broker] \(message)\(details.isEmpty ? "" : ": " + details)\n".utf8))
 }
 
 // MARK: - Build handshake
@@ -290,6 +299,8 @@ final class Broker {
     let bundlePath: String
     private let lock = NSLock()
     private var active = 0
+    private var stopping = false
+    private var connections: Set<Int32> = []
 
     init(options: ServeOptions, trust: TrustedServer) {
         self.options = options
@@ -306,7 +317,7 @@ final class Broker {
     private func reserveChild() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        if active >= maxChildren { return false }
+        if stopping || active >= maxChildren { return false }
         active += 1
         return true
     }
@@ -314,6 +325,28 @@ final class Broker {
     private func releaseChild() {
         lock.lock()
         active -= 1
+        lock.unlock()
+    }
+
+    private var isStopping: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopping
+    }
+
+    private func stop() {
+        lock.lock()
+        stopping = true
+        // Wake handshakes and child stdin without closing/reusing descriptors
+        // while their owning connection threads are still running.
+        for connection in connections { shutdown(connection, SHUT_RDWR) }
+        lock.unlock()
+    }
+
+    private func closeConnection(_ connection: Int32) {
+        lock.lock()
+        connections.remove(connection)
+        close(connection)
         lock.unlock()
     }
 
@@ -325,19 +358,19 @@ final class Broker {
                 atPath: directory, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
         } catch {
-            log("cannot create socket directory \(directory): \(error)")
+            log("cannot create socket directory", details: "\(directory): \(error)")
             exit(73)
         }
         // The directory is the first fence: owned by this user and closed to everyone else.
         var info = stat()
         guard lstat(directory, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR, info.st_uid == getuid() else {
-            log("socket directory \(directory) is not a directory owned by this user")
+            log("socket directory is not owned by this user", details: directory)
             exit(73)
         }
         chmod(directory, 0o700)
         if lstat(path, &info) == 0 {
             guard (info.st_mode & S_IFMT) == S_IFSOCK else {
-                log("refusing to replace \(path): it exists and is not a socket")
+                log("refusing to replace a non-socket path", details: path)
                 exit(73)
             }
             unlink(path)
@@ -353,7 +386,7 @@ final class Broker {
         let capacity = MemoryLayout.size(ofValue: address.sun_path)
         let pathBytes = Array(path.utf8)
         guard pathBytes.count < capacity else {
-            log("socket path is too long (\(pathBytes.count) bytes, limit \(capacity - 1)): \(path)")
+            log("socket path is too long", details: path)
             exit(64)
         }
         withUnsafeMutableBytes(of: &address.sun_path) { buffer in
@@ -370,7 +403,7 @@ final class Broker {
         }
         umask(previousMask)
         guard bound == 0 else {
-            log("bind(\(path)) failed: \(String(cString: strerror(errno)))")
+            log("socket bind failed", details: "\(path): \(String(cString: strerror(errno)))")
             exit(71)
         }
         chmod(path, 0o600)
@@ -378,32 +411,82 @@ final class Broker {
             log("listen() failed: \(String(cString: strerror(errno)))")
             exit(71)
         }
+        // A queued peer can disappear between poll and accept. Nonblocking
+        // accept keeps daemon cancellation responsive in that race.
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            log("could not configure the listening socket")
+            exit(71)
+        }
         return fd
     }
 
     func serve() -> Never {
         signal(SIGPIPE, SIG_IGN)
+        // Never inherit automatic child reaping: WNOWAIT must reserve the
+        // direct child's PID until its process group has been cleaned up.
+        signal(SIGCHLD, SIG_DFL)
+        signal(SIGTERM, SIG_IGN)
+        signal(SIGINT, SIG_IGN)
+        let signals = [SIGTERM, SIGINT].map { number -> DispatchSourceSignal in
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler { [self] in stop() }
+            source.resume()
+            return source
+        }
         let listener = listen()
-        log("listening on \(options.socketPath) (bundle \(bundlePath), node \(trust.config.nodePath))")
-        while true {
+        log("broker is listening", details: options.socketPath)
+        while !isStopping {
+            var ready = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+            guard poll(&ready, 1, 100) > 0 else { continue }
             let connection = accept(listener, nil, nil)
             if connection < 0 {
-                if errno == EINTR || errno == ECONNABORTED { continue }
+                if errno == EINTR || errno == ECONNABORTED || errno == EAGAIN || errno == EWOULDBLOCK { continue }
                 log("accept() failed: \(String(cString: strerror(errno)))")
                 continue
             }
+            // BSD can inherit listener flags. Child stdin must stay blocking;
+            // relay writes use MSG_DONTWAIT without changing this descriptor.
+            let connectionFlags = fcntl(connection, F_GETFL)
+            guard connectionFlags >= 0,
+                  fcntl(connection, F_SETFL, connectionFlags & ~O_NONBLOCK) == 0 else {
+                close(connection)
+                continue
+            }
+            lock.lock()
+            if stopping {
+                close(connection)
+                lock.unlock()
+                break
+            }
+            connections.insert(connection)
+            lock.unlock()
             Thread.detachNewThread { [self] in
                 handle(connection)
             }
         }
+        close(listener)
+        stop()
+        // Each session observes cancellation within a poll interval, signals
+        // its own process group, and reaps its child before leaving this set.
+        while true {
+            lock.lock()
+            let empty = connections.isEmpty
+            lock.unlock()
+            if empty { break }
+            usleep(10_000)
+        }
+        for source in signals { source.cancel() }
+        unlink(options.socketPath)
+        exit(0)
     }
 
     private func refuse(_ fd: Int32, _ code: String, _ message: String) {
         sendLine(fd, ["type": "error", "code": code, "message": message])
-        close(fd)
     }
 
     private func handle(_ connection: Int32) {
+        defer { closeConnection(connection) }
         var peerUID: uid_t = 0
         var peerGID: gid_t = 0
         guard getpeereid(connection, &peerUID, &peerGID) == 0, peerUID == getuid() else {
@@ -413,6 +496,7 @@ final class Broker {
         }
         var timeout = timeval(tv_sec: 10, tv_usec: 0)
         setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(connection, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         guard
             let line = readRequestLine(connection),
@@ -436,7 +520,6 @@ final class Broker {
                 "entrySha256": trust.config.entrySha256,
                 "activeChildren": activeChildren,
             ])
-            close(connection)
         case "connect":
             guard request["protocolVersion"] as? Int == protocolVersion else {
                 refuse(connection, "protocol_mismatch",
@@ -504,60 +587,213 @@ final class Broker {
         return env.map { "\($0.key)=\($0.value)" }
     }
 
+    /// Keep the child unreaped until all signals to its process group are
+    /// finished. Its reserved PID prevents signalling an unrelated reused ID.
+    private func terminateAndReap(_ pid: pid_t) {
+        kill(-pid, SIGTERM)
+        usleep(250_000)
+        kill(-pid, SIGKILL)
+        var status: Int32 = 0
+        while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+    }
+
+    private func frame(_ channel: UInt8, _ payload: Data) -> Data {
+        let length = UInt32(payload.count)
+        var data = Data([channel, UInt8((length >> 24) & 255), UInt8((length >> 16) & 255),
+                         UInt8((length >> 8) & 255), UInt8(length & 255)])
+        data.append(payload)
+        return data
+    }
+
+    /// Serialize stdout and stderr with one bounded frame in flight. Pipe
+    /// reads stop while the socket is backpressured; no user-space queue grows.
+    /// Child stdin retains the blocking socket descriptor: O_NONBLOCK here
+    /// would also change the child's dup, so only send uses MSG_DONTWAIT.
+    private func relay(_ connection: Int32, pid: pid_t, output: Int32, errors: Int32) {
+        let pipes = [output, errors]
+        var open = [true, true]
+        var nextPipe = 0
+        var pending = Data()
+        var sent = 0
+        var terminal = false
+        var exitCode: UInt32?
+        var exitedAt: TimeInterval?
+        var progressAt = ProcessInfo.processInfo.systemUptime
+        var bytes = [UInt8](repeating: 0, count: maxFrameBytes)
+        for fd in pipes { _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) }
+
+        while !isStopping {
+            let now = ProcessInfo.processInfo.systemUptime
+            // Darwin reports full peer closure to POLLOUT, but not to an
+            // events=0 poll. Probe separately so idle writable sockets don't
+            // spin the blocking poll below. POLLIN also reports HUP for a
+            // legitimate stdin half-close, so it must not be used here.
+            var peer = pollfd(fd: connection, events: Int16(POLLOUT), revents: 0)
+            if poll(&peer, 1, 0) > 0 && peer.revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 {
+                return
+            }
+            if exitCode == nil {
+                var info = siginfo_t()
+                if waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) < 0 {
+                    if errno == EINTR { continue }
+                    log("could not observe a broker child exit")
+                    return
+                }
+                if info.si_pid == pid {
+                    exitCode = info.si_code == CLD_EXITED ? UInt32(info.si_status & 255) :
+                        UInt32(min(255, 128 + info.si_status))
+                    exitedAt = now
+                }
+            }
+            if let exitedAt, now - exitedAt > finalDrainSeconds {
+                log("closed a session whose final output did not drain")
+                return
+            }
+            if !pending.isEmpty && now - progressAt > outputStallSeconds {
+                log("closed a session whose client stopped reading output")
+                return
+            }
+            if pending.isEmpty, !open[0], !open[1], let code = exitCode {
+                pending = frame(3, Data([0, 0, 0, UInt8(code)]))
+                terminal = true
+                progressAt = now
+            }
+            var descriptors = [pollfd(fd: connection, events: pending.isEmpty ? 0 : Int16(POLLOUT), revents: 0)]
+            for index in 0..<2 {
+                descriptors.append(pollfd(fd: open[index] && pending.isEmpty ? pipes[index] : -1,
+                                          events: Int16(POLLIN), revents: 0))
+            }
+            let result = poll(&descriptors, nfds_t(descriptors.count), 100)
+            if result < 0 {
+                if errno == EINTR { continue }
+                return
+            }
+            // For this POLLOUT subscription, SHUT_WR is not a disconnect.
+            if descriptors[0].revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 { return }
+            if !pending.isEmpty && descriptors[0].revents & Int16(POLLOUT) != 0 {
+                let count = pending.withUnsafeBytes { raw in
+                    Darwin.send(connection, raw.baseAddress!.advanced(by: sent), pending.count - sent, MSG_DONTWAIT)
+                }
+                if count > 0 {
+                    sent += count
+                    progressAt = now
+                    if sent == pending.count {
+                        pending.removeAll(keepingCapacity: true)
+                        sent = 0
+                        if terminal { return }
+                    }
+                } else if count == 0 || (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
+                    return
+                }
+            }
+            if !pending.isEmpty { continue }
+            // Alternate when both pipes are readable, so a stdout flood does
+            // not starve stderr (or vice versa).
+            for offset in 0..<2 {
+                let index = (nextPipe + offset) % 2
+                if !open[index] || descriptors[index + 1].revents == 0 { continue }
+                let count = Darwin.read(pipes[index], &bytes, bytes.count)
+                if count > 0 {
+                    pending = frame(UInt8(index + 1), Data(bytes.prefix(count)))
+                    nextPipe = (index + 1) % 2
+                    progressAt = now
+                    break
+                }
+                if count == 0 { open[index] = false }
+                else if errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK { return }
+            }
+        }
+    }
+
     private func connect(_ connection: Int32, passed: [String: Any]) {
         guard reserveChild() else {
-            log("refused a connection: child limit \(maxChildren) reached")
-            refuse(connection, "busy", "The broker is already serving \(maxChildren) clients.")
+            log("refused a connection: child limit \(maxChildren) reached or broker stopping")
+            refuse(connection, "busy", "The broker cannot accept another client now.")
             return
         }
         defer { releaseChild() }
         do {
             try trust.validate()
         } catch {
-            log("refused spawn: \(error)")
+            log("refused spawn after integrity failure", details: String(describing: error))
             refuse(connection, "integrity_failed", "The broker's sealed server or pinned runtime changed. Run setup --broker again.")
             return
         }
         var noTimeout = timeval(tv_sec: 0, tv_usec: 0)
         setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &noTimeout, socklen_t(MemoryLayout<timeval>.size))
-
+        var output: [Int32] = [-1, -1]
+        var errors: [Int32] = [-1, -1]
+        guard pipe(&output) == 0 else {
+            refuse(connection, "spawn_failed", "The broker could not create its output pipe.")
+            return
+        }
+        defer { for fd in output where fd >= 0 { close(fd) } }
+        guard pipe(&errors) == 0 else {
+            refuse(connection, "spawn_failed", "The broker could not create its error pipe.")
+            return
+        }
+        defer { for fd in errors where fd >= 0 { close(fd) } }
+        for fd in output + errors { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
         var actions: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&actions)
+        guard posix_spawn_file_actions_init(&actions) == 0 else {
+            refuse(connection, "spawn_failed", "The broker could not initialize its child descriptors.")
+            return
+        }
         defer { posix_spawn_file_actions_destroy(&actions) }
-        posix_spawn_file_actions_adddup2(&actions, connection, STDIN_FILENO)
-        posix_spawn_file_actions_adddup2(&actions, connection, STDOUT_FILENO)
-        // Inherit the descriptor opened by launchd/the caller, not a writable
-        // command-line path that could make the broker append to a TCC file.
-        posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDERR_FILENO)
+        guard posix_spawn_file_actions_adddup2(&actions, connection, STDIN_FILENO) == 0,
+              posix_spawn_file_actions_adddup2(&actions, output[1], STDOUT_FILENO) == 0,
+              posix_spawn_file_actions_adddup2(&actions, errors[1], STDERR_FILENO) == 0,
+              posix_spawn_file_actions_addchdir_np(&actions, trust.resourcesPath + "/server") == 0 else {
+            refuse(connection, "spawn_failed", "The broker could not configure its child descriptors.")
+            return
+        }
         var attributes: posix_spawnattr_t?
-        posix_spawnattr_init(&attributes)
+        guard posix_spawnattr_init(&attributes) == 0 else {
+            refuse(connection, "spawn_failed", "The broker could not initialize its child attributes.")
+            return
+        }
         defer { posix_spawnattr_destroy(&attributes) }
-        // Close every descriptor not named above, including the listening socket.
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
-
-        // Ignore LaunchAgent WorkingDirectory as well as its environment.
-        posix_spawn_file_actions_addchdir_np(&actions, trust.resourcesPath + "/server")
+        // A session owns exactly this child's process group, and resets signal
+        // dispositions ignored by the broker so cancellation reaches children.
+        var defaults = sigset_t()
+        sigemptyset(&defaults)
+        for number in [SIGTERM, SIGINT, SIGPIPE] { sigaddset(&defaults, number) }
+        var mask = sigset_t()
+        sigemptyset(&mask)
+        let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP |
+                          POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)
+        guard posix_spawnattr_setpgroup(&attributes, 0) == 0,
+              posix_spawnattr_setsigdefault(&attributes, &defaults) == 0,
+              posix_spawnattr_setsigmask(&attributes, &mask) == 0,
+              posix_spawnattr_setflags(&attributes, flags) == 0 else {
+            refuse(connection, "spawn_failed", "The broker could not configure its child process group and signals.")
+            return
+        }
         let argv: [UnsafeMutablePointer<CChar>?] = [strdup(trust.config.nodePath), strdup(trust.entryPath), nil]
         let envp: [UnsafeMutablePointer<CChar>?] = childEnvironment(passed: passed).map { strdup($0) } + [nil]
         defer {
             argv.forEach { free($0) }
             envp.forEach { free($0) }
         }
+        if isStopping { return }
         var pid: pid_t = 0
         let status = posix_spawn(&pid, trust.config.nodePath, &actions, &attributes, argv, envp)
         guard status == 0 else {
-            log("could not start \(trust.config.nodePath): \(String(cString: strerror(status)))")
-            refuse(connection, "spawn_failed", "The broker could not start Node at \(trust.config.nodePath).")
+            log("could not start runtime: \(String(cString: strerror(status)))")
+            refuse(connection, "spawn_failed", "The broker could not start its pinned runtime.")
             return
         }
-        // The child only writes after a request, and the client sends none
-        // until it reads this line, so the two never interleave.
-        sendLine(connection, ["type": "ready", "protocolVersion": protocolVersion, "pid": Int(pid),
-                              "packageVersion": trust.config.packageVersion, "entrySha256": trust.config.entrySha256])
-        close(connection)
-        var exitStatus: Int32 = 0
-        while waitpid(pid, &exitStatus, 0) < 0 && errno == EINTR {}
+        close(output[1]); output[1] = -1
+        close(errors[1]); errors[1] = -1
+        defer { terminateAndReap(pid) }
+        // Both child output pipes remain unread until the complete JSON ready
+        // line is sent, even if the child writes immediately on startup.
+        guard sendLine(connection, ["type": "ready", "protocolVersion": protocolVersion, "pid": Int(pid),
+                                    "packageVersion": trust.config.packageVersion,
+                                    "entrySha256": trust.config.entrySha256]) else { return }
+        relay(connection, pid: pid, output: output[0], errors: errors[0])
     }
+
 }
 
 // MARK: - Entry
@@ -574,7 +810,7 @@ enum BrokerMain {
                 Broker(options: options, trust: try TrustedServer()).serve()
             }
         } catch {
-            log("integrity check failed: \(error)")
+            log("integrity check failed", details: String(describing: error))
             exit(78)
         }
         FileHandle.standardError.write(Data(

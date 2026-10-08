@@ -29,21 +29,23 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { pingBroker } from "@/services/brokerClient.js";
 import { packageRoot, sha256Hex, sourceDigestSwift } from "@/services/publicHelper.js";
 
-export const BROKER_PROTOCOL = 2;
+export const BROKER_PROTOCOL = 3;
 export const BROKER_BUNDLE_ID = "apple-notes-mcp.broker";
 export const BROKER_LABEL = BROKER_BUNDLE_ID;
 export const BROKER_APP_NAME = "Apple Notes MCP Broker.app";
@@ -52,6 +54,7 @@ export const BROKER_SOURCE = "native/broker/apple-notes-mcp-broker.swift";
 export const BROKER_MANIFEST = "manifest.json";
 export const BROKER_SOCKET = "broker.sock";
 export const BROKER_SETUP_COMMAND = "apple-notes-mcp setup --broker";
+export const BROKER_LOG_COMMAND = `log show --last 10m --predicate 'subsystem == "${BROKER_BUNDLE_ID}"'`;
 /** Set by the broker on its children. */
 export const BROKERED_ENV = "APPLE_NOTES_MCP_BROKERED";
 export const BROKER_APP_ENV = "APPLE_NOTES_MCP_BROKER_APP";
@@ -128,9 +131,10 @@ export interface BrokerPaths {
 /** Where everything lives, honoring the directory overrides. */
 export function brokerPaths(env: NodeJS.ProcessEnv = process.env): BrokerPaths {
   const home = homedir();
-  const stateDir =
+  const stateDir = resolve(
     env[BROKER_DIR_ENV]?.trim() ||
-    join(home, "Library", "Application Support", "apple-notes-mcp", "broker");
+      join(home, "Library", "Application Support", "apple-notes-mcp", "broker")
+  );
   const appDir = env[BROKER_APP_DIR_ENV]?.trim() || join(home, "Applications");
   const agentDir = env[BROKER_AGENT_DIR_ENV]?.trim() || join(home, "Library", "LaunchAgents");
   const appPath = join(appDir, BROKER_APP_NAME);
@@ -177,6 +181,8 @@ export interface BrokerDeps {
   exists: (path: string) => boolean;
   readFile: (path: string) => Buffer;
   realpath: (path: string) => string;
+  removePath: typeof rmSync;
+  removeEmptyDirectory: (path: string) => void;
   spawn: typeof spawnSync;
   /** Ask the running broker for a pong; resolves false when it does not answer. */
   ping: (socketPath: string) => Promise<boolean>;
@@ -205,6 +211,8 @@ export function defaultBrokerDeps(overrides: Partial<BrokerDeps> = {}): BrokerDe
     exists: existsSync,
     readFile: (path) => readFileSync(path),
     realpath: (path) => realpathSync(path),
+    removePath: rmSync,
+    removeEmptyDirectory: (path) => rmdirSync(path),
     spawn: spawnSync,
     ping: (socketPath) => pingBroker(socketPath),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -393,7 +401,6 @@ export function brokerCompileArguments(
 export function brokerLaunchAgentPlist(args: {
   executablePath: string;
   socketPath: string;
-  logPath: string;
 }): string {
   const escape = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -418,7 +425,7 @@ export function brokerLaunchAgentPlist(args: {
     "  <key>KeepAlive</key>",
     "  <true/>",
     "  <key>StandardErrorPath</key>",
-    `  <string>${escape(args.logPath)}</string>`,
+    "  <string>/dev/null</string>",
     "</dict>",
     "</plist>",
     "",
@@ -519,6 +526,129 @@ function launchctl(deps: BrokerDeps, args: string[]) {
   return deps.spawn("/bin/launchctl", args, { encoding: "utf8", timeout: 30_000 });
 }
 
+/** Confirm launchd has actually removed the service before changing its files. */
+async function stopBroker(
+  deps: BrokerDeps,
+  domain: string
+): Promise<BrokerSetupReport["steps"][number]> {
+  const target = `${domain}/${BROKER_LABEL}`;
+  const step = "stop LaunchAgent";
+  try {
+    const stopped = deps.spawn("/bin/launchctl", ["bootout", target], {
+      encoding: "utf8",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const stopDetail =
+      stopped.status === 0
+        ? ""
+        : `bootout: ${String(stopped.stderr || stopped.stdout || stopped.error?.message || `exit ${stopped.status}`).trim()}. `;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const probe = deps.spawn("/bin/launchctl", ["print", target], {
+        encoding: "utf8",
+        timeout: 1_000,
+        killSignal: "SIGKILL",
+      });
+      const output = String(probe.stderr || probe.stdout || "");
+      // A generic nonzero status can mean permissions, a missing GUI domain, or
+      // a failed command. Only this service-specific diagnostic proves absence.
+      const absent =
+        !probe.error &&
+        !probe.signal &&
+        probe.status === 113 &&
+        output
+          .split("\n")
+          .some((line) =>
+            line.trim().startsWith(`Could not find service "${BROKER_LABEL}" in domain`)
+          );
+      if (absent)
+        return { step, ok: true, detail: `${stopDetail}Confirmed ${target} is not loaded.` };
+      if (probe.status !== 0 || probe.error || probe.signal)
+        return {
+          step,
+          ok: false,
+          detail: `${stopDetail}Cannot confirm service removal: ${String(output || probe.error?.message || `exit ${probe.status}`).trim()}. Broker files were preserved.`,
+        };
+      if (attempt < 19) await deps.sleep(250);
+    }
+    return {
+      step,
+      ok: false,
+      detail: `${stopDetail}${target} is still loaded after 20 checks. Broker files were preserved.`,
+    };
+  } catch (error) {
+    return {
+      step,
+      ok: false,
+      detail: `Cannot confirm service removal: ${error instanceof Error ? error.message : String(error)}. Broker files were preserved.`,
+    };
+  }
+}
+
+/** Remove only known broker artifacts; custom state directories may contain other files. */
+function removeBroker(
+  deps: BrokerDeps,
+  paths: BrokerPaths,
+  warnings: string[]
+): BrokerSetupReport["steps"][number] {
+  const failures: string[] = [];
+  let stateIsSymlink = false;
+  try {
+    stateIsSymlink = lstatSync(paths.stateDir).isSymbolicLink();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      return {
+        step: "remove broker",
+        ok: false,
+        detail: `${paths.stateDir}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+  }
+  const remove = (path: string) => {
+    try {
+      deps.removePath(path, { force: true, recursive: path === paths.appPath });
+      if (deps.exists(path)) throw new Error("the path still exists after removal");
+    } catch (error) {
+      failures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  for (const path of [
+    paths.agentPath,
+    paths.appPath,
+    ...(stateIsSymlink ? [] : [paths.socketPath]),
+    paths.logPath,
+  ]) {
+    remove(path);
+  }
+  // Retain installation metadata when any artifact failed to be removed, so
+  // diagnostics and a later uninstall can still recognize the installation.
+  if (!failures.length) remove(stateIsSymlink ? paths.stateDir : paths.manifestPath);
+  if (!failures.length && stateIsSymlink)
+    warnings.push(
+      `Removed the state-directory symlink ${paths.stateDir}; files in its target were left untouched.`
+    );
+  if (!failures.length && !stateIsSymlink) {
+    try {
+      deps.removeEmptyDirectory(paths.stateDir);
+      if (deps.exists(paths.stateDir)) throw new Error("the directory still exists after removal");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOTEMPTY" || code === "EEXIST")
+        warnings.push(
+          `Kept ${paths.stateDir} because it contains other files. Only known broker artifacts were removed.`
+        );
+      else if (code !== "ENOENT")
+        failures.push(
+          `${paths.stateDir}: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+  }
+  return {
+    step: "remove broker",
+    ok: failures.length === 0,
+    detail: failures.length ? failures.join("\n") : paths.appPath,
+  };
+}
+
 async function waitForBroker(deps: BrokerDeps, socketPath: string): Promise<boolean> {
   for (let attempt = 0; attempt < 20; attempt++) {
     if (await deps.ping(socketPath)) return true;
@@ -541,8 +671,9 @@ export async function setupBroker(
   const mode = options.uninstall ? "uninstall" : options.checkOnly ? "check" : "install";
   const finish = async (): Promise<BrokerSetupReport> => {
     const installation = inspectBroker(deps);
+    const stopFailed = steps.some((step) => step.step === "stop LaunchAgent" && !step.ok);
     const running =
-      mode !== "uninstall" && installation.installed ? await deps.ping(paths.socketPath) : false;
+      installation.installed || stopFailed ? await deps.ping(paths.socketPath) : false;
     const ok =
       steps.every((s) => s.ok) &&
       (mode === "uninstall" ? !installation.installed : installation.ready && running);
@@ -568,13 +699,10 @@ export async function setupBroker(
   }
 
   if (mode === "uninstall") {
-    launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
-    steps.push({ step: "stop LaunchAgent", ok: true });
-    rmSync(paths.agentPath, { force: true });
-    rmSync(paths.appPath, { recursive: true, force: true });
-    rmSync(paths.manifestPath, { force: true });
-    rmSync(paths.socketPath, { force: true });
-    steps.push({ step: "remove broker", ok: true, detail: paths.appPath });
+    const stopped = await stopBroker(deps, domain);
+    steps.push(stopped);
+    if (!stopped.ok) return finish();
+    steps.push(removeBroker(deps, paths, warnings));
     warnings.push(
       `The Full Disk Access and Automation entries for "Apple Notes MCP Broker" stay in System Settings until you remove them, or run \`tccutil reset All ${BROKER_BUNDLE_ID}\`.`
     );
@@ -811,8 +939,10 @@ export async function setupBroker(
     }
     steps.push({ step: "handshake", ok: true });
 
-    // Stop the old broker before replacing its bundle.
-    launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
+    // bootout can return before launchd removes the old service.
+    const stopped = await stopBroker(deps, domain);
+    steps.push(stopped);
+    if (!stopped.ok) return finish();
     rmSync(paths.appPath, { recursive: true, force: true });
     renameSync(stagedApp, paths.appPath);
     const manifest: BrokerManifest = {
@@ -842,7 +972,6 @@ export async function setupBroker(
       brokerLaunchAgentPlist({
         executablePath: paths.executablePath,
         socketPath: paths.socketPath,
-        logPath: paths.logPath,
       }),
       { mode: 0o644 }
     );
@@ -864,7 +993,9 @@ export async function setupBroker(
   steps.push({
     step: "broker answers",
     ok: answered,
-    detail: answered ? paths.socketPath : `no answer on ${paths.socketPath}; see ${paths.logPath}`,
+    detail: answered
+      ? paths.socketPath
+      : `no answer on ${paths.socketPath}; inspect diagnostics with \`${BROKER_LOG_COMMAND}\``,
   });
   return finish();
 }
@@ -902,7 +1033,7 @@ export function formatBrokerSetup(report: BrokerSetupReport): string {
   } else if (report.mode === "check") {
     lines.push(
       report.installation.installed && !report.running && report.installation.ready
-        ? `The broker is installed but not answering. Check ${report.installation.paths.logPath}, or run \`${BROKER_SETUP_COMMAND}\` again.`
+        ? `The broker is installed but not answering. Inspect diagnostics with \`${BROKER_LOG_COMMAND}\`, or run \`${BROKER_SETUP_COMMAND}\` again.`
         : `Run \`${BROKER_SETUP_COMMAND}\` to install it.`
     );
   } else {

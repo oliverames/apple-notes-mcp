@@ -51,12 +51,25 @@ let env: NodeJS.ProcessEnv;
 let sourcePath: string;
 let entryPath: string;
 let nodePath: string;
+let logFixturePath: string;
 
-type SpawnResult = { status: number | null; stdout?: string; stderr?: string; error?: Error };
-type SpawnHandler = (cmd: string, args: string[], opts: { input?: string }) => SpawnResult;
+const SERVICE_ABSENT = {
+  status: 113,
+  stderr: `Could not find service "${BROKER_BUNDLE_ID}" in domain for user gui: 501\n`,
+};
+
+type SpawnResult = {
+  status: number | null;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+};
+type SpawnOptions = { input?: string; timeout?: number; killSignal?: string };
+type SpawnHandler = (cmd: string, args: string[], opts: SpawnOptions) => SpawnResult;
 
 function makeSpawn(handler: SpawnHandler, calls: Array<[string, string[]]>): typeof spawnSync {
-  return ((cmd: string, args: string[], opts: { input?: string }) => {
+  return ((cmd: string, args: string[], opts: SpawnOptions) => {
     calls.push([cmd, args]);
     return {
       pid: 1,
@@ -102,6 +115,9 @@ function toolchain(overrides: Partial<Record<string, SpawnResult>> = {}): SpawnH
     if (cmd === "/usr/bin/codesign") return overrides.sign ?? { status: 0 };
     if (cmd === "/bin/launchctl" && args[0] === "bootstrap")
       return overrides.bootstrap ?? { status: 0 };
+    if (cmd === "/bin/launchctl" && args[0] === "print") return overrides.print ?? SERVICE_ABSENT;
+    if (cmd === "/bin/launchctl" && args[0] === "bootout")
+      return overrides.bootout ?? { status: 0 };
     if (cmd === "/bin/launchctl") return { status: 0 };
     // the staged broker binary: the hello handshake
     return (
@@ -128,6 +144,13 @@ function deps(overrides: Partial<BrokerDeps> = {}): BrokerDeps {
     execPath: nodePath,
     packageVersion: "9.9.9",
     uid: 501,
+    exists: (path) => existsSync(path === brokerPaths(env).logPath ? logFixturePath : path),
+    removePath: (path, options) => {
+      const fixturePath = path === brokerPaths(env).logPath ? logFixturePath : path;
+      if (typeof fixturePath !== "string" || !fixturePath.startsWith(root + "/"))
+        throw new Error(`Test attempted removal outside its fixture: ${String(path)}`);
+      rmSync(fixturePath, options);
+    },
     spawn: makeSpawn(toolchain(), []),
     ping: async () => true,
     sleep: async () => {},
@@ -208,6 +231,7 @@ beforeEach(() => {
   nodePath = join(root, "bin", "node");
   mkdirSync(join(root, "bin"));
   writeFileSync(nodePath, "node");
+  logFixturePath = join(root, "broker.log");
   recordBrokerFallback(null);
 });
 
@@ -387,13 +411,13 @@ describe("generated files", () => {
     const plist = brokerLaunchAgentPlist({
       executablePath: "/A&B/broker",
       socketPath: "/s.sock",
-      logPath: "/log",
     });
     expect(plist).toContain("<string>/A&amp;B/broker</string>\n    <string>serve</string>");
     expect(plist).toContain("<string>--socket</string>\n    <string>/s.sock</string>");
     expect(plist).not.toContain("--node");
     expect(plist).not.toContain("--entry");
     expect(plist).not.toContain("--log");
+    expect(plist).toContain("<key>StandardErrorPath</key>\n  <string>/dev/null</string>");
     expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
     expect(plist).toContain("<key>AssociatedBundleIdentifiers</key>");
   });
@@ -752,6 +776,8 @@ describe("setupBroker install", () => {
     );
     expect(report.ok).toBe(false);
     expect(report.steps.at(-1)).toMatchObject({ step: "broker answers", ok: false });
+    expect(report.steps.at(-1)?.detail).toContain("log show --last 10m");
+    expect(report.steps.at(-1)?.detail).not.toContain(brokerPaths(env).logPath);
   });
 
   it("refuses a socket path macOS cannot bind", async () => {
@@ -784,6 +810,258 @@ describe("setupBroker install", () => {
 });
 
 describe("setupBroker --check and --uninstall", () => {
+  it("waits for delayed service removal before replacing the installed app or bootstrapping", async () => {
+    writeManifest();
+    const paths = brokerPaths(env);
+    const oldMarker = join(paths.appPath, "old-installation");
+    writeFileSync(oldMarker, "preserve until stopped");
+    const calls: Array<[string, string[]]> = [];
+    const sleeps: number[] = [];
+    let probes = 0;
+    const handler = toolchain();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: false },
+      deps({
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+        spawn: makeSpawn((cmd, args, opts) => {
+          if (cmd === "/bin/launchctl" && args[0] === "bootout")
+            expect(opts).toMatchObject({ timeout: 10_000, killSignal: "SIGKILL" });
+          if (cmd === "/bin/launchctl" && args[0] === "print") {
+            expect(readFileSync(oldMarker, "utf8")).toBe("preserve until stopped");
+            expect(opts).toMatchObject({ timeout: 1_000, killSignal: "SIGKILL" });
+            return ++probes < 3 ? { status: 0, stdout: "state = running" } : SERVICE_ABSENT;
+          }
+          if (cmd === "/bin/launchctl" && args[0] === "bootstrap") {
+            expect(probes).toBe(3);
+            expect(existsSync(oldMarker)).toBe(false);
+          }
+          return handler(cmd, args, opts);
+        }, calls),
+      })
+    );
+    expect(report.ok).toBe(true);
+    expect(sleeps).toEqual([250, 250]);
+    expect(calls.filter(([cmd]) => cmd === "/bin/launchctl").map(([, args]) => args[0])).toEqual([
+      "bootout",
+      "print",
+      "print",
+      "print",
+      "bootstrap",
+    ]);
+  });
+
+  it.each([false, true])(
+    "preserves installed artifacts when service removal never completes (uninstall=%s)",
+    async (uninstall) => {
+      writeManifest();
+      const paths = brokerPaths(env);
+      writeFileSync(paths.socketPath, "socket fixture");
+      writeFileSync(logFixturePath, "legacy log");
+      const originals = [
+        paths.executablePath,
+        paths.agentPath,
+        paths.manifestPath,
+        paths.socketPath,
+        logFixturePath,
+      ].map((path) => [path, readFileSync(path)] as const);
+      const calls: Array<[string, string[]]> = [];
+      const sleeps: number[] = [];
+      const report = await setupBroker(
+        { checkOnly: false, uninstall },
+        deps({
+          spawn: makeSpawn(toolchain({ print: { status: 0, stdout: "state = running" } }), calls),
+          sleep: async (ms) => {
+            sleeps.push(ms);
+          },
+        })
+      );
+      expect(report.ok).toBe(false);
+      expect(report.running).toBe(true);
+      expect(report.steps.at(-1)).toMatchObject({ step: "stop LaunchAgent", ok: false });
+      expect(report.steps.at(-1)?.detail).toContain("still loaded after 20 checks");
+      expect(
+        calls.filter(([cmd, args]) => cmd === "/bin/launchctl" && args[0] === "print")
+      ).toHaveLength(20);
+      expect(sleeps).toEqual(Array<number>(19).fill(250));
+      expect(calls.some(([cmd, args]) => cmd === "/bin/launchctl" && args[0] === "bootstrap")).toBe(
+        false
+      );
+      for (const [path, original] of originals) expect(readFileSync(path)).toEqual(original);
+    }
+  );
+
+  it.each([
+    { status: 1, stderr: "Permission denied" },
+    { status: 113, stderr: "Could not find domain for user gui: 501" },
+    { status: 113, stderr: 'Could not find service "another.service" in domain for user gui: 501' },
+    { status: 1, stderr: SERVICE_ABSENT.stderr },
+    { ...SERVICE_ABSENT, error: new Error("timeout") },
+    { ...SERVICE_ABSENT, signal: "SIGKILL" },
+  ] as SpawnResult[])(
+    "preserves artifacts for ambiguous launchctl print result %#",
+    async (print) => {
+      writeManifest();
+      const paths = brokerPaths(env);
+      const calls: Array<[string, string[]]> = [];
+      const report = await setupBroker(
+        { checkOnly: false, uninstall: true },
+        deps({
+          spawn: makeSpawn(
+            toolchain({ bootout: { status: 5, stderr: "Boot-out failed" }, print }),
+            calls
+          ),
+          removePath: () => {
+            throw new Error("cleanup must not run");
+          },
+        })
+      );
+      expect(report.ok).toBe(false);
+      expect(report.steps).toHaveLength(1);
+      expect(report.steps[0]).toMatchObject({ step: "stop LaunchAgent", ok: false });
+      expect(report.steps[0].detail).toContain("Boot-out failed");
+      expect(existsSync(paths.appPath)).toBe(true);
+      expect(existsSync(paths.agentPath)).toBe(true);
+      expect(existsSync(paths.manifestPath)).toBe(true);
+      expect(calls.filter(([, args]) => args[0] === "print")).toHaveLength(1);
+    }
+  );
+
+  it("can remove an already absent service despite a nonzero bootout", async () => {
+    writeManifest();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: true },
+      deps({
+        spawn: makeSpawn(
+          toolchain({ bootout: { status: 5, stderr: "Service is not loaded" } }),
+          []
+        ),
+      })
+    );
+    expect(report.ok).toBe(true);
+    expect(report.steps[0].detail).toContain("Service is not loaded");
+    expect(report.steps[0].detail).toContain("Confirmed");
+    expect((await setupBroker({ checkOnly: false, uninstall: true }, deps())).ok).toBe(true);
+  });
+
+  it("reports a thrown launchctl failure without removing anything", async () => {
+    writeManifest();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: true },
+      deps({
+        spawn: makeSpawn((cmd) => {
+          if (cmd === "/bin/launchctl") throw new Error("spawn failed");
+          return { status: 0 };
+        }, []),
+      })
+    );
+    expect(report.ok).toBe(false);
+    expect(report.steps[0].detail).toContain("spawn failed");
+    expect(existsSync(brokerPaths(env).manifestPath)).toBe(true);
+  });
+
+  it("removes the exact owned files, legacy log, and empty state directory", async () => {
+    writeManifest();
+    const paths = brokerPaths(env);
+    writeFileSync(paths.socketPath, "stale socket fixture");
+    writeFileSync(logFixturePath, "old broker log");
+    const removed: string[] = [];
+    const defaults = deps();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: true },
+      deps({
+        removePath: (path, options) => {
+          removed.push(String(path));
+          defaults.removePath(path, options);
+        },
+      })
+    );
+    expect(report.ok).toBe(true);
+    expect(removed).toEqual([
+      paths.agentPath,
+      paths.appPath,
+      paths.socketPath,
+      paths.logPath,
+      paths.manifestPath,
+    ]);
+    expect(existsSync(paths.stateDir)).toBe(false);
+    expect(existsSync(logFixturePath)).toBe(false);
+    expect(existsSync(paths.appDir)).toBe(true);
+    expect(existsSync(join(paths.agentPath, ".."))).toBe(true);
+  });
+
+  it("keeps unrelated files in a custom state directory", async () => {
+    writeManifest();
+    const unrelated = join(brokerPaths(env).stateDir, "keep.txt");
+    writeFileSync(unrelated, "user data");
+    const report = await setupBroker({ checkOnly: false, uninstall: true }, deps());
+    expect(report.ok).toBe(true);
+    expect(readFileSync(unrelated, "utf8")).toBe("user data");
+    expect(report.warnings.join(" ")).toContain("contains other files");
+  });
+
+  it.each(["", "/", "/."])(
+    "unlinks a state directory symlink with suffix '%s' without following its target",
+    async (suffix) => {
+      writeManifest();
+      const paths = brokerPaths(env);
+      const target = join(root, "unrelated-directory");
+      mkdirSync(target);
+      writeFileSync(join(target, "manifest.json"), "unrelated manifest");
+      writeFileSync(join(target, "broker.sock"), "unrelated socket");
+      rmSync(paths.stateDir, { recursive: true });
+      symlinkSync(target, paths.stateDir);
+      env.APPLE_NOTES_MCP_BROKER_DIR = paths.stateDir + suffix;
+      const report = await setupBroker({ checkOnly: false, uninstall: true }, deps());
+      expect(report.ok).toBe(true);
+      expect(existsSync(paths.stateDir)).toBe(false);
+      expect(readFileSync(join(target, "manifest.json"), "utf8")).toBe("unrelated manifest");
+      expect(readFileSync(join(target, "broker.sock"), "utf8")).toBe("unrelated socket");
+      expect(report.warnings.join(" ")).toContain("target were left untouched");
+    }
+  );
+
+  it("reports every artifact removal failure and retains metadata for retry", async () => {
+    writeManifest();
+    const paths = brokerPaths(env);
+    writeFileSync(logFixturePath, "old log");
+    const defaults = deps();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: true },
+      deps({
+        removePath: (path, options) => {
+          if (path === paths.appPath || path === paths.logPath)
+            throw new Error("permission denied");
+          defaults.removePath(path, options);
+        },
+      })
+    );
+    expect(report.ok).toBe(false);
+    expect(report.steps.at(-1)).toMatchObject({ step: "remove broker", ok: false });
+    expect(report.steps.at(-1)?.detail).toContain(paths.appPath);
+    expect(report.steps.at(-1)?.detail).toContain(paths.logPath);
+    expect(existsSync(paths.manifestPath)).toBe(true);
+    expect(existsSync(paths.appPath)).toBe(true);
+    expect(existsSync(logFixturePath)).toBe(true);
+    expect(formatBrokerSetup(report)).toContain("not fully removed");
+  });
+
+  it("reports a state-directory removal failure even after removing the app", async () => {
+    writeManifest();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: true },
+      deps({
+        removeEmptyDirectory: () => {
+          throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+        },
+      })
+    );
+    expect(report.ok).toBe(false);
+    expect(report.steps.at(-1)?.detail).toContain("permission denied");
+    expect(existsSync(brokerPaths(env).stateDir)).toBe(true);
+  });
+
   it("checks an installed, running broker", async () => {
     writeManifest();
     const report = await setupBroker({ checkOnly: true, uninstall: false }, deps());
@@ -813,7 +1091,7 @@ describe("setupBroker --check and --uninstall", () => {
     const calls: Array<[string, string[]]> = [];
     const report = await setupBroker(
       { checkOnly: false, uninstall: true },
-      deps({ spawn: makeSpawn(() => ({ status: 0 }), calls) })
+      deps({ spawn: makeSpawn(toolchain(), calls) })
     );
     expect(report).toMatchObject({ ok: true, mode: "uninstall", running: false });
     expect(calls).toContainEqual(["/bin/launchctl", ["bootout", "gui/501/apple-notes-mcp.broker"]]);

@@ -62,13 +62,9 @@ vi.mock("child_process", () => ({
 }));
 
 import { spawnSync } from "child_process";
-import {
-  runDoctor,
-  formatDoctorReport,
-  checkNodeRuntimeSignature,
-  fdaRemediation,
-} from "@/tools/doctor.js";
+import { runDoctor, formatDoctorReport, checkNodeRuntimeSignature } from "@/tools/doctor.js";
 import { hasFullDiskAccess } from "@/utils/checklistParser.js";
+import { fdaRemediation } from "@/utils/fullDiskAccess.js";
 import { nativeTagsStatus } from "@/services/nativeTags.js";
 import type { AppleNotesManager } from "@/services/appleNotesManager.js";
 
