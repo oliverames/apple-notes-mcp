@@ -961,6 +961,7 @@ static NSDictionary *EditFileFeatureReport(BOOL contextOK, NSString *contextReas
 static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request);
 // Folder scope guards; defined in "Scope guards" below. Every save calls it.
 static void EnforceScopeGuard(NSManagedObjectContext *context);
+static void CheckSectionLinkScopeBeforeMutation(NSManagedObjectContext *context);
 static void RequireExpectedChanges(NSManagedObjectContext *context, NSArray<NSManagedObject *> *allowed,
                                    NSSet<NSString *> *allowedInsertedEntities);
 static void CheckExpectedChangesBeforeSave(NSManagedObjectContext *context);
@@ -991,7 +992,7 @@ static const ActionSpec kActions[] = {
     {"add_url_card", "identifier,url,afterParagraph,ifRevision,dryRun", HandleAddURLCard},
     {"set_paragraph_id", "identifier,blockIndex,expectedText,paragraphId,ifRevision",
      HandleSetParagraphId},
-    {"add_section_link", "identifier,target,blockIndex,expectedText,paragraphId,heading,position,clearExistingSectionLinks,ifRevision,ifTargetRevision", HandleAddSectionLink},
+    {"add_section_link", "identifier,target,blockIndex,expectedText,paragraphId,heading,position,clearExistingSectionLinks,ifRevision,ifTargetRevision,targetScope", HandleAddSectionLink},
     {"read_tables", "identifier", HandleReadTables},
     {"delete_table_row", "identifier,tableIdentifier,rowIdentifier,dryRun,ifRevision,ifTableDigest",
      HandleDeleteTableRow},
@@ -6526,6 +6527,9 @@ static NSDictionary *HandleAddSectionLink(NSDictionary *request) {
     Fail(@"revision_conflict", @"The target note changed since ifTargetRevision was read",
          @{@"committed" : @NO, @"currentTargetRevision" : targetRevision});
   NSString *canonicalTarget = [target valueForKey:@"identifier"];
+  // Refuse both policies before minting a paragraph UUID or creating a chip.
+  // SaveOrFail re-evaluates them in this same context after serialization.
+  CheckSectionLinkScopeBeforeMutation(context);
 
   // 1. The target paragraph, with a unique UUID (minted when needed).
   NSAttributedString *targetBody = [LoadBody(target, NULL) copy];
@@ -9352,6 +9356,7 @@ static const ScopeGuardedAction kScopeGuardedActions[] = {
 };
 
 static NSDictionary *gScopeRequest = nil;  // the request, when it carries a guard
+static NSDictionary *gTargetScopeRequest = nil;  // explicit other-note policy, independent of receiver/minting
 static ScopeSubject gScopeSubject = ScopeSubjectNone;
 static BOOL gScopeEnforced = NO;  // a save already evaluated the guard
 
@@ -9375,9 +9380,9 @@ static BOOL IsFolderURI(id value) {
          [re numberOfMatchesInString:value options:0 range:NSMakeRange(0, [value length])] == 1;
 }
 
-// Validates the guard fields and remembers them for EnforceScopeGuard. A
-// request without any guard leaves nothing to check.
-static void ParseScopeGuard(NSDictionary *request, ScopeSubject subject) {
+// Pure validation shared by the receiver and explicit section-link target.
+static NSDictionary *ValidatedScopeFields(NSDictionary *request) {
+  NSMutableDictionary *fields = [NSMutableDictionary dictionary];
   BOOL any = NO;
   for (NSString *key in @[ @"ifFolderId", @"ifAncestorFolderId" ]) {
     if (!request[key]) continue;
@@ -9385,6 +9390,7 @@ static void ParseScopeGuard(NSDictionary *request, ScopeSubject subject) {
       Fail(@"invalid_request", [NSString stringWithFormat:@"`%@` must be an x-coredata folder id", key],
            @{@"committed" : @NO});
     any = YES;
+    fields[key] = request[key];
   }
   id forbidden = request[@"forbiddenAncestorFolderIds"];
   if (forbidden) {
@@ -9395,15 +9401,84 @@ static void ParseScopeGuard(NSDictionary *request, ScopeSubject subject) {
       if (!IsFolderURI(value))
         Fail(@"invalid_request", @"Every forbiddenAncestorFolderIds entry must be an x-coredata folder id",
              @{@"committed" : @NO});
-    if ([forbidden count]) any = YES;
+    if ([forbidden count]) { any = YES; fields[@"forbiddenAncestorFolderIds"] = forbidden; }
   }
-  if (!any) return;
+  return any ? fields : @{};
+}
+
+// Only normalize the known folder-id form for policy equivalence. Forwarded
+// ids remain unchanged and still have to resolve in the writing store.
+static NSString *CanonicalScopeFolderURI(NSString *uri) {
+  NSArray *parts = [uri componentsSeparatedByString:@"/"];
+  NSString *key = [parts.lastObject substringFromIndex:1];
+  while (key.length > 1 && [key hasPrefix:@"0"]) key = [key substringFromIndex:1];
+  return [NSString stringWithFormat:@"x-coredata://%@/ICFolder/p%@", [parts[2] uppercaseString], key];
+}
+
+static NSDictionary *CanonicalScopePolicy(NSDictionary *fields) {
+  NSMutableDictionary *policy = [NSMutableDictionary dictionary];
+  for (NSString *key in @[ @"ifFolderId", @"ifAncestorFolderId" ])
+    if (fields[key]) policy[key] = CanonicalScopeFolderURI(fields[key]);
+  NSMutableSet *forbidden = [NSMutableSet set];
+  for (NSString *uri in fields[@"forbiddenAncestorFolderIds"] ?: @[])
+    [forbidden addObject:CanonicalScopeFolderURI(uri)];
+  policy[@"forbiddenAncestorFolderIds"] = [[forbidden allObjects] sortedArrayUsingSelector:@selector(compare:)];
+  return policy;
+}
+
+// Returns separate effective policies without borrowing receiver constraints.
+// On a self-link there is one subject: target-only guards apply to it, and
+// two explicit policies must be equivalent (including an explicit empty policy).
+static NSDictionary *SectionLinkScopePolicies(NSDictionary *request, NSDictionary *source) {
+  NSString *identifier = RequireIdentifier(request);
+  NSString *targetIdentifier = OptionalString(request, @"target") ?: identifier;
+  if (!IsUUID(targetIdentifier)) Fail(@"invalid_request", @"`target` must be a Notes UUID", @{@"committed" : @NO});
+  id rawTarget = request[@"targetScope"];
+  if (rawTarget && ![rawTarget isKindOfClass:[NSDictionary class]])
+    Fail(@"invalid_request", @"`targetScope` must be an object of folder preconditions", @{@"committed" : @NO});
+  if (rawTarget) RejectUnknownKeys(rawTarget, ScopeGuardKeys(), @"targetScope");
+  NSDictionary *target = rawTarget ? ValidatedScopeFields(rawTarget) : @{};
+  BOOL selfLink = [targetIdentifier caseInsensitiveCompare:identifier] == NSOrderedSame;
+  if (selfLink) {
+    if (source.count && rawTarget && ![CanonicalScopePolicy(source) isEqual:CanonicalScopePolicy(target)])
+      Fail(@"invalid_request", @"A self-link cannot have a targetScope distinct from its receiver scope", @{@"committed" : @NO});
+    return @{@"source" : source.count ? source : target};
+  }
+  if (source.count && !target.count)
+    Fail(@"invalid_request", @"A guarded link to another note requires an explicit nonempty targetScope", @{@"committed" : @NO});
+  NSMutableDictionary *targetRequest = [target mutableCopy];
+  if (target.count) targetRequest[@"identifier"] = targetIdentifier;
+  return @{@"source" : source, @"target" : targetRequest};
+}
+
+// Context-free policy setup is separate from the private-model capability probe.
+static void ConfigureScopeGuard(NSDictionary *request, ScopeSubject subject) {
+  gScopeRequest = nil;
+  gTargetScopeRequest = nil;
+  gScopeSubject = subject;
+  gScopeEnforced = NO;
+  NSDictionary *source = ValidatedScopeFields(request);
+  if ([request[@"action"] isEqual:@"add_section_link"]) {
+    NSDictionary *policies = SectionLinkScopePolicies(request, source);
+    source = policies[@"source"];
+    if ([policies[@"target"] count]) gTargetScopeRequest = policies[@"target"];
+  }
+  if (source.count) {
+    NSMutableDictionary *sourceRequest = [request mutableCopy];
+    for (NSString *key in ScopeGuardKeys()) [sourceRequest removeObjectForKey:key];
+    [sourceRequest addEntriesFromDictionary:source];
+    gScopeRequest = sourceRequest;
+  }
+}
+
+// Validate and remember both subjects before the handler can mutate objects.
+static void ParseScopeGuard(NSDictionary *request, ScopeSubject subject) {
+  ConfigureScopeGuard(request, subject);
+  if (!gScopeRequest && !gTargetScopeRequest) return;
   NSArray *missing = MissingForFeature(FeatureScopeGuards);
   if (missing.count)
     Fail(@"private_api_unavailable", @"Scope guards need NotesShared model properties missing on this macOS",
          @{@"missing" : missing, @"committed" : @NO});
-  gScopeRequest = request;
-  gScopeSubject = subject;
 }
 
 static NSString *ScopeNoun(void) { return gScopeSubject == ScopeSubjectNote ? @"note" : @"smart folder"; }
@@ -9436,8 +9511,25 @@ static NSManagedObjectID *ResolveScopeFolder(NSManagedObjectContext *context, NS
               [NSString stringWithFormat:@"%@ %@ does not name an existing folder in this store", field, uri]);
   // A folder this write itself deletes (a smart-folder delete) counts as it
   // was when the write read it.
-  id deleted = writing && folder.hasChanges ? [folder committedValuesForKeys:@[ @"markedForDeletion" ]]
-                                            : [folder dictionaryWithValuesForKeys:@[ @"markedForDeletion" ]];
+  id deleted = nil;
+  if (writing && folder.hasChanges) {
+    deleted = [folder committedValuesForKeys:@[ @"markedForDeletion" ]];
+  } else {
+    NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"ICFolder"];
+    fetch.predicate = [NSPredicate predicateWithFormat:@"self == %@", objectID];
+    fetch.resultType = NSDictionaryResultType;
+    fetch.propertiesToFetch = @[ @"markedForDeletion" ];
+    fetch.includesPendingChanges = NO;
+    NSError *error = nil;
+    NSArray *rows = [context executeFetchRequest:fetch error:&error];
+    if (!rows)
+      Fail(@"store_unavailable", @"Guard folder fetch failed during the scope check",
+           @{@"committed" : @NO, @"detail" : OrNull(error.localizedDescription)});
+    if (rows.count != 1)
+      ScopeFail(writing, @"scope_folder_not_found", @"folder_not_found",
+                [NSString stringWithFormat:@"%@ %@ no longer names an existing folder", field, uri]);
+    deleted = rows.firstObject;
+  }
   if (forbidden && BoolAttr(deleted, @"markedForDeletion"))
     ScopeFail(writing, @"scope_folder_not_found", @"folder_deleted",
               [NSString stringWithFormat:@"%@ %@ names a deleted folder", field, uri]);
@@ -9453,7 +9545,7 @@ static NSManagedObjectID *PersistedParent(NSManagedObjectContext *context, NSMan
   NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ICFolder"];
   request.predicate = [NSPredicate predicateWithFormat:@"self == %@", folderID];
   request.resultType = NSDictionaryResultType;
-  request.propertiesToFetch = @[ @"parent" ];
+  request.propertiesToFetch = @[ @"parent", @"markedForDeletion" ];
   request.includesPendingChanges = NO;
   NSError *error = nil;
   NSArray *rows = [context executeFetchRequest:request error:&error];
@@ -9462,6 +9554,8 @@ static NSManagedObjectID *PersistedParent(NSManagedObjectContext *context, NSMan
          @{@"committed" : @NO, @"detail" : OrNull(error.localizedDescription)});
   if (rows.count != 1)
     ScopeFail(writing, @"scope_conflict", @"folder_vanished", @"a folder above the target no longer exists");
+  if (BoolAttr(rows.firstObject, @"markedForDeletion"))
+    ScopeFail(writing, @"scope_conflict", @"folder_deleted", @"a folder above the target is deleted");
   id parent = [rows.firstObject objectForKey:@"parent"];
   return [parent isKindOfClass:[NSManagedObjectID class]] ? parent : nil;
 }
@@ -9483,10 +9577,10 @@ static NSManagedObjectID *ObjectIDOf(id object) {
 
 // Evaluates the guard. `writing` is the write's own context (right before its
 // save) or nil for the read-only check of a call that saved nothing.
-static void EvaluateScopeGuard(NSManagedObjectContext *context, NSManagedObjectContext *writing) {
-  NSDictionary *request = gScopeRequest;
+static void EvaluateScopeGuard(NSManagedObjectContext *context, NSManagedObjectContext *writing,
+                               NSDictionary *request, ScopeSubject subject) {
   NSManagedObjectID *home = nil, *subjectFolder = nil, *destination = nil;
-  if (gScopeSubject == ScopeSubjectNote) {
+  if (subject == ScopeSubjectNote) {
     if (!IsUUID(request[@"identifier"]))
       Fail(@"invalid_request", @"Scope guards need the note `identifier`", @{@"committed" : @NO});
     NSManagedObject *note = FetchNote(context, request[@"identifier"]);
@@ -9494,9 +9588,27 @@ static void EvaluateScopeGuard(NSManagedObjectContext *context, NSManagedObjectC
     // and where the write puts the note if it moves it.
     id read = writing ? [note committedValuesForKeys:@[ @"folder" ]][@"folder"] : [note valueForKey:@"folder"];
     home = ObjectIDOf(read);
-    NSManagedObjectID *now = ObjectIDOf([note valueForKey:@"folder"]);
+    // An already-minted section target is read but not saved, so optimistic
+    // locking cannot protect its cached direct folder. Re-read that folder.
+    if (writing && !note.hasChanges) {
+      NSFetchRequest *fetch = [NSFetchRequest fetchRequestWithEntityName:@"ICNote"];
+      fetch.predicate = [NSPredicate predicateWithFormat:@"self == %@", note.objectID];
+      fetch.resultType = NSDictionaryResultType;
+      fetch.propertiesToFetch = @[ @"folder" ];
+      fetch.includesPendingChanges = NO;
+      NSError *error = nil;
+      NSArray *rows = [context executeFetchRequest:fetch error:&error];
+      if (!rows)
+        Fail(@"store_unavailable", @"Note folder fetch failed during the scope check",
+             @{@"committed" : @NO, @"detail" : OrNull(error.localizedDescription)});
+      if (rows.count != 1)
+        ScopeFail(writing, @"scope_conflict", @"note_vanished", @"the guarded note no longer exists");
+      id folder = [rows.firstObject objectForKey:@"folder"];
+      home = [folder isKindOfClass:[NSManagedObjectID class]] ? folder : nil;
+    }
+    NSManagedObjectID *now = writing && !note.hasChanges ? home : ObjectIDOf([note valueForKey:@"folder"]);
     if (now && ![now isEqual:home]) destination = now;
-  } else if (gScopeSubject == ScopeSubjectFolder) {
+  } else if (subject == ScopeSubjectFolder) {
     if (!IsUUID(request[@"identifier"]))
       Fail(@"invalid_request", @"Scope guards need the folder `identifier`", @{@"committed" : @NO});
     NSManagedObject *folder = FetchByIdentifier(context, @"ICFolder", request[@"identifier"]);
@@ -9554,18 +9666,25 @@ static void EvaluateScopeGuard(NSManagedObjectContext *context, NSManagedObjectC
 }
 
 static void EnforceScopeGuard(NSManagedObjectContext *context) {
-  if (!gScopeRequest) return;
+  if (!gScopeRequest && !gTargetScopeRequest) return;
   [context processPendingChanges];
-  EvaluateScopeGuard(context, context);
+  if (gScopeRequest) EvaluateScopeGuard(context, context, gScopeRequest, gScopeSubject);
+  if (gTargetScopeRequest) EvaluateScopeGuard(context, context, gTargetScopeRequest, ScopeSubjectNote);
   gScopeEnforced = YES;
+}
+
+static void CheckSectionLinkScopeBeforeMutation(NSManagedObjectContext *context) {
+  if (gScopeRequest) EvaluateScopeGuard(context, context, gScopeRequest, gScopeSubject);
+  if (gTargetScopeRequest) EvaluateScopeGuard(context, context, gTargetScopeRequest, ScopeSubjectNote);
 }
 
 // For a guarded call that returned without saving: the same check in a fresh
 // read-only context, before the answer goes out.
 static void CheckScopeGuardWithoutSave(void) {
-  if (!gScopeRequest || gScopeEnforced) return;
+  if ((!gScopeRequest && !gTargetScopeRequest) || gScopeEnforced) return;
   NSManagedObjectContext *context = OpenContext(ResolveStore(), YES);
-  EvaluateScopeGuard(context, nil);
+  if (gScopeRequest) EvaluateScopeGuard(context, nil, gScopeRequest, gScopeSubject);
+  if (gTargetScopeRequest) EvaluateScopeGuard(context, nil, gTargetScopeRequest, ScopeSubjectNote);
 }
 
 #pragma mark - Purge-flag repair
