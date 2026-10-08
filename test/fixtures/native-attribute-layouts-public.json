@@ -1,0 +1,1359 @@
+{
+  "sourceSha256": "a5abc6b1588edb5cc70da3371e3d6cc71eb56506a7483b469c082f4c8486eb53",
+  "classes": [
+    {
+      "instanceSize": 24,
+      "ivars": [
+        {
+          "encoding": "@\"NSString\"",
+          "name": "_attachmentIdentifier",
+          "offset": 8
+        },
+        {
+          "encoding": "@\"NSString\"",
+          "name": "_attachmentUTI",
+          "offset": 16
+        }
+      ],
+      "name": "ICTTAttachment",
+      "properties": [
+        {
+          "attributes": "T@\"NSString\",C,N,V_attachmentIdentifier",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "attachmentIdentifier"
+          },
+          "name": "attachmentIdentifier"
+        },
+        {
+          "attributes": "T@\"NSString\",C,N,V_attachmentUTI",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "attachmentUTI"
+          },
+          "name": "attachmentUTI"
+        },
+        {
+          "attributes": "T@\"NSString\",?,R,C",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "debugDescription"
+          },
+          "name": "debugDescription"
+        },
+        {
+          "attributes": "T@\"NSString\",R,C",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "description"
+          },
+          "name": "description"
+        },
+        {
+          "attributes": "TQ,R",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "hash"
+          },
+          "name": "hash"
+        },
+        {
+          "attributes": "T#,R",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "#16@0:8",
+            "present": true,
+            "returnType": "#",
+            "selector": "superclass"
+          },
+          "name": "superclass"
+        }
+      ],
+      "superclass": "NSObject",
+      "zeroArgumentMethods": [
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "v16@0:8",
+          "present": true,
+          "returnType": "v",
+          "selector": ".cxx_destruct"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "_isEmojiImage"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "adaptiveImageGlyph"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "attachmentIdentifier"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "attachmentUTI"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "description"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "fileType"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "q16@0:8",
+          "present": true,
+          "returnType": "q",
+          "selector": "standaloneAlignment"
+        }
+      ]
+    },
+    {
+      "instanceSize": 40,
+      "ivars": [
+        {
+          "encoding": "I",
+          "name": "_fontHints",
+          "offset": 8
+        },
+        {
+          "encoding": "@\"NSString\"",
+          "name": "_fontName",
+          "offset": 16
+        },
+        {
+          "encoding": "@",
+          "name": "_nativeFont",
+          "offset": 32
+        },
+        {
+          "encoding": "d",
+          "name": "_pointSize",
+          "offset": 24
+        }
+      ],
+      "name": "ICTTFont",
+      "properties": [
+        {
+          "attributes": "TI,R,N,V_fontHints",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "I16@0:8",
+            "present": true,
+            "returnType": "I",
+            "selector": "fontHints"
+          },
+          "name": "fontHints"
+        },
+        {
+          "attributes": "T@\"NSString\",R,N,V_fontName",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "fontName"
+          },
+          "name": "fontName"
+        },
+        {
+          "attributes": "T@,&,N,V_nativeFont",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "nativeFont"
+          },
+          "name": "nativeFont"
+        },
+        {
+          "attributes": "Td,R,N,V_pointSize",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "d16@0:8",
+            "present": true,
+            "returnType": "d",
+            "selector": "pointSize"
+          },
+          "name": "pointSize"
+        }
+      ],
+      "superclass": "NSObject",
+      "zeroArgumentMethods": [
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "v16@0:8",
+          "present": true,
+          "returnType": "v",
+          "selector": ".cxx_destruct"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "description"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "I16@0:8",
+          "present": true,
+          "returnType": "I",
+          "selector": "fontHints"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "fontName"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "Q16@0:8",
+          "present": true,
+          "returnType": "Q",
+          "selector": "hash"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "nativeFont"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "d16@0:8",
+          "present": true,
+          "returnType": "d",
+          "selector": "pointSize"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "serialize"
+        }
+      ]
+    },
+    {
+      "instanceSize": 80,
+      "ivars": [],
+      "name": "ICTTMutableParagraphStyle",
+      "properties": [
+        {
+          "attributes": "Tq,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "q16@0:8",
+            "present": true,
+            "returnType": "q",
+            "selector": "alignment"
+          },
+          "name": "alignment"
+        },
+        {
+          "attributes": "TQ,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "blockQuoteLevel"
+          },
+          "name": "blockQuoteLevel"
+        },
+        {
+          "attributes": "TI,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "I16@0:8",
+            "present": true,
+            "returnType": "I",
+            "selector": "hints"
+          },
+          "name": "hints"
+        },
+        {
+          "attributes": "TQ,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "indent"
+          },
+          "name": "indent"
+        },
+        {
+          "attributes": "TB,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "needsListCleanup"
+          },
+          "name": "needsListCleanup"
+        },
+        {
+          "attributes": "TB,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "needsParagraphCleanup"
+          },
+          "name": "needsParagraphCleanup"
+        },
+        {
+          "attributes": "TQ,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "startingItemNumber"
+          },
+          "name": "startingItemNumber"
+        },
+        {
+          "attributes": "TI,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "I16@0:8",
+            "present": true,
+            "returnType": "I",
+            "selector": "style"
+          },
+          "name": "style"
+        },
+        {
+          "attributes": "T@\"ICTTTodo\",&,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "todo"
+          },
+          "name": "todo"
+        },
+        {
+          "attributes": "T@\"NSUUID\",C,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "uuid"
+          },
+          "name": "uuid"
+        },
+        {
+          "attributes": "Tq,D,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "q16@0:8",
+            "present": true,
+            "returnType": "q",
+            "selector": "writingDirection"
+          },
+          "name": "writingDirection"
+        }
+      ],
+      "superclass": "ICTTParagraphStyle",
+      "zeroArgumentMethods": []
+    },
+    {
+      "instanceSize": 80,
+      "ivars": [
+        {
+          "encoding": "q",
+          "name": "_alignment",
+          "offset": 24
+        },
+        {
+          "encoding": "Q",
+          "name": "_blockQuoteLevel",
+          "offset": 48
+        },
+        {
+          "encoding": "I",
+          "name": "_hints",
+          "offset": 16
+        },
+        {
+          "encoding": "Q",
+          "name": "_indent",
+          "offset": 40
+        },
+        {
+          "encoding": "B",
+          "name": "_needsListCleanup",
+          "offset": 9
+        },
+        {
+          "encoding": "B",
+          "name": "_needsParagraphCleanup",
+          "offset": 8
+        },
+        {
+          "encoding": "Q",
+          "name": "_startingItemNumber",
+          "offset": 56
+        },
+        {
+          "encoding": "I",
+          "name": "_style",
+          "offset": 12
+        },
+        {
+          "encoding": "@\"ICTTTodo\"",
+          "name": "_todo",
+          "offset": 64
+        },
+        {
+          "encoding": "@\"NSUUID\"",
+          "name": "_uuid",
+          "offset": 72
+        },
+        {
+          "encoding": "q",
+          "name": "_writingDirection",
+          "offset": 32
+        }
+      ],
+      "name": "ICTTParagraphStyle",
+      "properties": [
+        {
+          "attributes": "Tq,N,V_alignment",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "q16@0:8",
+            "present": true,
+            "returnType": "q",
+            "selector": "alignment"
+          },
+          "name": "alignment"
+        },
+        {
+          "attributes": "TQ,N,V_blockQuoteLevel",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "blockQuoteLevel"
+          },
+          "name": "blockQuoteLevel"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "canIndent"
+          },
+          "name": "canIndent"
+        },
+        {
+          "attributes": "T@\"NSString\",?,R,C",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "debugDescription"
+          },
+          "name": "debugDescription"
+        },
+        {
+          "attributes": "T@\"NSString\",R,C",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "description"
+          },
+          "name": "description"
+        },
+        {
+          "attributes": "TQ,R",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "hash"
+          },
+          "name": "hash"
+        },
+        {
+          "attributes": "TI,N,V_hints",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "I16@0:8",
+            "present": true,
+            "returnType": "I",
+            "selector": "hints"
+          },
+          "name": "hints"
+        },
+        {
+          "attributes": "TQ,N,V_indent",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "indent"
+          },
+          "name": "indent"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "isBlockQuote"
+          },
+          "name": "isBlockQuote"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "isChecklist"
+          },
+          "name": "isChecklist"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "isHeader"
+          },
+          "name": "isHeader"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "isList"
+          },
+          "name": "isList"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "isRTL"
+          },
+          "name": "isRTL"
+        },
+        {
+          "attributes": "TB,N,V_needsListCleanup",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "needsListCleanup"
+          },
+          "name": "needsListCleanup"
+        },
+        {
+          "attributes": "TB,N,V_needsParagraphCleanup",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "needsParagraphCleanup"
+          },
+          "name": "needsParagraphCleanup"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "preferSingleLine"
+          },
+          "name": "preferSingleLine"
+        },
+        {
+          "attributes": "TQ,N,V_startingItemNumber",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "Q16@0:8",
+            "present": true,
+            "returnType": "Q",
+            "selector": "startingItemNumber"
+          },
+          "name": "startingItemNumber"
+        },
+        {
+          "attributes": "TI,N,V_style",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "I16@0:8",
+            "present": true,
+            "returnType": "I",
+            "selector": "style"
+          },
+          "name": "style"
+        },
+        {
+          "attributes": "T#,R",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "#16@0:8",
+            "present": true,
+            "returnType": "#",
+            "selector": "superclass"
+          },
+          "name": "superclass"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "supportsSectionLinks"
+          },
+          "name": "supportsSectionLinks"
+        },
+        {
+          "attributes": "T@\"ICTTTodo\",&,N,V_todo",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "todo"
+          },
+          "name": "todo"
+        },
+        {
+          "attributes": "T@\"NSUUID\",R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "todoTrackingUUID"
+          },
+          "name": "todoTrackingUUID"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "uniqueToLine"
+          },
+          "name": "uniqueToLine"
+        },
+        {
+          "attributes": "T@\"NSUUID\",C,N,V_uuid",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "uuid"
+          },
+          "name": "uuid"
+        },
+        {
+          "attributes": "TB,R,N",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "wantsFollowingNewLine"
+          },
+          "name": "wantsFollowingNewLine"
+        },
+        {
+          "attributes": "Tq,N,V_writingDirection",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "q16@0:8",
+            "present": true,
+            "returnType": "q",
+            "selector": "writingDirection"
+          },
+          "name": "writingDirection"
+        }
+      ],
+      "superclass": "NSObject",
+      "zeroArgumentMethods": [
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "v16@0:8",
+          "present": true,
+          "returnType": "v",
+          "selector": ".cxx_destruct"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "q16@0:8",
+          "present": true,
+          "returnType": "q",
+          "selector": "alignment"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "Q16@0:8",
+          "present": true,
+          "returnType": "Q",
+          "selector": "blockQuoteLevel"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "canIndent"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "description"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "Q16@0:8",
+          "present": true,
+          "returnType": "Q",
+          "selector": "hash"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "I16@0:8",
+          "present": true,
+          "returnType": "I",
+          "selector": "hints"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "Q16@0:8",
+          "present": true,
+          "returnType": "Q",
+          "selector": "indent"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "init"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "isBlockQuote"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "isChecklist"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "isHeader"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "isList"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "isRTL"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "isUnknownStyle"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "mutableCopy"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "needsListCleanup"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "needsParagraphCleanup"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "preferSingleLine"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "serialize"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "Q16@0:8",
+          "present": true,
+          "returnType": "Q",
+          "selector": "startingItemNumber"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "I16@0:8",
+          "present": true,
+          "returnType": "I",
+          "selector": "style"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "supportsSectionLinks"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "todo"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "todoTrackingUUID"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "uniqueToLine"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "uuid"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "wantsFollowingNewLine"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "q16@0:8",
+          "present": true,
+          "returnType": "q",
+          "selector": "writingDirection"
+        }
+      ]
+    },
+    {
+      "instanceSize": 24,
+      "ivars": [
+        {
+          "encoding": "B",
+          "name": "_done",
+          "offset": 8
+        },
+        {
+          "encoding": "@\"NSUUID\"",
+          "name": "_uuid",
+          "offset": 16
+        }
+      ],
+      "name": "ICTTTodo",
+      "properties": [
+        {
+          "attributes": "TB,R,N,V_done",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "B16@0:8",
+            "present": true,
+            "returnType": "B",
+            "selector": "done"
+          },
+          "name": "done"
+        },
+        {
+          "attributes": "T@\"NSUUID\",R,N,V_uuid",
+          "getter": {
+            "argumentTypes": [
+              "@",
+              ":"
+            ],
+            "encoding": "@16@0:8",
+            "present": true,
+            "returnType": "@",
+            "selector": "uuid"
+          },
+          "name": "uuid"
+        }
+      ],
+      "superclass": "NSObject",
+      "zeroArgumentMethods": [
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "v16@0:8",
+          "present": true,
+          "returnType": "v",
+          "selector": ".cxx_destruct"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "description"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "B16@0:8",
+          "present": true,
+          "returnType": "B",
+          "selector": "done"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "Q16@0:8",
+          "present": true,
+          "returnType": "Q",
+          "selector": "hash"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "init"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "serialize"
+        },
+        {
+          "argumentTypes": [
+            "@",
+            ":"
+          ],
+          "encoding": "@16@0:8",
+          "present": true,
+          "returnType": "@",
+          "selector": "uuid"
+        }
+      ]
+    }
+  ]
+}

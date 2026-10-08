@@ -1,32 +1,79 @@
 // Pure synthetic attributed text. No NotesShared, stores, writer, or dispatch.
 #include "../../native/private-helper/content-preservation.h"
 
-@interface ICTTTodo : NSObject
-@property(nonatomic, copy) NSUUID *uuid;
-@property(nonatomic) BOOL done;
+@interface ICTTTodo : NSObject { BOOL _done; NSUUID *_uuid; }
+@property(nonatomic, readonly) NSUUID *uuid;
+@property(nonatomic, readonly) BOOL done;
 @end
 @implementation ICTTTodo
+@synthesize uuid = _uuid, done = _done;
 @end
 
-@interface ICTTParagraphStyle : NSObject
-@property(nonatomic) unsigned int style;
-@property(nonatomic) NSInteger alignment, writingDirection, indent, blockQuoteLevel, startingItemNumber;
-@property(nonatomic) unsigned int hints;
+@interface ICTTParagraphStyle : NSObject<NSObject> {
+  BOOL _needsParagraphCleanup, _needsListCleanup;
+  unsigned int _style, _hints;
+  NSInteger _alignment, _writingDirection;
+  NSUInteger _indent, _blockQuoteLevel, _startingItemNumber;
+  ICTTTodo *_todo;
+  NSUUID *_uuid;
+}
+@property(nonatomic) NSInteger alignment, writingDirection;
+@property(nonatomic) NSUInteger blockQuoteLevel, indent, startingItemNumber;
+@property(nonatomic) unsigned int hints, style;
+@property(nonatomic) BOOL needsListCleanup, needsParagraphCleanup;
+@property(nonatomic, strong) ICTTTodo *todo;
 @property(nonatomic, copy) NSUUID *uuid;
-@property(nonatomic) ICTTTodo *todo;
+@property(nonatomic, readonly) BOOL canIndent, isBlockQuote, isChecklist, isHeader, isList, isRTL,
+    preferSingleLine, supportsSectionLinks, uniqueToLine, wantsFollowingNewLine;
+@property(nonatomic, readonly) NSUUID *todoTrackingUUID;
 @end
 @implementation ICTTParagraphStyle
+@synthesize alignment = _alignment, writingDirection = _writingDirection, blockQuoteLevel = _blockQuoteLevel,
+    indent = _indent, startingItemNumber = _startingItemNumber, hints = _hints, style = _style,
+    needsListCleanup = _needsListCleanup, needsParagraphCleanup = _needsParagraphCleanup,
+    todo = _todo, uuid = _uuid;
+- (BOOL)canIndent { return NO; }
+- (BOOL)isBlockQuote { return NO; }
+- (BOOL)isChecklist { return NO; }
+- (BOOL)isHeader { return NO; }
+- (BOOL)isList { return NO; }
+- (BOOL)isRTL { return NO; }
+- (BOOL)preferSingleLine { return NO; }
+- (BOOL)supportsSectionLinks { return NO; }
+- (BOOL)uniqueToLine { return NO; }
+- (BOOL)wantsFollowingNewLine { return NO; }
+- (NSUUID *)todoTrackingUUID { return nil; }
 @end
 
-@interface ICTTFont : NSObject
-@property(nonatomic, copy) NSString *fontName;
-@property(nonatomic) double pointSize;
-@property(nonatomic) unsigned int fontHints;
+@interface ICTTMutableParagraphStyle : ICTTParagraphStyle
+@property(nonatomic) NSInteger alignment, writingDirection;
+@property(nonatomic) NSUInteger blockQuoteLevel, indent, startingItemNumber;
+@property(nonatomic) unsigned int hints, style;
+@property(nonatomic) BOOL needsListCleanup, needsParagraphCleanup;
+@property(nonatomic, strong) ICTTTodo *todo;
+@property(nonatomic, copy) NSUUID *uuid;
+@end
+@implementation ICTTMutableParagraphStyle
+@dynamic alignment, writingDirection, blockQuoteLevel, indent, startingItemNumber, hints, style,
+    needsListCleanup, needsParagraphCleanup, todo, uuid;
+@end
+
+@interface ICTTFont : NSObject {
+  unsigned int _fontHints;
+  NSString *_fontName;
+  double _pointSize;
+  id _nativeFont;
+}
+@property(nonatomic, readonly) unsigned int fontHints;
+@property(nonatomic, readonly) NSString *fontName;
+@property(nonatomic, readonly) double pointSize;
+@property(nonatomic, strong) id nativeFont;
 @end
 @implementation ICTTFont
+@synthesize fontHints = _fontHints, fontName = _fontName, pointSize = _pointSize, nativeFont = _nativeFont;
 @end
 
-@interface ICTTAttachment : NSObject
+@interface ICTTAttachment : NSObject<NSObject>
 @property(nonatomic, copy) NSString *attachmentIdentifier, *attachmentUTI;
 @end
 @implementation ICTTAttachment
@@ -38,32 +85,64 @@ static void Assert(BOOL condition, NSString *message) {
   checks++;
 }
 
+
+static void BuildObservedClasses(void) {
+  NSString *source = @(__FILE__);
+  NSString *path = [[[source stringByDeletingLastPathComponent] stringByDeletingLastPathComponent]
+      stringByAppendingPathComponent:@"fixtures/native-attribute-layouts-public.json"];
+  NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:path] options:0 error:NULL];
+  Assert([fixture[@"sourceSha256"] isEqual:@"a5abc6b1588edb5cc70da3371e3d6cc71eb56506a7483b469c082f4c8486eb53"], @"Independent public metadata fixture source");
+  for (NSDictionary *metadata in fixture[@"classes"]) {
+    Class cls = NSClassFromString(metadata[@"name"]);
+    Assert(cls != Nil, @"Independent counterfeit class exists");
+    Assert(class_getInstanceSize(cls) == [metadata[@"instanceSize"] unsignedIntegerValue], @"Observed fixture instance size");
+    for (NSDictionary *field in metadata[@"ivars"]) {
+      Ivar ivar = class_getInstanceVariable(cls, [field[@"name"] UTF8String]);
+      Assert(ivar && ivar_getOffset(ivar) >= 0 && (NSUInteger)ivar_getOffset(ivar) == [field[@"offset"] unsignedIntegerValue] &&
+          [@(ivar_getTypeEncoding(ivar)) isEqual:field[@"encoding"]], @"Observed fixture exact stored ABI and offset");
+    }
+    unsigned int count = 0;
+    objc_property_t *properties = class_copyPropertyList(cls, &count);
+    Assert(count == [metadata[@"properties"] count], @"Independent counterfeit full property surface");
+    free(properties);
+    for (NSDictionary *property in metadata[@"properties"]) {
+      objc_property_t declared = class_getProperty(cls, [property[@"name"] UTF8String]);
+      Assert(declared && [@(property_getAttributes(declared)) isEqual:property[@"attributes"]],
+          [@"Independent counterfeit property: " stringByAppendingString:property[@"name"]]);
+      Method method = class_getInstanceMethod(cls, NSSelectorFromString(property[@"getter"][@"selector"]));
+      char *type = method_copyReturnType(method);
+      Assert(method && [@(type) isEqual:property[@"getter"][@"returnType"]], @"Independent counterfeit getter ABI");
+      free(type);
+    }
+  }
+}
+
 static ICTTParagraphStyle *FixtureStyle(void) {
-  ICTTParagraphStyle *style = [ICTTParagraphStyle new];
-  style.style = 103;
-  style.alignment = 2;
-  style.writingDirection = -1;
-  style.indent = 3;
-  style.blockQuoteLevel = 2;
-  style.startingItemNumber = 17;
-  style.hints = 3;
-  style.uuid = [[NSUUID alloc] initWithUUIDString:@"11111111-1111-1111-1111-111111111111"];
-  style.todo = [ICTTTodo new];
-  style.todo.uuid = [[NSUUID alloc] initWithUUIDString:@"22222222-2222-2222-2222-222222222222"];
-  style.todo.done = YES;
+  ICTTParagraphStyle *style = [NSClassFromString(@"ICTTParagraphStyle") new];
+  [style setValue:@(103) forKey:@"style"];
+  [style setValue:@(2) forKey:@"alignment"];
+  [style setValue:@(-1) forKey:@"writingDirection"];
+  [style setValue:@(3) forKey:@"indent"];
+  [style setValue:@(2) forKey:@"blockQuoteLevel"];
+  [style setValue:@(17) forKey:@"startingItemNumber"];
+  [style setValue:@(3) forKey:@"hints"];
+  [style setValue:([[NSUUID alloc] initWithUUIDString:@"11111111-1111-1111-1111-111111111111"]) forKey:@"uuid"];
+  [style setValue:[ICTTTodo new] forKey:@"todo"];
+  [style.todo setValue:[[NSUUID alloc] initWithUUIDString:@"22222222-2222-2222-2222-222222222222"] forKey:@"uuid"];
+  [style.todo setValue:@YES forKey:@"done"];
   return style;
 }
 
 static NSMutableAttributedString *Body(NSString *text) {
-  ICTTFont *font = [ICTTFont new];
-  font.fontName = @"FixtureFont";
-  font.pointSize = 13.123456789;
-  font.fontHints = 5;
+  ICTTFont *font = [NSClassFromString(@"ICTTFont") new];
+  [font setValue:@"FixtureFont" forKey:@"fontName"];
+  [font setValue:@(13.123456789) forKey:@"pointSize"];
+  [font setValue:@(5) forKey:@"fontHints"];
   return [[NSMutableAttributedString alloc] initWithString:text attributes:@{
     @"TTStyle" : FixtureStyle(), @"TTHints" : @3, @"TTUnderline" : @YES, @"TTStrikethrough" : @YES,
     @"TTEmphasis" : @4, @"NSLink" : [NSURL URLWithString:@"https://example.test/?q=é"],
     @"TTColor" : [NSColor colorWithSRGBRed:0.123456789 green:0.25 blue:0.75 alpha:0.5],
-    @"NSFont" : font, @"TTTimestamp" : [NSDate dateWithTimeIntervalSinceReferenceDate:1.123456789]
+    @"ICTTFont" : font, @"TTTimestamp" : [NSDate dateWithTimeIntervalSinceReferenceDate:1.123456789]
   }];
 }
 
@@ -78,12 +157,12 @@ static void BodyFixtures(void) {
   NSString *reason = nil;
   NSDictionary *before = Snapshot(Body(@"Title\nChecklist 🙂\nHeading\nOld tail"));
   Assert(ANMContentMatches(before, Body(before[@"text"]), &reason), @"Separate equal objects compare without pointer identity");
-  for (NSString *key in @[ @"TTHints", @"NSLink", @"TTEmphasis", @"TTUnderline", @"TTStrikethrough", @"NSFont", @"TTTimestamp" ]) {
+  for (NSString *key in @[ @"TTHints", @"NSLink", @"TTEmphasis", @"TTUnderline", @"TTStrikethrough", @"ICTTFont", @"TTTimestamp" ]) {
     NSMutableAttributedString *lost = Body(before[@"text"]);
     [lost removeAttribute:key range:NSMakeRange(0, 1)];
     Assert(!ANMContentMatches(before, lost, &reason), [@"Must detect loss of " stringByAppendingString:key]);
   }
-  for (NSString *field in @[ @"alignment", @"writingDirection", @"indent", @"blockQuoteLevel", @"startingItemNumber", @"style", @"hints" ]) {
+  for (NSString *field in @[ @"alignment", @"writingDirection", @"indent", @"blockQuoteLevel", @"startingItemNumber", @"style", @"hints", @"needsListCleanup", @"needsParagraphCleanup" ]) {
     NSMutableAttributedString *changed = Body(before[@"text"]);
     ICTTParagraphStyle *style = [changed attribute:@"TTStyle" atIndex:0 effectiveRange:NULL];
     [style setValue:@42 forKey:field];
@@ -91,23 +170,23 @@ static void BodyFixtures(void) {
   }
   NSMutableAttributedString *changed = Body(before[@"text"]);
   ICTTParagraphStyle *style = [changed attribute:@"TTStyle" atIndex:0 effectiveRange:NULL];
-  style.todo.uuid = NSUUID.UUID;
+  [style.todo setValue:NSUUID.UUID forKey:@"uuid"];
   Assert(!ANMContentMatches(before, changed, &reason), @"Must detect changed todo UUID");
   changed = Body(before[@"text"]);
   style = [changed attribute:@"TTStyle" atIndex:0 effectiveRange:NULL];
-  style.todo.done = NO;
+  [style.todo setValue:@NO forKey:@"done"];
   Assert(!ANMContentMatches(before, changed, &reason), @"Must detect changed todo checked state");
   changed = Body(before[@"text"]);
   style = [changed attribute:@"TTStyle" atIndex:0 effectiveRange:NULL];
-  style.uuid = NSUUID.UUID;
+  [style setValue:NSUUID.UUID forKey:@"uuid"];
   Assert(!ANMContentMatches(before, changed, &reason), @"Must detect changed paragraph UUID");
   changed = Body(before[@"text"]);
   [changed addAttribute:@"TTColor" value:[NSColor colorWithSRGBRed:0.123456780 green:0.25 blue:0.75 alpha:0.5]
       range:NSMakeRange(0, 1)];
   Assert(!ANMContentMatches(before, changed, &reason), @"Must detect color changes below rounded hex precision");
   changed = Body(before[@"text"]);
-  ICTTFont *font = [changed attribute:@"NSFont" atIndex:0 effectiveRange:NULL];
-  font.pointSize += 0.00000001;
+  ICTTFont *font = [changed attribute:@"ICTTFont" atIndex:0 effectiveRange:NULL];
+  [font setValue:@(font.pointSize + 0.00000001) forKey:@"pointSize"];
   Assert(!ANMContentMatches(before, changed, &reason), @"Must detect font changes below four-decimal precision");
   changed = Body(before[@"text"]);
   [changed addAttribute:@"TTTimestamp" value:[NSDate dateWithTimeIntervalSinceReferenceDate:1.123456780]
@@ -129,7 +208,7 @@ static void BodyFixtures(void) {
   NSMutableAttributedString *original = Body(@"x");
   NSDictionary *frozen = Snapshot(original);
   style = [original attribute:@"TTStyle" atIndex:0 effectiveRange:NULL];
-  style.todo.done = NO;
+  [style.todo setValue:@NO forKey:@"done"];
   Assert(!ANMContentMatches(frozen, original, &reason), @"Snapshot freezes mutable attribute fields");
   ICTTAttachment *attachment = [ICTTAttachment new];
   attachment.attachmentIdentifier = @"unrelated-glyph";
@@ -139,6 +218,102 @@ static void BodyFixtures(void) {
   frozen = Snapshot(glyph);
   attachment.attachmentIdentifier = @"changed-glyph";
   Assert(!ANMContentMatches(frozen, glyph, &reason), @"Unrelated body glyph identity must remain unchanged");
+}
+
+
+
+static void NativeFieldFixtures(void) {
+  NSString *reason = nil;
+  ICTTParagraphStyle *immutable = FixtureStyle();
+  ICTTMutableParagraphStyle *mutable = [ICTTMutableParagraphStyle new];
+  for (NSString *field in ANMContentLayout(immutable))
+    [mutable setValue:[immutable valueForKey:field] forKey:field];
+  Assert([ANMContentValue(immutable, &reason) isEqual:ANMContentValue(mutable, &reason)],
+      @"Separate mutable and immutable layout contracts preserve equal complete stored semantics");
+  [mutable setValue:@(NSUIntegerMax) forKey:@"indent"];
+  id value = ANMContentValue(mutable, &reason);
+  Assert(value != nil, @"Unsigned paragraph storage retains its high bit");
+  NSArray *indent = value[1][@"indent"];
+  Assert([indent[0] isEqual:@"stored-scalar"] && [indent[1] isEqual:@"Q"], @"Storage encoding stays unsigned despite NSNumber boxing");
+  NSUInteger stored = 0;
+  [(NSData *)indent[2] getBytes:&stored length:sizeof(stored)];
+  Assert(stored == NSUIntegerMax, @"Unsigned storage retains every bit");
+  Assert(ANMContentFields(mutable, @[ @"indent" ], &reason) == nil, @"Partial native stored field capture refuses");
+  NSDictionary *layout = ANMObservedNativeLayout(@"ICTTParagraphStyle");
+  NSMutableDictionary *changed = [layout mutableCopy];
+  NSMutableDictionary *ivars = [layout[@"ivars"] mutableCopy];
+  ivars[@"_indent"] = @{ @"encoding" : @"q", @"offset" : @40 };
+  changed[@"ivars"] = ivars;
+  Assert(!ANMContentObservedClassMatches(ICTTParagraphStyle.class, ICTTParagraphStyle.class, changed, &reason),
+      @"Signed storage cannot satisfy the reviewed unsigned contract");
+  ivars = [layout[@"ivars"] mutableCopy];
+  [ivars removeObjectForKey:@"_needsListCleanup"];
+  changed[@"ivars"] = ivars;
+  Assert(!ANMContentObservedClassMatches(ICTTParagraphStyle.class, ICTTParagraphStyle.class, changed, &reason),
+      @"Cleanup state cannot be dropped from a native layout contract");
+  Assert(ANMContentFontFormatSupported(@(kCTFontFormatTrueType)) && ANMContentFontFormatSupported(@(kCTFontFormatOpenTypeTrueType)),
+      @"Audited TrueType formats are explicit");
+  for (id format in @[ @(kCTFontFormatUnrecognized), @(kCTFontFormatOpenTypePostScript), @(kCTFontFormatPostScript),
+      @(kCTFontFormatBitmap), @999, @"3", NSNull.null ])
+    Assert(!ANMContentFontFormatSupported(format), @"Unproven font resource formats refuse");
+  Assert(!ANMContentFontPublicClass([NSObject new], NO), @"Unknown public font class cannot substitute for factory concrete class");
+}
+
+static void PublicFontFixtures(void) {
+  NSString *reason = nil;
+  NSFont *font = [NSFont fontWithName:@"Helvetica" size:13];
+  Assert(font != nil, @"Public named test font exists");
+  id original = ANMContentPublicFont(font, &reason);
+  Assert(original != nil, reason ?: @"Complete public font representation");
+  NSFont *same = [NSFont fontWithName:@"Helvetica" size:13];
+  Assert([original isEqual:ANMContentPublicFont(same, &reason)], @"Named public font reconstruction freezes identically");
+  NSFont *collisionBase = [NSFont fontWithDescriptor:font.fontDescriptor textTransform:font.textTransform];
+  NSAffineTransform *shear = [NSAffineTransform transform];
+  NSAffineTransformStruct matrix = font.textTransform.transformStruct;
+  matrix.m21 += 0.123456789;
+  shear.transformStruct = matrix;
+  NSFont *transformed = [NSFont fontWithDescriptor:font.fontDescriptor textTransform:shear];
+  Assert(transformed && [collisionBase.fontName isEqual:transformed.fontName] && collisionBase.pointSize == transformed.pointSize,
+      @"Materialized transform collision keeps old name and size projection");
+  id transformedSnapshot = ANMContentPublicFont(transformed, &reason);
+  Assert(transformedSnapshot != nil, reason ?: @"Transformed public font round trip");
+  Assert(![ANMContentPublicFont(collisionBase, &reason) isEqual:transformedSnapshot], @"Full public font witness detects materialized transform collision");
+  ICTTFont *wrapper = [NSClassFromString(@"ICTTFont") new];
+  [wrapper setValue:@"Helvetica" forKey:@"fontName"];
+  [wrapper setValue:@13 forKey:@"pointSize"];
+  [wrapper setValue:@5 forKey:@"fontHints"];
+  wrapper.nativeFont = collisionBase;
+  NSAttributedString *text = [[NSAttributedString alloc] initWithString:@"x" attributes:@{ @"ICTTFont" : wrapper }];
+  NSDictionary *frozen = Snapshot(text);
+  wrapper.nativeFont = transformed;
+  Assert(!ANMContentMatches(frozen, text, &reason), @"Nested nativeFont changes cannot disappear behind identical private font name/size/hints");
+  wrapper.nativeFont = [NSObject new];
+  Assert(ANMContentSnapshot(text, NSMakeRange(0, text.length), &reason) == nil, @"Unknown nested nativeFont refuses");
+  // Independent pure nested-state fixtures cover numeric variation keys,
+  // ordered duplicate feature/cascade values, cycles, unsupported values, and
+  // mutation detachment even when platform font matching collapses a feature.
+  NSMutableDictionary *descriptor = [@{ @"variation" : [@{ @1234 : @0.25 } mutableCopy],
+      @"features" : [@[ @{ @"type" : @1, @"selector" : @0 }, @{ @"type" : @1, @"selector" : @1 } ] mutableCopy] } mutableCopy];
+  NSUInteger budget = 0;
+  id nested = ANMContentFontNested(descriptor, [NSMutableSet set], 0, &budget, &reason);
+  Assert(nested != nil, @"Numeric axis keys and ordered feature settings remain representable");
+  descriptor[@"variation"][@1234] = @0.250000001;
+  budget = 0;
+  Assert(![nested isEqual:ANMContentFontNested(descriptor, [NSMutableSet set], 0, &budget, &reason)], @"Frozen nested descriptor detaches mutable numeric axis settings");
+  descriptor[@"variation"][@1234] = @0.25;
+  descriptor[@"features"] = [[descriptor[@"features"] reverseObjectEnumerator] allObjects];
+  budget = 0;
+  Assert(![nested isEqual:ANMContentFontNested(descriptor, [NSMutableSet set], 0, &budget, &reason)], @"Feature setting order cannot collide");
+  budget = 0;
+  Assert(ANMContentFontNested(@{ @"unknown" : [NSObject new] }, [NSMutableSet set], 0, &budget, &reason) == nil, @"Unsupported nested descriptor objects refuse");
+  budget = 0;
+  Assert(ANMContentFontNested(@(NAN), [NSMutableSet set], 0, &budget, &reason) == nil, @"Nonfinite font numbers refuse");
+  NSMutableArray *cycle = [NSMutableArray array];
+  id cyclicItem = cycle;
+  [cycle addObject:cyclicItem];
+  budget = 0;
+  Assert(ANMContentFontNested(cycle, [NSMutableSet set], 0, &budget, &reason) == nil, @"Cyclic descriptor state refuses");
+  [cycle removeAllObjects];
 }
 
 static void InsertionFixtures(void) {
@@ -250,9 +425,10 @@ static double IncompatibleStyleGetter(id object, SEL selector) {
 }
 
 static void LayoutFixture(NSString *mode) {
-  NSString *name = [mode isEqual:@"subclass"] ? @"FixtureUnknownParagraphStyle" : @"ICTTMutableParagraphStyle";
-  Class fixtureClass = objc_allocateClassPair(ICTTParagraphStyle.class, name.UTF8String, 0);
-  Assert(fixtureClass != Nil, @"Allocate fresh fabricated class");
+  NSString *name = @"FixtureUnknownParagraphStyle";
+  Class fixtureClass = [mode isEqual:@"subclass"] || [mode isEqual:@"hidden-ivar"] ?
+      objc_allocateClassPair(NSClassFromString(@"ICTTMutableParagraphStyle"), name.UTF8String, 0) : NSClassFromString(@"ICTTMutableParagraphStyle");
+  Assert(fixtureClass != Nil, @"Fabricated known mutable or unknown subclass");
   if ([mode isEqual:@"hidden-ivar"])
     Assert(class_addIvar(fixtureClass, "_hiddenStoredState", sizeof(long long), 3, "q"), @"Add hidden stored state");
   else if ([mode isEqual:@"extra-property"]) {
@@ -260,7 +436,7 @@ static void LayoutFixture(NSString *mode) {
     Assert(class_addProperty(fixtureClass, "hiddenSemanticProperty", attributes, 2), @"Add extra property");
   } else if ([mode isEqual:@"getter-abi"])
     Assert(class_addMethod(fixtureClass, @selector(style), (IMP)IncompatibleStyleGetter, "d@:"), @"Override getter ABI");
-  objc_registerClassPair(fixtureClass);
+  if ([mode isEqual:@"subclass"] || [mode isEqual:@"hidden-ivar"]) objc_registerClassPair(fixtureClass);
   id style = [[fixtureClass alloc] init];
   NSAttributedString *text = [[NSAttributedString alloc] initWithString:@"old" attributes:@{ @"TTStyle" : style }];
   NSString *reason = nil;
@@ -272,9 +448,12 @@ static void LayoutFixture(NSString *mode) {
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     @try {
+      BuildObservedClasses();
       if (argc == 2) LayoutFixture(@(argv[1]));
       else {
         BodyFixtures();
+        NativeFieldFixtures();
+        PublicFontFixtures();
         InsertionFixtures();
         TableFixtures();
       }

@@ -54,6 +54,8 @@ test("report closure exactly matches the pure production function for packaged w
       "attachment-evidence.h",
       "content-preservation.h",
       "legacy-attribute-projection.h",
+      "native-attribute-layouts.h",
+      "public-font-preservation.h",
     ]
   );
   assert.equal(

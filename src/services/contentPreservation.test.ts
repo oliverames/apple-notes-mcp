@@ -44,11 +44,11 @@ describe.skipIf(!MACOS)("pure untouched content preservation", () => {
       execFileSync(binary, [], {
         encoding: "utf8",
         timeout: 20_000,
-        env: { PATH: process.env.PATH, HOME: directory, TMPDIR: directory },
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, CFFIXED_USER_HOME: directory, TMPDIR: directory },
       })
     );
     expect(result.fixture).toBe("pure-attributed-text");
-    expect(result.checks).toBeGreaterThanOrEqual(90);
+    expect(result.checks).toBeGreaterThanOrEqual(304);
   });
   it.each(["hidden-ivar", "extra-property", "getter-abi", "subclass"])(
     "refuses the unsupported %s native layout",
@@ -57,7 +57,7 @@ describe.skipIf(!MACOS)("pure untouched content preservation", () => {
         execFileSync(binary, [mode], {
           encoding: "utf8",
           timeout: 20_000,
-          env: { PATH: process.env.PATH, HOME: directory, TMPDIR: directory },
+          env: { PATH: process.env.PATH, HOME: process.env.HOME, CFFIXED_USER_HOME: directory, TMPDIR: directory },
         })
       );
       expect(result.checks).toBeGreaterThanOrEqual(3);

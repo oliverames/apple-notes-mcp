@@ -7,8 +7,9 @@
 #import <objc/runtime.h>
 #include <stdlib.h>
 #include <string.h>
+#include "native-attribute-layouts.h"
 
-static NSString *const ANMContentEvidencePolicy = @"supported-attributes-v1:pinned-native-layouts:exact-scalars:no-unknowns";
+static NSString *const ANMContentEvidencePolicy = @"supported-attributes-v2:observed-native-storage:exact-scalars:no-unknowns";
 
 static id ANMContentValue(id value, NSString **reason);
 
@@ -33,75 +34,80 @@ static id ANMContentNumber(NSNumber *value, NSString **reason) {
   return @[ @"number", [NSString stringWithUTF8String:type], [NSData dataWithBytes:bytes length:size] ];
 }
 
-// Explicit synthetic-supported layouts. This is deliberately not a layout
-// inferred from a loaded private framework. A real native value whose opaque
-// or additional stored state differs refuses until separately reviewed.
+#include "public-font-preservation.h"
+
+// The reviewed native layouts pin immutable and mutable classes separately.
+// Every inherited stored field is captured; derived getters are ABI-pinned but
+// never used as a substitute for opaque stored state.
 static NSDictionary *ANMContentLayout(id value) {
-  NSString *name = NSStringFromClass(object_getClass(value));
-  if ([name isEqual:@"ICTTParagraphStyle"] || [name isEqual:@"ICTTMutableParagraphStyle"])
-    return @{ @"style" : @"I", @"alignment" : @"q", @"writingDirection" : @"q", @"indent" : @"q",
-        @"blockQuoteLevel" : @"q", @"startingItemNumber" : @"q", @"hints" : @"I", @"uuid" : @"@", @"todo" : @"@" };
-  if ([name isEqual:@"ICTTTodo"]) return @{ @"uuid" : @"@", @"done" : @(@encode(BOOL)) };
-  if ([name isEqual:@"ICTTFont"]) return @{ @"fontName" : @"@", @"pointSize" : @"d", @"fontHints" : @"I" };
-  if ([name isEqual:@"ICTTAttachment"]) return @{ @"attachmentIdentifier" : @"@", @"attachmentUTI" : @"@" };
-  return nil;
+  NSMutableDictionary *fields = [NSMutableDictionary dictionary];
+  for (Class cls = object_getClass(value); cls && cls != NSObject.class; cls = class_getSuperclass(cls)) {
+    NSDictionary *observed = ANMObservedNativeLayout(NSStringFromClass(cls));
+    if (!observed) return nil;
+    for (NSString *ivar in observed[@"ivars"])
+      fields[[ivar substringFromIndex:1]] = observed[@"ivars"][ivar][@"encoding"];
+  }
+  return fields.count ? [fields copy] : nil;
+}
+
+static BOOL ANMContentObservedClassMatches(Class cls, Class valueClass, NSDictionary *layout, NSString **reason) {
+  if (![NSStringFromClass(class_getSuperclass(cls)) isEqual:layout[@"superclass"]] ||
+      class_getInstanceSize(cls) != [layout[@"instanceSize"] unsignedIntegerValue]) {
+    ANMContentUnsupported(reason, @"Unpinned native attribute superclass or instance size"); return NO;
+  }
+  unsigned int count = 0;
+  Ivar *ivars = class_copyIvarList(cls, &count);
+  NSMutableDictionary *stored = [NSMutableDictionary dictionary];
+  for (unsigned int i = 0; i < count; i++) {
+    const char *name = ivar_getName(ivars[i]), *type = ivar_getTypeEncoding(ivars[i]);
+    if (!name || !type) { free(ivars); return NO; }
+    stored[@(name)] = @{ @"encoding" : @(type), @"offset" : @(ivar_getOffset(ivars[i])) };
+  }
+  free(ivars);
+  if (![stored isEqual:layout[@"ivars"]]) {
+    ANMContentUnsupported(reason, @"Extra, missing, or incompatible native stored field"); return NO;
+  }
+  objc_property_t *properties = class_copyPropertyList(cls, &count);
+  NSMutableDictionary *declared = [NSMutableDictionary dictionary];
+  BOOL valid = YES;
+  for (unsigned int i = 0; i < count; i++) {
+    NSString *name = @(property_getName(properties[i]));
+    if (declared[name]) { valid = NO; break; }
+    char *customGetter = property_copyAttributeValue(properties[i], "G");
+    NSString *selector = @(customGetter ?: property_getName(properties[i]));
+    free(customGetter);
+    Method method = class_getInstanceMethod(valueClass, NSSelectorFromString(selector));
+    if (!method || method_getNumberOfArguments(method) != 2) { valid = NO; break; }
+    char *result = method_copyReturnType(method), *selfType = method_copyArgumentType(method, 0),
+        *selectorType = method_copyArgumentType(method, 1);
+    valid = result && selfType && selectorType && strcmp(selfType, "@") == 0 && strcmp(selectorType, ":") == 0;
+    if (valid) declared[name] = @{ @"attributes" : @(property_getAttributes(properties[i])),
+        @"returnType" : @(result), @"selector" : selector };
+    free(result); free(selfType); free(selectorType);
+    if (!valid) break;
+  }
+  free(properties);
+  if (!valid || ![declared isEqual:layout[@"properties"]]) {
+    ANMContentUnsupported(reason, @"Extra, missing, or incompatible native property or getter ABI"); return NO;
+  }
+  return YES;
 }
 
 static BOOL ANMContentLayoutMatches(id value, NSString **reason) {
-  NSDictionary *layout = ANMContentLayout(value);
-  if (!layout) { ANMContentUnsupported(reason, @"Unpinned native attribute class"); return NO; }
-  NSMutableSet *ivarsSeen = [NSMutableSet set], *propertiesSeen = [NSMutableSet set];
-  Class directSuperclass = class_getSuperclass(object_getClass(value));
-  NSString *className = NSStringFromClass(object_getClass(value));
-  BOOL validSuperclass = directSuperclass == NSObject.class ||
-      ([className isEqual:@"ICTTMutableParagraphStyle"] && directSuperclass == NSClassFromString(@"ICTTParagraphStyle"));
-  if (!validSuperclass) { ANMContentUnsupported(reason, @"Unpinned native attribute superclass"); return NO; }
-  for (Class cls = object_getClass(value); cls != NSObject.class; cls = class_getSuperclass(cls)) {
-    NSString *className = NSStringFromClass(cls);
-    if (!cls || ![@[ @"ICTTParagraphStyle", @"ICTTMutableParagraphStyle", @"ICTTTodo", @"ICTTFont", @"ICTTAttachment" ] containsObject:className]) {
-      ANMContentUnsupported(reason, @"Unpinned native attribute superclass"); return NO;
-    }
-    unsigned int count = 0;
-    Ivar *ivars = class_copyIvarList(cls, &count);
-    BOOL valid = YES;
-    for (unsigned int i = 0; i < count; i++) {
-      NSString *storedName = @(ivar_getName(ivars[i]));
-      NSString *field = [storedName hasPrefix:@"_"] ? [storedName substringFromIndex:1] : nil;
-      NSString *abi = field ? layout[field] : nil;
-      const char *type = ivar_getTypeEncoding(ivars[i]);
-      BOOL objectType = [abi isEqual:@"@"] && type && type[0] == '@';
-      if (!abi || [ivarsSeen containsObject:field] || (!objectType && strcmp(type, abi.UTF8String) != 0)) {
-        valid = NO; break;
-      }
-      [ivarsSeen addObject:field];
-    }
-    free(ivars);
-    if (!valid) { ANMContentUnsupported(reason, @"Extra, opaque, or incompatible stored native attribute field"); return NO; }
-    objc_property_t *properties = class_copyPropertyList(cls, &count);
-    for (unsigned int i = 0; i < count; i++) {
-      NSString *field = @(property_getName(properties[i]));
-      if (!layout[field] || [propertiesSeen containsObject:field]) { valid = NO; break; }
-      [propertiesSeen addObject:field];
-    }
-    free(properties);
-    if (!valid) { ANMContentUnsupported(reason, @"Extra native attribute property"); return NO; }
-  }
-  NSSet *required = [NSSet setWithArray:layout.allKeys];
-  if (![ivarsSeen isEqual:required] || ![propertiesSeen isEqual:required]) {
-    ANMContentUnsupported(reason, @"Incomplete pinned native attribute layout"); return NO;
-  }
-  for (NSString *field in layout) {
-    NSMethodSignature *signature = [value methodSignatureForSelector:NSSelectorFromString(field)];
-    if (!signature || signature.numberOfArguments != 2 || strcmp(signature.methodReturnType, [layout[field] UTF8String]) != 0) {
-      ANMContentUnsupported(reason, @"Incompatible pinned native attribute getter ABI"); return NO;
-    }
+  Class valueClass = object_getClass(value);
+  for (Class cls = valueClass; cls != NSObject.class; cls = class_getSuperclass(cls)) {
+    NSDictionary *observed = cls ? ANMObservedNativeLayout(NSStringFromClass(cls)) : nil;
+    if (!observed) { ANMContentUnsupported(reason, @"Unpinned native attribute class or superclass"); return NO; }
+    if (!ANMContentObservedClassMatches(cls, valueClass, observed, reason)) return NO;
   }
   return YES;
 }
 
 static id ANMContentStoredField(id value, NSString *name, NSString **reason) {
   Ivar ivar = class_getInstanceVariable(object_getClass(value), [[@"_" stringByAppendingString:name] UTF8String]);
+  if (!ivar) return ANMContentUnsupported(reason, @"Missing pinned native attribute field");
   const char *type = ivar_getTypeEncoding(ivar);
+  if (!type) return ANMContentUnsupported(reason, @"Missing pinned native attribute storage ABI");
   if (type[0] == '@') return object_getIvar(value, ivar) ?: NSNull.null;
   const unsigned char *bytes = (const unsigned char *)(__bridge const void *)value + ivar_getOffset(ivar);
 #define ANM_CONTENT_STORED(encoding, scalarType) \
@@ -109,6 +115,7 @@ static id ANMContentStoredField(id value, NSString *name, NSString **reason) {
     memcpy(&result, bytes, sizeof(result)); return @(result); }
   ANM_CONTENT_STORED(unsigned int, unsigned int)
   ANM_CONTENT_STORED(long long, long long)
+  ANM_CONTENT_STORED(unsigned long long, unsigned long long)
   ANM_CONTENT_STORED(BOOL, BOOL)
   ANM_CONTENT_STORED(double, double)
 #undef ANM_CONTENT_STORED
@@ -117,13 +124,25 @@ static id ANMContentStoredField(id value, NSString *name, NSString **reason) {
 
 static id ANMContentFields(id value, NSArray<NSString *> *names, NSString **reason) {
   if (!ANMContentLayoutMatches(value, reason)) return nil;
+  if (![[NSSet setWithArray:names] isEqual:[NSSet setWithArray:ANMContentLayout(value).allKeys]])
+    return ANMContentUnsupported(reason, @"Incomplete native stored-field representation");
   NSMutableDictionary *fields = [NSMutableDictionary dictionary];
   for (NSString *name in names) {
     // Read every pinned stored field itself; a getter projection cannot hide
     // state in a supported field. Getter ABI is independently checked above.
     id field = ANMContentStoredField(value, name, reason);
     if (!field) return nil;
-    id canonical = ANMContentValue(field, reason);
+    Ivar ivar = class_getInstanceVariable(object_getClass(value), [[@"_" stringByAppendingString:name] UTF8String]);
+    const char *type = ivar_getTypeEncoding(ivar);
+    id canonical = nil;
+    if (type[0] == '@') canonical = ANMContentValue(field, reason);
+    else {
+      NSUInteger size = 0;
+      NSGetSizeAndAlignment(type, &size, NULL);
+      if (!size || size > 16) return ANMContentUnsupported(reason, @"Unsupported native storage size");
+      const unsigned char *bytes = (const unsigned char *)(__bridge const void *)value + ivar_getOffset(ivar);
+      canonical = @[ @"stored-scalar", @(type), [NSData dataWithBytes:bytes length:size] ];
+    }
     if (!canonical) return nil;
     fields[name] = canonical;
   }
@@ -153,7 +172,8 @@ static id ANMContentValue(id value, NSString **reason) {
     if (todo != NSNull.null && !ANMContentNamedClass(todo, @[ @"ICTTTodo" ]))
       return ANMContentUnsupported(reason, @"Unsupported checklist value class");
     id fields = ANMContentFields(value, @[ @"style", @"alignment", @"writingDirection", @"indent",
-        @"blockQuoteLevel", @"startingItemNumber", @"hints", @"uuid", @"todo" ], reason);
+        @"blockQuoteLevel", @"startingItemNumber", @"hints", @"uuid", @"todo",
+        @"needsListCleanup", @"needsParagraphCleanup" ], reason);
     return fields ? @[ @"paragraph", fields ] : nil;
   }
   if (ANMContentNamedClass(value, @[ @"ICTTTodo" ])) {
@@ -174,9 +194,17 @@ static id ANMContentValue(id value, NSString **reason) {
     return @[ @"attachment", [identifier copy], [uti copy] ];
   }
   if (ANMContentNamedClass(value, @[ @"ICTTFont" ])) {
-    id fields = ANMContentFields(value, @[ @"fontName", @"pointSize", @"fontHints" ], reason);
+    if (!ANMContentLayoutMatches(value, reason)) return nil;
+    id name = ANMContentStoredField(value, @"fontName", reason);
+    id nativeFont = ANMContentStoredField(value, @"nativeFont", reason);
+    if (name != NSNull.null && ![name isKindOfClass:NSString.class])
+      return ANMContentUnsupported(reason, @"Unsupported native font name representation");
+    if (nativeFont != NSNull.null && ![nativeFont isKindOfClass:NSFont.class])
+      return ANMContentUnsupported(reason, @"Unsupported nested native font class");
+    id fields = ANMContentFields(value, @[ @"fontName", @"pointSize", @"fontHints", @"nativeFont" ], reason);
     return fields ? @[ @"font", fields ] : nil;
   }
+  if ([value isKindOfClass:NSFont.class]) return ANMContentPublicFont(value, reason);
   // Exact component values and color-space property list retain alpha and
   // sub-byte color differences. Pattern/dynamic colors are unsupported.
   CGColorRef color = NULL;
@@ -217,7 +245,7 @@ static NSDictionary *ANMContentSnapshot(NSAttributedString *text, NSRange range,
       range.length > text.length - range.location)
     return ANMContentUnsupported(reason, @"Invalid attributed-text preservation range");
   NSSet *keys = [NSSet setWithArray:@[ @"TTStyle", @"TTHints", @"TTUnderline", @"TTStrikethrough",
-      @"TTEmphasis", @"TTColor", @"TTTimestamp", @"TTFont", @"NSFont", @"NSLink", @"NSAttachment" ]];
+      @"TTEmphasis", @"TTColor", @"TTTimestamp", @"TTFont", @"ICTTFont", @"NSFont", @"NSLink", @"NSAttachment" ]];
   NSMutableArray *runs = [NSMutableArray array];
   __block BOOL complete = YES;
   __block NSString *localReason = nil;

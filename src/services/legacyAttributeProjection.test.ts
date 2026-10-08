@@ -49,6 +49,8 @@ describe("legacy exact getter projection wiring", () => {
         "legacy-attribute-projection.h",
         "content-preservation.h",
         "attachment-evidence.h",
+        "native-attribute-layouts.h",
+        "public-font-preservation.h",
       ])
         writeFileSync(
           join(closureDirectory, name),

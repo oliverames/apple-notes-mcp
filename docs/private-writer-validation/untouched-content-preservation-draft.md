@@ -12,17 +12,29 @@ does not use object descriptions, rounded plain summaries, or string delimiters.
 Checklist UUID and checked state, paragraph UUID and every supported paragraph
 field are preserved. Unknown attribute keys or value classes refuse.
 
-The native adapters accept only explicit synthetic-supported layouts for
+The native adapters now pin the exact observed public-fixture metadata for
 `ICTTParagraphStyle`, `ICTTMutableParagraphStyle`, `ICTTTodo`, `ICTTFont`, and
-`ICTTAttachment`. Every declared ivar and property across the superclass chain
-must fit the pinned layout, and every getter ABI must match. The snapshot reads
-all pinned stored fields rather than trusting a getter projection. Extra/opaque
-state, extra properties, different superclasses, or getter ABI changes refuse.
-These pins are not an assertion that a real NotesShared release has these
-layouts. Real native compatibility remains unvalidated and may refuse even a
-known class name. Ordinary `NSFont`, pattern/dynamic colors, decimal numbers,
-string-only table cell accessors, and unrecognized attributes are availability
-limitations. This is not a claim of full native rich-text parity.
+`ICTTAttachment`. Immutable and mutable paragraph classes have separate direct
+property contracts, and the mutable superclass must satisfy the full immutable
+contract. Every declared ivar encoding and offset, instance size, superclass,
+property attribute string, and getter ABI must match. All stored fields are
+frozen directly, including cleanup flags, the unsigned list fields, nested todo,
+and `_nativeFont`; scalar tags retain the storage ABI and exact bytes. Additional
+fields/properties, different superclasses, or getter ABI changes refuse.
+
+The native `ICTTFont` attribute key is supported. A nil nested font is explicit.
+A nonnil nested font must satisfy the public AppKit/CoreText contract described
+in [native representation](native-representation-adapters.md): complete deeply
+frozen descriptor attributes, explicit size/transform/orientation/rendering
+state, variation/features, and every available selected-face font table, plus
+an identical public-factory round trip. Unknown objects, nonfinite state,
+cycles, missing tables, unresolved rendering modes, or font substitution refuse.
+
+Observed metadata establishes the stored-field layout; it is not complete
+archive or actual-writer persistence evidence. Public-font fixtures demonstrate
+a named-font round trip and a materialized transform collision with the same
+old name/size projection. Pattern/dynamic colors, decimal numbers, string-only
+table accessors, and unrecognized attributes remain availability limitations.
 The native cell accessor's exposure of stored semantics is also unvalidated.
 An empty attributed string cannot expose latent cell paragraph/todo state, so
 existing empty surviving cells conservatively refuse before mutation. Empty
