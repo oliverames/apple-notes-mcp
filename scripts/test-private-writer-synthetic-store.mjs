@@ -91,16 +91,20 @@ const sandbox = (binary, args = [], options = {}) =>
     cwd: root,
   });
 const compile = (source, output, frameworks) =>
-  command("/usr/bin/xcrun", [
-    "clang",
-    "-fobjc-arc",
-    "-O2",
-    "-Wall",
-    ...frameworks.flatMap((name) => ["-framework", name]),
-    source,
-    "-o",
-    output,
-  ]);
+  command(
+    "/usr/bin/xcrun",
+    [
+      "clang",
+      "-fobjc-arc",
+      "-O2",
+      "-Wall",
+      ...frameworks.flatMap((name) => ["-framework", name]),
+      source,
+      "-o",
+      output,
+    ],
+    { timeout: 180000 }
+  );
 try {
   const probe = join(root, "isolation-probe");
   compile(join(repo, "scripts/lib/replica-isolation-probe.m"), probe, ["Foundation"]);
