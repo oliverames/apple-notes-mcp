@@ -109,3 +109,24 @@ test("harness retains the exact ordinary sandbox and six preflights without invo
   for (const forbidden of ["APPLE_NOTES_MCP_ALLOW_UNVERIFIED", "ALLOW_NOTES_RUNNING", "compose_note", "APPLE_NOTES_MCP_PRIVATE_STORE", "apple-notes-private-writer.m"])
     assert.ok(!harness.includes(forbidden), forbidden);
 });
+
+
+test("duplicate category declarations remain explicit bounded metadata", () => {
+  const value = report();
+  const layer = value.classes[0].chain[0];
+  // Public metadata spellings observed in NSObject categories. No native
+  // values or actual private-class acceptance layout is pinned by this case.
+  const getter = { selector: "description", present: true, encoding: "@16@0:8",
+    returnType: "@", argumentTypes: ["@", ":"] };
+  layer.properties = [
+    { name: "description", attributes: 'T@"NSString",R,C', getter },
+    { name: "description", attributes: 'T@"NSString",?,R,C', getter },
+  ];
+  layer.zeroArgumentMethods = [getter, structuredClone(getter)];
+  assert.equal(validateSyntheticNativeLayoutReport(value), value);
+  assert.equal(layer.properties.length, 2);
+  assert.notEqual(layer.properties[0].attributes, layer.properties[1].attributes);
+  assert.equal(layer.zeroArgumentMethods.length, 2);
+  layer.properties[1].value = "payload additions still refuse";
+  assert.throws(() => validateSyntheticNativeLayoutReport(value));
+});

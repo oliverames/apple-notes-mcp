@@ -31,8 +31,11 @@ store with migration disabled. The entire resulting string must equal the
 fixed 184-unit public prose internally. It reports attribute key names and
 top-level value classes. Per observed class it reports the superclass chain,
 instance size, declared ivar names/type encodings/offsets, declared property
-names/attributes/getter ABIs, and declared zero-argument method ABIs. A
-zero-argument method is metadata, not an asserted semantic getter.
+names/attributes/getter ABIs, and declared zero-argument method selectors with
+their effective runtime ABI. Duplicate category declarations are retained. The
+method ABI is resolved by selector, so overridden implementations cannot be
+distinguished by this report. A zero-argument method is metadata, not an
+asserted semantic getter.
 
 The diagnostic does not read attribute field values, invoke attribute getters,
 traverse nested todo/font/attachment state, describe or archive an attribute,
@@ -40,7 +43,9 @@ read object bytes, or emit text/UUID/value/pointer payloads. Runtime metadata C
 APIs provide the schema. `supportedKey` means membership in the unchanged key
 allowlist; it does not mean its native value can be preserved. The strict
 nested report validator rejects extra fields, inconsistent chains, unbounded
-metadata and broadened coverage flags. The full scratch tree and raw database
+metadata and broadened coverage flags. It permits duplicate property/method
+declarations because Objective-C category metadata contains them; every record
+remains explicit, sorted and bounded. The full scratch tree and raw database
 bytes must match after the process returns. Any new journal/cache/preference
 file fails this check; only the three exact harness evidence filenames are
 excluded.
@@ -75,3 +80,46 @@ loosen the profile/layout pins to obtain availability.
 
 Dirty-editor merging, replica/preference-reset behavior, independent-device
 upload, and the maintainer's writer hold remain separate acceptance work.
+
+
+## Observed native availability (October 8, 2026)
+
+Two fresh harness attempts are retained as failures. The first diagnostic
+returned only a boundary refusal; its preflight, fixed generation and exact
+store/tree checks passed. A reviewed temporary-path alias correction and fixed
+stage codes preceded the second attempt. That diagnostic emitted the fixed
+public metadata; its full store/tree ledger passed, but the harness validator
+rejected duplicate category properties. A source-only validator correction
+retains duplicate metadata records with all payload/size/coverage constraints
+intact. Offline validation of the **exact saved second stdout** passed. No third
+native run or fresh successful harness is claimed.
+
+The observed seed has 184 UTF-16 units and six attribute runs. Its keys are
+`ICTTFont`, `TTStyle`, `TTHints` and `TTTimestamp`. Only `ICTTFont` is outside the
+unchanged key allowlist. The top-level value classes are `ICTTFont`,
+`ICTTParagraphStyle` and `__NSCFNumber`.
+
+The actual font declares `_fontName` (object), `_pointSize` (`d`), `_fontHints`
+(`I`) and extra `_nativeFont` (`@`), with matching declared properties. Its
+three familiar getter ABIs match the existing synthetic pins; `_nativeFont`
+storage and property remain outside them. No nativeFont field value was read,
+so its representation, derived-cache behavior or complete preservation cannot
+be inferred from its name or encoding.
+
+The actual paragraph class declares 11 ivars, including extra
+`_needsParagraphCleanup` / `_needsListCleanup` (`B`). Native `_indent`,
+`_blockQuoteLevel` and `_startingItemNumber` storage and getter returns are
+unsigned `Q`; current synthetic pins require signed `q`. It declares 26
+properties, including derived/common declarations beyond the synthetic nine.
+This directly establishes additional schema refusals after the unknown key.
+The observed font/paragraph ivars contain scalar/object encodings, with no
+opaque C++/CRDT field reported on those two classes. Their nested object state
+and semantics remain unavailable; absence of a C++ encoding does not prove a
+complete native projection.
+
+A concrete next adapter review must handle the exact `ICTTFont` key, preserve
+all actual font and paragraph stored state with exact ABI distinctions, and
+establish the representation of `_nativeFont` and nested todo state through
+separately reviewed fixed public fixtures. It must explicitly address derived
+properties and cleanup flags rather than drop them or assume they are harmless.
+No native acceptance pin is authored by this metadata record.

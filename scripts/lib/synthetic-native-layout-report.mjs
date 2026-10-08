@@ -20,10 +20,13 @@ function integer(value, max = Number.MAX_SAFE_INTEGER) {
 function list(value, max) {
   assert.ok(Array.isArray(value) && value.length <= max);
 }
-function uniqueNames(records, field) {
+function sortedNames(records, field) {
   const names = records.map((r) => r[field]);
-  assert.equal(new Set(names).size, names.length);
   assert.deepEqual(names, [...names].sort());
+}
+function uniqueNames(records, field) {
+  assert.equal(new Set(records.map((r) => r[field])).size, records.length);
+  sortedNames(records, field);
 }
 function method(value) {
   record(value, value.present
@@ -91,8 +94,11 @@ export function validateSyntheticNativeLayoutReport(report) {
       list(layer.properties, 1024);
       list(layer.zeroArgumentMethods, 2048);
       uniqueNames(layer.ivars, "name");
-      uniqueNames(layer.properties, "name");
-      uniqueNames(layer.zeroArgumentMethods, "selector");
+      // Objective-C categories/protocol declarations may duplicate names.
+      // Retain every bounded metadata record, rather than dropping entries
+      // or mistaking duplicate declarations for unsafe content payloads.
+      sortedNames(layer.properties, "name");
+      sortedNames(layer.zeroArgumentMethods, "selector");
       for (const ivar of layer.ivars) {
         record(ivar, ["name", "encoding", "offset"]);
         metadata(ivar.name);
