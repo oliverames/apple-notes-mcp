@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { buildSyntheticNotePayload, noteIdentifier, replicaIdentifier } from "./lib/synthetic-note-payload.mjs";
 import { readSingleLinkFile } from "./lib/synthetic-fixture-files.mjs";
 import { sha256, snapshotSyntheticTree, summarizeSyntheticTree } from "./lib/synthetic-store-snapshot.mjs";
+import { validateFixtureRootPath } from "./lib/synthetic-native-layout-path.mjs";
 import { validateSyntheticNativeLayoutReport } from "./lib/synthetic-native-layout-report.mjs";
 
 if (process.argv.length !== 2) throw new Error("This fixture accepts no paths or private input");
@@ -16,6 +17,7 @@ if (process.platform !== "darwin") throw new Error("Native layout metadata requi
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = realpathSync(mkdtempSync("/private/tmp/apple-notes-synthetic-fixture-"));
 chmodSync(root, 0o700);
+validateFixtureRootPath(root);
 const privateUser = join(root, "isolated-user");
 mkdirSync(join(privateUser, "Library/Preferences"), { recursive: true, mode: 0o700 });
 mkdirSync(join(privateUser, "Library/Caches"), { recursive: true, mode: 0o700 });
@@ -81,6 +83,7 @@ try {
     ["probe", probeSource], ["generator", generatorSource], ["diagnostic", diagnosticSource],
     ["harness", fileURLToPath(import.meta.url)], ["payload", join(repo, "scripts/lib/synthetic-note-payload.mjs")],
     ["validator", join(repo, "scripts/lib/synthetic-native-layout-report.mjs")],
+    ["pathBoundary", join(repo, "scripts/lib/synthetic-native-layout-path.mjs")],
     ["fixtureFiles", join(repo, "scripts/lib/synthetic-fixture-files.mjs")],
     ["treeSnapshot", join(repo, "scripts/lib/synthetic-store-snapshot.mjs")],
     ["preservation", join(repo, "native/private-helper/content-preservation.h")],

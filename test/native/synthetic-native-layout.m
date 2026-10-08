@@ -7,6 +7,7 @@
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
 extern const int SANDBOX_CHECK_NO_REPORT;
@@ -22,6 +23,8 @@ static NSString *const PublicText = @"PUBLIC SYNTHETIC WRITER FIXTURE\n"
     "All contents and identifiers in this note are generated.\n"
     "This note contains no user data or device identifiers.\n"
     "For use in isolated fixture validation.\n";
+
+static const char *DiagnosticStage = "input";
 
 static void Require(BOOL condition) {
   if (!condition) @throw [NSException exceptionWithName:@"DiagnosticBoundary" reason:nil userInfo:nil];
@@ -171,6 +174,7 @@ static NSManagedObject *FixedNote(NSManagedObjectContext *context) {
   NSManagedObject *note = notes.firstObject;
   Require([[note valueForKey:@"identifier"] isEqual:@"33333333-3333-4333-8333-333333333333"]);
   NSData *body = [[note valueForKey:@"noteData"] valueForKey:@"data"];
+  DiagnosticStage = "fixed-public-body-hash";
   Require([body isKindOfClass:NSData.class] && [Digest(body) isEqual:PublicPayloadSHA256]);
   return note;
 }
@@ -180,18 +184,33 @@ static void CloseContext(NSManagedObjectContext *context) {
   NSArray *stores = [coordinator.persistentStores copy];
   for (NSPersistentStore *store in stores) Require([coordinator removePersistentStore:store error:NULL]);
 }
+static NSString *FixtureRootName(NSString *path) {
+  NSString *parent = [path stringByDeletingLastPathComponent];
+  if (![@[ @"/tmp", @"/private/tmp" ] containsObject:parent]) return nil;
+  NSString *name = path.lastPathComponent;
+  NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:
+      @"^apple-notes-synthetic-fixture-[A-Za-z0-9]+$" options:0 error:NULL];
+  return [pattern numberOfMatchesInString:name options:0 range:NSMakeRange(0, name.length)] == 1 ? name : nil;
+}
+static BOOL EquivalentFixtureRoots(NSString *supplied, NSString *resolved) {
+  NSString *name = FixtureRootName(supplied);
+  return name && [name isEqual:FixtureRootName(resolved)];
+}
 static NSDictionary *Diagnose(NSString *root) {
   // Policy checks inspect denial only and never open real home/preferences.
   const char *home = getenv("HOME"), *fixed = getenv("CFFIXED_USER_HOME"), *tmp = getenv("TMPDIR");
   Require(home && fixed && tmp && strcmp(home, fixed) != 0);
-  Require([root hasPrefix:@"/private/tmp/apple-notes-synthetic-fixture-"] &&
-      [[root stringByResolvingSymlinksInPath] isEqual:root] &&
-      [[root stringByDeletingLastPathComponent] isEqual:@"/private/tmp"]);
+  DiagnosticStage = "root-containment";
+  Require(FixtureRootName(root) != nil);
+  char resolvedRoot[PATH_MAX];
+  Require(realpath(root.fileSystemRepresentation, resolvedRoot) != NULL &&
+      EquivalentFixtureRoots(root, Metadata(resolvedRoot)));
   struct stat rootStat;
   Require(lstat(root.fileSystemRepresentation, &rootStat) == 0 && S_ISDIR(rootStat.st_mode) &&
       rootStat.st_uid == getuid() && (rootStat.st_mode & 0777) == 0700);
   Require([@(fixed) isEqual:[root stringByAppendingPathComponent:@"isolated-user"]] &&
       [@(tmp) isEqual:[root stringByAppendingPathComponent:@"tmp"]]);
+  DiagnosticStage = "sandbox-policy";
   NSString *sentinel = [@(home) stringByAppendingPathComponent:@"Library/Preferences/io.github.apple-notes-mcp.private-writer.plist"];
   Require(Denied("file-read-data", 1, sentinel.UTF8String) && Denied("file-write-data", 1, sentinel.UTF8String) &&
       Denied("file-read-data", 1, "/Library/Preferences/.GlobalPreferences.plist") &&
@@ -201,31 +220,42 @@ static NSDictionary *Diagnose(NSString *root) {
   Require([[NSHomeDirectory() stringByStandardizingPath] isEqual:[@(fixed) stringByStandardizingPath]] &&
       [NSBundle.mainBundle.bundleIdentifier isEqual:@"io.github.apple-notes-mcp.private-writer"]);
   Require(objc_getClass("ICNote") == Nil);
+  DiagnosticStage = "public-payload-file";
   NSData *payload = SingleLinkFile([root stringByAppendingPathComponent:@"generated-baseline.gz"]);
   Require([Digest(payload) isEqual:PublicPayloadSHA256]);
   NSString *storePath = [root stringByAppendingPathComponent:@"NoteStore.sqlite"];
   (void)SingleLinkFile(storePath);
   // Verify generic persisted fixed seed before any private framework loads.
+  DiagnosticStage = "generic-model-open";
   NSManagedObjectModel *genericModel = [[NSManagedObjectModel alloc] initWithContentsOfURL:
       [NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks/NotesShared.framework/Resources/NoteData.mom"]];
   Require(genericModel != nil);
   for (NSEntityDescription *entity in genericModel.entities) entity.managedObjectClassName = @"NSManagedObject";
   NSManagedObjectContext *generic = ReadOnlyContext(genericModel, @{}, storePath);
+  DiagnosticStage = "generic-public-seed";
   (void)FixedNote(generic);
   CloseContext(generic);
+  DiagnosticStage = "framework-load";
   Require(dlopen("/System/Library/PrivateFrameworks/NotesShared.framework/NotesShared", RTLD_NOW | RTLD_LOCAL) != NULL);
   Class container = objc_getClass("ICPersistentContainer");
   Require(container != Nil);
+  DiagnosticStage = "container-model-abi";
   NSManagedObjectModel *model = FixedObjectGetter((id)container, "managedObjectModel");
   NSDictionary *standard = FixedObjectGetter((id)container, "standardStoreOptions");
   Require([model isKindOfClass:NSManagedObjectModel.class] && [standard isKindOfClass:NSDictionary.class]);
+  DiagnosticStage = "native-read-only-open";
   NSManagedObjectContext *context = ReadOnlyContext(model, standard, storePath);
+  DiagnosticStage = "native-public-seed";
   NSManagedObject *note = FixedNote(context);
   Require(SubclassOf(object_getClass(note), objc_getClass("ICNote")));
+  DiagnosticStage = "mergeable-string-abi";
   id mergeable = FixedObjectGetter(note, "mergeableString");
   Require(mergeable != nil);
+  DiagnosticStage = "attributed-string-abi";
   NSAttributedString *body = FixedObjectGetter(mergeable, "attributedString");
+  DiagnosticStage = "public-body-text";
   Require([body isKindOfClass:NSAttributedString.class] && [body.string isEqual:PublicText]);
+  DiagnosticStage = "attribute-schema-metadata";
   NSSet *supported = [NSSet setWithArray:@[ @"TTStyle", @"TTHints", @"TTUnderline", @"TTStrikethrough",
       @"TTEmphasis", @"TTColor", @"TTTimestamp", @"TTFont", @"NSFont", @"NSLink", @"NSAttachment" ]];
   NSMutableDictionary *keyClasses = [NSMutableDictionary dictionary];
@@ -261,6 +291,7 @@ static NSDictionary *Diagnose(NSString *root) {
       @"nativeAttributeGettersInvoked": @NO, @"preservationPinsChanged": @NO,
       @"bodyUTF16": @(body.length), @"attributeRuns": @(runs), @"attributes": attributes, @"classes": classes,
       @"tableCellCoverage": @"unavailable:no-table-in-fixed-seed", @"nestedValueCoverage": @"unavailable:no-attribute-value-traversal" };
+  DiagnosticStage = "close-read-only-context";
   CloseContext(context);
   return result;
 }
@@ -278,7 +309,7 @@ int main(int argc, const char **argv) {
       (void)error;
       // Never print exception reason/userInfo: private object descriptions or
       // native values could be embedded in either. A failure remains private.
-      fputs("{\"kind\":\"fixed-public-native-layout-metadata\",\"completed\":false,\"code\":\"diagnostic_boundary_or_api_unavailable\"}\n", stdout);
+      fprintf(stdout, "{\"kind\":\"fixed-public-native-layout-metadata\",\"completed\":false,\"code\":\"diagnostic_boundary_or_api_unavailable\",\"stage\":\"%s\"}\n", DiagnosticStage);
       return 1;
     }
   }
