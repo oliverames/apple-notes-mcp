@@ -427,7 +427,13 @@ try {
       assert.match(reviewedPlan.planDigest, /^p4:[0-9a-f]{64}$/);
       assert.match(reviewedPlan.attachmentSnapshot, /^a1:[0-9a-f]{64}$/);
       assert.equal(reviewedPlan.frozenAttachments.inlineAttachments, 1);
+      assert.equal(reviewedPlan.frozenAttachments.attachments, 0);
       assert.equal(reviewedPlan.frozenAttachments.filesHashed, 0);
+      assert.equal(reviewedPlan.frozenAttachments.evidenceComplete, true);
+      assert.equal(
+        reviewedPlan.attachmentEvidencePolicy,
+        "complete-sha256-v1:512MiB:stored-attributes:transient-excluded:version-floor-may-rise"
+      );
       assert.equal(reviewedPlan.attachmentGlyphs, 0);
     });
     for (const [label, scope] of weakenedScopes) {
@@ -783,7 +789,9 @@ try {
     "p4 checks digest consistency with the loaded revision and request; no prior preview authentication is claimed.",
     "One hidden inline row is generated; token/tombstone/owned-row drift is exercised. No media bytes, table CRDT or body attachment glyphs are generated.",
     "Installed native content layout may refuse c2 before receipt comparison; unsupported layouts remain held and are reported separately.",
-    "Prospective compose-file digest refusals prove no persistent materialization; a matching file apply is not attempted.",
+    report.ordinaryBodyCompose.supported
+      ? "Prospective compose-file digest refusals prove no persistent materialization; a matching file apply is not attempted, and stale c2 receipt drift is not exercised."
+      : "Prospective compose-file digest/receipt checks are unavailable because strict ordinary-body content pins refuse before attachment capture; no compose materialization proof is claimed.",
     "The isolated user starts with empty Preferences and Caches infrastructure directories; cold Caches-directory initialization is not exercised.",
   ];
   persist("report.json", report);
