@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { test } from "node:test";
 import {
@@ -69,6 +71,18 @@ test("fixture is deterministic, accepts no external input, and returns fresh byt
   assert.equal(first[9], 255, "no host OS marker");
   assert.throws(() => buildSyntheticNotePayload(Buffer.from("saved data")), /accepts no input/);
   assert.throws(() => buildSyntheticNotePayload({ text: "override" }), /accepts no input/);
+});
+
+test("native receipt fixture pins precisely the public generated payload", () => {
+  const source = readFileSync(
+    new URL("../../test/native/synthetic-notes-store.m", import.meta.url),
+    "utf8"
+  );
+  const digest = createHash("sha256").update(buildSyntheticNotePayload()).digest("hex");
+  assert.ok(source.includes(`@"${digest}"`));
+  assert.ok(
+    source.includes("if ((receiptFixture || mutate) && !IsFixedPublicPayload(payload)) return 4;")
+  );
 });
 
 test("every character and attribute reference belongs to the fixed synthetic graph", () => {
