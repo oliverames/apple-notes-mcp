@@ -52,6 +52,13 @@ cannot contact Mach services or the network. `HOME` is unchanged;
 `CFFIXED_USER_HOME` and `TMPDIR` point inside scratch. Generator policy checks
 also reject direct execution outside this sandbox. These are observed boundary
 checks, not a claim that every possible IPC mechanism has been analyzed.
+The isolated user starts with empty `Library/Preferences` and `Library/Caches`
+directories. A cold file-compose plan was observed to create only the empty
+Caches directory, with exact database/body/dump/object state unchanged; that
+attempt failed the tree assertion and was retained as incomplete. Precreating
+ordinary cache infrastructure avoids testing this initialization as note
+materialization. Native files or later directory changes remain fully covered
+by the unchanged tree assertions.
 
 The synthetic account is local (`accountType = 0`) and starts with a generated
 bundle-ID-to-replica map, avoiding an unrelated lazy account update during a
