@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { z } from "zod";
 
 vi.mock(import("../services/privateWriterParagraphs.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -121,6 +122,14 @@ describe("native-add-section-link", () => {
     expect(tool.inputSchema.target.safeParse("nope").success).toBe(false);
     expect(tool.inputSchema.ifTargetRevision.safeParse("r1:x").success).toBe(false);
     expect(tool.inputSchema.blockIndex.safeParse(-1).success).toBe(false);
+    expect(tool.inputSchema.targetScope.safeParse({ typo: true }).success).toBe(false);
+    expect(tool.inputSchema.targetScope.safeParse({ ifFolderId: "nope" }).success).toBe(false);
+    expect(
+      z.object(tool.inputSchema).safeParse({
+        ...chipArgs,
+        targetScope: { ifFolderId: "x-coredata://8FA9/ICFolder/p1" },
+      }).success
+    ).toBe(true);
   });
 
   it("passes every option through and resolves an x-coredata id", async () => {
@@ -135,6 +144,7 @@ describe("native-add-section-link", () => {
       clearExistingSectionLinks: true,
       ifRevision: REV,
       ifTargetRevision: REV,
+      targetScope: { ifAncestorFolderId: "x-coredata://8FA9/ICFolder/p1" },
     });
     expect(manager.getNoteLinkById).toHaveBeenCalledWith(CD);
     expect(r.structuredContent).toEqual({ ok: true, status: "updated" });
@@ -150,6 +160,7 @@ describe("native-add-section-link", () => {
         clearExistingSectionLinks: true,
         ifRevision: REV,
         ifTargetRevision: REV,
+        targetScope: { ifAncestorFolderId: "x-coredata://8FA9/ICFolder/p1" },
       },
       WRITER
     );

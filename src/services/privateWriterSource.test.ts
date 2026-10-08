@@ -440,6 +440,28 @@ describe("private writer source contract", () => {
     expect(SOURCE).toMatch(/\{"ICFolder", "identifier,parent,markedForDeletion"\}/);
   });
 
+  it("checks explicit section-link target scope before mutation and at the shared save", () => {
+    const section = SOURCE.slice(
+      SOURCE.indexOf("static NSDictionary *HandleAddSectionLink(NSDictionary *request) {"),
+      SOURCE.indexOf("#pragma mark - Tables")
+    );
+    expect(section.indexOf("CheckSectionLinkScopeBeforeMutation(context);")).toBeLessThan(
+      section.indexOf("AssignParagraphUUID(targetMs")
+    );
+    expect(section).toMatch(
+      /RequireExpectedChanges\(context, writeObjects, \[NSSet set\]\);\s*SaveOrFail\(context\);/
+    );
+    const guards = SOURCE.slice(SOURCE.indexOf("#pragma mark - Scope guards"));
+    expect(guards).toMatch(
+      /if \(gTargetScopeRequest\) EvaluateScopeGuard\(context, context, gTargetScopeRequest, ScopeSubjectNote\);/
+    );
+    expect(guards).toMatch(
+      /if \(writing && !note\.hasChanges\)[\s\S]*fetch\.includesPendingChanges = NO;/
+    );
+    expect(guards).toMatch(/BoolAttr\(rows\.firstObject, @"markedForDeletion"\)/);
+    expect(guards).toMatch(/if \(source\.count && !target\.count\)/);
+  });
+
   it("repairs a purge flag with an ordinary move to Recently Deleted, never a purge", () => {
     const body = SOURCE.slice(
       SOURCE.indexOf("static NSDictionary *HandleRepairPurgeFlag(NSDictionary *request) {"),

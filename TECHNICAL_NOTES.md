@@ -1101,16 +1101,24 @@ that table.
   not detected; the window is the few milliseconds of the save itself.
 - A write that moves the note (the purge-flag repair) also checks the
   destination's chain against the forbidden ids.
+- Section links can have two independently guarded subjects. `targetScope`
+  is an explicit object with the same three fields; it works without receiver
+  guards and when the target paragraph already has a unique identifier.
+  Receiver guards on a cross-note call require a nonempty target policy.
+  Both checks run in the writing context before object creation and again
+  before save. An unchanged target's direct folder is fetched from persisted
+  values, since an unchanged row does not participate in save locking.
 - Fail closed: every id must resolve, through the coordinator, to an existing
   `ICFolder` in this store, and a forbidden id must not name a deleted folder
-  (`scope_folder_not_found`, `committed: false`). The AppleScript guards match
+  (`scope_folder_not_found`, `committed: false`). A deleted folder in a
+  persisted ancestor chain also refuses (`scope_conflict`, `folder_deleted`). The AppleScript guards match
   ids by string and treat an unknown forbidden id as "not an ancestor"; the
   writer refuses instead, because an unknown id is almost always a stale or
   mistyped one.
 - A failure is `scope_conflict` with a `scopeReason` (`not_in_folder`,
   `not_in_expected_folder`, `not_inside_expected_ancestor`,
   `inside_forbidden_folder`, `destination_inside_forbidden_folder`,
-  `folder_vanished`, `folder_chain_invalid`), always `committed: false`. The
+  `folder_vanished`, `folder_deleted`, `note_vanished`, `folder_chain_invalid`), always `committed: false`. The
   server maps it to `revision_conflict`.
 - `compose-note` create mode refuses the guards: Notes.app makes the note in
   the named folder before the writer runs, so a guard there could only refuse
@@ -1878,6 +1886,25 @@ copy-store script confirms each chip with the `listNoteLinks` reader.
 On the 2026-09-24 copy test no recent note had a heading, so the default and
 `heading` selectors have not yet run against a store; `blockIndex` and `paragraphId`,
 minting in the same and in another note, and clearing ran on the copy.
+
+Receiver folder guards apply only to the note receiving the chip. An explicit
+`targetScope: {ifFolderId?, ifAncestorFolderId?, forbiddenAncestorFolderIds?}`
+guards the other note independently; a nonempty receiver policy requires a
+nonempty target policy for a cross-note call. No receiver policy is copied to
+the target. A self-link has one subject: a target-only policy guards it; two
+explicit policies must be equivalent or the request is refused. Equivalence
+normalizes only known folder-id spelling and forbidden-list set order. Both
+guards are checked before paragraph-ID minting or chip creation and again
+immediately before save, with persisted ancestor-chain rereads. An unchanged
+target also gets a persisted direct-folder reread. This narrows drift checks
+but does not lock ancestor rows against a move during the save itself.
+
+`privateWriterSectionScopeNative.test.ts` exercises the production scope/save
+functions using an original generic in-memory Core Data model and a forbidden
+`dlopen`. It covers target-only policies, already-unique and minted targets,
+cached ancestry/direct-folder drift, missing/deleted/cyclic ancestors and
+atomic refusal of both notes, target paragraph ID and inline row. It does not
+exercise NotesShared section-chip creation or supply release/live evidence.
 
 ### Native tables
 

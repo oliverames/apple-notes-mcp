@@ -14,7 +14,8 @@
  * @module services/privateWriterSectionLinks
  */
 import { z } from "zod";
-import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
+import { canonicalCoreDataId, UUID_PATTERN } from "../utils/noteIdentifiers.js";
+import { MAX_FORBIDDEN_FOLDERS, SCOPE_FOLDER_ID } from "../utils/scopeGuard.js";
 import {
   PrivateWriteError,
   SECTION_LINKS_LIVE_VALIDATED,
@@ -82,10 +83,58 @@ export interface AddSectionLinkRequest {
   ifTargetRevision?: string;
   /** Folder preconditions on the note that receives the chip, checked just before the save. */
   scope?: ScopeGuard;
+  /** Explicit target policy, checked even when its paragraph identifier already exists.
+   * Required and nonempty for another note when `scope` is nonempty. For a self-link,
+   * a target-only policy guards that note; two explicit policies must be equivalent.
+   */
+  targetScope?: ScopeGuard;
 }
 
 function invalid(message: string): never {
   throw new PrivateWriteError("invalid_request", message, false);
+}
+
+const folderId = z.string().max(256).regex(SCOPE_FOLDER_ID);
+const targetScopeSchema = z
+  .object({
+    ifFolderId: folderId.optional(),
+    ifAncestorFolderId: folderId.optional(),
+    forbiddenAncestorFolderIds: z.array(folderId).max(MAX_FORBIDDEN_FOLDERS).optional(),
+  })
+  .strict();
+
+function canonicalPolicy(fields: Record<string, unknown>): string {
+  return JSON.stringify({
+    ifFolderId: fields.ifFolderId && canonicalCoreDataId(fields.ifFolderId as string),
+    ifAncestorFolderId:
+      fields.ifAncestorFolderId && canonicalCoreDataId(fields.ifAncestorFolderId as string),
+    forbiddenAncestorFolderIds: [
+      ...new Set(((fields.forbiddenAncestorFolderIds as string[]) ?? []).map(canonicalCoreDataId)),
+    ].sort(),
+  });
+}
+
+/** Original policies remain separate for another note; neither is inferred from the other. */
+function sectionLinkScopeFields(request: AddSectionLinkRequest, selfLink: boolean) {
+  const source = writerScopeFields(request.scope);
+  if (
+    request.targetScope !== undefined &&
+    !targetScopeSchema.safeParse(request.targetScope).success
+  )
+    invalid("targetScope must contain only valid folder preconditions");
+  const target = writerScopeFields(request.targetScope);
+  if (selfLink) {
+    if (
+      Object.keys(source).length &&
+      request.targetScope !== undefined &&
+      canonicalPolicy(source) !== canonicalPolicy(target)
+    )
+      invalid("A self-link cannot have a targetScope distinct from its receiver scope");
+    return Object.keys(source).length ? source : target;
+  }
+  if (Object.keys(source).length && !Object.keys(target).length)
+    invalid("A guarded link to another note requires an explicit nonempty targetScope");
+  return Object.keys(target).length ? { ...source, targetScope: target } : source;
 }
 
 /** Insert one section-link chip, verified by a fresh read-back of both notes. */
@@ -123,6 +172,7 @@ export function addSectionLink(
   if (request.paragraphId !== undefined && !UUID_PATTERN.test(request.paragraphId))
     invalid("paragraphId must be a UUID");
   if (request.heading !== undefined && !request.heading.trim()) invalid("heading is empty");
+  const scopeFields = sectionLinkScopeFields(request, selfLink);
   requireLiveValidated(SECTION_LINKS_LIVE_VALIDATED, "native-add-section-link", deps.env);
 
   const fields: Record<string, unknown> = {
@@ -142,7 +192,7 @@ export function addSectionLink(
   if (request.position !== undefined) fields.position = request.position;
   if (request.clearExistingSectionLinks !== undefined)
     fields.clearExistingSectionLinks = request.clearExistingSectionLinks;
-  Object.assign(fields, writerScopeFields(request.scope));
+  Object.assign(fields, scopeFields);
   return parseWriterResult(
     addSectionLinkSchema,
     callPrivateWriter("add_section_link", fields, deps),

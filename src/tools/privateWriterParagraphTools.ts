@@ -113,7 +113,7 @@ export function registerPrivateWriterParagraphTools(
     "Use when: inserting a native section-link chip (what Notes' Copy Link to Section pastes) that opens a paragraph or heading in the same note or another note. macOS 27 or later.\n" +
       "Returns: `url` and `token` (applenotes://showNote?identifier=…&paragraphID=…), the `section` label, `paragraphId`, `paragraphIdMinted` (true when the target paragraph needed an identifier of its own), `inlineAttachmentIdentifier`, `clearedSectionLinks`, revisionBefore/After (plus targetRevisionBefore/After for another note), sync state (pushScheduled is always false), and with nudge: true a `sync` report.\n" +
       "Do not use when: a link string is enough (get-paragraph-link, or native-set-paragraph-id first when the identifier is shared), or you want a chip to a whole note.\n" +
-      "Safety: writes to the Notes database through unsupported private API. Selects the target paragraph by `blockIndex` + `expectedText` from list-note-paragraphs, by a unique `paragraphId`, by `heading` text (exact, case-insensitive), or defaults to the first heading or subheading; refuses a missing or ambiguous match. Needs `ifRevision` and, for another note, `ifTargetRevision`, both from native-note-state; refuses on any change (committed: false). `clearExistingSectionLinks` removes only chips that are section links; note-link chips stay. Verified by a fresh read-back of both notes and the attachment. A timeout is indeterminate (indeterminate: true). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS=1 until live-validated.",
+      "Safety: writes to the Notes database through unsupported private API. Selects the target paragraph by `blockIndex` + `expectedText` from list-note-paragraphs, by a unique `paragraphId`, by `heading` text (exact, case-insensitive), or defaults to the first heading or subheading; refuses a missing or ambiguous match. Needs `ifRevision` and, for another note, `ifTargetRevision`, both from native-note-state; refuses on any change (committed: false). Receiver folder guards require an explicit nonempty `targetScope` for another note; target-only guards are supported. Both policies are checked before creating the chip and just before save, even when no target identifier is minted. A self-link cannot carry distinct receiver and target policies. `clearExistingSectionLinks` removes only chips that are section links; note-link chips stay. Verified by a fresh read-back of both notes and the attachment. A timeout is indeterminate (indeterminate: true). Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and APPLE_NOTES_MCP_ALLOW_UNVERIFIED_SECTION_LINKS=1 until live-validated.",
     {
       identifier: notesUuid.optional().describe("Notes UUID of the note that receives the chip"),
       id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
@@ -157,6 +157,13 @@ export function registerPrivateWriterParagraphTools(
       ifTargetRevision: revisionToken
         .optional()
         .describe("The target note's `revision` from native-note-state; required for another note"),
+      targetScope: z
+        .object(writerScopeGuardInput())
+        .strict()
+        .optional()
+        .describe(
+          "Explicit folder policy for the target note, checked even if its paragraph ID already exists. Required and nonempty for another note when receiver folder guards are given. For a self-link, two explicit policies must be equivalent; a target-only policy guards that note."
+        ),
       ...writerScopeGuardInput(),
       ...nudgeInput,
     },
@@ -177,6 +184,7 @@ export function registerPrivateWriterParagraphTools(
           ifRevision: args.ifRevision,
           ifTargetRevision: args.ifTargetRevision,
           scope: scopeGuardFrom(args),
+          targetScope: args.targetScope,
         },
         deps.writer
       );
