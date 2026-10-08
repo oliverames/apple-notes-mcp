@@ -174,6 +174,7 @@ try {
     assert.equal(sqlite("PRAGMA integrity_check;"), "ok");
     assert.equal(sqlite("SELECT count(*) FROM ZICNOTEDATA;"), "1");
     assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "7");
+    assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSTATE;"), "7");
     assert.equal(
       sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
       "0"
@@ -311,7 +312,12 @@ try {
   function unchanged(name, expectedText, fn) {
     const beforeState = read();
     const before = snapshot();
-    const result = fn();
+    let result, failure;
+    try {
+      result = fn();
+    } catch (error) {
+      failure = error;
+    }
     assert.deepEqual(
       snapshot(),
       before,
@@ -330,7 +336,10 @@ try {
       ...countsAndHashes,
       tree: summarizeSyntheticTree(tree),
       unchanged: true,
+      expectedOperationCompleted: !failure,
     });
+    persist("report.json", report);
+    if (failure) throw failure;
     return result;
   }
   let state = read();
@@ -793,6 +802,7 @@ try {
     assert.equal(sqlite("PRAGMA integrity_check;"), "ok");
     assert.equal(sqlite("SELECT count(*) FROM ZICNOTEDATA;"), "1");
     assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "7");
+    assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSTATE;"), "7");
   });
   report.osVersion = command("/usr/bin/sw_vers", ["-productVersion"]).stdout.trim();
   report.completed = true;
