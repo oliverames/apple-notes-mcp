@@ -98,6 +98,6 @@ describe.skipIf(!MACOS)("legacy exact getter projection", () => {
       notesSharedLoaded: false,
       storesOpened: 0,
     });
-    expect(result.checks).toBe(43);
+    expect(result.checks).toBe(51);
   });
 });

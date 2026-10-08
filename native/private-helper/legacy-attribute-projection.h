@@ -74,6 +74,21 @@ static id ANMLegacyUUID(id value) {
   return [value isKindOfClass:NSUUID.class] ? @[ @"uuid", [value UUIDString] ] : nil;
 }
 
+// The observed native indent/list getters use unsigned 64-bit values while
+// synthetic getters use signed 64-bit values. Preserve the declared
+// ABI tag and use its matching cast; neither width nor sign is guessed.
+static id ANMLegacyInteger64(id value, NSString *name, BOOL allowUnsigned) {
+  if (ANMLegacyGetter(value, name, @encode(long long))) {
+    long long scalar = ((long long (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name));
+    return @[ @"getter-scalar", @"q", [NSData dataWithBytes:&scalar length:sizeof(scalar)] ];
+  }
+  if (allowUnsigned && ANMLegacyGetter(value, name, @encode(unsigned long long))) {
+    unsigned long long scalar = ((unsigned long long (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name));
+    return @[ @"getter-scalar", @"Q", [NSData dataWithBytes:&scalar length:sizeof(scalar)] ];
+  }
+  return nil;
+}
+
 static NSString *ANMLegacyCanonicalValue(id value) {
   if (!value) return ANMLegacyEncode(@[ @"null" ]);
   // Use the exact scalar/color implementation without applying synthetic
@@ -92,7 +107,13 @@ static NSString *ANMLegacyCanonicalValue(id value) {
     NSArray *u32 = @[ @"style", @"hints" ];
     NSArray *i64 = @[ @"alignment", @"writingDirection", @"indent", @"blockQuoteLevel", @"startingItemNumber" ];
     for (NSString *name in u32) if (!ANMLegacyGetter(value, name, @encode(unsigned int))) return nil;
-    for (NSString *name in i64) if (!ANMLegacyGetter(value, name, @encode(long long))) return nil;
+    NSMutableDictionary *integers = [NSMutableDictionary dictionary];
+    for (NSString *name in i64) {
+      BOOL allowUnsigned = [@[ @"indent", @"blockQuoteLevel", @"startingItemNumber" ] containsObject:name];
+      id exact = ANMLegacyInteger64(value, name, allowUnsigned);
+      if (!exact) return nil;
+      integers[name] = exact;
+    }
     if (!ANMLegacyGetter(value, @"uuid", @encode(id)) || !ANMLegacyGetter(value, @"todo", @encode(id))) return nil;
     id uuid = ANMLegacyUUID(ANMLegacyObject(value, @"uuid"));
     if (!uuid) return nil;
@@ -108,8 +129,7 @@ static NSString *ANMLegacyCanonicalValue(id value) {
     NSMutableDictionary *fields = [NSMutableDictionary dictionaryWithDictionary:@{ @"uuid" : uuid, @"todo" : todoFields }];
     for (NSString *name in u32)
       fields[name] = @(((unsigned int (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name)));
-    for (NSString *name in i64)
-      fields[name] = @(((long long (*)(id, SEL))objc_msgSend)(value, NSSelectorFromString(name)));
+    [fields addEntriesFromDictionary:integers];
     return ANMLegacyEncode(@[ @"paragraph-getters", fields ]);
   }
   Class attachment = NSClassFromString(@"ICTTAttachment");

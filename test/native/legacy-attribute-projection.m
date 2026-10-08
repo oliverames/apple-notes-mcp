@@ -1,6 +1,7 @@
 // Pure public/synthetic objects only; no writer, store, NotesShared or dispatch.
 #include "../../native/private-helper/legacy-attribute-projection.h"
 #include <math.h>
+#include <limits.h>
 
 @interface ICTTTodo : NSObject
 @property(nonatomic, copy) NSUUID *uuid;
@@ -35,6 +36,8 @@ static void Check(BOOL value, NSString *message) {
   checks++;
 }
 static float WrongSize(id self, SEL cmd) { (void)self; (void)cmd; invalidGetterCalls++; return 13; }
+static unsigned long long unsignedFixtureValue = ULLONG_MAX;
+static unsigned long long UnsignedValue(id self, SEL cmd) { (void)self; (void)cmd; return unsignedFixtureValue; }
 static ICTTFont *Font(void) {
   ICTTFont *font = [ICTTFont new];
   font.fontName = @"Public fixture"; font.pointSize = 13.123456789; font.fontHints = 7;
@@ -106,6 +109,23 @@ int main(void) {
         style = FixtureParagraphStyle(); [style setValue:@42 forKey:field];
         Check(![before isEqual:ANMLegacyCanonicalValue(style)], [@"Exact paragraph getter participates: " stringByAppendingString:field]);
       }
+      Class unsignedStyleClass = objc_allocateClassPair(ICTTParagraphStyle.class, "FixtureUnsignedParagraph", 0);
+      Check(unsignedStyleClass != Nil, @"Create synthetic unsigned getter family");
+      for (NSString *field in @[ @"indent", @"blockQuoteLevel", @"startingItemNumber" ])
+        Check(class_addMethod(unsignedStyleClass, NSSelectorFromString(field), (IMP)UnsignedValue, "Q@:"), @"Install observed unsigned64 getter ABI");
+      objc_registerClassPair(unsignedStyleClass);
+      id unsignedStyle = [unsignedStyleClass new];
+      NSString *unsignedBefore = ANMLegacyCanonicalValue(unsignedStyle);
+      Check(unsignedBefore != nil, @"Observed Q getter family remains supported without signed cast");
+      unsignedFixtureValue = ULLONG_MAX - 1;
+      Check(![unsignedBefore isEqual:ANMLegacyCanonicalValue(unsignedStyle)], @"One-unit uint64 drift above signed range remains exact");
+      ICTTParagraphStyle *signedStyle = [ICTTParagraphStyle new];
+      signedStyle.indent = -1; signedStyle.blockQuoteLevel = -1; signedStyle.startingItemNumber = -1;
+      Check(![unsignedBefore isEqual:ANMLegacyCanonicalValue(signedStyle)], @"Signed and unsigned64 getter representations stay distinct");
+      unsignedFixtureValue = 7;
+      signedStyle.indent = 7; signedStyle.blockQuoteLevel = 7; signedStyle.startingItemNumber = 7;
+      Check(![ANMLegacyCanonicalValue(unsignedStyle) isEqual:ANMLegacyCanonicalValue(signedStyle)],
+          @"Equal small boxed integers cannot hide the declared getter ABI");
       NSMutableString *mutable = [@"frozen" mutableCopy];
       before = ANMLegacyCanonicalValue(mutable); [mutable appendString:@" changed"];
       Check(![before isEqual:ANMLegacyCanonicalValue(mutable)], @"Projection freezes mutable string values");

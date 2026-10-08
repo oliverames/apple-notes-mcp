@@ -12,7 +12,9 @@ values as equal. The new shared projection retains scalar type and bytes,
 exact component colors and color-space information, and length-framed values
 with literal UTF-16 dictionary ordering. Unknown representations refuse.
 Private getters are called only after checking their return ABI, implicit
-argument ABI and argument count.
+argument ABI and argument count. Observed native indent, block-quote and list-start
+getters use unsigned 64-bit values; validated signed/unsigned variants retain
+their explicit ABI tag and exact bytes without a mismatched signed cast.
 
 An attributed-string copy retains its mutable attribute objects. The plan
 now captures immutable getter projections before planning and mutation,
