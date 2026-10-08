@@ -18,11 +18,16 @@ export function writerSourceSha256(
     const directives = source
       .toString("utf8")
       .replace(/\\\r?\n/g, "")
-      .replace(/\/\*[\s\S]*?\*\//g, " ");
+      .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (token) =>
+        token.startsWith("/*") || token.startsWith("//") ? token.replace(/[^\n]/g, " ") : token
+      );
     for (const directive of directives.matchAll(/^\s*#\s*(?:include|import)\b\s*([^\n]+)/gm)) {
       const local = directive[1].match(/^"([^"\n]+)"\s*(?:\/\/.*)?$/);
-      if (local) visit(resolve(dirname(path), local[1]));
-      else if (!/^<[^>\n]+>\s*(?:\/\/.*)?$/.test(directive[1]))
+      if (local) {
+        if (!/^[a-zA-Z0-9_./-]+$/.test(local[1]))
+          throw new Error("Writer local include names must use plain relative paths");
+        visit(resolve(dirname(path), local[1]));
+      } else if (!/^<[^>\n]+>\s*(?:\/\/.*)?$/.test(directive[1]))
         throw new Error("Writer includes must name a literal local or system header");
     }
   };

@@ -47,6 +47,24 @@ describe("writer source closure checksum", () => {
       writerSourceSha256(fixture({ "/packaged/writer.m": "#include SUPPORT_HEADER" }))
     ).toThrow(/literal/);
   });
+  it("refuses comment-like literal paths instead of hashing a transformed header name", () => {
+    expect(() =>
+      writerSourceSha256(
+        fixture({
+          "/packaged/writer.m": '#include "dir/*literal*/support.h"',
+          "/packaged/dir support.h": "wrong",
+        })
+      )
+    ).toThrow(/plain relative paths/);
+  });
+  it("preserves an active include between line comments containing block-comment markers", () => {
+    const source = '// /*\n#include "support.h"\n// */';
+    expect(
+      writerSourceSha256(fixture({ "/packaged/writer.m": source, "/packaged/support.h": "one" }))
+    ).not.toBe(
+      writerSourceSha256(fixture({ "/packaged/writer.m": source, "/packaged/support.h": "two" }))
+    );
+  });
   it.each(['#include"support.h"', '#include/**/"support.h"', '#include \\\n"support.h"'])(
     "binds valid include formatting %s",
     (source) => {
