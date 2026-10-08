@@ -63,7 +63,6 @@ native writer. System headers remain external build inputs. Strict `c2` content
 layout pins remain unchanged; an ordinary generated rich body that cannot pass
 those pins is labelled unavailable, not counted as compose receipt coverage.
 
-
 Missing and mismatched digests also refuse a prospective compose-file request,
 after its read-only plan, with identical object and file checks. The file is
 constructed from literal public bytes inside scratch, and no matching file

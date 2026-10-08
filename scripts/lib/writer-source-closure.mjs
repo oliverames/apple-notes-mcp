@@ -16,9 +16,12 @@ export function writerSourceClosure(sourcePath, readFile = readFileSync, exists 
     if (!exists(path)) throw new Error(`Packaged writer source is missing: ${path}`);
     const source = readFile(path);
     closure.set(name, sha256(source));
-    const directives = source.toString("utf8").replace(/\\\r?\n/g, "")
+    const directives = source
+      .toString("utf8")
+      .replace(/\\\r?\n/g, "")
       .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (token) =>
-        token.startsWith("/*") || token.startsWith("//") ? token.replace(/[^\n]/g, " ") : token);
+        token.startsWith("/*") || token.startsWith("//") ? token.replace(/[^\n]/g, " ") : token
+      );
     for (const directive of directives.matchAll(/^\s*#\s*(?:include|import)\b\s*([^\n]+)/gm)) {
       const local = directive[1].match(/^"([^"\n]+)"\s*(?:\/\/.*)?$/);
       if (local) {
