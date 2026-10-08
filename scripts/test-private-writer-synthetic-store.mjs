@@ -176,7 +176,21 @@ try {
     assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "7");
     assert.equal(
       sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
+      "0"
+    );
+    // The installed model stores ICInlineAttachment.typeUTI separately from
+    // ICAttachment.typeUTI; keep the file-attachment zero check above exact.
+    assert.equal(
+      sqlite(
+        "SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT=(SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME='ICInlineAttachment');"
+      ),
       "1"
+    );
+    assert.equal(
+      sqlite(
+        "SELECT ZTYPEUTI1 FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT=(SELECT Z_ENT FROM Z_PRIMARYKEY WHERE Z_NAME='ICInlineAttachment');"
+      ),
+      "com.apple.notes.inlinetextattachment.dividerline"
     );
     assert.equal(hash(body()), hash(payload));
     assert.ok(!existsSync(store + "-wal") && !existsSync(store + "-shm"));
@@ -604,7 +618,7 @@ try {
     );
     assert.equal(
       sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
-      "1"
+      "0"
     );
     afterAppend = text + changedText;
     checkDecoded(afterAppend);
@@ -721,7 +735,7 @@ try {
       assert.equal(hash(readSingleLinkFile(prospectiveFilePath)), hash(prospectiveFile));
       assert.equal(
         sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
-        "1"
+        "0"
       );
     });
     const afterCompose = afterAppend + "\nSynthetic heading\nSynthetic rich text";
