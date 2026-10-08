@@ -190,7 +190,7 @@ int main(int argc, const char **argv) {
     @try {
       if (argc == 2 && strcmp(argv[1], "digest") == 0) {
         NSDictionary *request = [NSJSONSerialization JSONObjectWithData:ReadStdin() options:0 error:NULL];
-        EmitAndExit(@{@"digest" : ComposePlanDigest(request, request[@"ifRevision"]), @"frameworkLoaded" : @(gFrameworkLoaded)}, 0);
+        EmitAndExit(@{@"digest" : ComposePlanDigest(request, request[@"ifRevision"], request[@"attachmentSnapshot"]), @"frameworkLoaded" : @(gFrameworkLoaded)}, 0);
       }
       if (argc == 2 && strcmp(argv[1], "dispatch") == 0) {
         @try {
