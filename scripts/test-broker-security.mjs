@@ -50,6 +50,9 @@ const compiledBroker = join(temporary, "broker");
 const compiledRuntime = join(temporary, "echo-runtime");
 const injectionLibrary = join(temporary, "injection.dylib");
 const injectionMarker = join(temporary, "dyld-loaded");
+const injectionSource = join(temporary, "injection.c");
+const diagnosticFixtures = [];
+let positiveControlRecords;
 const brokers = new Set();
 const connections = new Set();
 const refusedExecutionCounts = new Map();
@@ -168,11 +171,14 @@ function compileFixtures() {
     cSource,
     String.raw`
 #include <limits.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 extern char **environ;
+extern int csops(pid_t, unsigned int, void *, size_t);
 static void json_string(const char *s) {
   putchar('"');
   for (const unsigned char *p = (const unsigned char *)s; *p; ++p) {
@@ -193,6 +199,12 @@ int main(int argc, char **argv) {
   for (int i = 0; i < argc; i++) { if (i) putchar(','); json_string(argv[i]); }
   fputs("],\"cwd\":", stdout);
   json_string(getcwd(cwd, sizeof(cwd)) ? cwd : "");
+  uint32_t flags = 0;
+  errno = 0;
+  int cs_status = csops(getpid(), 0 /* CS_OPS_STATUS */, &flags, sizeof(flags));
+  int cs_errno = errno;
+  printf(",\"codeSigning\":{\"pid\":%d,\"ppid\":%d,\"csopsStatus\":%d,\"csopsErrno\":%d,\"csopsFlags\":%u}",
+         getpid(), getppid(), cs_status, cs_errno, flags);
   fputs(",\"env\":{", stdout);
   int first = 1;
   for (char **e = environ; *e; ++e) {
@@ -210,13 +222,45 @@ int main(int argc, char **argv) {
 `
   );
   command("/usr/bin/xcrun", ["clang", "-O2", cSource, "-o", compiledRuntime]);
-  const injectionSource = join(temporary, "injection.c");
   writeFileSync(
     injectionSource,
-    `#include <stdio.h>
+    `#define INJECTION_MARKER ${JSON.stringify(injectionMarker)}\n` +
+      String.raw`
+#include <errno.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/file.h>
+#include <sys/types.h>
+#include <unistd.h>
+extern int csops(pid_t, unsigned int, void *, size_t);
+static void json_string(FILE *f, const char *s) {
+  fputc('"', f);
+  for (const unsigned char *p = (const unsigned char *)s; *p; ++p) {
+    if (*p == '"' || *p == '\\') { fputc('\\', f); fputc(*p, f); }
+    else if (*p < 0x20) fprintf(f, "\\u%04x", *p);
+    else fputc(*p, f);
+  }
+  fputc('"', f);
+}
 __attribute__((constructor)) static void injected(void) {
-  FILE *f = fopen(${JSON.stringify(injectionMarker)}, "w");
-  if (f) { fputs("harmless fixture loaded\\n", f); fclose(f); }
+  char executable[PATH_MAX] = "";
+  uint32_t size = sizeof(executable), flags = 0;
+  int path_status = _NSGetExecutablePath(executable, &size);
+  errno = 0;
+  int cs_status = csops(getpid(), 0 /* CS_OPS_STATUS */, &flags, sizeof(flags));
+  int cs_errno = errno;
+  FILE *f = fopen(INJECTION_MARKER, "a");
+  if (!f) return;
+  flock(fileno(f), LOCK_EX);
+  fprintf(f, "{\"pid\":%d,\"ppid\":%d,\"executable\":", getpid(), getppid());
+  json_string(f, path_status == 0 ? executable : "<path unavailable>");
+  fprintf(f, ",\"executablePathStatus\":%d,\"csopsStatus\":%d,\"csopsErrno\":%d,\"csopsFlags\":%u}\n",
+          path_status, cs_status, cs_errno, flags);
+  fflush(f);
+  flock(fileno(f), LOCK_UN);
+  fclose(f);
 }
 `
   );
@@ -284,6 +328,7 @@ createInterface({ input: process.stdin }).once("line", () => {
   }
   command("/usr/bin/codesign", [...signArgs, app]);
   command("/usr/bin/codesign", ["--verify", "--strict", app]);
+  diagnosticFixtures.push({ app, hardened, entitlement });
   return {
     directory,
     app,
@@ -503,6 +548,164 @@ function assertNoUnexpectedExecution() {
   }
 }
 
+function markerRecords(path = injectionMarker) {
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+function assertInjectionAbsent(stage) {
+  assert.equal(
+    existsSync(injectionMarker),
+    false,
+    `the injected dylib constructor ran ${stage}: ${markerRecords()}`
+  );
+}
+
+function diagnosticCommand(executable, args, options = {}) {
+  const result = spawnSync(executable, args, {
+    env: cleanEnvironment,
+    cwd: temporary,
+    encoding: "utf8",
+    timeout: 10_000,
+    maxBuffer: 128 * 1024,
+    ...options,
+  });
+  return {
+    command: [executable, ...args],
+    status: result.status,
+    signal: result.signal,
+    error: result.error?.message,
+    stdout: result.stdout?.slice(-16_384),
+    stderr: result.stderr?.slice(-16_384),
+  };
+}
+
+async function detachedDiagnostic(executable, env) {
+  const child = spawn(executable, [], {
+    cwd: temporary,
+    env,
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const processRecord = { child, exited: false };
+  const result = { pid: child.pid, stdout: "", stderr: "" };
+  brokers.add(processRecord);
+  child.stdout.on("data", (data) => {
+    result.stdout = `${result.stdout}${data}`.slice(-16_384);
+  });
+  child.stderr.on("data", (data) => {
+    result.stderr = `${result.stderr}${data}`.slice(-16_384);
+  });
+  child.stdin.on("error", (error) => {
+    result.stdinError = error.message;
+  });
+  processRecord.done = new Promise((resolve) => {
+    child.once("error", (error) => {
+      result.error = error.message;
+      processRecord.exited = true;
+      resolve();
+    });
+    child.once("close", (status, signal) => {
+      result.status = status;
+      result.signal = signal;
+      processRecord.exited = true;
+      resolve();
+    });
+  });
+  child.stdin.end("{}\n");
+  try {
+    let timer;
+    await Promise.race([
+      processRecord.done,
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          result.error = "control timed out after 10 seconds";
+          resolve();
+        }, 10_000);
+      }),
+    ]);
+    clearTimeout(timer);
+    return result;
+  } finally {
+    await stop(processRecord);
+  }
+}
+
+async function reportFailureDiagnostics() {
+  // Preserve the broker's marker. Independent probes use a separately compiled
+  // dylib/marker and run only after the original security assertion has failed.
+  const report = {
+    node: process.version,
+    architecture: process.arch,
+    positiveControlRecords,
+    brokerInjectionRecords: markerRecords(),
+    fixtures: diagnosticFixtures,
+    system: [
+      diagnosticCommand("/usr/bin/sw_vers", []),
+      diagnosticCommand("/usr/bin/uname", ["-mrs"]),
+      diagnosticCommand("/usr/sbin/sysctl", ["-n", "kern.bootargs"]),
+      diagnosticCommand("/usr/bin/csrutil", ["status"]),
+    ],
+  };
+  if (diagnosticFixtures.length) {
+    report.brokerSignature = diagnosticCommand("/usr/bin/codesign", [
+      "-d",
+      "--verbose=4",
+      "--entitlements",
+      ":-",
+      diagnosticFixtures[0].app,
+    ]);
+  }
+  if (report.brokerInjectionRecords && existsSync(compiledRuntime) && existsSync(injectionSource)) {
+    const control = join(temporary, "hardened-control");
+    const controlSource = join(temporary, "control-injection.c");
+    const controlLibrary = join(temporary, "control-injection.dylib");
+    const controlMarker = join(temporary, "control-dyld-loaded");
+    copyFileSync(compiledRuntime, control);
+    writeFileSync(
+      controlSource,
+      readFileSync(injectionSource, "utf8").replace(
+        /^#define INJECTION_MARKER .*$/m,
+        `#define INJECTION_MARKER ${JSON.stringify(controlMarker)}`
+      )
+    );
+    report.controlSetup = [
+      diagnosticCommand("/usr/bin/codesign", [
+        "--force",
+        "--sign",
+        "-",
+        "--options",
+        "runtime",
+        control,
+      ]),
+      diagnosticCommand("/usr/bin/xcrun", [
+        "clang",
+        "-dynamiclib",
+        controlSource,
+        "-o",
+        controlLibrary,
+      ]),
+      diagnosticCommand("/usr/bin/codesign", [
+        "-d",
+        "--verbose=4",
+        "--entitlements",
+        ":-",
+        control,
+      ]),
+    ];
+    if (report.controlSetup.every((result) => result.status === 0)) {
+      const env = { ...cleanEnvironment, DYLD_INSERT_LIBRARIES: controlLibrary };
+      report.synchronousHardenedControl = diagnosticCommand(control, [], { env, input: "{}\n" });
+      report.synchronousHardenedControl.injectionRecords = markerRecords(controlMarker);
+      rmSync(controlMarker, { force: true });
+      report.detachedHardenedControl = await detachedDiagnostic(control, env);
+      report.detachedHardenedControl.injectionRecords = markerRecords(controlMarker);
+    }
+  }
+  console.error(
+    `Native broker failure diagnostics (read-only host queries; ephemeral controls):\n${JSON.stringify(report, null, 2)}`
+  );
+}
+
 function assertEnvironment(fx, actual, expectedNumeric = {}) {
   assert.deepEqual(actual.argv, [fx.runtime, fx.entry]);
   assert.equal(actual.cwd, join(fx.resources, "server"));
@@ -534,7 +737,7 @@ function assertEnvironment(fx, actual, expectedNumeric = {}) {
   for (const key of numericKeys) {
     assert.equal(actual.env[key], expectedNumeric[key], `${key} violated the numeric policy`);
   }
-  assert.equal(existsSync(injectionMarker), false, "the injected dylib constructor ran");
+  assertInjectionAbsent("while checking the runtime environment");
 }
 
 function cleanup() {
@@ -563,7 +766,9 @@ try {
       env: { ...cleanEnvironment, DYLD_INSERT_LIBRARIES: injectionLibrary },
     });
     assert.equal(existsSync(injectionMarker), true, "injection fixture did not load");
+    positiveControlRecords = markerRecords();
     rmSync(injectionMarker);
+    assertInjectionAbsent("after removing the positive-control marker");
   });
 
   const base = fixture();
@@ -602,8 +807,10 @@ try {
     ...hostileEnvironment,
     ...Object.fromEntries(numericKeys.map((key) => [key, "9999"])),
   };
+  assertInjectionAbsent("before launching the broker");
   const running = await start(base, inherited);
   try {
+    assertInjectionAbsent("after broker ping, before any child request");
     await check("hardened launch ignores DYLD and all inherited overrides", async () => {
       assertEnvironment(base, await request(base, connectRequest(base), true));
       assert.equal(statSync(base.socket).mode & 0o777, 0o600);
@@ -734,6 +941,13 @@ try {
 } catch (error) {
   console.error(error.stack ?? error);
   process.exitCode = 1;
+  try {
+    await reportFailureDiagnostics();
+  } catch (diagnosticError) {
+    console.error(
+      `Failure diagnostics could not complete: ${diagnosticError.stack ?? diagnosticError}`
+    );
+  }
 } finally {
   await cleanup();
 }
