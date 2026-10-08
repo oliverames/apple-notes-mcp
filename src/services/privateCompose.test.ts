@@ -13,6 +13,7 @@ import {
   COMPOSE_LIVE_VALIDATED,
   PRIVATE_WRITER_PROTOCOL,
   PrivateWriteError,
+  ATTACHMENT_EVIDENCE_POLICY,
   WRITER_BINARY_NAME,
   WRITER_MANIFEST_NAME,
   defaultWriterDeps,
@@ -577,8 +578,11 @@ process.stdin.on("end", () => {
   const base = { identifier: req.identifier, mode: req.mode, paragraphs: summary.length, insertedUTF16: 9, insertAt: 4, unitStart: 5, objectURI: "x-coredata://S/ICNote/p1", revisionBefore: "r1:" + "a".repeat(64), requiredNonSystemPaper: !!req.requireNonSystemPaper, storeKind: "live", echo: req };
   const document = Object.fromEntries(Object.entries(req).filter(([k]) => !["protocol", "action", "dryRun", "ifPlanDigest"].includes(k)));
   document.ifRevision = base.revisionBefore;
-  const planDigest = "c1:" + createHash("sha256").update(JSON.stringify(stable(document))).digest("hex");
-  if (req.dryRun) out({ ...base, status: "planned", dryRun: true, committed: false, plan: summary, planDigest: mode === "wrong-plan" ? "c1:" + "0".repeat(64) : planDigest });
+  delete document.ifAttachmentSnapshot;
+  document.attachmentSnapshot = "a1:" + "e".repeat(64);
+  document.attachmentEvidencePolicy = "complete-sha256-v1:512MiB:stored-attributes:transient-excluded:version-floor-may-rise";
+  const planDigest = "c2:" + createHash("sha256").update(JSON.stringify(stable(document))).digest("hex");
+  if (req.dryRun) out({ ...base, status: "planned", dryRun: true, committed: false, plan: summary, attachmentSnapshot: document.attachmentSnapshot, attachmentEvidencePolicy: document.attachmentEvidencePolicy, frozenAttachments: {attachments:0,inlineAttachments:0,evidenceComplete:true}, planDigest: mode === "wrong-plan" ? "c2:" + "0".repeat(64) : planDigest });
   out({ ...base, status: "updated", committed: true, verified: true, placementVerified: true, revisionAfter: "r1:" + "c".repeat(64), modificationDate: null, title: "t", readBack: summary, objects, cloudSync: { available: true, inICloudAccount: true, uploadPending: true }, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true });
 });
 `;
@@ -635,11 +639,15 @@ const SPAWN_TIMEOUT = { timeout: 20_000 };
 function plannedApply(request: ComposeRequest): ComposeRequest {
   return {
     ...request,
+    ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     ifPlanDigest: composePlanDigest({
       ...request,
       scope: undefined,
       dryRun: undefined,
       ifPlanDigest: undefined,
+      ifAttachmentSnapshot: undefined,
+      attachmentSnapshot: `a1:${"e".repeat(64)}`,
+      attachmentEvidencePolicy: ATTACHMENT_EVIDENCE_POLICY,
       ...request.scope,
     }),
   };
@@ -669,7 +677,7 @@ describe("composePlanDigest", () => {
       ifFolderId: "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p1",
       forbiddenAncestorFolderIds: ["x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICFolder/p2"],
     };
-    const expected = "c1:4d104337f127f927f903a592d5b19e3f161b6e74c2e799dade427dcee7c541a2";
+    const expected = "c2:4d104337f127f927f903a592d5b19e3f161b6e74c2e799dade427dcee7c541a2";
     expect(composePlanDigest(fields)).toBe(expected);
     expect(composePlanDigest(Object.fromEntries(Object.entries(fields).reverse()))).toBe(expected);
   });
@@ -683,7 +691,7 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
       paragraphs: PARAGRAPHS,
       ifRevision: REV,
     };
-    for (const ifPlanDigest of [undefined, "p2:" + "a".repeat(64), "c1:bad"])
+    for (const ifPlanDigest of [undefined, "p2:" + "a".repeat(64), "c2:bad"])
       expect(caught(() => composeNote({ ...base, ifPlanDigest }, deps(ALLOW)))).toMatchObject({
         code: "invalid_request",
         committed: false,
@@ -691,7 +699,7 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
     expect(
       caught(() =>
         composeNote(
-          { ...base, dryRun: true, ifRevision: undefined, ifPlanDigest: `c1:${"a".repeat(64)}` },
+          { ...base, dryRun: true, ifRevision: undefined, ifPlanDigest: `c2:${"a".repeat(64)}` },
           deps()
         )
       )
@@ -701,9 +709,15 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
   it("binds the note, revision, text, style, placement, and scope to the plan", () => {
     const request = { identifier: NOTE, mode: "append" as const, paragraphs: PARAGRAPHS };
     const plan = composeNote({ ...request, dryRun: true }, deps());
-    const apply = { ...request, ifRevision: REV, ifPlanDigest: String(plan.planDigest) };
+    const apply = {
+      ...request,
+      ifRevision: REV,
+      ifPlanDigest: String(plan.planDigest),
+      ifAttachmentSnapshot: String(plan.attachmentSnapshot),
+    };
     expect(composeNote(apply, deps(ALLOW))).toMatchObject({ committed: true });
     const changes: Partial<ComposeRequest>[] = [
+      { ifAttachmentSnapshot: `a1:${"f".repeat(64)}` },
       { identifier: "11111111-2222-3333-4444-555555555555" },
       { ifRevision: `r1:${"b".repeat(64)}` },
       { mode: "prepend" },
@@ -720,6 +734,26 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
         )
       ).toMatchObject({ code: "plan_mismatch", committed: false });
   });
+  it("requires a complete reviewed existing-object receipt before invoking the writer", () => {
+    const request = {
+      identifier: NOTE,
+      mode: "append" as const,
+      paragraphs: PARAGRAPHS,
+      ifRevision: REV,
+      ifPlanDigest: `c2:${"b".repeat(64)}`,
+    };
+    for (const ifAttachmentSnapshot of [undefined, "a1:bad", `a0:${"e".repeat(64)}`]) {
+      const noSpawn = {
+        ...deps(ALLOW),
+        spawn: (() => {
+          throw new Error("must not invoke the writer");
+        }) as PrivateHelperDeps["spawn"],
+      };
+      expect(
+        caught(() => composeNote({ ...request, ifAttachmentSnapshot }, noSpawn))
+      ).toMatchObject({ code: "invalid_request", committed: false });
+    }
+  });
 
   it("binds same-size attachment bytes and forwards their hash to the native writer", () => {
     const path = join(root, "report.txt");
@@ -735,7 +769,12 @@ describe("composeNote", SPAWN_TIMEOUT, () => {
     });
     const captured = snapshotComposeFiles(request.paragraphs);
     writeFileSync(path, "new");
-    const apply = { ...request, ifRevision: REV, ifPlanDigest: String(plan.planDigest) };
+    const apply = {
+      ...request,
+      ifRevision: REV,
+      ifPlanDigest: String(plan.planDigest),
+      ifAttachmentSnapshot: String(plan.attachmentSnapshot),
+    };
     expect(
       caught(() => composeNote(apply, deps({ ...ALLOW, FAKE_MODE: "conflict" })))
     ).toMatchObject({ code: "plan_mismatch", committed: false });

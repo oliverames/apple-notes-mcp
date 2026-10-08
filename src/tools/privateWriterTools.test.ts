@@ -97,7 +97,9 @@ describe("private writer tools", () => {
     expect(edit.inputSchema.operations.description).not.toMatch(
       /puts a new attachment in its place|removes that attachment from the body/
     );
-    expect(edit.inputSchema.dryRun.description).toMatch(/requires ifRevision and ifPlanDigest/);
+    expect(edit.inputSchema.dryRun.description).toMatch(
+      /requires ifRevision, ifPlanDigest and ifAttachmentSnapshot/
+    );
   });
 
   it("status adds the writer setup command while it is not installed", async () => {

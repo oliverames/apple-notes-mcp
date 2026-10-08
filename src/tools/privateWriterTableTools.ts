@@ -15,6 +15,7 @@
  *
  * @module tools/privateWriterTableTools
  */
+import { attachmentSnapshotToken } from "../services/privateWriter.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
@@ -52,6 +53,9 @@ const ifTableDigest = z
   .string()
   .regex(TABLE_DIGEST)
   .describe("The table `digest` from native-read-tables, or `tableDigest` from the dry run");
+const ifAttachmentSnapshot = attachmentSnapshotToken.describe(
+  "The complete attachmentSnapshot from native-read-tables or an identical dry run"
+);
 const cellText = z.string().max(MAX_CELL_TEXT);
 const nudgeFields = {
   nudge: z
@@ -101,7 +105,7 @@ export function registerPrivateWriterTableTools(
     depsFactory,
     "native-read-tables",
     "Use when: you need a note's native tables with stable row and column identifiers, before native-delete-table-row, native-insert-table-row, native-set-table-cell, or native-prune-orphan-table; or to find orphaned tables (table attachments no body glyph shows).\n" +
-      "Returns: the note `revision`, and per active table its `identifier`, `glyphCount`, `orphan` flag, `digest` (pass as ifTableDigest), `rowCount`, `columnCount`, `columnIdentifiers`, and `rows` ({identifier, cells}). A table too large or without unique identities reports `readable: false`.\n" +
+      "Returns: the note `revision`, complete `attachmentSnapshot` and its policy, and per active table its `identifier`, `glyphCount`, `orphan` flag, `digest` (pass as ifTableDigest), `rowCount`, `columnCount`, `columnIdentifiers`, and `rows` ({identifier, cells}). A table too large or without unique identities reports `readable: false`.\n" +
       "Do not use when: you only want table text as Markdown or a grid (get-note-tables). Row identifiers here are native CRDT identities and are the only ones the native table tools accept.\n" +
       "Safety: read-only; the writer opens the store with Core Data's read-only option. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer.",
     noteRef,
@@ -113,8 +117,8 @@ export function registerPrivateWriterTableTools(
     server,
     depsFactory,
     "native-delete-table-row",
-    "Use when: removing one exact row from a native Notes table, selected by its native row identifier from native-read-tables. Two phases: call with dryRun: true, show the returned row cells to the user, then apply with dryRun: false plus the plan's `revision` as ifRevision and `tableDigest` as ifTableDigest.\n" +
-      "Returns: dry run: the row's index, cells, and the two tokens (nothing written). Apply: committed/verified, revisionBefore/After, tableDigestBefore/After, the new row count, and sync state (pushScheduled is always false).\n" +
+    "Use when: removing one exact row from a native Notes table, selected by its native row identifier from native-read-tables. Two phases: call with dryRun: true, show the returned row cells to the user, then apply with dryRun: false plus the plan's `revision` as ifRevision and `tableDigest` as ifTableDigest, and `attachmentSnapshot` as ifAttachmentSnapshot.\n" +
+      "Returns: dry run: the row's index, cells, and the three tokens (nothing written). Apply: committed/verified, revisionBefore/After, tableDigestBefore/After, the new row count, and sync state (pushScheduled is always false).\n" +
       "Do not use when: the table is not visible in the body (use native-prune-orphan-table for orphans), or it is the table's only row.\n" +
       "Safety: deletes table content through unsupported private API, attended. Refuses locked, shared, trashed, and still-downloading notes. Refuses on any change to the note or table since the dry run (revision_conflict / attachment_conflict, committed: false). Saves once with optimistic locking and verifies through a fresh Core Data stack that the body is untouched and the table equals the plan. A timeout on apply is indeterminate (indeterminate: true): read the tables again before any retry. " +
       GATE,
@@ -125,6 +129,7 @@ export function registerPrivateWriterTableTools(
       dryRun: z.boolean().describe("true = plan only; false = apply the planned deletion"),
       ifRevision: ifRevision.optional(),
       ifTableDigest: ifTableDigest.optional(),
+      ifAttachmentSnapshot: ifAttachmentSnapshot.optional(),
       ...writerScopeGuardInput(),
       ...nudgeFields,
     },
@@ -139,6 +144,7 @@ export function registerPrivateWriterTableTools(
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          ifAttachmentSnapshot: args.ifAttachmentSnapshot,
           scope: scopeGuardFrom(args),
         },
         deps.writer
@@ -152,9 +158,9 @@ export function registerPrivateWriterTableTools(
     depsFactory,
     "native-insert-table-row",
     "Use when: adding one row to a native Notes table, after a given row or at the end, with optional plain-text cells.\n" +
-      "Returns: committed/verified, the new `rowIdentifier` and `rowIndex`, revisionBefore/After, tableDigestBefore/After (chain tableDigestAfter and revisionAfter into the next table write), and sync state.\n" +
+      "Returns: committed/verified, the new `rowIdentifier` and `rowIndex`, revisionBefore/After, tableDigestBefore/After (read native-read-tables again before the next table write to obtain a new complete attachmentSnapshot), and sync state.\n" +
       "Do not use when: creating a new table (create-table) or the table is an orphan.\n" +
-      "Safety: writes through unsupported private API. Needs ifRevision and ifTableDigest from a fresh native-read-tables and refuses on any change since. Cells are plain text (tabs and \\n allowed). Verified by a fresh read-back. A timeout is indeterminate. " +
+      "Safety: writes through unsupported private API. Needs ifRevision, ifTableDigest and ifAttachmentSnapshot from a fresh native-read-tables and refuses on any change since. Cells are plain text (tabs and \\n allowed). Verified by a fresh read-back. A timeout is indeterminate. " +
       GATE,
     {
       ...noteRef,
@@ -167,6 +173,7 @@ export function registerPrivateWriterTableTools(
         .describe("Cell text by column order; missing trailing cells stay empty"),
       ifRevision,
       ifTableDigest,
+      ifAttachmentSnapshot,
       ...writerScopeGuardInput(),
       ...nudgeFields,
     },
@@ -181,6 +188,7 @@ export function registerPrivateWriterTableTools(
           cells: args.cells,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          ifAttachmentSnapshot: args.ifAttachmentSnapshot,
           scope: scopeGuardFrom(args),
         },
         deps.writer
@@ -196,7 +204,7 @@ export function registerPrivateWriterTableTools(
     "Use when: replacing the text of one cell in a native Notes table, addressed by native row and column identifiers.\n" +
       "Returns: committed/verified, `previousText`, revisionBefore/After, tableDigestBefore/After, and sync state.\n" +
       "Do not use when: the cell holds formatting you want to keep (the new text is plain), or the table is an orphan.\n" +
-      "Safety: writes through unsupported private API. Needs ifRevision and ifTableDigest from a fresh native-read-tables and refuses on any change since. Verified by a fresh read-back. A timeout is indeterminate. " +
+      "Safety: writes through unsupported private API. Needs ifRevision, ifTableDigest and ifAttachmentSnapshot from a fresh native-read-tables and refuses on any change since. Verified by a fresh read-back. A timeout is indeterminate. " +
       GATE,
     {
       ...noteRef,
@@ -206,6 +214,7 @@ export function registerPrivateWriterTableTools(
       text: cellText.describe("New plain text for the cell; may be empty"),
       ifRevision,
       ifTableDigest,
+      ifAttachmentSnapshot,
       ...writerScopeGuardInput(),
       ...nudgeFields,
     },
@@ -221,6 +230,7 @@ export function registerPrivateWriterTableTools(
           text: args.text,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          ifAttachmentSnapshot: args.ifAttachmentSnapshot,
           scope: scopeGuardFrom(args),
         },
         deps.writer
@@ -233,7 +243,7 @@ export function registerPrivateWriterTableTools(
     server,
     depsFactory,
     "native-prune-orphan-table",
-    "Use when: removing one orphaned table from a note: an active table attachment that native-read-tables reports with `orphan: true` (no glyph in the body, so Notes does not show it, but it still syncs). Two phases: dryRun: true, show the plan (row/column counts and first row) to the user, then apply with dryRun: false plus the plan's `revision` and `tableDigest`.\n" +
+    "Use when: removing one orphaned table from a note: an active table attachment that native-read-tables reports with `orphan: true` (no glyph in the body, so Notes does not show it, but it still syncs). Two phases: dryRun: true, show the plan (row/column counts and first row) to the user, then apply with dryRun: false plus the plan's `revision`, `tableDigest`, and `attachmentSnapshot`.\n" +
       "Returns: dry run: the plan and tokens (nothing written). Apply: committed/verified, `removedTableIdentifier`, active table counts before and after, revisionBefore/After, and sync state.\n" +
       "Do not use when: the table is visible in the body (the writer refuses), or you want to delete a visible table.\n" +
       "Safety: tombstones the attachment the way Notes deletes one (it goes away on other devices once Notes uploads); the body is never edited. Attended and guarded like native-delete-table-row; verified by a fresh read-back. The note `revision` does not change, because the body and modification date do not. " +
@@ -244,6 +254,7 @@ export function registerPrivateWriterTableTools(
       dryRun: z.boolean().describe("true = plan only; false = apply the planned prune"),
       ifRevision: ifRevision.optional(),
       ifTableDigest: ifTableDigest.optional(),
+      ifAttachmentSnapshot: ifAttachmentSnapshot.optional(),
       ...writerScopeGuardInput(),
       ...nudgeFields,
     },
@@ -257,6 +268,7 @@ export function registerPrivateWriterTableTools(
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
           ifTableDigest: args.ifTableDigest,
+          ifAttachmentSnapshot: args.ifAttachmentSnapshot,
           scope: scopeGuardFrom(args),
         },
         deps.writer

@@ -53,6 +53,24 @@ function handlerBody(name: string): string {
 }
 
 describe("private writer source contract", () => {
+  it("captures and requires the reviewed complete snapshot before edit/compose materialization or no-op", () => {
+    const edit = handlerBody("HandleEditNote");
+    expect(edit).toMatch(/RequireAttachmentSnapshot\(request\)/);
+    expect(
+      edit.indexOf("ifAttachmentSnapshot isEqualToString:plan.attachmentSnapshot")
+    ).toBeLessThan(edit.indexOf("if (!plan.wouldChange)"));
+    expect(edit.indexOf("FreshFrozenAttachments(store, identifier")).toBeLessThan(
+      edit.indexOf("MaterializeReplacementFiles")
+    );
+    const compose = handlerBody("HandleComposeNote");
+    expect(compose.indexOf("FrozenAttachments(note, existing")).toBeLessThan(
+      compose.indexOf("ComposePlanDigest")
+    );
+    expect(compose.indexOf("FreshFrozenAttachments(store, identifier")).toBeLessThan(
+      compose.indexOf("MaterializeObjects")
+    );
+    expect(compose).toMatch(/RequireAttachmentSnapshot\(request\)/);
+  });
   it("offers exactly the actions the client table lists", () => {
     const names = actionRows().map((row) => row.name);
     expect(new Set(names)).toEqual(new Set(Object.keys(WRITER_ACTIONS)));
@@ -282,7 +300,7 @@ describe("private writer source contract", () => {
     expect(handlerBody("HandlePlanEdit")).toMatch(/PlanEdit\([^;]*nil, request\)/);
     expect(apply).toMatch(/PlanEdit\([^;]*ifRevision, request\)/);
     expect(CODE).toMatch(
-      /PlanDigest\(identifier, plan\.revisionBefore, operations, requireNonSystemPaper, plan\.files, request\)/
+      /PlanDigest\(identifier, plan\.revisionBefore, operations, requireNonSystemPaper, plan\.files, request, plan\.attachmentSnapshot\)/
     );
   });
 

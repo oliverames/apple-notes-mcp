@@ -44,7 +44,7 @@ import { z } from "zod";
 
 const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
 const REV = `r1:${"a".repeat(64)}`;
-const PLAN = `p3:${"b".repeat(64)}`;
+const PLAN = `p4:${"b".repeat(64)}`;
 const SOURCE = "// fake writer source\n";
 
 const FAKE_WRITER = `#!/usr/bin/env node
@@ -81,7 +81,7 @@ process.stdin.on("end", () => {
       out({ status: "ok", identifier: req.identifier, echo: req });
     case "plan_edit":
     case "edit_note": {
-      const plan = { identifier: req.identifier, revisionBefore: "r1:" + "e".repeat(64), planDigest: "p1:x", operationCount: req.operations.length, targetCount: 1, operations: [{ index: 0, op: req.operations[0].op, matchedCount: 1, targets: [{ paragraphIndex: 2, paragraphStyle: "body", location: 40, length: 5, newLength: 5 }] }], lengthBefore: 100, lengthAfter: 100, unchangedUTF16: 95, wouldChange: mode !== "edit-noop", titleChanged: false, attachmentGlyphs: 1, storeKind: "live", echo: req };
+      const plan = { identifier: req.identifier, revisionBefore: "r1:" + "e".repeat(64), planDigest: "p4:" + "b".repeat(64), attachmentSnapshot: "a1:" + "e".repeat(64), attachmentEvidencePolicy: "complete-sha256-v1:512MiB:stored-attributes:transient-excluded:version-floor-may-rise", operationCount: req.operations.length, targetCount: 1, operations: [{ index: 0, op: req.operations[0].op, matchedCount: 1, targets: [{ paragraphIndex: 2, paragraphStyle: "body", location: 40, length: 5, newLength: 5 }] }], lengthBefore: 100, lengthAfter: 100, unchangedUTF16: 95, wouldChange: mode !== "edit-noop", titleChanged: false, attachmentGlyphs: 1, storeKind: "live", echo: req };
       if (req.action === "plan_edit") out({ status: "planned", dryRun: true, committed: false, ...plan });
       if (mode === "edit-noop") out({ status: "unchanged", dryRun: false, committed: false, revisionAfter: plan.revisionBefore, ...plan });
       if (mode === "edit-attachment") { const id = req.operations[0].selector.identifier; out({ status: "updated", dryRun: false, committed: true, verified: true, revisionAfter: "r1:" + "f".repeat(64), modificationDate: null, title: "t", preservation: { unchangedUTF16: 99, formattingOutsideEditsVerified: true, attachmentGlyphs: 2, attachmentGlyphSequenceVerified: true, attachmentRows: 3, attachmentRowsVerified: true, otherAttachmentRowsUnchanged: 2, removedAttachments: [{ identifier: id, rowStillInNote: true, markedForDeletion: false }] }, cloudSync, pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, ...plan, attachmentGlyphs: 3, attachmentGlyphsAfter: 2, removedAttachments: [id] }); }
@@ -656,6 +656,7 @@ describe("editNote", () => {
         dryRun: false,
         ifRevision: REV,
         ifPlanDigest: PLAN,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
         requireNonSystemPaper: true,
         operations: REPLACE,
       },
@@ -680,12 +681,20 @@ describe("editNote", () => {
       requireNonSystemPaper: true,
       ifRevision: REV,
       ifPlanDigest: PLAN,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
   });
 
   it("reports an unchanged apply as not committed", () => {
     const r = editNote(
-      { identifier: NOTE, dryRun: false, ifRevision: REV, ifPlanDigest: PLAN, operations: REPLACE },
+      {
+        identifier: NOTE,
+        dryRun: false,
+        ifRevision: REV,
+        ifPlanDigest: PLAN,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+        operations: REPLACE,
+      },
       deps({ ...UNVERIFIED, FAKE_MODE: "edit-noop" })
     );
     expect(r).toMatchObject({ status: "unchanged", committed: false });
@@ -705,6 +714,7 @@ describe("editNote", () => {
             dryRun: false,
             ifRevision: REV,
             ifPlanDigest: PLAN,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
             operations: REPLACE,
           },
           deps(ON)
@@ -719,6 +729,7 @@ describe("editNote", () => {
             dryRun: false,
             ifRevision: REV,
             ifPlanDigest: PLAN,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
             operations: REPLACE,
           },
           deps({ APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT: "1" })
@@ -776,6 +787,7 @@ describe("editNote", () => {
           dryRun: false,
           ifRevision: REV,
           ifPlanDigest: PLAN,
+          ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
           operations: REPLACE,
         },
         deps({ ...UNVERIFIED, FAKE_MODE: "edit-side-effect" })
@@ -797,6 +809,7 @@ describe("editNote", () => {
             dryRun: false,
             ifRevision: REV,
             ifPlanDigest: PLAN,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
             operations: REPLACE,
           },
           d
@@ -971,7 +984,14 @@ describe("attachment selector schema", () => {
       },
     ];
     const r = editNote(
-      { identifier: NOTE, dryRun: false, ifRevision: REV, ifPlanDigest: PLAN, operations },
+      {
+        identifier: NOTE,
+        dryRun: false,
+        ifRevision: REV,
+        ifPlanDigest: PLAN,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+        operations,
+      },
       deps({ ...UNVERIFIED, FAKE_MODE: "edit-attachment" })
     );
     expect(r).toMatchObject({
@@ -1251,13 +1271,14 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
 
   it("passes ifPlanDigest on apply only", () => {
     install();
-    const digest = `p3:${"b".repeat(64)}`;
+    const digest = `p4:${"b".repeat(64)}`;
     const r = editNote(
       {
         identifier: NOTE,
         dryRun: false,
         ifRevision: REV,
         ifPlanDigest: digest,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
         operations: REPLACE,
       },
       deps(UNVERIFIED)
@@ -1265,11 +1286,18 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
     expect((r as Record<string, unknown>).echo).toMatchObject({
       action: "edit_note",
       ifPlanDigest: digest,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(
       thrown(() =>
         editNote(
-          { identifier: NOTE, dryRun: true, ifPlanDigest: digest, operations: REPLACE },
+          {
+            identifier: NOTE,
+            dryRun: true,
+            ifPlanDigest: digest,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+            operations: REPLACE,
+          },
           deps(ON)
         )
       ).code
@@ -1306,6 +1334,31 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
     expect(error).toMatchObject({ code: "invalid_request", committed: false });
     expect(error.message).toMatch(/ifPlanDigest/);
     expect(spawned).toBe(false);
+  });
+  it("requires the complete reviewed existing-object receipt even for a no-op", () => {
+    install();
+    const noSpawn = {
+      ...deps({ ...UNVERIFIED, FAKE_MODE: "edit-noop" }),
+      spawn: (() => {
+        throw new Error("must not invoke the writer");
+      }) as PrivateHelperDeps["spawn"],
+    };
+    for (const ifAttachmentSnapshot of [undefined, "a1:bad", `a0:${"e".repeat(64)}`])
+      expect(
+        thrown(() =>
+          editNote(
+            {
+              identifier: NOTE,
+              dryRun: false,
+              ifRevision: REV,
+              ifPlanDigest: PLAN,
+              ifAttachmentSnapshot,
+              operations: REPLACE,
+            },
+            noSpawn
+          )
+        )
+      ).toMatchObject({ code: "invalid_request", committed: false });
   });
 
   it("rejects a well-shaped legacy p2 digest before an edit can spawn", () => {

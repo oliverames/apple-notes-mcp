@@ -45,10 +45,10 @@ process.stdin.on("end", () => {
   const cloudSync = { available: true, inICloudAccount: true };
   const push = { pushScheduled: false, pushState: "awaiting_notes_app", syncHostRunning: true, storeKind: "copy", cloudSync };
   const write = { status: "updated", dryRun: false, committed: true, verified: true, identifier: req.identifier, tableIdentifier: req.tableIdentifier, revisionBefore: req.ifRevision, revisionAfter: rev, tableDigestBefore: req.ifTableDigest, tableDigestAfter: dig, rowCount: 3, columnCount: 2, cloudSync, ...push, echo: req };
-  const plan = { status: "planned", dryRun: true, committed: false, identifier: req.identifier, tableIdentifier: req.tableIdentifier, revision: rev, tableDigest: dig, echo: req };
+  const plan = { status: "planned", dryRun: true, committed: false, identifier: req.identifier, tableIdentifier: req.tableIdentifier, revision: rev, tableDigest: dig, attachmentSnapshot: "a1:" + "e".repeat(64), attachmentEvidencePolicy: "complete-sha256-v1:512MiB:stored-attributes:transient-excluded:version-floor-may-rise", echo: req };
   switch (req.action) {
     case "read_tables":
-      out({ status: "ok", identifier: req.identifier, revision: rev, deletedOrInTrash: false, sharedViaICloud: false, tableCount: 1,
+      out({ status: "ok", identifier: req.identifier, revision: rev, attachmentSnapshot: "a1:" + "e".repeat(64), attachmentEvidencePolicy: "complete-sha256-v1:512MiB:stored-attributes:transient-excluded:version-floor-may-rise", deletedOrInTrash: false, sharedViaICloud: false, tableCount: 1,
         tables: [{ identifier: "${TABLE}", glyphCount: 1, orphan: false, digest: dig, readable: true, rowCount: 1, columnCount: 2,
           columnIdentifiers: ["${COL}", "C2"], rows: [{ identifier: "${ROW}", cells: ["a", "b"] }] }] });
     case "delete_table_row":
@@ -149,6 +149,7 @@ describe("switches", SPAWN_TIMEOUT, () => {
             text: "x",
             ifRevision: REV,
             ifTableDigest: DIGEST,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
           },
           deps({ ...off, ...ALLOW })
         )
@@ -205,7 +206,16 @@ describe("deleteTableRow", SPAWN_TIMEOUT, () => {
   it("gates the apply until live validation", () => {
     expect(TABLE_WRITES_LIVE_VALIDATED).toBe(false);
     const e = caught(() =>
-      deleteTableRow({ ...base, dryRun: false, ifRevision: REV, ifTableDigest: DIGEST }, deps())
+      deleteTableRow(
+        {
+          ...base,
+          dryRun: false,
+          ifRevision: REV,
+          ifTableDigest: DIGEST,
+          ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+        },
+        deps()
+      )
     );
     expect(e).toMatchObject({ code: "not_live_validated", committed: false });
     expect(e.message).toMatch(/native-delete-table-row/);
@@ -213,11 +223,22 @@ describe("deleteTableRow", SPAWN_TIMEOUT, () => {
 
   it("applies with both guards and returns the verified result", () => {
     const r = deleteTableRow(
-      { ...base, dryRun: false, ifRevision: REV, ifTableDigest: DIGEST },
+      {
+        ...base,
+        dryRun: false,
+        ifRevision: REV,
+        ifTableDigest: DIGEST,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+      },
       deps(ALLOW)
     );
     expect(r).toMatchObject({ committed: true, verified: true, rowCount: 3 });
-    expect(r.echo).toMatchObject({ dryRun: false, ifRevision: REV, ifTableDigest: DIGEST });
+    expect(r.echo).toMatchObject({
+      dryRun: false,
+      ifRevision: REV,
+      ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+    });
   });
 
   it("treats a dry-run timeout as a failed read and an apply timeout as indeterminate", () => {
@@ -225,7 +246,16 @@ describe("deleteTableRow", SPAWN_TIMEOUT, () => {
     const read = caught(() => deleteTableRow({ ...base, dryRun: true }, deps(slow)));
     expect(read).toMatchObject({ code: "timeout", committed: undefined });
     const write = caught(() =>
-      deleteTableRow({ ...base, dryRun: false, ifRevision: REV, ifTableDigest: DIGEST }, deps(slow))
+      deleteTableRow(
+        {
+          ...base,
+          dryRun: false,
+          ifRevision: REV,
+          ifTableDigest: DIGEST,
+          ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+        },
+        deps(slow)
+      )
     );
     expect(write).toMatchObject({ code: "timeout", committed: "unknown" });
   });
@@ -233,7 +263,13 @@ describe("deleteTableRow", SPAWN_TIMEOUT, () => {
   it("marks a malformed apply response indeterminate", () => {
     const e = caught(() =>
       deleteTableRow(
-        { ...base, dryRun: false, ifRevision: REV, ifTableDigest: DIGEST },
+        {
+          ...base,
+          dryRun: false,
+          ifRevision: REV,
+          ifTableDigest: DIGEST,
+          ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+        },
         deps({ ...ALLOW, FAKE_MODE: "malformed" })
       )
     );
@@ -242,7 +278,11 @@ describe("deleteTableRow", SPAWN_TIMEOUT, () => {
 });
 
 describe("insertTableRow and setTableCell", SPAWN_TIMEOUT, () => {
-  const guards = { ifRevision: REV, ifTableDigest: DIGEST };
+  const guards = {
+    ifRevision: REV,
+    ifTableDigest: DIGEST,
+    ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+  };
 
   it("inserts at the end or after a row, passing only the fields given", () => {
     const end = insertTableRow(
@@ -313,7 +353,13 @@ describe("pruneOrphanTable", SPAWN_TIMEOUT, () => {
     const plan = pruneOrphanTable({ ...base, dryRun: true }, deps());
     expect(plan).toMatchObject({ status: "planned", glyphCount: 0, activeTableCountBefore: 2 });
     const done = pruneOrphanTable(
-      { ...base, dryRun: false, ifRevision: REV, ifTableDigest: DIGEST },
+      {
+        ...base,
+        dryRun: false,
+        ifRevision: REV,
+        ifTableDigest: DIGEST,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+      },
       deps(ALLOW)
     );
     expect(done).toMatchObject({ removedTableIdentifier: TABLE, activeTableCountAfter: 1 });
@@ -325,11 +371,30 @@ describe("pruneOrphanTable", SPAWN_TIMEOUT, () => {
     ).toBe("invalid_request");
     expect(
       caught(() =>
-        pruneOrphanTable({ ...base, dryRun: false, ifRevision: REV, ifTableDigest: DIGEST }, deps())
+        pruneOrphanTable(
+          {
+            ...base,
+            dryRun: false,
+            ifRevision: REV,
+            ifTableDigest: DIGEST,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+          },
+          deps()
+        )
       ).code
     ).toBe("not_live_validated");
     expect(
-      caught(() => pruneOrphanTable({ ...base, dryRun: true, ifTableDigest: DIGEST }, deps())).code
+      caught(() =>
+        pruneOrphanTable(
+          {
+            ...base,
+            dryRun: true,
+            ifTableDigest: DIGEST,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
+          },
+          deps()
+        )
+      ).code
     ).toBe("invalid_request");
   });
 });

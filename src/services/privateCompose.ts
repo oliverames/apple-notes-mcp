@@ -22,6 +22,8 @@ import { z } from "zod";
 import {
   COMPOSE_LIVE_VALIDATED,
   PrivateWriteError,
+  ATTACHMENT_EVIDENCE_POLICY,
+  attachmentSnapshotToken,
   assertNoteIdentifier,
   callPrivateWriter,
   defaultWriterDeps,
@@ -929,7 +931,7 @@ const summarySchema = z.array(
 );
 
 const REVISION = /^r1:[a-f0-9]{64}$/;
-export const COMPOSE_PLAN_DIGEST = /^c1:[a-f0-9]{64}$/;
+export const COMPOSE_PLAN_DIGEST = /^c2:[a-f0-9]{64}$/;
 
 /** Stable JSON shared with the native writer's sorted-key JSON serialization. */
 function canonicalJson(value: unknown): string {
@@ -945,7 +947,7 @@ function canonicalJson(value: unknown): string {
 
 /** Bind the complete planned request, including each file's captured hash. */
 export function composePlanDigest(fields: Record<string, unknown>): string {
-  return `c1:${createHash("sha256").update(canonicalJson(fields)).digest("hex")}`;
+  return `c2:${createHash("sha256").update(canonicalJson(fields)).digest("hex")}`;
 }
 
 export function assertComposePlanDigest(value: string | undefined, expected: string): void {
@@ -1004,6 +1006,8 @@ export const composePlanSchema = z
     unitStart: z.number().int(),
     revisionBefore: z.string().regex(REVISION),
     planDigest: z.string().regex(COMPOSE_PLAN_DIGEST),
+    attachmentSnapshot: attachmentSnapshotToken,
+    attachmentEvidencePolicy: z.literal(ATTACHMENT_EVIDENCE_POLICY),
     plan: summarySchema,
   })
   .passthrough();
@@ -1056,6 +1060,7 @@ export interface ComposeRequest {
   paragraphs: WireEntry[];
   ifRevision?: string;
   ifPlanDigest?: string;
+  ifAttachmentSnapshot?: string;
   dryRun?: boolean;
   requireNonSystemPaper?: boolean;
   insertBeforeHeading?: InsertBeforeHeading;
@@ -1316,13 +1321,22 @@ export function composeNote(
 ): ComposePlan | ComposeResult {
   assertNoteIdentifier(request.identifier);
   const dryRun = request.dryRun === true;
-  if (dryRun && (request.ifRevision !== undefined || request.ifPlanDigest !== undefined))
-    throw invalid("A dry run does not take ifRevision or ifPlanDigest");
+  if (
+    dryRun &&
+    (request.ifRevision !== undefined ||
+      request.ifPlanDigest !== undefined ||
+      request.ifAttachmentSnapshot !== undefined)
+  )
+    throw invalid("A dry run does not take ifRevision, ifPlanDigest or ifAttachmentSnapshot");
   if (!dryRun) {
     if (!request.ifRevision || !REVISION.test(request.ifRevision))
       throw invalid("ifRevision (the revisionBefore of a dry run) is required to apply");
     if (!request.ifPlanDigest || !COMPOSE_PLAN_DIGEST.test(request.ifPlanDigest))
       throw invalid("ifPlanDigest (the planDigest of an identical dry run) is required to apply");
+    if (!attachmentSnapshotToken.safeParse(request.ifAttachmentSnapshot).success)
+      throw invalid(
+        "ifAttachmentSnapshot (the complete existing-attachment receipt of an identical dry run) is required to apply"
+      );
     assertComposeWritesAllowed(deps.env);
   }
   if (request.insertBeforeHeading && request.mode !== "append")
@@ -1344,13 +1358,22 @@ export function composeNote(
   if (!dryRun)
     assertComposePlanDigest(
       request.ifPlanDigest,
-      composePlanDigest({ ...fields, ifRevision: request.ifRevision })
+      composePlanDigest({
+        ...fields,
+        ifRevision: request.ifRevision,
+        attachmentSnapshot: request.ifAttachmentSnapshot,
+        attachmentEvidencePolicy: ATTACHMENT_EVIDENCE_POLICY,
+      })
     );
   const wireFields = {
     ...fields,
     ...(dryRun
       ? { dryRun: true }
-      : { ifRevision: request.ifRevision, ifPlanDigest: request.ifPlanDigest }),
+      : {
+          ifRevision: request.ifRevision,
+          ifPlanDigest: request.ifPlanDigest,
+          ifAttachmentSnapshot: request.ifAttachmentSnapshot,
+        }),
   };
 
   assertWriterRequestSize(wireFields);
@@ -1359,7 +1382,15 @@ export function composeNote(
     const response = callPrivateWriter("compose_note", wireFields, deps, { dryRun });
     if (dryRun) {
       const plan = parseWriterResult(composePlanSchema, response, false);
-      if (plan.planDigest !== composePlanDigest({ ...fields, ifRevision: plan.revisionBefore }))
+      if (
+        plan.planDigest !==
+        composePlanDigest({
+          ...fields,
+          ifRevision: plan.revisionBefore,
+          attachmentSnapshot: plan.attachmentSnapshot,
+          attachmentEvidencePolicy: plan.attachmentEvidencePolicy,
+        })
+      )
         throw new PrivateWriteError(
           "invalid_response",
           "The writer's plan digest differs from the requested content",

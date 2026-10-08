@@ -5,11 +5,11 @@
  * column has a stable native identifier, so every action here selects rows,
  * columns, and tables by identifier, never by position alone.
  *
- * Writes use two compare-and-swap tokens: `ifRevision` (the note's revision,
+ * Writes use three compare-and-swap tokens: `ifRevision` (the note's revision,
  * covering the body) and `ifTableDigest` (the table attachment's serialized
- * document). Row deletion and orphan pruning are two-phase: a dry run opens
- * the store read-only and returns the plan and both tokens, and the apply
- * must present them unchanged. Every apply follows the writer contract in
+ * document), plus ifAttachmentSnapshot (every existing attachment/media/inline row and complete file bytes). Row deletion and orphan pruning are two-phase: a dry run opens
+ * the store read-only and returns the plan and all three tokens, and the apply
+ * must present them unchanged. Snapshot evidence refuses unavailable, drifting, nonregular or cumulatively over-budget files before materialization. Every apply follows the writer contract in
  * privateWriter.ts (both switches, the live-validation gate, a fresh
  * read-back, and `committed` on every failure).
  *
@@ -19,6 +19,8 @@ import { z } from "zod";
 import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
 import {
   PrivateWriteError,
+  ATTACHMENT_EVIDENCE_POLICY,
+  attachmentSnapshotToken,
   TABLE_WRITES_LIVE_VALIDATED,
   assertNoteIdentifier,
   callPrivateWriter,
@@ -58,6 +60,8 @@ export const readTablesSchema = z
     status: z.literal("ok"),
     identifier: z.string(),
     revision,
+    attachmentSnapshot: attachmentSnapshotToken,
+    attachmentEvidencePolicy: z.literal(ATTACHMENT_EVIDENCE_POLICY),
     deletedOrInTrash: z.boolean(),
     sharedViaICloud: z.boolean(),
     tableCount: z.number().int(),
@@ -74,6 +78,8 @@ const planBase = {
   tableIdentifier: z.string(),
   revision,
   tableDigest,
+  attachmentSnapshot: attachmentSnapshotToken,
+  attachmentEvidencePolicy: z.literal(ATTACHMENT_EVIDENCE_POLICY),
 };
 
 export const tableWriteResultSchema = z
@@ -154,6 +160,7 @@ function assertUuid(value: string, field: string): void {
 interface Guards {
   ifRevision?: string;
   ifTableDigest?: string;
+  ifAttachmentSnapshot?: string;
   /** Folder preconditions, checked by the writer just before the save (and in a dry run). */
   scope?: ScopeGuard;
 }
@@ -165,20 +172,35 @@ function assertGuards(guards: Guards): asserts guards is Required<Guards> {
     throw invalid(
       "ifTableDigest must be the table `digest` from native-read-tables or `tableDigest` from a dry run"
     );
+  if (!attachmentSnapshotToken.safeParse(guards.ifAttachmentSnapshot).success)
+    throw invalid(
+      "ifAttachmentSnapshot must be the complete attachmentSnapshot from native-read-tables or a dry run"
+    );
 }
 
 /** A dry run carries no guards; an apply carries both. */
 function modeFields(dryRun: boolean, guards: Guards): Record<string, unknown> {
   if (dryRun) {
-    if (guards.ifRevision !== undefined || guards.ifTableDigest !== undefined)
-      throw invalid("ifRevision and ifTableDigest are only accepted with dryRun: false");
+    if (
+      guards.ifRevision !== undefined ||
+      guards.ifTableDigest !== undefined ||
+      guards.ifAttachmentSnapshot !== undefined
+    )
+      throw invalid(
+        "ifRevision, ifTableDigest and ifAttachmentSnapshot are only accepted with dryRun: false"
+      );
     return { dryRun: true };
   }
   assertGuards(guards);
-  return { dryRun: false, ifRevision: guards.ifRevision, ifTableDigest: guards.ifTableDigest };
+  return {
+    dryRun: false,
+    ifRevision: guards.ifRevision,
+    ifTableDigest: guards.ifTableDigest,
+    ifAttachmentSnapshot: guards.ifAttachmentSnapshot,
+  };
 }
 
-/** Every active table in a note, with native identifiers and both tokens. Read-only. */
+/** Every active table in a note, with native identifiers and all three tokens. Read-only. */
 export function readTables(
   identifier: string,
   deps: PrivateHelperDeps = defaultWriterDeps()
@@ -246,6 +268,7 @@ export function insertTableRow(
     tableIdentifier: request.tableIdentifier,
     ifRevision: request.ifRevision,
     ifTableDigest: request.ifTableDigest,
+    ifAttachmentSnapshot: request.ifAttachmentSnapshot,
   };
   if (request.afterRowIdentifier !== undefined)
     fields.afterRowIdentifier = request.afterRowIdentifier;
@@ -289,6 +312,7 @@ export function setTableCell(
         text: request.text,
         ifRevision: request.ifRevision,
         ifTableDigest: request.ifTableDigest,
+        ifAttachmentSnapshot: request.ifAttachmentSnapshot,
         ...writerScopeFields(request.scope),
       },
       deps

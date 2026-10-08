@@ -29,7 +29,7 @@
 //
 // Build (src/services/privateWriterBuild.ts; `apple-notes-mcp setup --native-writer`):
 //   xcrun clang -fobjc-arc -O2 -Wall -framework Foundation -framework CoreData \
-//     -framework AppKit -framework PencilKit -DHELPER_SOURCE_SHA256='"<sha256 of this file>"' \
+//     -framework AppKit -framework PencilKit -DHELPER_SOURCE_SHA256='"<sha256 of packaged source closure>"' \
 //     -o apple-notes-private-writer apple-notes-private-writer.m
 //
 // Adding an action: write a `static NSDictionary *HandleX(NSDictionary *)`,
@@ -924,6 +924,15 @@ static NSString *RequireString(NSDictionary *request, NSString *key) {
   return value;
 }
 
+static NSString *RequireAttachmentSnapshot(NSDictionary *request) {
+  NSString *token = RequireString(request, @"ifAttachmentSnapshot");
+  NSRegularExpression *shape = [NSRegularExpression regularExpressionWithPattern:@"^a1:[a-f0-9]{64}$"
+                                                                        options:0 error:nil];
+  if ([shape numberOfMatchesInString:token options:0 range:NSMakeRange(0, token.length)] != 1)
+    Fail(@"invalid_request", @"`ifAttachmentSnapshot` must be the attachmentSnapshot from a fresh plan or read", nil);
+  return token;
+}
+
 static NSString *RequireIdentifier(NSDictionary *request) {
   NSString *identifier = RequireString(request, @"identifier");
   if (!IsUUID(identifier)) Fail(@"invalid_request", @"`identifier` must be a Notes UUID", nil);
@@ -983,9 +992,9 @@ static const ActionSpec kActions[] = {
     {"append_plain_text", "identifier,text,ifRevision", HandleAppendPlainText},
     {"read_sync_state", "identifiers", HandleReadSyncState},
     {"plan_edit", "identifier,requireNonSystemPaper,operations", HandlePlanEdit},
-    {"edit_note", "identifier,ifRevision,requireNonSystemPaper,operations,ifPlanDigest", HandleEditNote},
+    {"edit_note", "identifier,ifRevision,requireNonSystemPaper,operations,ifPlanDigest,ifAttachmentSnapshot", HandleEditNote},
     {"compose_note",
-     "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading,ifPlanDigest",
+     "identifier,mode,paragraphs,ifRevision,dryRun,requireNonSystemPaper,insertBeforeHeading,ifPlanDigest,ifAttachmentSnapshot",
      HandleComposeNote},
     {"read_checklist", "identifier", HandleReadChecklist},
     {"set_checklist_item", "identifier,todoIdentifier,done,ifRevision", HandleSetChecklistItem},
@@ -1724,6 +1733,9 @@ static NSDictionary<NSString *, NSManagedObject *> *AttachmentRows(NSManagedObje
     NSString *key = [identifier isKindOfClass:[NSString class]]
                         ? [identifier lowercaseString]
                         : attachment.objectID.URIRepresentation.absoluteString;
+    if (rows[key])
+      Fail(@"attachment_evidence_incomplete", @"Attachment identities are duplicated; nothing was changed",
+           @{@"committed" : @NO});
     rows[key] = attachment;
   }
   return rows;
@@ -3139,13 +3151,22 @@ static void Segments(NSArray<NSDictionary *> *targets, NSUInteger oldLength, NSM
     ]];
 }
 
+typedef struct {
+  NSUInteger attachments, inlineAttachments, filesHashed, filesBySize, filesUnreachable;
+} FrozenStats;
+static NSDictionary *FrozenAttachments(NSManagedObject *note, NSAttributedString *body,
+                                      NSSet<NSString *> *exclude, FrozenStats *stats);
+static NSArray<NSString *> *FrozenDrift(NSDictionary *before, NSDictionary *after, NSMutableArray *raised);
+static NSDictionary *FrozenReport(FrozenStats stats);
+static NSDictionary *FreshFrozenAttachments(StoreLocation store, NSString *identifier, NSSet *exclude);
+
 // A digest of the reviewed note snapshot and semantic request: the note
 // identifier and revision, the operations, requireNonSystemPaper, the folder scope policy,
-// and the SHA-256 of each
+// the complete existing-attachment snapshot and evidence policy, and the SHA-256 of each
 // replacement file in plan order. edit_note's `ifPlanDigest` refuses an apply
 // whose request or files differ from the dry run's.
 static NSString *PlanDigest(NSString *identifier, NSString *revisionBefore, NSArray *operations, BOOL requireNonSystemPaper,
-                            NSArray<NSDictionary *> *files, NSDictionary *request) {
+                            NSArray<NSDictionary *> *files, NSDictionary *request, NSString *attachmentSnapshot) {
   NSMutableArray *fileDigests = [NSMutableArray array];
   for (NSDictionary *file in files) [fileDigests addObject:file[@"sha256"]];
   NSMutableDictionary *scope = [NSMutableDictionary dictionary];
@@ -3159,10 +3180,12 @@ static NSString *PlanDigest(NSString *identifier, NSString *revisionBefore, NSAr
     @"requireNonSystemPaper" : @(requireNonSystemPaper),
     @"files" : fileDigests,
     @"scope" : scope,
+    @"attachmentSnapshot" : attachmentSnapshot,
+    @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
   };
   NSData *data = [NSJSONSerialization dataWithJSONObject:document options:NSJSONWritingSortedKeys error:nil];
   if (!data) Fail(@"invalid_request", @"The operations cannot be serialized", nil);
-  return [@"p3:" stringByAppendingString:SHA256Hex(data)];
+  return [@"p4:" stringByAppendingString:SHA256Hex(data)];
 }
 
 @interface EditPlan : NSObject
@@ -3177,6 +3200,8 @@ static NSString *PlanDigest(NSString *identifier, NSString *revisionBefore, NSAr
 @property(nonatomic) BOOL wouldChange;
 @property(nonatomic, copy) NSString *revisionBefore;
 @property(nonatomic, strong) NSMutableDictionary *response;
+@property(nonatomic, copy) NSDictionary *frozenAttachments;
+@property(nonatomic, copy) NSString *attachmentSnapshot;
 // The note's attachment rows by lowercased identifier, and the keys of those
 // whose glyph the plan removes from the body.
 @property(nonatomic, copy) NSDictionary<NSString *, NSManagedObject *> *attachmentRows;
@@ -3237,6 +3262,9 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
     Fail(@"unsupported_note", @"The note holds formatting the writer cannot verify after an edit; nothing was changed",
          @{@"committed" : @NO, @"attributes" : unverifiable});
   plan.attachmentRows = AttachmentRows(note);
+  FrozenStats frozenStats;
+  plan.frozenAttachments = FrozenAttachments(note, snapshot, [NSSet set], &frozenStats);
+  plan.attachmentSnapshot = ANMAttachmentSnapshotToken(plan.frozenAttachments);
   NSArray<EditParagraph *> *paragraphs = Paragraphs(snapshot.string);
 
   NSMutableArray *targets = [NSMutableArray array];
@@ -3304,8 +3332,11 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   plan.response = [@{
     @"identifier" : identifier,
     @"revisionBefore" : plan.revisionBefore,
-    @"planDigest" : PlanDigest(identifier, plan.revisionBefore, operations, requireNonSystemPaper, plan.files, request),
+    @"planDigest" : PlanDigest(identifier, plan.revisionBefore, operations, requireNonSystemPaper, plan.files, request, plan.attachmentSnapshot),
     @"requireNonSystemPaper" : @(requireNonSystemPaper),
+    @"attachmentSnapshot" : plan.attachmentSnapshot,
+    @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
+    @"frozenAttachments" : FrozenReport(frozenStats),
     // Attachments and inline objects in the body, adjacent glyphs of one
     // attachment counted once (attachmentGlyphs counts every glyph).
     @"attachmentSpans" : @(AttachmentSpans(snapshot).count),
@@ -3544,6 +3575,7 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   NSArray *operations = EditOperations(request);
   BOOL requireNonSystemPaper = OptionalBool(request, @"requireNonSystemPaper", NO);
   NSString *ifPlanDigest = RequireString(request, @"ifPlanDigest");
+  NSString *ifAttachmentSnapshot = RequireAttachmentSnapshot(request);
   RequireFeature(FeatureEdit);
 
   StoreLocation store = ResolveStore();
@@ -3551,12 +3583,18 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
   EditPlan *plan = PlanEdit(context, store, identifier, operations, requireNonSystemPaper, ifRevision, request);
   NSMutableDictionary *response = plan.response;
   response[@"dryRun"] = @NO;
+  if (![ifAttachmentSnapshot isEqualToString:plan.attachmentSnapshot])
+    Fail(@"attachment_snapshot_mismatch", @"Existing attachments changed since the reviewed plan; nothing was saved",
+         @{@"committed" : @NO, @"attachmentSnapshot" : plan.attachmentSnapshot});
   // The dry run's planDigest: the same identifier, operations,
   // requireNonSystemPaper, folder scope policy, and replacement file bytes.
   if (![ifPlanDigest isEqualToString:response[@"planDigest"]])
     Fail(@"plan_mismatch",
          @"The request or a replacement file differs from the dry run that produced ifPlanDigest; nothing was saved",
          @{@"committed" : @NO, @"planDigest" : response[@"planDigest"]});
+  if (![ifAttachmentSnapshot isEqualToString:ANMAttachmentSnapshotToken(FreshFrozenAttachments(store, identifier, [NSSet set]))])
+    Fail(@"attachment_snapshot_mismatch", @"Existing attachments changed before applying the reviewed plan; nothing was saved",
+         @{@"committed" : @NO});
   if (!plan.wouldChange) {
     response[@"status"] = @"unchanged";
     response[@"committed"] = @NO;
@@ -3575,6 +3613,13 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
       plan.createdObjects = MaterializeReplacementFiles(plan.files, plan.note, mediaContainers);
     }
     ApplyInContext(context, plan, YES);
+    NSArray *attachmentDrift = FrozenDrift(plan.frozenAttachments,
+        FrozenAttachments(plan.note, LoadBody(plan.note, NULL), [NSSet set], NULL), nil);
+    if (!attachmentDrift.count)
+      attachmentDrift = FrozenDrift(plan.frozenAttachments, FreshFrozenAttachments(store, identifier, [NSSet set]), nil);
+    if (attachmentDrift.count)
+      Fail(@"attachment_drift", @"An existing attachment would change; nothing was saved",
+           @{@"committed" : @NO, @"attachmentDrift" : attachmentDrift});
     RequireExpectedChanges(context, @[ plan.note ], [NSSet set]);
     if ([fault isEqualToString:@"fail_before_save"]) {
       [context rollback];
@@ -3613,6 +3658,8 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
     attachmentRows = rowsAfter.count;
     if (!verifyError)
       verifyError = VerifyAttachmentRows(attachmentsBefore, AttachmentRowDigests(rowsAfter), plan);
+    if (!verifyError && FrozenDrift(plan.frozenAttachments, FrozenAttachments(reread, persisted, [NSSet set], NULL), nil).count)
+      verifyError = @"An existing attachment changed during the edit";
     if (!verifyError) verifyError = VerifyReplacementFiles(fresh, reread, plan.files);
     for (NSString *key in plan.removedAttachments) {
       NSManagedObject *row = rowsAfter[key];
@@ -4383,39 +4430,27 @@ static NSString *VerifyObjects(NSManagedObjectContext *fresh, ComposedUnit unit,
 
 #pragma mark Frozen attachments
 
-// Hashing budget for existing attachment files, per fingerprint. Files past
-// it are fingerprinted by size and modification time instead.
+// Complete byte evidence is mandatory, with a cumulative budget per capture.
+// Unavailable, unreadable, nonregular, drifting or over-budget files refuse.
 #define MAX_FROZEN_HASH_BYTES (512LL * 1024 * 1024)
 
-typedef struct {
-  NSUInteger attachments, inlineAttachments, filesHashed, filesBySize, filesUnreachable;
-} FrozenStats;
-
-// Size and content (or size and modification time, past the budget) of one
-// attachment's media file; "none" without media, "unreachable" when the file
-// is not on this Mac.
 static NSString *FrozenFile(NSManagedObject *attachment, long long *budget, FrozenStats *stats) {
-  if (!attachment.entity.relationshipsByName[@"media"] || ![attachment valueForKey:@"media"]) return @"none";
-  NSString *path = MediaFilePath(attachment);
-  struct stat info;
-  if (!path || lstat(path.fileSystemRepresentation, &info) != 0 || !S_ISREG(info.st_mode)) {
-    stats->filesUnreachable++;
-    return @"unreachable";
+  if (!attachment.entity.relationshipsByName[@"media"] || ![attachment valueForKey:@"media"]) {
+    // Only these audited object kinds have no required external file. A file
+    // row with a missing media relationship is incomplete, not byte equality.
+    NSString *uti = [attachment valueForKey:@"typeUTI"];
+    if ([uti isEqualToString:@"com.apple.notes.table"] || [uti isEqualToString:@"public.url"])
+      return @"no-external-file";
+    Fail(@"attachment_evidence_incomplete", @"An attachment that may require file bytes has no media row",
+         @{@"committed" : @NO, @"typeUTI" : OrNull(uti)});
   }
-  if (info.st_size > *budget) {
-    stats->filesBySize++;
-    return [NSString stringWithFormat:@"size:%lld:mtime:%ld.%09ld", (long long)info.st_size,
-                                      (long)info.st_mtimespec.tv_sec, (long)info.st_mtimespec.tv_nsec];
-  }
-  long long size = 0;
-  NSString *digest = FileDigest(path, &size);
-  if (!digest) {
-    stats->filesUnreachable++;
-    return @"unreadable";
-  }
-  *budget -= size;
+  NSError *error = nil;
+  NSDictionary *evidence = ANMCompleteFileEvidence(MediaFilePath(attachment), budget, NULL, &error);
+  if (!evidence)
+    Fail(@"attachment_evidence_incomplete", error.localizedDescription ?: @"Complete attachment bytes are unavailable",
+         @{@"committed" : @NO, @"evidenceComplete" : @NO, @"evidenceFailure" : @(error.code)});
   stats->filesHashed++;
-  return [NSString stringWithFormat:@"%lld:%@", size, digest];
+  return [NSString stringWithFormat:@"%@:%@", evidence[@"bytes"], evidence[@"sha256"]];
 }
 
 static NSString *const kVersionFloorKey = @"minimumSupportedNotesVersion";
@@ -4427,43 +4462,64 @@ static NSString *const kVersionFloorKey = @"minimumSupportedNotesVersion";
 // newer Notes: on a store copy (macOS 27.2, 2026-09-24) inserting a divider
 // raised existing image rows from 0 or 2 to 6. FrozenDrift accepts a raised
 // floor and refuses a lowered one.
+static NSString *FrozenObjectIdentity(NSManagedObject *row) {
+  return row.objectID.URIRepresentation.absoluteString;
+}
+
 static NSString *FrozenRowDigest(NSManagedObject *row, NSString *key, NSMutableDictionary *out) {
-  NSMutableArray *parts = [NSMutableArray array];
+  NSMutableDictionary *values = [NSMutableDictionary dictionary];
+  values[@"objectIdentity"] = FrozenObjectIdentity(row);
+  values[@"entity"] = row.entity.name;
   NSDictionary *attributes = row.entity.attributesByName;
   for (NSString *name in [attributes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
     NSAttributeDescription *attribute = attributes[name];
-    if (attribute.isTransient || attribute.valueTransformerName ||
-        attribute.attributeType == NSTransformableAttributeType)
-      continue;
+    if (attribute.isTransient) continue;
     id value = [row valueForKey:name];
     if ([name isEqualToString:kVersionFloorKey]) {
-      out[[@"version:" stringByAppendingString:key]] = [value isKindOfClass:[NSNumber class]] ? value : @0;
+      if (value && ![value isKindOfClass:[NSNumber class]])
+        Fail(@"attachment_evidence_incomplete", @"An attachment version floor cannot be verified", @{@"committed" : @NO});
+      out[[@"version:" stringByAppendingString:key]] = value ?: @0;
       continue;
     }
-    NSString *canonical;
-    if (!value)
-      canonical = @"nil";
-    else if ([value isKindOfClass:[NSData class]])
-      canonical = [@"d:" stringByAppendingString:SHA256Hex(value)];
-    else
-      canonical = CanonicalValue(value);
-    [parts addObject:[NSString stringWithFormat:@"%@=%@", name, canonical]];
+    id canonical = ANMCanonicalStoredValue(value);
+    if (!canonical)
+      Fail(@"attachment_evidence_incomplete", @"An attachment holds a stored value the writer cannot verify",
+           @{@"committed" : @NO, @"attribute" : name});
+    values[name] = canonical;
   }
-  id owner = row.entity.relationshipsByName[@"note"] ? [row valueForKey:@"note"] : nil;
-  id ownerIdentifier = owner ? ([owner valueForKey:@"identifier"] ?: @"?") : @"nil";
-  [parts addObject:[NSString stringWithFormat:@"note=%@", ownerIdentifier]];
-  return SHA256Hex([[parts componentsJoinedByString:@"\x1f"] dataUsingEncoding:NSUTF8StringEncoding]);
+  NSMutableDictionary *relationships = [NSMutableDictionary dictionary];
+  for (NSString *name in row.entity.relationshipsByName) {
+    NSRelationshipDescription *relationship = row.entity.relationshipsByName[name];
+    if (relationship.isTransient) continue;
+    id related = [row valueForKey:name];
+    NSMutableArray *identities = [NSMutableArray array];
+    if (relationship.isToMany) {
+      for (NSManagedObject *item in related) [identities addObject:FrozenObjectIdentity(item)];
+      if (!relationship.isOrdered) [identities sortUsingSelector:@selector(compare:)];
+    } else if (related) {
+      [identities addObject:FrozenObjectIdentity(related)];
+    }
+    relationships[name] = identities;
+  }
+  values[@"relationships"] = relationships;
+  NSData *data = [NSJSONSerialization dataWithJSONObject:values options:NSJSONWritingSortedKeys error:nil];
+  if (!data) Fail(@"attachment_evidence_incomplete", @"Attachment values cannot be canonicalized", @{@"committed" : @NO});
+  return SHA256Hex(data);
 }
 
 // One fingerprint per existing attachment of the note: every ICAttachment row
 // (identifier, type, payload metadata, mergeable data such as a table's
-// cells, owning note; see AttachmentRowDigest), its media row, and its file
-// bytes where the file is on this Mac; every inline attachment row (tags,
+// cells, owning note; see AttachmentRowDigest), its media row, and its complete file
+// bytes; every inline attachment row (tags,
 // mentions, dividers, links); and the order of the attachment glyphs in the
 // body. Objects this compose created (`exclude`, lowercased identifiers) are
 // left out, so the same call proves before and after that nothing else moved.
-static NSDictionary<NSString *, NSString *> *FrozenAttachments(NSManagedObject *note, NSAttributedString *body,
+static NSDictionary *FrozenAttachments(NSManagedObject *note, NSAttributedString *body,
                                                                NSSet<NSString *> *exclude, FrozenStats *stats) {
+  if (![body isKindOfClass:[NSAttributedString class]])
+    Fail(@"attachment_evidence_incomplete", @"The attachment glyph sequence cannot be loaded", @{@"committed" : @NO});
+  if (!note.entity.relationshipsByName[@"attachments"] || !note.entity.relationshipsByName[@"inlineAttachments"])
+    Fail(@"attachment_evidence_incomplete", @"The complete attachment ownership relationships are unavailable", @{@"committed" : @NO});
   NSMutableDictionary *out = [NSMutableDictionary dictionary];
   FrozenStats local = {0, 0, 0, 0, 0};
   long long budget = MAX_FROZEN_HASH_BYTES;
@@ -4479,23 +4535,37 @@ static NSDictionary<NSString *, NSString *> *FrozenAttachments(NSManagedObject *
                          FrozenFile(row, &budget, &local)];
     local.attachments++;
   }
+  NSMutableSet *allIdentities = [NSMutableSet setWithArray:rows.allKeys];
   if (note.entity.relationshipsByName[@"inlineAttachments"]) {
     for (NSManagedObject *inlineRow in [note valueForKey:@"inlineAttachments"]) {
       id identifier = [inlineRow valueForKey:@"identifier"];
       NSString *key = [identifier isKindOfClass:[NSString class]] ? [identifier lowercaseString]
                                                                    : inlineRow.objectID.URIRepresentation.absoluteString;
+      if ([allIdentities containsObject:key])
+        Fail(@"attachment_evidence_incomplete", @"Attachment identities are duplicated across rows or kinds", @{@"committed" : @NO});
+      [allIdentities addObject:key];
       if ([exclude containsObject:key]) continue;
       NSString *inlineKey = [@"inline:" stringByAppendingString:key];
+      if (out[inlineKey])
+        Fail(@"attachment_evidence_incomplete", @"Inline attachment identities are duplicated", @{@"committed" : @NO});
       out[inlineKey] = FrozenRowDigest(inlineRow, inlineKey, out);
       local.inlineAttachments++;
     }
   }
   NSMutableArray *glyphs = [NSMutableArray array];
-  for (NSDictionary *entry in AttachmentGlyphEntries(body)) {
+  NSArray *glyphEntries = AttachmentGlyphEntries(body);
+  NSUInteger markerCount = 0;
+  for (NSUInteger i = 0; i < body.length; i++)
+    if ([body.string characterAtIndex:i] == 0xFFFC) markerCount++;
+  if (markerCount != glyphEntries.count)
+    Fail(@"attachment_evidence_incomplete", @"An attachment marker has no identifiable glyph", @{@"committed" : @NO});
+  for (NSDictionary *entry in glyphEntries) {
     NSString *identifier = [entry[@"identifier"] lowercaseString];
-    if (![exclude containsObject:identifier]) [glyphs addObject:identifier];
+    if (!identifier.length || entry[@"uti"] == [NSNull null] || ![allIdentities containsObject:identifier])
+      Fail(@"attachment_evidence_incomplete", @"An attachment glyph cannot be identified", @{@"committed" : @NO});
+    if (![exclude containsObject:identifier]) [glyphs addObject:@{@"identifier" : identifier, @"uti" : entry[@"uti"]}];
   }
-  out[@"glyphs"] = [glyphs componentsJoinedByString:@","];
+  out[@"glyphs"] = SHA256Hex([NSJSONSerialization dataWithJSONObject:glyphs options:NSJSONWritingSortedKeys error:nil]);
   if (stats) *stats = local;
   return out;
 }
@@ -4519,11 +4589,20 @@ static NSArray<NSString *> *FrozenDrift(NSDictionary *before, NSDictionary *afte
   return [drift sortedArrayUsingSelector:@selector(compare:)];
 }
 
+static NSDictionary *FreshFrozenAttachments(StoreLocation store, NSString *identifier, NSSet *exclude) {
+  NSManagedObjectContext *fresh = OpenContext(store, YES);
+  NSManagedObject *note = FetchNote(fresh, identifier);
+  return FrozenAttachments(note, LoadBody(note, NULL), exclude, NULL);
+}
+
 static NSDictionary *FrozenReport(FrozenStats stats) {
   return @{
     @"attachments" : @(stats.attachments),
     @"inlineAttachments" : @(stats.inlineAttachments),
     @"filesHashed" : @(stats.filesHashed),
+    @"evidenceComplete" : @YES,
+    @"evidencePolicy" : ANMAttachmentEvidencePolicy,
+    @"hashBudgetBytes" : @(MAX_FROZEN_HASH_BYTES),
     @"filesBySizeAndDate" : @(stats.filesBySize),
     @"filesNotOnThisMac" : @(stats.filesUnreachable),
   };
@@ -4725,10 +4804,11 @@ static NSArray *ReadBackSummary(NSArray *signatures) {
 // gWriteRequest without gSaveAttempted), so the client never reports a
 // refused compose as indeterminate. Failures from the save on set committed
 // themselves.
-static NSString *ComposePlanDigest(NSDictionary *request, NSString *revisionBefore) {
+static NSString *ComposePlanDigest(NSDictionary *request, NSString *revisionBefore, NSString *attachmentSnapshot) {
   NSMutableDictionary *canonical = [@{
     @"identifier" : request[@"identifier"], @"mode" : request[@"mode"],
     @"paragraphs" : request[@"paragraphs"], @"ifRevision" : revisionBefore,
+    @"attachmentSnapshot" : attachmentSnapshot, @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
   } mutableCopy];
   if ([request[@"requireNonSystemPaper"] boolValue]) canonical[@"requireNonSystemPaper"] = @YES;
   for (NSString *key in @[ @"insertBeforeHeading", @"ifFolderId", @"ifAncestorFolderId",
@@ -4739,7 +4819,7 @@ static NSString *ComposePlanDigest(NSDictionary *request, NSString *revisionBefo
   NSData *data = [NSJSONSerialization dataWithJSONObject:canonical
       options:NSJSONWritingSortedKeys | NSJSONWritingWithoutEscapingSlashes error:&error];
   if (!data) Fail(@"invalid_request", @"The compose plan cannot be canonicalized", @{@"committed" : @NO});
-  return [@"c1:" stringByAppendingString:SHA256Hex(data)];
+  return [@"c2:" stringByAppendingString:SHA256Hex(data)];
 }
 
 static NSDictionary *HandleComposeNote(NSDictionary *request) {
@@ -4752,12 +4832,13 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
   BOOL requireNonSystemPaper = ComposeBool(request, @"requireNonSystemPaper", @"Request");
   NSString *ifRevision = nil;
   if (dryRun) {
-    if (request[@"ifRevision"] || request[@"ifPlanDigest"])
-      Fail(@"invalid_request", @"`dryRun` does not take `ifRevision` or `ifPlanDigest`", nil);
+    if (request[@"ifRevision"] || request[@"ifPlanDigest"] || request[@"ifAttachmentSnapshot"])
+      Fail(@"invalid_request", @"`dryRun` does not take `ifRevision`, `ifPlanDigest` or `ifAttachmentSnapshot`", nil);
   } else {
     ifRevision = RequireString(request, @"ifRevision");
   }
   NSString *ifPlanDigest = dryRun ? nil : RequireString(request, @"ifPlanDigest");
+  NSString *ifAttachmentSnapshot = dryRun ? nil : RequireAttachmentSnapshot(request);
   NSDictionary *beforeHeading = request[@"insertBeforeHeading"];
   if (beforeHeading) {
     if (![beforeHeading isKindOfClass:[NSDictionary class]])
@@ -4793,11 +4874,6 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     Fail(@"revision_conflict", @"The note changed since ifRevision was read",
          @{@"committed" : @NO, @"currentRevision" : revisionBefore});
 
-  NSString *planDigest = ComposePlanDigest(request, revisionBefore);
-  if (!dryRun && ![ifPlanDigest isEqualToString:planDigest])
-    Fail(@"plan_mismatch", @"The compose request differs from its reviewed plan; nothing was saved",
-         @{@"committed" : @NO, @"planDigest" : planDigest});
-
   id ms = Send(note, "mergeableString");
   NSAttributedString *existing = ms ? Send(ms, "attributedString") : nil;
   if (![existing isKindOfClass:[NSAttributedString class]])
@@ -4824,6 +4900,14 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
   // changes; the same fingerprint is taken again before and after the save.
   FrozenStats frozenStats;
   NSDictionary *frozenBefore = FrozenAttachments(note, existing, [NSSet set], &frozenStats);
+  NSString *attachmentSnapshot = ANMAttachmentSnapshotToken(frozenBefore);
+  if (!dryRun && ![ifAttachmentSnapshot isEqualToString:attachmentSnapshot])
+    Fail(@"attachment_snapshot_mismatch", @"Existing attachments changed since the reviewed plan; nothing was saved",
+         @{@"committed" : @NO, @"attachmentSnapshot" : attachmentSnapshot});
+  NSString *planDigest = ComposePlanDigest(request, revisionBefore, attachmentSnapshot);
+  if (!dryRun && ![ifPlanDigest isEqualToString:planDigest])
+    Fail(@"plan_mismatch", @"The compose request differs from its reviewed plan; nothing was saved",
+         @{@"committed" : @NO, @"planDigest" : planDigest});
 
   NSArray *created = @[];
   NSMutableAttributedString *insertion = nil;
@@ -4845,6 +4929,10 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
                 if (!gSaveAttempted) earlySaves++;
               }];
   @try {
+    // Recapture through a fresh read-only stack before materializing any row/file.
+    if (!dryRun && ![ifAttachmentSnapshot isEqualToString:ANMAttachmentSnapshotToken(FreshFrozenAttachments(store, identifier, [NSSet set]))])
+      Fail(@"attachment_snapshot_mismatch", @"Existing attachments changed before applying the reviewed plan; nothing was saved",
+           @{@"committed" : @NO});
     // Objects are created only on apply, after the revision check.
     created = (!dryRun && hasObjects) ? MaterializeObjects(unit, note) : @[];
     for (NSDictionary *object in created) [createdKeys addObject:[object[@"identifier"] lowercaseString]];
@@ -4863,6 +4951,8 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
       @"objectURI" : note.objectID.URIRepresentation.absoluteString,
       @"revisionBefore" : revisionBefore,
       @"planDigest" : planDigest,
+      @"attachmentSnapshot" : attachmentSnapshot,
+      @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
       @"requiredNonSystemPaper" : @(requireNonSystemPaper),
       @"storeKind" : store.isCopy ? @"copy" : @"live",
       @"frozenAttachments" : FrozenReport(frozenStats),
@@ -4901,6 +4991,8 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     NSArray *drift = context.deletedObjects.count ? @[ @"deleted objects" ] : @[];
     if (!drift.count)
       drift = FrozenDrift(frozenBefore, FrozenAttachments(note, LoadBody(note, NULL), createdKeys, NULL), nil);
+    if (!drift.count)
+      drift = FrozenDrift(frozenBefore, FreshFrozenAttachments(store, identifier, createdKeys), nil);
     if (drift.count)
       Fail(@"attachment_drift", @"An existing attachment would change; nothing was saved",
            @{@"committed" : @NO, @"attachmentDrift" : drift});

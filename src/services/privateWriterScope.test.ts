@@ -180,7 +180,8 @@ describe("every writer write forwards the scope guard", () => {
             identifier: NOTE,
             dryRun: false,
             ifRevision: REV,
-            ifPlanDigest: `p3:${"b".repeat(64)}`,
+            ifPlanDigest: `p4:${"b".repeat(64)}`,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
             operations: [{ op: "replace", selector: { text: "a" }, replacement: { text: "b" } }],
             scope: GUARD,
           },
@@ -264,6 +265,7 @@ describe("every writer write forwards the scope guard", () => {
             tableIdentifier: UUID2,
             ifRevision: REV,
             ifTableDigest: DIGEST,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
             scope: GUARD,
           },
           d
@@ -281,6 +283,7 @@ describe("every writer write forwards the scope guard", () => {
             text: "x",
             ifRevision: REV,
             ifTableDigest: DIGEST,
+            ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
             scope: GUARD,
           },
           d

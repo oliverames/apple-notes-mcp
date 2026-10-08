@@ -35,7 +35,7 @@ const ALLOW = {
   APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE: "1",
   APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING: "1",
 };
-const PLAN = `c1:${"a".repeat(64)}`;
+const PLAN = `c2:${"a".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 afterEach(() => {
   for (const path of temporaryDirectories.splice(0)) rmSync(path, { recursive: true, force: true });
@@ -63,7 +63,9 @@ function runPlannedComposeNote(
     return runComposeNote({ ...args, ifPlanDigest: String(plan.planDigest) }, rt);
   }
   return runComposeNote(
-    !args.dryRun && args.ifRevision && !args.ifPlanDigest ? { ...args, ifPlanDigest: PLAN } : args,
+    !args.dryRun && args.ifRevision && !args.ifPlanDigest
+      ? { ...args, ifPlanDigest: PLAN, ifAttachmentSnapshot: `a1:${"e".repeat(64)}` }
+      : args,
     rt
   );
 }
@@ -85,7 +87,18 @@ const available = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(composeNote).mockReturnValue({ status: "updated", committed: true } as never);
+  vi.mocked(composeNote).mockImplementation((request) =>
+    request.dryRun
+      ? ({
+          status: "planned",
+          committed: false,
+          revisionBefore: REV,
+          planDigest: PLAN,
+          attachmentSnapshot: `a1:${"e".repeat(64)}`,
+          frozenAttachments: { attachments: 0, inlineAttachments: 0 },
+        } as never)
+      : ({ status: "updated", committed: true } as never)
+  );
   vi.mocked(readWriterNoteState).mockReturnValue({ revision: REV } as never);
 });
 
@@ -113,7 +126,7 @@ describe("compose-note append and prepend", () => {
       },
       { env: ALLOW }
     );
-    expect(r).toMatchObject({ status: "updated" });
+    expect(r).toMatchObject({ status: "planned" });
   });
 
   it("applies with ifRevision, resolving an x-coredata id and echoing it", () => {
@@ -133,6 +146,7 @@ describe("compose-note append and prepend", () => {
         ],
         ifRevision: REV,
         ifPlanDigest: PLAN,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       },
       { env: ALLOW }
     );
@@ -315,7 +329,7 @@ describe("compose-note create", () => {
       committed: false,
       mode: "create",
       paragraphs: 2,
-      planDigest: expect.stringMatching(/^c1:[a-f0-9]{64}$/),
+      planDigest: expect.stringMatching(/^c2:[a-f0-9]{64}$/),
       plan: [
         { style: "checklist", indent: 0, blockQuote: false, checked: false, runs: 1 },
         { style: "body", indent: 0, blockQuote: true, runs: 1 },
@@ -340,7 +354,8 @@ describe("compose-note create", () => {
         mode: "append",
         paragraphs: expect.any(Array),
         ifRevision: REV,
-        ifPlanDigest: expect.stringMatching(/^c1:[a-f0-9]{64}$/),
+        ifPlanDigest: expect.stringMatching(/^c2:[a-f0-9]{64}$/),
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       },
       { env: ALLOW }
     );
@@ -692,7 +707,7 @@ describe("registerComposeNoteTool", () => {
   it("returns structured results and structured errors", async () => {
     const [, , handler] = registered();
     const ok = await handler({ mode: "append", identifier: NOTE, blocks: BLOCKS, dryRun: true });
-    expect(ok.structuredContent).toMatchObject({ ok: true, status: "updated" });
+    expect(ok.structuredContent).toMatchObject({ ok: true, status: "planned" });
     const bad = await handler({ mode: "append", identifier: NOTE, blocks: BLOCKS });
     expect(bad.isError).toBe(true);
     expect(bad.structuredContent).toMatchObject({
@@ -722,6 +737,7 @@ describe("registerComposeNoteTool", () => {
       blocks: BLOCKS,
       ifRevision: REV,
       ifPlanDigest: PLAN,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       nudge: true,
       nudgeWaitSeconds: 5,
     });
@@ -743,6 +759,7 @@ describe("registerComposeNoteTool", () => {
       blocks: BLOCKS,
       ifRevision: REV,
       ifPlanDigest: PLAN,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       nudge: true,
     });
     expect(failed.isError).toBeUndefined();
@@ -756,6 +773,7 @@ describe("registerComposeNoteTool", () => {
       blocks: BLOCKS,
       ifRevision: REV,
       ifPlanDigest: PLAN,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(plain.structuredContent.sync).toBeUndefined();
     expect(nudgeInPlace).toHaveBeenCalledTimes(2);
@@ -772,6 +790,7 @@ describe("registerComposeNoteTool", () => {
       blocks: BLOCKS,
       ifRevision: REV,
       ifPlanDigest: PLAN,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(conflict.structuredContent).toMatchObject({
       code: "revision_conflict",

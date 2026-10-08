@@ -1067,10 +1067,17 @@ const editTargetSchema = z
   })
   .passthrough();
 
+/** Existing objects must have complete bytes and stored comparable attributes. */
+export const ATTACHMENT_EVIDENCE_POLICY =
+  "complete-sha256-v1:512MiB:stored-attributes:transient-excluded:version-floor-may-rise";
+export const attachmentSnapshotToken = z.string().regex(/^a1:[a-f0-9]{64}$/);
+
 const editPlanFields = {
   identifier: z.string(),
   revisionBefore: z.string().regex(/^r1:[a-f0-9]{64}$/),
-  planDigest: z.string(),
+  planDigest: z.string().regex(/^p4:[a-f0-9]{64}$/),
+  attachmentSnapshot: z.string().regex(/^a1:[a-f0-9]{64}$/),
+  attachmentEvidencePolicy: z.literal(ATTACHMENT_EVIDENCE_POLICY),
   operationCount: z.number().int(),
   targetCount: z.number().int(),
   operations: z.array(
@@ -1184,15 +1191,17 @@ export interface EditNoteRequest {
   dryRun: boolean;
   /** Required to apply: the plan's revisionBefore. */
   ifRevision?: string;
-  /** Required on apply: the plan's planDigest; the writer refuses changed operations, scope or files. */
+  /** Required on apply: the plan's planDigest; the writer refuses changed operations, scope, files or existing attachment evidence. */
   ifPlanDigest?: string;
+  /** Required on apply: complete existing-object receipt returned by the plan. */
+  ifAttachmentSnapshot?: string;
   requireNonSystemPaper?: boolean;
   /** Folder preconditions, checked by the writer (in the plan too). */
   scope?: ScopeGuard;
 }
 
-/** A dry run's planDigest (identifier, revision, operations, Quick Note policy, scope, file bytes). */
-export const planDigestToken = z.string().regex(/^p3:[a-f0-9]{64}$/);
+/** A dry run's planDigest (identifier, revision, operations, Quick Note policy, scope, file bytes, existing-object receipt/policy). */
+export const planDigestToken = z.string().regex(/^p4:[a-f0-9]{64}$/);
 
 /**
  * Checks each replacement file before the writer runs, under add-attachment's
@@ -1262,8 +1271,10 @@ export function editNote(
     fields.requireNonSystemPaper = request.requireNonSystemPaper;
   Object.assign(fields, writerScopeFields(request.scope));
   if (request.dryRun) {
-    if (request.ifPlanDigest !== undefined)
-      throw refuse("ifPlanDigest belongs on the apply (dryRun: false), not on the dry run");
+    if (request.ifPlanDigest !== undefined || request.ifAttachmentSnapshot !== undefined)
+      throw refuse(
+        "ifPlanDigest and ifAttachmentSnapshot belong on the apply (dryRun: false), not on the dry run"
+      );
     return parseWriterResult(editPlanSchema, callPrivateWriter("plan_edit", fields, deps), false);
   }
   if (!request.ifRevision)
@@ -1274,9 +1285,14 @@ export function editNote(
   assertRevision(request.ifRevision, "a dry run's revisionBefore");
   if (!planDigestToken.safeParse(request.ifPlanDigest).success)
     throw refuse(
-      "Applying an edit requires ifPlanDigest from the identical dry run (p3: followed by 64 hex digits)"
+      "Applying an edit requires ifPlanDigest from the identical dry run (p4: followed by 64 hex digits)"
+    );
+  if (!attachmentSnapshotToken.safeParse(request.ifAttachmentSnapshot).success)
+    throw refuse(
+      "Applying an edit requires ifAttachmentSnapshot from the identical dry run (a1: followed by 64 hex digits)"
     );
   fields.ifPlanDigest = request.ifPlanDigest;
+  fields.ifAttachmentSnapshot = request.ifAttachmentSnapshot;
   requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
   return parseWriterResult(
     editResultSchema,

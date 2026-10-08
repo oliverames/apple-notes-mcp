@@ -104,6 +104,7 @@ describe("native table writer tools", () => {
       dryRun: false,
       ifRevision: REV,
       ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(deleteTableRow).toHaveBeenCalledWith(
       {
@@ -113,6 +114,7 @@ describe("native table writer tools", () => {
         dryRun: false,
         ifRevision: REV,
         ifTableDigest: DIGEST,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       },
       WRITER
     );
@@ -147,6 +149,7 @@ describe("native table writer tools", () => {
       cells: ["a"],
       ifRevision: REV,
       ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(inserted.structuredContent).toEqual({ ok: true, rowIdentifier: ROW });
     expect(insertTableRow).toHaveBeenCalledWith(
@@ -157,6 +160,7 @@ describe("native table writer tools", () => {
         cells: ["a"],
         ifRevision: REV,
         ifTableDigest: DIGEST,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       },
       WRITER
     );
@@ -168,6 +172,7 @@ describe("native table writer tools", () => {
       text: "b",
       ifRevision: REV,
       ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(setTableCell).toHaveBeenCalledWith(
       {
@@ -178,6 +183,7 @@ describe("native table writer tools", () => {
         text: "b",
         ifRevision: REV,
         ifTableDigest: DIGEST,
+        ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       },
       WRITER
     );
@@ -200,6 +206,7 @@ describe("native table writer tools", () => {
       text: "b",
       ifRevision: REV,
       ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
       nudge: true,
       nudgeWaitSeconds: 3,
     });
@@ -226,6 +233,7 @@ describe("native table writer tools", () => {
       dryRun: false,
       ifRevision: REV,
       ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(r.isError).toBe(true);
     expect(r.structuredContent).toEqual({
@@ -243,6 +251,7 @@ describe("native table writer tools", () => {
       tableIdentifier: TABLE,
       ifRevision: REV,
       ifTableDigest: DIGEST,
+      ifAttachmentSnapshot: `a1:${"e".repeat(64)}`,
     });
     expect(slow.structuredContent).toMatchObject({
       code: "timeout_indeterminate",

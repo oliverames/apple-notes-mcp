@@ -31,7 +31,7 @@ int main(void) {
   @autoreleasepool {
     NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
     NSDictionary *request = [NSJSONSerialization JSONObjectWithData:input options:0 error:nil];
-    NSString *digest = PlanDigest(@"D629A948-0C61-43BA-8FDE-04CD6DED38C7", request[@"snapshotRevision"] ?: @"r1:fixture", @[], NO, @[], request);
+    NSString *digest = PlanDigest(@"D629A948-0C61-43BA-8FDE-04CD6DED38C7", request[@"snapshotRevision"] ?: @"r1:fixture", @[], NO, @[], request, request[@"attachmentSnapshot"] ?: @"a1:fixture");
     printf("%s\\n", digest.UTF8String);
   }
   return 0;
@@ -63,13 +63,18 @@ const other = "x-coredata://AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA/ICFolder/p2";
 
 describe.skipIf(!RUN_NATIVE)("native edit plan scope binding", () => {
   it("versions the stronger contract and produces a stable digest", () => {
-    expect(digest({})).toMatch(/^p3:[a-f0-9]{64}$/u);
+    expect(digest({})).toMatch(/^p4:[a-f0-9]{64}$/u);
     expect(digest({ ifFolderId: folder })).toBe(digest({ ifFolderId: folder }));
   });
 
   it("binds the revision of the snapshot used to construct the plan", () => {
     expect(digest({ snapshotRevision: "r1:before" })).not.toBe(
       digest({ snapshotRevision: "r1:after" })
+    );
+  });
+  it("binds the existing-object receipt even when the note r1 is identical", () => {
+    expect(digest({ attachmentSnapshot: "a1:before", snapshotRevision: "r1:constant" })).not.toBe(
+      digest({ attachmentSnapshot: "a1:after", snapshotRevision: "r1:constant" })
     );
   });
 

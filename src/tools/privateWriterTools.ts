@@ -53,6 +53,7 @@ import {
   editNote,
   editOperationsSchema,
   planDigestToken,
+  attachmentSnapshotToken,
   privateWriterCapabilities,
   type PrivateHelperDeps,
 } from "../services/privateWriter.js";
@@ -78,10 +79,12 @@ export function writerEnvelopeCode(helperCode: string, message: string): ErrorCo
     case "scope_conflict": // the note is no longer where the guard requires
     case "paragraph_changed": // the selected paragraph moved or changed since it was listed
     case "attachment_conflict":
+    case "attachment_snapshot_mismatch":
     case "plan_mismatch": // the request or a replacement file differs from the dry run (ifPlanDigest)
       return "revision_conflict";
     case "unsupported_attachment":
     case "unsupported_attachment_change":
+    case "attachment_evidence_incomplete":
       return "unsupported";
     case "unsupported_folder":
     case "query_not_representable":
@@ -321,17 +324,17 @@ export function registerPrivateWriterTools(
     server,
     depsFactory,
     "native-edit-note",
-    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence) with plain text or formatted runs (bold, italic, underline, strikethrough, link, highlight, color), insert paragraphs (checklist rows checked or not) before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, add inline runs such as a link at the end of one exact paragraph (append_to_paragraph), replace a note's checklist with new items (replace_checklist), delete a paragraph or list row, retitle, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan, revisionBefore, and planDigest, then the IDENTICAL request with dryRun: false, ifRevision set to that revisionBefore, and ifPlanDigest set to that planDigest.\n" +
-      "Returns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16; replace_checklist lists removedItems with their text and checked state), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, attachmentSpans, revisionBefore, and planDigest. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and every attachment row unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\n" +
+    "Use when: changing selected text inside one existing note in place while everything outside the edited ranges (attachments, tables, checklist state, paragraph styles, inline formatting) stays untouched: replace literal text (with expectedCount and occurrence) with plain text or formatted runs (bold, italic, underline, strikethrough, link, highlight, color), insert paragraphs (checklist rows checked or not) before or after a paragraph matched by its exact text, by style and position (for example the 2nd subheading), or by the attachment it holds, add inline runs such as a link at the end of one exact paragraph (append_to_paragraph), replace a note's checklist with new items (replace_checklist), delete a paragraph or list row, retitle, or add text beside one named attachment (selector kind 'attachment' with identifier, id, or ordinal from get-note-structure or list-attachments), or trim redundant empty paragraphs (runs of blank lines, trailing blank lines, or blank lines around one paragraph). Always run twice: dryRun: true to get the plan, revisionBefore, and planDigest, then the IDENTICAL request with dryRun: false, ifRevision set to that revisionBefore, and ifPlanDigest set to that planDigest, and ifAttachmentSnapshot set to attachmentSnapshot.\n" +
+      "Returns: per-operation matched counts and target ranges (a trim lists every empty paragraph it would remove by paragraphIndex, style, and blankUTF16; replace_checklist lists removedItems with their text and checked state), lengthBefore/lengthAfter, unchangedUTF16, wouldChange, titleChanged, attachmentGlyphs, attachmentSpans, revisionBefore, planDigest, attachmentSnapshot, and attachmentEvidencePolicy. An apply also returns committed/verified, revisionAfter, `preservation` (what the read-back proved: formatting outside the edits, the attachment glyph sequence, and every attachment row unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report of the move-in-place nudge.\n" +
       "Do not use when: replacing a whole note (update-note), appending (native-append-plain-text, append-native), or the note is locked, shared, trashed, or still downloading. Matching is literal and case-sensitive, never crosses a line break, and never splits a character. Removing or replacing attachments is refused until safe tombstoning is implemented; inserting beside one remains supported. Inline objects (hashtags, mentions, note links) are never selectable.\n" +
-      "Safety: a dry run is read-only and never writes a file. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), plan_mismatch (the request differs from the dry run's planDigest), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unsupported_attachment, unsupported_attachment_change (attachment removal or replacement), unexpected_side_effect. Attachment removal and replacement are refused in both the dry run and the apply; nothing is changed. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
+      "Safety: a dry run is read-only and never writes a file. Applying writes through unsupported private API and requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, a built writer (setup --native-writer), and, until live-validated, APPLE_NOTES_MCP_ALLOW_UNVERIFIED_EDIT=1. Refuses with a code and commits nothing on: revision_conflict (note changed since the dry run), attachment_snapshot_mismatch (existing objects changed), attachment_evidence_incomplete (required bytes unavailable, drifting, unsupported or over the cumulative 512 MiB budget), plan_mismatch (the request differs from the dry run's planDigest), match_count_mismatch, mixed_formatting (plain text over mixed formatting; pass replacement.runs), conflicting_operations, title_invariant, unsupported_selection, unsupported_attachment, unsupported_attachment_change (attachment removal or replacement), unexpected_side_effect. Attachment removal and replacement are refused in both the dry run and the apply; nothing is changed. Each apply is verified by re-reading in a new Core Data stack; verification_failed means committed: true and indeterminate. A timeout is indeterminate: read native-note-state before any retry.",
     {
       identifier: notesUuid.optional().describe("Notes UUID"),
       id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
       dryRun: z
         .boolean()
         .describe(
-          "true: plan only and return revisionBefore and planDigest. false: apply; requires ifRevision and ifPlanDigest"
+          "true: plan only and return revisionBefore and planDigest. false: apply; requires ifRevision, ifPlanDigest and ifAttachmentSnapshot"
         ),
       ifRevision: revisionToken
         .optional()
@@ -341,6 +344,9 @@ export function registerPrivateWriterTools(
         .describe(
           "The planDigest of the identical dry run (required on apply; refuses with plan_mismatch if the request changed)"
         ),
+      ifAttachmentSnapshot: attachmentSnapshotToken
+        .optional()
+        .describe("The complete attachmentSnapshot from the identical dry run; required on apply"),
       requireNonSystemPaper: z
         .boolean()
         .optional()
@@ -372,6 +378,7 @@ export function registerPrivateWriterTools(
           dryRun: args.dryRun,
           ifRevision: args.ifRevision,
           ifPlanDigest: args.ifPlanDigest,
+          ifAttachmentSnapshot: args.ifAttachmentSnapshot,
           requireNonSystemPaper: args.requireNonSystemPaper,
           operations: args.operations,
           scope: scopeGuardFrom(args),

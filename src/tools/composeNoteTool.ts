@@ -23,6 +23,8 @@ import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { MAX_NUDGE_WAIT_SECONDS } from "../services/privateSyncNudge.js";
 import {
   PrivateWriteError,
+  ATTACHMENT_EVIDENCE_POLICY,
+  attachmentSnapshotToken,
   privateWriterCapabilities,
   readWriterNoteState,
   type PrivateHelperDeps,
@@ -86,6 +88,9 @@ export const composeNoteInput = {
     .regex(COMPOSE_PLAN_DIGEST)
     .optional()
     .describe("All apply modes: planDigest from an identical dry run, including file contents"),
+  ifAttachmentSnapshot: attachmentSnapshotToken
+    .optional()
+    .describe("append/prepend apply: complete attachmentSnapshot from the identical dry run"),
   dryRun: z.boolean().optional().describe("Validate and plan without writing"),
   requireNonSystemPaper: z
     .boolean()
@@ -149,15 +154,24 @@ function contentFor(args: ComposeArgs): { paragraphs: WireEntry[]; warnings: str
 function checkModeFields(args: ComposeArgs): void {
   const present = (keys: Array<keyof ComposeArgs>) => keys.filter((k) => args[k] !== undefined);
   if (args.dryRun && args.nudge) throw invalid("A dry run does not take nudge");
-  if (args.dryRun && args.ifPlanDigest !== undefined)
-    throw invalid("A dry run does not take ifPlanDigest");
+  if (args.dryRun && (args.ifPlanDigest !== undefined || args.ifAttachmentSnapshot !== undefined))
+    throw invalid("A dry run does not take ifPlanDigest or ifAttachmentSnapshot");
   if (!args.dryRun && (!args.ifPlanDigest || !COMPOSE_PLAN_DIGEST.test(args.ifPlanDigest)))
     throw invalid("Applying requires ifPlanDigest: run the identical request with dryRun first");
+  if (
+    args.mode !== "create" &&
+    !args.dryRun &&
+    !attachmentSnapshotToken.safeParse(args.ifAttachmentSnapshot).success
+  )
+    throw invalid(
+      "Applying append/prepend requires ifAttachmentSnapshot from the identical dry run"
+    );
   if (args.mode === "create") {
     const extra = present([
       "identifier",
       "id",
       "ifRevision",
+      "ifAttachmentSnapshot",
       "requireNonSystemPaper",
       "insertBeforeHeading",
       "ifFolderId",
@@ -281,7 +295,8 @@ function createAndCompose(
     mode: "append",
     paragraphs,
     ifRevision: PLACEHOLDER_REVISION,
-    ifPlanDigest: `c1:${"0".repeat(64)}`,
+    ifPlanDigest: `c2:${"0".repeat(64)}`,
+    ifAttachmentSnapshot: `a1:${"0".repeat(64)}`,
   });
   const features = privateWriterCapabilities(deps).features;
   const kinds = new Set(paragraphs.filter(isObject).map((p) => p.kind));
@@ -335,11 +350,34 @@ function createAndCompose(
     if (!state)
       throw new PrivateWriteError("not_found", "The writer cannot see the new note yet", false);
     revision = state.revision;
-    // The create plan already authorized these exact paragraphs and file hashes.
-    // Bind that plan to the new identity/revision for the native append; the
-    // service and binary both recheck its captured file hashes before saving.
-    const fields = { identifier, mode: "append" as const, paragraphs, ifRevision: state.revision };
-    const result = composeNote({ ...fields, ifPlanDigest: composePlanDigest(fields) }, deps);
+    // The public create plan binds these paragraphs and new-file bytes. The
+    // internal read-only plan binds the newly created title-only target and
+    // refuses any unexpected existing objects before its native append.
+    const fields = { identifier, mode: "append" as const, paragraphs };
+    const plan = composeNote({ ...fields, dryRun: true }, deps);
+    if (plan.status !== "planned" || plan.revisionBefore !== state.revision)
+      throw new PrivateWriteError(
+        "revision_conflict",
+        "The newly created note changed before its internal plan",
+        false
+      );
+    const frozen = plan.frozenAttachments as
+      { attachments?: number; inlineAttachments?: number } | undefined;
+    if (!frozen || frozen.attachments !== 0 || frozen.inlineAttachments !== 0)
+      throw new PrivateWriteError(
+        "attachment_snapshot_mismatch",
+        "The newly created note unexpectedly contains existing attachments",
+        false
+      );
+    const result = composeNote(
+      {
+        ...fields,
+        ifRevision: plan.revisionBefore,
+        ifPlanDigest: plan.planDigest,
+        ifAttachmentSnapshot: plan.attachmentSnapshot as string,
+      },
+      deps
+    );
     return {
       ...withDatabaseCheck(result, paragraphs),
       mode: "create",
@@ -381,6 +419,8 @@ export function runComposeNote(
     const capturedParagraphs = snapshotComposeFiles(paragraphs);
     const planDigest = composePlanDigest({
       mode: args.mode,
+      attachmentBaseline: "new-note-without-existing-attachments",
+      attachmentEvidencePolicy: ATTACHMENT_EVIDENCE_POLICY,
       title: args.title,
       ...(args.folder !== undefined ? { folder: args.folder } : {}),
       ...(args.account !== undefined ? { account: args.account } : {}),
@@ -393,7 +433,8 @@ export function runComposeNote(
         mode: "append",
         paragraphs: capturedParagraphs,
         ifRevision: PLACEHOLDER_REVISION,
-        ifPlanDigest: `c1:${"0".repeat(64)}`,
+        ifPlanDigest: `c2:${"0".repeat(64)}`,
+        ifAttachmentSnapshot: `a1:${"0".repeat(64)}`,
       });
       return {
         status: "planned",
@@ -437,7 +478,11 @@ export function runComposeNote(
       paragraphs,
       ...(args.dryRun
         ? { dryRun: true }
-        : { ifRevision: args.ifRevision, ifPlanDigest: args.ifPlanDigest }),
+        : {
+            ifRevision: args.ifRevision,
+            ifPlanDigest: args.ifPlanDigest,
+            ifAttachmentSnapshot: args.ifAttachmentSnapshot,
+          }),
       ...(args.requireNonSystemPaper ? { requireNonSystemPaper: true } : {}),
       ...(args.insertBeforeHeading ? { insertBeforeHeading: args.insertBeforeHeading } : {}),
       scope: scopeGuardFrom(args),
@@ -467,7 +512,7 @@ export function registerComposeNoteTool(
     "Use when: writing natively formatted content to Apple Notes in one step through the private writer: headings, subheadings, body paragraphs with bold/italic/underline/strikethrough/link/highlight/color runs, bulleted/dashed/numbered lists with indent, checklists with checked state, block quotes, monospaced blocks, native dividers, native tables, local files and rich link cards placed in order, and links to other notes. Modes: create (new note in a folder), append (end of a note, or before one exact heading), prepend (directly below the title). Accepts a block list or Markdown.\n" +
       "Returns: plan (dryRun) or committed/verified flags, revisionBefore/revisionAfter, unitStart and objectURI (where the written paragraphs begin), readBack (each written paragraph's persisted style, indent, quote, checklist state, and run attributes), databaseReadBack (the same paragraphs decoded independently from NoteStore.sqlite), objects (each created divider, table, file with its size and SHA-256, or link card), frozenAttachments (existing attachments proven unchanged), sync state (pushScheduled is always false; pushState, cloudSync), and with nudge: true a `sync` report.\n" +
       "Do not use when: the writer is not enabled (check native-writer-status), the target is locked, shared, trashed, still downloading, or has no title line.\n" +
-      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). All modes: run with dryRun: true, then send the IDENTICAL request with ifPlanDigest set to the plan's planDigest; append/prepend also require ifRevision set to revisionBefore. The digest binds content, target, placement, guards, and attachment file hashes. Changed files or requests refuse before writing; create validates its digest before calling Notes.app. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing attachments are fingerprinted before and after and any change refuses (attachment_drift, nothing written). Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1. Live writes require Notes.app to be closed unless APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1; create needs this opt-in because it uses Notes.app.",
+      "Safety: writes to the Notes database through unsupported private API. Requires APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer). All modes: run with dryRun: true, then send the IDENTICAL request with ifPlanDigest set to the plan's planDigest; append/prepend also require ifRevision set to revisionBefore. append/prepend require ifAttachmentSnapshot from that plan. The c2 digest binds content, target, placement, guards, new-file hashes, and the complete a1 existing-attachment receipt and policy. Changed files or requests refuse before writing; create validates its digest before calling Notes.app. Every paragraph, table cell, card URL, and file's bytes is verified in a fresh read and checked against the request; existing objects require complete evidence before materialization and are checked before save and through fresh readback. Unavailable, drifting or over-budget existing files refuse with attachment_evidence_incomplete; snapshot changes refuse with attachment_snapshot_mismatch. Pre-save drift refuses; a post-save mismatch is committed and indeterminate. The cumulative existing-file hashing budget is 512 MiB per capture. Files follow add-attachment's rules (absolute path, regular file, at most 64 MiB; at most 20 files and cards). A link to a note must name an existing note that is not locked or in Recently Deleted. A timeout is indeterminate (indeterminate: true): read native-note-state before retrying. create checks every limit first, then makes the note through Notes.app; if the compose then fails with nothing written, the unchanged title-only note is moved to Recently Deleted (createdNote), otherwise the error names it. Not yet live-validated, so writes also require APPLE_NOTES_MCP_ALLOW_UNVERIFIED_COMPOSE=1. Live writes require Notes.app to be closed unless APPLE_NOTES_MCP_ALLOW_NOTES_RUNNING=1; create needs this opt-in because it uses Notes.app.",
     composeNoteInput,
     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async (args, deps) => {
