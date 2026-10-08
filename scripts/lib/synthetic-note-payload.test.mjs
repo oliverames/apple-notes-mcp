@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { test } from "node:test";
+import { buildSync } from "esbuild";
 import {
   buildSyntheticNotePayload,
+  buildSyntheticAttributeFreePayload,
   noteIdentifier,
   paragraphIdentifier,
   replicaIdentifier,
@@ -81,7 +83,71 @@ test("native receipt fixture pins precisely the public generated payload", () =>
   const digest = createHash("sha256").update(buildSyntheticNotePayload()).digest("hex");
   assert.ok(source.includes(`@"${digest}"`));
   assert.ok(
-    source.includes("if ((receiptFixture || mutate) && !IsFixedPublicPayload(payload)) return 4;")
+    source.includes("if (attributeFreeFixture && !IsFixedAttributeFreePayload(payload)) return 4;")
+  );
+  assert.ok(source.includes("!(mutate && IsFixedAttributeFreePayload(payload))) return 4;"));
+  const attributeFreeDigest = createHash("sha256")
+    .update(buildSyntheticAttributeFreePayload())
+    .digest("hex");
+  assert.ok(source.includes(`@"${attributeFreeDigest}"`));
+});
+
+test("attribute-free variant retains public nonempty text and topology with length-only runs", () => {
+  const plain = gunzipSync(buildSyntheticAttributeFreePayload());
+  const root = fields(plain);
+  const version = fields(one(root, 2));
+  const body = fields(one(version, 3));
+  const baseline = document().body;
+  assert.equal(one(body, 2).toString("utf8"), text);
+  for (const field of [2, 3, 4]) assert.deepEqual(all(body, field), all(baseline, field));
+  const runs = all(body, 5).map(({ value }) => fields(value));
+  assert.deepEqual(
+    runs.map((run) => run.map(({ field }) => field)),
+    runs.map(() => [1])
+  );
+  assert.equal(
+    runs.reduce((sum, run) => sum + one(run, 1), 0),
+    text.length
+  );
+  assert.deepEqual(buildSyntheticAttributeFreePayload(), buildSyntheticAttributeFreePayload());
+  assert.throws(() => buildSyntheticAttributeFreePayload("saved input"), /accepts no input/);
+});
+
+test("independent public decoders round-trip the fixed attribute-free title body and owner clocks", async () => {
+  const modules = [
+    ["parseNoteReplicaTable", "noteReplicaTable.ts"],
+    ["decodeNoteBody", "noteQueryStore.ts"],
+    ["decodeNoteBlocks", "noteBlocks.ts"],
+  ].map(
+    ([name, file]) =>
+      `export { ${name} } from ${JSON.stringify(new URL(`../../src/utils/${file}`, import.meta.url).pathname)};`
+  );
+  const repo = new URL("../../", import.meta.url).pathname;
+  const result = buildSync({
+    stdin: { contents: modules.join("\n"), resolveDir: repo },
+    absWorkingDir: repo,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    write: false,
+    logLevel: "error",
+  });
+  const decoders = await import(
+    `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`
+  );
+  const stored = buildSyntheticAttributeFreePayload();
+  const plain = gunzipSync(stored);
+  assert.equal(decoders.decodeNoteBody(plain)?.text, text);
+  const blocks = decoders.decodeNoteBlocks(plain);
+  assert.equal(blocks.text, text);
+  assert.deepEqual(blocks.attachments, []);
+  const table = decoders.parseNoteReplicaTable(stored);
+  assert.equal(table.layout.lengthsMatchText, true);
+  assert.deepEqual(table.layout.warnings, []);
+  assert.deepEqual(table.layout.unmappedReplicaIds, []);
+  assert.deepEqual(
+    table.replicas.map((row) => row.uuid),
+    [replicaIdentifier]
   );
 });
 

@@ -98,6 +98,29 @@ production account state. The fixture does not prove live editor merge behavior,
 persistent preferences, replica identity on a real account, or cloud upload.
 Feature release flags therefore remain unchanged.
 
+The hidden inline row also starts with the same fixed generic cloud-state
+infrastructure as the other generated cloud objects. A rehearsal without it was
+refused for a pending `ICCloudState` insertion; that attempt is incomplete. Fixed
+row drift requires an already-WAL database header and preserves WAL mode. A
+mutation that forced DELETE mode was rejected by the exact ledger when the native
+refusal reestablished WAL; its logical dump equality is not a successful raw
+database/file preservation proof. These failed attempts remain separate.
+
+`node scripts/test-private-writer-compose-receipt-synthetic-store.mjs` is a separate
+no-input probe. It uses the same public nonempty text/topology/owner clocks, with
+length-only attribute-run dictionaries and a distinct pinned seed hash. Its fresh
+store is predetermined as WAL-ready and the header is asserted before test
+ledgers. The same six preflights, generic model objects, denying sandbox and exact
+ledgers apply. If native decoding accepts this target without synthesizing
+unsupported attributes, it tests missing/wrong `c2`/`a1` plus stale `a1` on text
+and prospective file requests before materialization. Otherwise it reports
+`unsupported_note` and unavailable receipt coverage. It does not demonstrate
+ordinary styled-body compatibility, an exact compose no-op (the grammar requires
+nonempty insertion), a matching file apply, existing media bytes, or live behavior.
+Empty target bodies cannot provide this control because compose refuses a missing
+title before receipt capture. Native error details remain in private reports;
+console failure output contains only counts and the local report location.
+
 Each run retains a private report, source hashes, native responses and the store
 in a fresh `/private/tmp/apple-notes-synthetic-fixture-*` directory. The workflow
 does not upload these artifacts. Native serialization can add identifiers or

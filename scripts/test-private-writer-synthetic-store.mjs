@@ -826,7 +826,7 @@ try {
   report.error = error.message;
   persist("report.json", report);
   console.error(
-    `Synthetic store checks failed; private evidence: ${join(root, "report.json")}\n${error.message}`
+    `Synthetic store checks failed after ${report.tests.length} checks; details remain private: ${join(root, "report.json")}`
   );
   process.exitCode = 1;
 }
