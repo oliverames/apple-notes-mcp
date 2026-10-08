@@ -9,18 +9,25 @@ The public baseline is constructed field by field in
 explicit CRDT character/attribute clocks and child references, fixed timestamps,
 and a fresh gzip stream. There is no embedded snapshot or opaque base64 blob.
 The generator uses generic `NSManagedObject` instances with the unchanged system
-model, without loading NotesShared or invoking its object-insertion hooks.
+model schema. Every model entity uses the generic managed-object class in memory,
+including fixed drift reads; NotesShared and private object hooks are never loaded
+by the generator.
 
 The dedicated workflow `Private writer synthetic store` runs the pure fixture
 and replica-evidence tests, then executes the unmodified production writer
 against this store. It checks model compatibility, exact baseline decoding,
-feature refusal, native append, compose planning, missing/mismatched digest
-refusal, real rich compose, fresh-coordinator verification and final integrity.
-The fixed `--scope-fixture` generator mode adds a parent for the note's folder
+feature refusal, native append, edit planning, missing/mismatched digest and
+attachment-receipt refusal, fresh-coordinator verification and final integrity.
+Compose runs only when the strict untouched-content schema accepts the installed
+layout; otherwise both plan and apply must conservatively refuse without mutation.
+The fixed `--receipt-fixture` generator mode adds a parent for the note's folder
 and two off-chain forbidden folders, for four generated folders in total. The
-default generator mode remains the one-folder fixture.
+default generator mode remains the one-folder fixture. The prior `--scope-fixture`
+mode remains available without attachment rows. Receipt mode additionally creates
+one hidden owned divider `ICInlineAttachment`, using fixed public UUIDs, a known
+inline UTI, and no body glyph, file or media relationship.
 
-For `p3` edit plans the harness simultaneously requires the exact folder, its
+For `p4` edit plans the harness simultaneously requires the exact folder, its
 generated ancestor, and both forbidden folders. With the same loaded revision,
 operations and supplied plan digest, it refuses omission of each guard, either
 shortened forbidden list, an empty list, and removal of every guard. The same
@@ -33,6 +40,29 @@ file-tree entries. Only exact harness report/response filenames are excluded
 from the tree; native media, journals, preferences and temporary files are not.
 These checks establish persistent state after each process returns, not an
 absence of transient in-process activity.
+
+The harness forwards each plan's `attachmentSnapshot` as `ifAttachmentSnapshot`
+alongside the unchanged operations, revision, scope and digest. Missing or wrong
+`a1` receipts refuse for both changing edits and exact no-ops. Three fixed generic
+row mutations change the hidden token, tombstone bit, or owned row membership.
+Each holds the raw body, note modification date, operations and `r1` constant,
+captures a different fresh `a1`, then refuses the original changing and no-op
+requests with `attachment_snapshot_mismatch`. Exact mutation comparisons surround
+each refused apply **after** the deliberate fixture change. The generator restores
+only its fixed public rows and a new plan must recover the original receipt/digest.
+No arbitrary entity, property, identifier, payload or mutation value is accepted
+in receipt mode. This tests existing owned-row preservation and pre-apply receipt
+binding; it does not test media selectors, actual file attachments, table CRDT,
+body glyph ordering, or races during native attachment capture.
+
+The report records `writer-source-closure-v1`: the production writer and every
+recursively quoted local header, each individual SHA-256, and the exact sorted
+closure digest used by `writerSourceSha256`. A pure test extracts only that hash
+function and proves equality without importing production services or loading a
+native writer. System headers remain external build inputs. Strict `c2` content
+layout pins remain unchanged; an ordinary generated rich body that cannot pass
+those pins is labelled unavailable, not counted as compose receipt coverage.
+
 
 Missing and mismatched digests also refuse a prospective compose-file request,
 after its read-only plan, with identical object and file checks. The file is

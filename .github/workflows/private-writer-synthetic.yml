@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "native/private-helper/apple-notes-private-writer.m"
+      - "native/private-helper/attachment-evidence.h"
+      - "native/private-helper/content-preservation.h"
       - "test/native/synthetic-notes-store.m"
       - "scripts/test-private-writer-synthetic-store.mjs"
       - "scripts/test-private-writer-replica-identity-synthetic.mjs"
@@ -13,6 +15,8 @@ on:
       - "scripts/lib/synthetic-note-payload*"
       - "scripts/lib/synthetic-fixture-files*"
       - "scripts/lib/synthetic-store-snapshot*"
+      - "scripts/lib/writer-source-closure*"
+      - "src/services/privateWriterSources.ts"
       - "scripts/lib/replica-isolation-probe.m"
       - "scripts/lib/replica-identity-evidence*"
       - "src/utils/noteReplicaTable*"
@@ -46,7 +50,7 @@ jobs:
           node --check scripts/prepare-replica-notes-app-control.mjs
           bash -n scripts/test-private-writer-replica-identity-copy-store.sh
       - name: Check pure fixture construction and replica evidence rules
-        run: node --test scripts/lib/synthetic-note-payload.test.mjs scripts/lib/replica-identity-evidence.test.mjs scripts/lib/synthetic-fixture-files.test.mjs scripts/lib/synthetic-store-snapshot.test.mjs
+        run: node --test scripts/lib/synthetic-note-payload.test.mjs scripts/lib/replica-identity-evidence.test.mjs scripts/lib/synthetic-fixture-files.test.mjs scripts/lib/synthetic-store-snapshot.test.mjs scripts/lib/writer-source-closure.test.mjs
       - name: Test actual native writer with generated data in a denying sandbox
         run: node scripts/test-private-writer-synthetic-store.mjs
       # Never upload the generated DB, preferences or native reserialized data.

@@ -32,17 +32,34 @@ static void CloudState(NSManagedObjectContext *context, NSManagedObject *object)
 static BOOL IsUUID(NSString *value) {
   return [[NSUUID alloc] initWithUUIDString:value] != nil;
 }
+static NSString *const InlineIdentifier = @"66666666-6666-4666-8666-666666666666";
+static NSString *const ExtraInlineIdentifier = @"88888888-8888-4888-8888-888888888888";
+static NSManagedObject *HiddenInline(NSManagedObjectContext *context, NSManagedObject *note, NSString *identifier) {
+  NSManagedObject *row = Insert(context, @"ICInlineAttachment");
+  Set(row, @"identifier", identifier);
+  Set(row, @"tokenContentIdentifier", identifier);
+  Set(row, @"typeUTI", @"com.apple.notes.inlinetextattachment.dividerline");
+  Set(row, @"markedForDeletion", @NO);
+  Set(row, @"note", note);
+  return row;
+}
 int main(int argc, const char **argv) {
   @autoreleasepool {
     @try {
-      BOOL scopeFixture = argc == 6 && strcmp(argv[5], "--scope-fixture") == 0;
-      if (argc != 5 && !scopeFixture) { fputs("usage: synthetic-notes-store NEW_STORE PAYLOAD NOTE_UUID NOTES_REPLICA_UUID [--scope-fixture]\n", stderr); return 2; }
+      NSString *mode = argc == 6 ? @(argv[5]) : @"";
+      BOOL receiptFixture = [mode isEqualToString:@"--receipt-fixture"];
+      BOOL mutate = [@[@"--inline-token", @"--inline-tombstone", @"--inline-add-hidden", @"--inline-restore"] containsObject:mode];
+      BOOL scopeFixture = [mode isEqualToString:@"--scope-fixture"] || receiptFixture;
+      if (argc != 5 && !(argc == 6 && (scopeFixture || mutate))) return 2;
       NSString *storePath = @(argv[1]), *payloadPath = @(argv[2]);
       NSString *noteIdentifier = @(argv[3]), *notesReplicaIdentifier = @(argv[4]);
       // Caller paths are confined by the mandatory surrounding sandbox. Refuse
       // replacing any existing database or consuming a non-UUID identity.
       if (!storePath.isAbsolutePath || !payloadPath.isAbsolutePath || !IsUUID(noteIdentifier) ||
-          !IsUUID(notesReplicaIdentifier) || [NSFileManager.defaultManager fileExistsAtPath:storePath]) return 3;
+          !IsUUID(notesReplicaIdentifier) ||
+          [NSFileManager.defaultManager fileExistsAtPath:storePath] != mutate) return 3;
+      if ((receiptFixture || mutate) && (![noteIdentifier isEqualToString:@"33333333-3333-4333-8333-333333333333"] ||
+          ![notesReplicaIdentifier isEqualToString:@"11111111-1111-4111-8111-111111111111"])) return 3;
       NSString *root = [[storePath stringByDeletingLastPathComponent] stringByResolvingSymlinksInPath];
       NSString *payloadRoot = [[payloadPath stringByDeletingLastPathComponent] stringByResolvingSymlinksInPath];
       const char *realHome = getenv("HOME");
@@ -61,6 +78,9 @@ int main(int argc, const char **argv) {
       NSManagedObjectModel *model = [[NSManagedObjectModel alloc] initWithContentsOfURL:
           [NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks/NotesShared.framework/Resources/NoteData.mom"]];
       if (!model) return 5;
+      // Opening a generated store for fixed row drift must also fetch generic
+      // objects; never resolve the model's private managed-object classes.
+      for (NSEntityDescription *entity in model.entities) entity.managedObjectClassName = @"NSManagedObject";
       NSPersistentStoreCoordinator *coordinator = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:model];
       NSDictionary *options = @{
         NSMigratePersistentStoresAutomaticallyOption: @NO,
@@ -77,6 +97,40 @@ int main(int argc, const char **argv) {
       context.mergePolicy = NSErrorMergePolicy;
       context.undoManager = nil;
       context.transactionAuthor = @"synthetic-fixture-generator";
+      if (mutate) {
+        // Fixed generated rows only. No arbitrary entity, key, identifier or
+        // payload may be supplied; generic objects avoid private model hooks.
+        NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ICNote"];
+        request.predicate = [NSPredicate predicateWithFormat:@"identifier == %@", noteIdentifier];
+        NSArray *notes = [context executeFetchRequest:request error:&error];
+        if (notes.count != 1) return 11;
+        NSManagedObject *note = notes.firstObject;
+        NSManagedObject *data = [note valueForKey:@"noteData"];
+        NSData *beforeBody = [[data valueForKey:@"data"] copy];
+        NSDate *beforeDate = [[note valueForKey:@"modificationDate"] copy];
+        NSManagedObject *primary = nil, *extra = nil;
+        for (NSManagedObject *row in [note valueForKey:@"inlineAttachments"]) {
+          NSString *identifier = [row valueForKey:@"identifier"];
+          if ([identifier isEqualToString:InlineIdentifier]) primary = row;
+          else if ([identifier isEqualToString:ExtraInlineIdentifier]) extra = row;
+          else return 12;
+        }
+        if (!primary) return 12;
+        if ([mode isEqualToString:@"--inline-token"]) Set(primary, @"tokenContentIdentifier", ExtraInlineIdentifier);
+        else if ([mode isEqualToString:@"--inline-tombstone"]) Set(primary, @"markedForDeletion", @YES);
+        else if ([mode isEqualToString:@"--inline-add-hidden"]) { if (extra) return 12; HiddenInline(context, note, ExtraInlineIdentifier); }
+        else {
+          Set(primary, @"tokenContentIdentifier", InlineIdentifier);
+          Set(primary, @"markedForDeletion", @NO);
+          if (extra) [context deleteObject:extra];
+        }
+        if (![[data valueForKey:@"data"] isEqual:beforeBody] || ![[note valueForKey:@"modificationDate"] isEqual:beforeDate]) return 13;
+        if (![context save:&error]) return 7;
+        [context reset];
+        if (![coordinator removePersistentStore:store error:&error]) return 8;
+        puts("{\"mutated\":true,\"frameworkLoaded\":false,\"bodyPreserved\":true,\"modificationDatePreserved\":true}");
+        return 0;
+      }
       NSManagedObject *account = Insert(context, @"ICAccount");
       NSManagedObject *folder = Insert(context, @"ICFolder");
       NSManagedObject *note = Insert(context, @"ICNote");
@@ -131,10 +185,14 @@ int main(int argc, const char **argv) {
       Set(note, @"noteData", data);
       Set(data, @"data", payload);
       CloudState(context, note);
+      // Deliberately hidden owned row: no glyph, file, media relation or table
+      // CRDT. a1 must include it even though the note body never references it.
+      if (receiptFixture) HiddenInline(context, note, InlineIdentifier);
       if (![context save:&error]) { NSLog(@"Synthetic graph save failed: %@", error); return 7; }
       [context reset];
       if (![coordinator removePersistentStore:store error:&error]) { NSLog(@"Synthetic store close failed: %@", error); return 8; }
-      printf("{\"created\":true,\"frameworkLoaded\":false,\"notes\":1,\"accounts\":1,\"folders\":%d}\n", scopeFixture ? 4 : 1);
+      if (receiptFixture) puts("{\"created\":true,\"frameworkLoaded\":false,\"notes\":1,\"accounts\":1,\"folders\":4,\"inlineAttachments\":1}");
+      else printf("{\"created\":true,\"frameworkLoaded\":false,\"notes\":1,\"accounts\":1,\"folders\":%d}\n", scopeFixture ? 4 : 1);
       return 0;
     } @catch (NSException *error) {
       NSLog(@"Synthetic generator failed: %@: %@", error.name, error.reason);
