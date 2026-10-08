@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+## [2.14.1] - 2026-10-08
+
+### Changed
+
+- Upgrade `@modelcontextprotocol/sdk` from 1.30.1 to 1.31.0 and rebuild the
+  committed bundle. Retain the other transitive dependency versions so
+  frozen installs pass the seven-day release-age guard, with all security
+  overrides unchanged. The SDK update affects OAuth client credential
+  binding; the stdio server bundle changes only in dependency path comments.
+- Update development-only `source-map-js` to 1.2.2 to fix
+  GHSA-68fv-2mgg-jv7q now that the patch satisfies the seven-day release-age
+  guard. This dependency is not included in the shipped bundle.
+
 ## [2.14.0] - 2026-10-03
 
 Split out of #262 per review: paragraph anchors and the opt-in anchor
