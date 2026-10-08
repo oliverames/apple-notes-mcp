@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { packageRoot } from "./privateHelper.js";
 import { writerCompileArguments } from "./privateWriterBuild.js";
 import { composePlanDigest } from "./privateCompose.js";
-import { WRITER_ACTIONS } from "./privateWriter.js";
+import { ATTACHMENT_EVIDENCE_POLICY, WRITER_ACTIONS } from "./privateWriter.js";
 
 let directory: string;
 let binary: string;
@@ -103,6 +103,8 @@ describe.skipIf(!MACOS)("synthetic native writer safety", () => {
       identifier: "12345678-1234-1234-1234-123456789ABC",
       mode: "append",
       ifRevision: `r1:${"b".repeat(64)}`,
+      attachmentSnapshot: `a1:${"e".repeat(64)}`,
+      attachmentEvidencePolicy: ATTACHMENT_EVIDENCE_POLICY,
       paragraphs,
       requireNonSystemPaper: true,
       insertBeforeHeading: { text: "Title / café", expectedCount: 1, occurrence: 1 },
