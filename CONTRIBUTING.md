@@ -5,12 +5,14 @@ Thank you for your interest in contributing! This document provides guidelines f
 ## Development Setup
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/sweetrb/apple-notes-mcp.git
    cd apple-notes-mcp
    ```
 
 2. **Install dependencies**
+
    ```bash
    pnpm install
    ```
@@ -18,6 +20,7 @@ Thank you for your interest in contributing! This document provides guidelines f
    This repo pins pnpm via `packageManager` in `package.json` — `corepack enable` provides it. Development needs Node >= 22.13 (CI tests on Node 22 and 24); the published server itself runs on Node >= 20.
 
 3. **Build the project**
+
    ```bash
    pnpm run build
    ```
@@ -63,9 +66,25 @@ pnpm run test:watch
 - Test both success and failure paths
 - Test edge cases (empty strings, special characters, etc.)
 
+### Native broker security tests
+
+Run `pnpm run test:broker-security` on a Mac with the command-line developer
+tools and hardened-runtime enforcement enabled. The harness compiles temporary
+fixtures, applies ad-hoc signatures, and tests direct socket requests, sealed
+resource and runtime tampering, and harmless DYLD injection. It does not install
+a LaunchAgent, use signing credentials, invoke Notes, or request TCC grants.
+
+The injection assertion must remain fatal. A static `runtime` signature does not
+prove that the host enforces it: hosts with disabled system protections can admit
+injection into both the broker and an independently signed hardened control. On
+failure, the harness records host policy, process identity, signing flags, and
+control results. Do not turn that failure into a skip or passing check; run the
+same harness on an enforcing host and retain it in a required CI check.
+
 ## Pull Request Process
 
 1. **Create a feature branch**
+
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -76,6 +95,7 @@ pnpm run test:watch
    - Add tests for new functionality
 
 3. **Run all checks**
+
    ```bash
    pnpm run lint
    pnpm run typecheck
