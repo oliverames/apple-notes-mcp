@@ -26,7 +26,7 @@ new Function("module", "exports", "dirname", "relative", "resolve", "sha256Hex",
 );
 const productionHash = module.exports.writerSourceSha256;
 
-test("report closure exactly matches the pure production function for packaged writer and both headers", () => {
+test("report closure exactly matches the pure production function for packaged writer and all local headers", () => {
   const sourcePath = new URL(
     "../../native/private-helper/apple-notes-private-writer.m",
     import.meta.url
@@ -49,7 +49,12 @@ test("report closure exactly matches the pure production function for packaged w
   );
   assert.deepEqual(
     actual.files.map(([name]) => name),
-    ["apple-notes-private-writer.m", "attachment-evidence.h", "content-preservation.h"]
+    [
+      "apple-notes-private-writer.m",
+      "attachment-evidence.h",
+      "content-preservation.h",
+      "legacy-attribute-projection.h",
+    ]
   );
   assert.equal(
     actual.sha256,

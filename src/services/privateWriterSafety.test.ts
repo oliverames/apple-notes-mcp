@@ -62,6 +62,14 @@ function run(args: string[] = [], input?: Record<string, unknown>) {
 }
 
 describe.skipIf(!MACOS)("synthetic native writer safety", () => {
+  it("freezes legacy projections before shared mutable attributes can hide drift", () => {
+    const result = run(["legacy-frozen-plan"]);
+    expect(result.frameworkLoaded).toBe(false);
+    expect(result.passed).toHaveLength(6);
+    expect(result.passed).toContain("frozen baseline rejects shared untouched drift");
+    expect(result.passed).toContain("frozen replacement rejects shared inserted drift");
+  });
+
   it("saves expected objects and refuses unrelated, undeclared, and early saves", () => {
     const result = run();
     expect(result.frameworkLoaded).toBe(false);

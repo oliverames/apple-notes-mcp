@@ -198,10 +198,8 @@ describe("private writer source contract", () => {
     );
     // Formatting outside the edits is compared run by run, including
     // timestamps, and the glyph sequence against the planned text.
-    expect(CODE).toMatch(/CanonicalRuns\(plan\.snapshot, oldRange, NO\)/);
-    expect(CODE).toMatch(
-      /AttachmentGlyphs\(persisted\) isEqual:AttachmentGlyphs\(plan\.expected\)/
-    );
+    expect(CODE).toMatch(/ANMLegacySliceRuns\(plan\.snapshotRuns, oldRange\)/);
+    expect(CODE).toMatch(/AttachmentGlyphs\(persisted\) isEqual:plan\.expectedGlyphs/);
     // One entry per glyph character, so two adjacent glyphs of one attachment
     // (Notes stores AppleScript-added images that way) are not merged into one run.
     expect(CODE).toMatch(
@@ -263,19 +261,24 @@ describe("private writer source contract", () => {
     );
   });
 
-  it("compares stored runs field by field and refuses what it cannot compare", () => {
+  it("compares the frozen supported getter projection and refuses unsupported classes/ABIs", () => {
     const canonical = CODE.slice(CODE.indexOf("static NSString *CanonicalValue(id value) {"));
     const body = canonical.slice(0, canonical.indexOf("\n}\n"));
-    // No description fallback: an unknown class is nil (unverifiable).
-    expect(body).not.toMatch(/description/);
-    expect(body).toMatch(/return nil;\s*$/);
-    expect(body).toMatch(/CanonicalParagraphStyle\(value\)/);
-    const style = SOURCE.slice(
-      SOURCE.indexOf("static NSString *CanonicalParagraphStyle(id style) {")
+    expect(body).toMatch(/return ANMLegacyCanonicalValue\(value\);/);
+    const projection = readFileSync(
+      join(packageRoot(__dirname), "native/private-helper/legacy-attribute-projection.h"),
+      "utf8"
     );
-    const styleBody = style.slice(0, style.indexOf("\n}\n"));
+    expect(projection).not.toMatch(/\[value description\]/);
+    expect(projection).toMatch(/return nil;\s*}\s*static NSString \*ANMLegacyCanonicalAttributes/);
+    expect(projection).toContain("ANMLegacyGetter");
     for (const field of ["startingItemNumber", "hints", "uuid", "todo", "done", "alignment"])
-      expect(styleBody).toContain(field);
+      expect(projection).toContain(field);
+    const freeze = CODE.indexOf("plan.snapshotRuns = CanonicalRuns(snapshot");
+    expect(freeze).toBeGreaterThan(0);
+    expect(freeze).toBeLessThan(CODE.indexOf("PlanOperation(operations[i]"));
+    expect(CODE).toContain("plan.replacedRuns = frozenReplacements;");
+    expect(CODE).toContain("plan.expectedGlyphs = AttachmentGlyphs(expected);");
     // A plan refuses a note holding an unverifiable value; a read-back fails on one.
     expect(CODE).toMatch(
       /NSArray \*unverifiable = UnverifiableAttributeClasses\(snapshot\);\s*if \(unverifiable\.count\)\s*Fail\(""/

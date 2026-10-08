@@ -52,6 +52,7 @@
 #include <unistd.h>
 #include "attachment-evidence.h"
 #include "content-preservation.h"
+#include "legacy-attribute-projection.h"
 
 #define PROTOCOL_VERSION 1
 #define MAX_INPUT_BYTES (1024 * 1024)
@@ -255,7 +256,7 @@ static const APIRequirement kEditAPI[] = {
     {"ICTTMutableParagraphStyle", "setStyle:", NO},
     {"ICTTMutableParagraphStyle", "setTodo:", NO},
     {"ICTTTodo", "initWithIdentifier:done:", NO},
-    // Everything CanonicalValue reads to compare stored runs field by field.
+    // Supported getter projection used by the legacy run comparison.
     {"ICTTParagraphStyle", "alignment", NO},
     {"ICTTParagraphStyle", "writingDirection", NO},
     {"ICTTParagraphStyle", "indent", NO},
@@ -1478,8 +1479,9 @@ static BOOL IsJSONBool(id value) {
 //   inline object is never inside an edited range.
 // - edit_note requires `ifPlanDigest` (the dry run's planDigest),
 //   which also covers requireNonSystemPaper and each replacement file's bytes.
-// - A note holding an attribute value whose class the writer cannot compare
-//   field by field (CanonicalValue) is refused at the plan.
+// - A note holding an attribute value outside the supported getter projection
+//   (CanonicalValue) is refused at the plan. This projection does not cover
+//   unknown or opaque private fields; strict stored-layout work is separate.
 // - Before saving, only the note, its note data, its cloud state, and the row
 //   of an attachment the plan removes from the body may be dirty; anything
 //   else rolls back (unexpected_side_effect).
@@ -1586,85 +1588,11 @@ static id ParagraphStyleAt(NSAttributedString *text, EditParagraph *p) {
 
 static NSString *ColorHex(id value);
 
-// Every stored field of a native paragraph style, read through its own
-// accessors: style, alignment, writing direction, indent, block quote level,
-// list start number, hints, paragraph UUID, and the checklist todo (its UUID
-// and done state). nil when an accessor is missing, which fails closed.
-static NSString *CanonicalParagraphStyle(id style) {
-  for (NSString *sel in @[
-         @"style", @"alignment", @"writingDirection", @"indent", @"blockQuoteLevel", @"startingItemNumber", @"hints",
-         @"uuid", @"todo"
-       ])
-    if (![style respondsToSelector:NSSelectorFromString(sel)]) return nil;
-  unsigned int (*u32)(id, SEL) = (unsigned int (*)(id, SEL))objc_msgSend;
-  long long (*i64)(id, SEL) = (long long (*)(id, SEL))objc_msgSend;
-  id uuid = Send(style, "uuid");
-  id todo = Send(style, "todo");
-  NSString *todoText = @"none";
-  if (todo) {
-    if (![todo respondsToSelector:sel_registerName("uuid")] || ![todo respondsToSelector:sel_registerName("done")])
-      return nil;
-    todoText = [NSString stringWithFormat:@"%@/%d", [Send(todo, "uuid") UUIDString] ?: @"nil", SendBool(todo, "done")];
-  }
-  return [NSString stringWithFormat:@"p:%u|%lld|%lld|%lld|%lld|%lld|%u|%@|%@", u32(style, sel_registerName("style")),
-                                    i64(style, sel_registerName("alignment")),
-                                    i64(style, sel_registerName("writingDirection")),
-                                    i64(style, sel_registerName("indent")),
-                                    i64(style, sel_registerName("blockQuoteLevel")),
-                                    i64(style, sel_registerName("startingItemNumber")),
-                                    u32(style, sel_registerName("hints")),
-                                    [uuid isKindOfClass:[NSUUID class]] ? [uuid UUIDString] : @"nil", todoText];
-}
-
-// Canonical, pointer-free text for an attribute value, built from the
-// fields of each class Notes stores in a note body, so two reads of the same
-// stored run compare equal and any change to a stored field compares
-// unequal. A value of any other class returns nil: it cannot be verified, so
-// a plan refuses the note (UnverifiableAttributeClasses) instead of relying
-// on a description that might omit a field.
+// Legacy edit compares the supported getter projection exactly. This does
+// not establish complete opaque private-state coverage; compose/table use
+// the separate strict stored-layout snapshots and refuse unsupported state.
 static NSString *CanonicalValue(id value) {
-  if (!value) return @"nil";
-  if ([value isKindOfClass:[NSNumber class]]) return [NSString stringWithFormat:@"n:%@", value];
-  if ([value isKindOfClass:[NSString class]]) return [NSString stringWithFormat:@"s:%@", value];
-  if ([value isKindOfClass:[NSURL class]])
-    return [NSString stringWithFormat:@"u:%@", [value absoluteString]];
-  if ([value isKindOfClass:[NSUUID class]]) return [@"id:" stringByAppendingString:[value UUIDString]];
-  if ([value isKindOfClass:[NSDate class]])
-    return [NSString stringWithFormat:@"t:%.6f", [value timeIntervalSinceReferenceDate]];
-  Class paragraphStyle = objc_getClass("ICTTParagraphStyle");
-  if (paragraphStyle && [value isKindOfClass:paragraphStyle]) return CanonicalParagraphStyle(value);
-  Class attachment = objc_getClass("ICTTAttachment");
-  if (attachment && [value isKindOfClass:attachment]) {
-    if (![value respondsToSelector:sel_registerName("attachmentIdentifier")] ||
-        ![value respondsToSelector:sel_registerName("attachmentUTI")])
-      return nil;
-    return [NSString stringWithFormat:@"a:%@|%@", Send(value, "attachmentUTI") ?: @"nil",
-                                      Send(value, "attachmentIdentifier") ?: @"nil"];
-  }
-  Class font = objc_getClass("ICTTFont");
-  if (font && [value isKindOfClass:font]) {
-    for (NSString *sel in @[ @"fontName", @"pointSize", @"fontHints" ])
-      if (![value respondsToSelector:NSSelectorFromString(sel)]) return nil;
-    return [NSString stringWithFormat:@"f:%@|%.4f|%u", Send(value, "fontName") ?: @"nil",
-                                      ((double (*)(id, SEL))objc_msgSend)(value, sel_registerName("pointSize")),
-                                      ((unsigned int (*)(id, SEL))objc_msgSend)(value, sel_registerName("fontHints"))];
-  }
-  if (CFGetTypeID((__bridge CFTypeRef)value) == CGColorGetTypeID() || [value isKindOfClass:[NSColor class]]) {
-    NSString *hex = ColorHex(value);
-    return [hex hasPrefix:@"#"] ? [@"c:" stringByAppendingString:hex] : nil;
-  }
-  return nil;
-}
-
-static NSString *CanonicalAttributes(NSDictionary *attributes, BOOL ignoreTimestamp) {
-  NSMutableArray *parts = [NSMutableArray array];
-  for (NSString *key in [attributes.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-    if (ignoreTimestamp && [key isEqualToString:kTimestampKey]) continue;
-    // An unverifiable value never compares equal to anything, itself included.
-    NSString *canonical = CanonicalValue(attributes[key]) ?: [NSString stringWithFormat:@"?%@", NSUUID.UUID];
-    [parts addObject:[NSString stringWithFormat:@"%@=%@", key, canonical]];
-  }
-  return [parts componentsJoinedByString:@"\x1f"];
+  return ANMLegacyCanonicalValue(value);
 }
 
 // Classes of attribute values in `text` that CanonicalValue cannot verify.
@@ -1687,22 +1615,7 @@ static NSArray<NSString *> *UnverifiableAttributeClasses(NSAttributedString *tex
 // Runs of equal canonical attributes over `range`, as [relativeStart, length,
 // canonical] triples, merged so that storage-level run splits do not matter.
 static NSArray *CanonicalRuns(NSAttributedString *text, NSRange range, BOOL ignoreTimestamp) {
-  NSMutableArray *runs = [NSMutableArray array];
-  if (!range.length) return runs;
-  [text enumerateAttributesInRange:range
-                           options:0
-                        usingBlock:^(NSDictionary *attrs, NSRange r, BOOL *stop) {
-                          (void)stop;
-                          NSString *canonical = CanonicalAttributes(attrs, ignoreTimestamp);
-                          NSMutableArray *last = runs.lastObject;
-                          if (last && [last[2] isEqualToString:canonical]) {
-                            last[1] = @([last[1] unsignedIntegerValue] + r.length);
-                          } else {
-                            [runs addObject:[@[ @(r.location - range.location), @(r.length), canonical ]
-                                                mutableCopy]];
-                          }
-                        }];
-  return runs;
+  return ANMLegacyCanonicalRuns(text, range, ignoreTimestamp, kTimestampKey);
 }
 
 static NSArray<NSString *> *AttachmentGlyphs(NSAttributedString *text) {
@@ -1763,6 +1676,9 @@ static NSString *AttachmentRowDigest(NSManagedObject *row) {
       canonical = [@"d:" stringByAppendingString:SHA256Hex(value)];
     else
       canonical = CanonicalValue(value);
+    if (!canonical)
+      Fail(@"attachment_evidence_incomplete", @"An attachment stored value cannot be compared exactly",
+           @{ @"committed" : @NO });
     [parts addObject:[NSString stringWithFormat:@"%@=%@", name, canonical]];
   }
   id owner = row.entity.relationshipsByName[@"note"] ? [row valueForKey:@"note"] : nil;
@@ -3194,6 +3110,12 @@ static NSString *PlanDigest(NSString *identifier, NSString *revisionBefore, NSAr
 @property(nonatomic, strong) id mergeable;
 @property(nonatomic, copy) NSAttributedString *snapshot;
 @property(nonatomic, copy) NSAttributedString *expected;
+// Attributed-string copies retain mutable native attribute objects. These
+// immutable strings freeze the supported getter projection before edits.
+@property(nonatomic, copy) NSArray *snapshotRuns;
+@property(nonatomic, copy) NSArray *snapshotRunsWithoutTimestamp;
+@property(nonatomic, copy) NSArray *replacedRuns;
+@property(nonatomic, copy) NSArray *expectedGlyphs;
 @property(nonatomic, copy) NSArray *targets;
 @property(nonatomic, strong) NSMutableArray *unchanged;
 @property(nonatomic, strong) NSMutableArray *replaced;
@@ -3255,13 +3177,14 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   NSAttributedString *snapshot = [LoadBody(note, &ms) copy];
   plan.mergeable = ms;
   plan.snapshot = snapshot;
-  // Verification compares stored runs field by field; a value of a class it
-  // cannot read field by field would make that comparison blind, so such a
-  // note is refused before anything is planned or written.
+  // Verification compares the supported getter projection, not every opaque
+  // native field. Unknown classes/ABIs refuse before planning or mutation.
   NSArray *unverifiable = UnverifiableAttributeClasses(snapshot);
   if (unverifiable.count)
     Fail(@"unsupported_note", @"The note holds formatting the writer cannot verify after an edit; nothing was changed",
          @{@"committed" : @NO, @"attributes" : unverifiable});
+  plan.snapshotRuns = CanonicalRuns(snapshot, NSMakeRange(0, snapshot.length), NO);
+  plan.snapshotRunsWithoutTimestamp = CanonicalRuns(snapshot, NSMakeRange(0, snapshot.length), YES);
   plan.attachmentRows = AttachmentRows(note);
   FrozenStats frozenStats;
   plan.frozenAttachments = FrozenAttachments(note, snapshot, [NSSet set], &frozenStats);
@@ -3317,9 +3240,16 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   plan.unchanged = [NSMutableArray array];
   plan.replaced = [NSMutableArray array];
   Segments(targets, snapshot.length, plan.unchanged, plan.replaced);
+  NSMutableArray *frozenReplacements = [NSMutableArray array];
+  for (NSArray *segment in plan.replaced) {
+    NSAttributedString *replacement = segment[1];
+    [frozenReplacements addObject:CanonicalRuns(replacement, NSMakeRange(0, replacement.length), YES)];
+  }
+  plan.replacedRuns = frozenReplacements;
+  plan.expectedGlyphs = AttachmentGlyphs(expected);
   plan.wouldChange = ![expected.string isEqualToString:snapshot.string] ||
                      ![CanonicalRuns(expected, NSMakeRange(0, expected.length), YES)
-                         isEqual:CanonicalRuns(snapshot, NSMakeRange(0, snapshot.length), YES)];
+                         isEqual:plan.snapshotRunsWithoutTimestamp];
   NSUInteger unchangedUTF16 = 0;
   for (NSArray *segment in plan.unchanged) unchangedUTF16 += [segment[0] rangeValue].length;
   NSMutableArray *replacementFiles = [NSMutableArray array];
@@ -3369,19 +3299,18 @@ static NSString *VerifyAgainstPlan(NSAttributedString *persisted, EditPlan *plan
     return @"The persisted note holds formatting the writer cannot verify";
   for (NSArray *segment in plan.unchanged) {
     NSRange oldRange = [segment[0] rangeValue], newRange = [segment[1] rangeValue];
-    if (![CanonicalRuns(plan.snapshot, oldRange, NO) isEqual:CanonicalRuns(persisted, newRange, NO)])
+    if (![ANMLegacySliceRuns(plan.snapshotRuns, oldRange) isEqual:CanonicalRuns(persisted, newRange, NO)])
       return [NSString stringWithFormat:@"Formatting changed outside the edited ranges (at %lu)",
                                         (unsigned long)newRange.location];
   }
-  for (NSArray *segment in plan.replaced) {
+  for (NSUInteger index = 0; index < plan.replaced.count; index++) {
+    NSArray *segment = plan.replaced[index];
     NSRange newRange = [segment[0] rangeValue];
-    NSAttributedString *replacement = segment[1];
-    if (![CanonicalRuns(replacement, NSMakeRange(0, replacement.length), YES)
-            isEqual:CanonicalRuns(persisted, newRange, YES)])
+    if (![plan.replacedRuns[index] isEqual:CanonicalRuns(persisted, newRange, YES)])
       return [NSString stringWithFormat:@"The inserted text does not carry the planned formatting (at %lu)",
                                         (unsigned long)newRange.location];
   }
-  if (![AttachmentGlyphs(persisted) isEqual:AttachmentGlyphs(plan.expected)])
+  if (![AttachmentGlyphs(persisted) isEqual:plan.expectedGlyphs])
     return @"The attachment glyph sequence changed";
   return nil;
 }

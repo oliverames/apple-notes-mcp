@@ -185,9 +185,60 @@ static NSArray *RunFixture(void) {
   return passed;
 }
 
+// Invoke the production verifier with shallow attributed-string copies that
+// share mutable Foundation attribute objects. No context, dispatch or native
+// framework is involved. This reproduces the prior comparison-baseline gap.
+static NSArray *LegacyFrozenPlanFixture(void) {
+  NSMutableArray *passed = [NSMutableArray array];
+  NSMutableString *link = [@"https://example.test/original" mutableCopy];
+  NSAttributedString *body = [[NSAttributedString alloc] initWithString:@"A🙂B" attributes:@{ @"NSLink" : link }];
+  EditPlan *plan = [EditPlan new];
+  plan.snapshot = body;
+  plan.expected = body;
+  plan.snapshotRuns = CanonicalRuns(body, NSMakeRange(0, body.length), NO);
+  plan.unchanged = [NSMutableArray arrayWithObject:@[ [NSValue valueWithRange:NSMakeRange(0, 4)], [NSValue valueWithRange:NSMakeRange(0, 4)] ]];
+  plan.replaced = [NSMutableArray array];
+  plan.replacedRuns = @[];
+  plan.expectedGlyphs = @[];
+  Assert(VerifyAgainstPlan(body, plan) == nil, @"Frozen unchanged baseline passes");
+  [passed addObject:@"unchanged frozen projection passes"];
+  [link appendString:@"-changed"];
+  Assert([CanonicalRuns(plan.snapshot, NSMakeRange(0, 4), NO) isEqual:CanonicalRuns(body, NSMakeRange(0, 4), NO)],
+      @"Shallow copy fixture shares the mutated getter value");
+  [passed addObject:@"shallow copy reproduces shared mutable attribute"];
+  Assert([VerifyAgainstPlan(body, plan) hasPrefix:@"Formatting changed outside"], @"Frozen baseline detects shared attribute drift");
+  [passed addObject:@"frozen baseline rejects shared untouched drift"];
+
+  NSAttributedString *old = [[NSAttributedString alloc] initWithString:@"AB"];
+  NSMutableString *newLink = [@"https://example.test/insertion" mutableCopy];
+  NSAttributedString *replacement = [[NSAttributedString alloc] initWithString:@"🙂" attributes:@{ @"NSLink": newLink }];
+  NSMutableAttributedString *expected = [old mutableCopy];
+  [expected insertAttributedString:replacement atIndex:1];
+  plan = [EditPlan new]; plan.snapshot = old; plan.expected = expected;
+  plan.snapshotRuns = CanonicalRuns(old, NSMakeRange(0, old.length), NO);
+  plan.unchanged = [NSMutableArray arrayWithArray:@[
+      @[ [NSValue valueWithRange:NSMakeRange(0, 1)], [NSValue valueWithRange:NSMakeRange(0, 1)] ],
+      @[ [NSValue valueWithRange:NSMakeRange(1, 1)], [NSValue valueWithRange:NSMakeRange(3, 1)] ] ]];
+  plan.replaced = [NSMutableArray arrayWithObject:@[ [NSValue valueWithRange:NSMakeRange(1, 2)], replacement ]];
+  plan.replacedRuns = @[ CanonicalRuns(replacement, NSMakeRange(0, replacement.length), YES) ];
+  plan.expectedGlyphs = @[];
+  Assert(VerifyAgainstPlan(expected, plan) == nil, @"Exact frozen planned insertion passes");
+  [passed addObject:@"frozen UTF-16 replacement passes"];
+  [newLink appendString:@"-changed"];
+  Assert([CanonicalRuns(replacement, NSMakeRange(0, 2), YES) isEqual:CanonicalRuns(expected, NSMakeRange(1, 2), YES)],
+      @"Replacement and persisted-like body share the changed attribute");
+  [passed addObject:@"replacement reproduces shared mutable attribute"];
+  Assert([VerifyAgainstPlan(expected, plan) hasPrefix:@"The inserted text"], @"Frozen replacement detects shared inserted attribute drift");
+  [passed addObject:@"frozen replacement rejects shared inserted drift"];
+  Assert(!gFrameworkLoaded, @"Frozen plan test cannot load NotesShared");
+  return passed;
+}
+
 int main(int argc, const char **argv) {
   @autoreleasepool {
     @try {
+      if (argc == 2 && strcmp(argv[1], "legacy-frozen-plan") == 0)
+        EmitAndExit(@{ @"passed": LegacyFrozenPlanFixture(), @"frameworkLoaded": @(gFrameworkLoaded) }, 0);
       if (argc == 2 && strcmp(argv[1], "digest") == 0) {
         NSDictionary *request = [NSJSONSerialization JSONObjectWithData:ReadStdin() options:0 error:NULL];
         EmitAndExit(@{@"digest" : ComposePlanDigest(request, request[@"ifRevision"], request[@"attachmentSnapshot"]), @"frameworkLoaded" : @(gFrameworkLoaded)}, 0);
