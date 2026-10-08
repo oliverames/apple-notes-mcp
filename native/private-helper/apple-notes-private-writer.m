@@ -52,7 +52,6 @@
 #include <unistd.h>
 #include "attachment-evidence.h"
 #include "content-preservation.h"
-#include "attachment-evidence.h"
 
 #define PROTOCOL_VERSION 1
 #define MAX_INPUT_BYTES (1024 * 1024)
