@@ -44,6 +44,7 @@ const report = {
   personalStoreRead: false,
   fixtureSeedPublic: true,
   nativeOutputPrivacyReviewed: false,
+  isolatedCachesPrecreated: true,
   tests: [],
   mutationChecks: [],
   completed: false,
@@ -67,6 +68,10 @@ function test(name, fn) {
 }
 const privateUser = join(root, "isolated-user");
 mkdirSync(join(privateUser, "Library/Preferences"), { recursive: true, mode: 0o700 });
+// File-type resolution may initialize an otherwise empty user Caches folder.
+// Supply this ordinary infrastructure before preflight, without excluding any
+// native cache content or later directory changes from exact tree comparisons.
+mkdirSync(join(privateUser, "Library/Caches"), { recursive: true, mode: 0o700 });
 mkdirSync(join(root, "tmp"), { mode: 0o700 });
 const profile = join(root, "fixture.sb");
 // Allow runtime primitive operations but deny every filesystem path except
@@ -627,6 +632,7 @@ try {
     "p3 checks digest consistency with the loaded revision and request; no prior preview authentication is claimed.",
     "No existing attachments are generated; p3 replacement-file materialization and nonempty attachment preservation are not exercised.",
     "Prospective compose-file digest refusals prove no persistent materialization; a matching file apply is not attempted.",
+    "The isolated user starts with empty Preferences and Caches infrastructure directories; cold Caches-directory initialization is not exercised.",
   ];
   persist("report.json", report);
   console.log(
