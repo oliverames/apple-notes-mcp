@@ -49,6 +49,9 @@ static NSManagedObject *HiddenInline(NSManagedObjectContext *context, NSManagedO
   Set(row, @"typeUTI", @"com.apple.notes.inlinetextattachment.dividerline");
   Set(row, @"markedForDeletion", @NO);
   Set(row, @"note", note);
+  // Match the fixed cloud-state infrastructure of every generated cloud row;
+  // otherwise Notes' ordinary lazy initialization inserts one at rehearsal.
+  CloudState(context, row);
   return row;
 }
 int main(int argc, const char **argv) {
