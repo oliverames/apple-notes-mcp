@@ -7162,7 +7162,6 @@ typedef struct {
   NSManagedObject *attachment;
   NSString *revision;
   NSString *tableDigest;
-  NSString *bodyText;
   NSDictionary *bodySnapshot;
   NSDictionary *unrelatedAttachments;
   NSString *attachmentSnapshot;
@@ -7184,7 +7183,6 @@ static TableTarget ResolveTableTarget(NSDictionary *request, BOOL readOnly, BOOL
   RequireAppendableNote(target.note);
   NSAttributedString *body = BodyAttributedString(target.note);
   if (!body) Fail(@"unsupported_note", @"The note body could not be loaded as a mergeable string", nil);
-  target.bodyText = [body.string copy];
   NSString *preservationReason = nil;
   target.bodySnapshot = ANMContentSnapshot(body, NSMakeRange(0, body.length), &preservationReason);
   if (!target.bodySnapshot)
@@ -7619,6 +7617,8 @@ static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
       @"committed" : @NO,
       @"revision" : target.revision,
       @"tableDigest" : target.tableDigest,
+      @"attachmentSnapshot" : target.attachmentSnapshot,
+      @"attachmentEvidencePolicy" : ANMAttachmentEvidencePolicy,
     }];
     return plan;
   }
@@ -7637,6 +7637,21 @@ static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
                                         @"apple-notes-mcp prune_orphan_table");
   // Only the note and the table row may change; anything else NotesShared
   // staged is refused before the save.
+  NSString *preservationReason = nil;
+  NSAttributedString *beforeSaveBody = BodyAttributedString(target.note);
+  if (!ANMContentMatches(target.bodySnapshot, beforeSaveBody, &preservationReason))
+    Fail(@"content_drift", preservationReason, @{@"committed" : @NO});
+  NSSet *excluded = [NSSet setWithObject:tableIdentifier.lowercaseString];
+  NSArray *attachmentDrift = FrozenDrift(target.unrelatedAttachments,
+      FrozenAttachments(target.note, beforeSaveBody, excluded, NULL), nil);
+  if (attachmentDrift.count)
+    Fail(@"attachment_drift", @"An unrelated attachment would change during the prune",
+         @{@"committed" : @NO, @"attachmentDrift" : attachmentDrift});
+  attachmentDrift = FrozenDrift(target.unrelatedAttachments,
+      FreshFrozenAttachments(target.store, plan[@"identifier"], excluded), nil);
+  if (attachmentDrift.count)
+    Fail(@"attachment_drift", @"Fresh persisted unrelated attachments changed before the prune save",
+         @{@"committed" : @NO, @"attachmentDrift" : attachmentDrift});
   RequireExpectedChanges(target.context, @[ target.note, target.attachment ], [NSSet set]);
   SaveOrFail(target.context);
 
@@ -7648,29 +7663,36 @@ static NSDictionary *HandlePruneOrphanTable(NSDictionary *request) {
     NSManagedObject *note = FetchNote(fresh, plan[@"identifier"]);
     NSManagedObject *attachment = AttachmentNamed(note, tableIdentifier);
     activeAfter = ActiveTables(note).count;
-    if (![BodyAttributedString(note).string isEqualToString:target.bodyText])
-      verifyDetail = @"The note body changed during the prune";
+    NSAttributedString *body = BodyAttributedString(note);
+    if (!ANMContentMatches(target.bodySnapshot, body, &verifyDetail))
+      verifyDetail = verifyDetail ?: @"The note body changed during the prune";
     else if (!attachment)
       verifyDetail = @"The pruned table's attachment row is missing after the save";
     else if (![[attachment valueForKey:@"markedForDeletion"] boolValue])
       verifyDetail = @"The table is not marked for deletion after the save";
     else if (activeAfter + 1 != activeBefore)
       verifyDetail = @"The active table count did not drop by exactly one";
-    else
-      after = NoteState(note);
+    if (!verifyDetail) {
+      attachmentDrift = FrozenDrift(target.unrelatedAttachments, FrozenAttachments(note, body, excluded, NULL), nil);
+      if (attachmentDrift.count) verifyDetail = @"An unrelated attachment changed during the prune";
+      else after = NoteState(note);
+    }
   } @catch (NSException *e) {
     // After a successful save: a committed write that could not be verified.
     verifyDetail = e.reason ?: e.name;
   }
   if (verifyDetail)
     Fail(@"verification_failed", verifyDetail,
-         @{@"committed" : @YES, @"revisionBefore" : target.revision});
+         @{@"committed" : @YES, @"indeterminate" : @YES, @"revisionBefore" : target.revision});
   [plan addEntriesFromDictionary:@{
     @"status" : @"updated",
     @"dryRun" : @NO,
     @"committed" : @YES,
     @"verified" : @YES,
     @"removedTableIdentifier" : tableIdentifier,
+    @"untouchedContentVerified" : @YES,
+    @"unrelatedAttachmentsVerified" : @YES,
+    @"contentEvidencePolicy" : ANMContentEvidencePolicy,
     @"activeTableCountAfter" : @(activeAfter),
     @"revisionBefore" : target.revision,
     @"revisionAfter" : after[@"revision"],
