@@ -129,6 +129,8 @@ try {
   const control = validateSyntheticNativeContentControl(JSON.parse(result.stdout));
   report.nativeComparatorCompleted = control.completed;
   report.nativeComparatorChecks = control.checks;
+  report.nativeComparatorObservations = control.observations;
+  report.nativeComparatorReportSha256 = sha256(result.stdout);
   if (!control.completed) report.nativeComparatorStage = control.stage;
   persist("report.json", report);
   assert.ok(!result.error && result.status === 0, "native control unavailable; private output retained");

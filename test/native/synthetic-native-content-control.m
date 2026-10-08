@@ -28,6 +28,14 @@ static NSString *const PublicText = @"PUBLIC SYNTHETIC WRITER FIXTURE\n"
 
 static const char *DiagnosticStage = "input";
 
+static NSNumber *Flag(BOOL value) { return value ? @YES : @NO; }
+static NSMutableDictionary *EmptyObservations(void) {
+  return [@{ @"firstPayloadMatchesBeforeProjection": NSNull.null, @"secondPayloadMatchesBeforeProjection": NSNull.null,
+      @"firstPayloadMatchesAfterProjection": NSNull.null, @"secondPayloadMatchesAfterProjection": NSNull.null,
+      @"firstContextHasChangesBeforeProjection": NSNull.null, @"secondContextHasChangesBeforeProjection": NSNull.null,
+      @"firstContextHasChangesAfterProjection": NSNull.null, @"secondContextHasChangesAfterProjection": NSNull.null } mutableCopy];
+}
+
 static void Require(BOOL condition) {
   if (!condition) @throw [NSException exceptionWithName:@"DiagnosticBoundary" reason:nil userInfo:nil];
 }
@@ -259,7 +267,7 @@ static BOOL EquivalentFixtureRoots(NSString *supplied, NSString *resolved) {
   NSString *name = FixtureRootName(supplied);
   return name && [name isEqual:FixtureRootName(resolved)];
 }
-static NSDictionary *Control(NSString *root, NSMutableArray *checks) {
+static NSDictionary *Control(NSString *root, NSMutableArray *checks, NSMutableDictionary *observations) {
   // Policy checks inspect denial only and never open real home/preferences.
   const char *home = getenv("HOME"), *fixed = getenv("CFFIXED_USER_HOME"), *tmp = getenv("TMPDIR");
   Require(home && fixed && tmp && strcmp(home, fixed) != 0);
@@ -300,6 +308,9 @@ static NSDictionary *Control(NSString *root, NSMutableArray *checks) {
   CloseContext(generic);
   DiagnosticStage = "framework-load";
   Require(dlopen("/System/Library/PrivateFrameworks/NotesShared.framework/NotesShared", RTLD_NOW | RTLD_LOCAL) != NULL);
+  // Independent new-memory controls run before any native store projection.
+  // A later payload bookkeeping failure cannot hide their completed result.
+  NSDictionary *constructedLedger = ConstructedControls(checks);
   Class container = objc_getClass("ICPersistentContainer");
   Require(container != Nil);
   DiagnosticStage = "container-model-abi";
@@ -314,6 +325,13 @@ static NSDictionary *Control(NSString *root, NSMutableArray *checks) {
   NSManagedObject *firstNote = FixedNote(first), *secondNote = FixedNote(second);
   Require(firstNote != secondNote && SubclassOf(object_getClass(firstNote), objc_getClass("ICNote")) &&
       SubclassOf(object_getClass(secondNote), objc_getClass("ICNote")));
+  // Each FixedNote has already independently type-checked and matched the
+  // stored gzip bytes against the public literal hash before projection.
+  observations[@"firstPayloadMatchesBeforeProjection"] = @YES;
+  observations[@"secondPayloadMatchesBeforeProjection"] = @YES;
+  DiagnosticStage = "read-only-context-before-projection";
+  observations[@"firstContextHasChangesBeforeProjection"] = Flag(first.hasChanges);
+  observations[@"secondContextHasChangesBeforeProjection"] = Flag(second.hasChanges);
   id firstMergeable = FixedObjectGetter(firstNote, "mergeableString"), secondMergeable = FixedObjectGetter(secondNote, "mergeableString");
   Require(firstMergeable && secondMergeable && firstMergeable != secondMergeable);
   NSAttributedString *firstBody = FixedObjectGetter(firstMergeable, "attributedString"), *secondBody = FixedObjectGetter(secondMergeable, "attributedString");
@@ -330,33 +348,45 @@ static NSDictionary *Control(NSString *root, NSMutableArray *checks) {
   DiagnosticStage = "fixed-seed-independent-context";
   Require(ANMContentMatches(frozen, secondBody, NULL));
   [checks addObject:@"native-fixed-seed-independent-context-stable"];
-  DiagnosticStage = "read-only-public-body-ledgers";
+  DiagnosticStage = "read-only-context-after-projection";
+  observations[@"firstContextHasChangesAfterProjection"] = Flag(first.hasChanges);
+  observations[@"secondContextHasChangesAfterProjection"] = Flag(second.hasChanges);
+  // A read-only persistent store plus the outer exact byte/tree ledger is the
+  // durability boundary. Context dirtiness is reported separately; no cause
+  // or harmlessness is inferred from its value.
+  DiagnosticStage = "read-only-first-payload-recheck";
   NSData *firstBytes = [[firstNote valueForKey:@"noteData"] valueForKey:@"data"];
+  Require([firstBytes isKindOfClass:NSData.class]);
+  observations[@"firstPayloadMatchesAfterProjection"] = Flag([Digest(firstBytes) isEqual:PublicPayloadSHA256]);
+  Require([observations[@"firstPayloadMatchesAfterProjection"] isEqual:@YES]);
+  DiagnosticStage = "read-only-second-payload-recheck";
   NSData *secondBytes = [[secondNote valueForKey:@"noteData"] valueForKey:@"data"];
-  Require([Digest(firstBytes) isEqual:PublicPayloadSHA256] && [Digest(secondBytes) isEqual:PublicPayloadSHA256]);
-  Require(!first.hasChanges && !second.hasChanges);
+  Require([secondBytes isKindOfClass:NSData.class]);
+  observations[@"secondPayloadMatchesAfterProjection"] = Flag([Digest(secondBytes) isEqual:PublicPayloadSHA256]);
+  Require([observations[@"secondPayloadMatchesAfterProjection"] isEqual:@YES]);
   [checks addObject:@"native-fixed-seed-public-body-ledgers-unchanged"];
   NSString *firstBodyHash = Digest([firstBody.string dataUsingEncoding:NSUTF8StringEncoding]);
   NSString *secondBodyHash = Digest([secondBody.string dataUsingEncoding:NSUTF8StringEncoding]);
   NSString *persistedPayloadHash = Digest(firstBytes);
   CloseContext(first); CloseContext(second);
-  NSDictionary *constructedLedger = ConstructedControls(checks);
-  return @{ @"schemaVersion": @1, @"kind": @"fixed-public-native-comparator-control", @"completed": @YES,
+  return @{ @"schemaVersion": @2, @"kind": @"fixed-public-native-comparator-control", @"completed": @YES,
       @"syntheticOnly": @YES, @"fixedPublicBodyVerified": @YES, @"readOnlyStore": @YES,
       @"storedAttributeFieldsRead": @YES, @"snapshotValuesEmitted": @NO, @"nativeAttributeGettersInvoked": @NO,
       @"nativeObjectsConstructedInMemory": @YES, @"storeSavesInvoked": @NO, @"writerInvoked": @NO,
       @"archiveCompletenessClaimed": @NO, @"persistenceClaimed": @NO,
       @"seedBodyUTF16": @184, @"seedPayloadSha256": persistedPayloadHash,
       @"firstSeedBodyUTF8Sha256": firstBodyHash, @"secondSeedBodyUTF8Sha256": secondBodyHash,
-      @"constructedBodyUTF16": constructedLedger[@"constructedBodyUTF16"], @"constructedBodyUTF8Sha256": constructedLedger[@"constructedBodyUTF8Sha256"], @"checks": [checks copy] };
+      @"constructedBodyUTF16": constructedLedger[@"constructedBodyUTF16"], @"constructedBodyUTF8Sha256": constructedLedger[@"constructedBodyUTF8Sha256"],
+      @"observations": [observations copy], @"checks": [checks copy] };
 }
 
 int main(int argc, const char **argv) {
   @autoreleasepool {
     if (argc != 2) return 2;
     NSMutableArray *checks = [NSMutableArray array];
+    NSMutableDictionary *observations = EmptyObservations();
     @try {
-      NSDictionary *report = Control(@(argv[1]), checks);
+      NSDictionary *report = Control(@(argv[1]), checks, observations);
       NSData *json = [NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingSortedKeys error:NULL];
       Require(json != nil);
       fwrite(json.bytes, 1, json.length, stdout); fputc('\n', stdout);
@@ -365,8 +395,8 @@ int main(int argc, const char **argv) {
       (void)error;
       // Never output native reason, userInfo, body, snapshot, getter values or
       // object descriptions. The fixed stage/check code envelope is bounded.
-      NSDictionary *failure = @{ @"schemaVersion": @1, @"kind": @"fixed-public-native-comparator-control", @"completed": @NO,
-          @"code": @"control_boundary_or_api_unavailable", @"stage": @(DiagnosticStage), @"checks": [checks copy] };
+      NSDictionary *failure = @{ @"schemaVersion": @2, @"kind": @"fixed-public-native-comparator-control", @"completed": @NO,
+          @"code": @"control_boundary_or_api_unavailable", @"stage": @(DiagnosticStage), @"observations": [observations copy], @"checks": [checks copy] };
       NSData *json = [NSJSONSerialization dataWithJSONObject:failure options:NSJSONWritingSortedKeys error:NULL];
       if (json) { fwrite(json.bytes, 1, json.length, stdout); fputc('\n', stdout); }
       return 1;

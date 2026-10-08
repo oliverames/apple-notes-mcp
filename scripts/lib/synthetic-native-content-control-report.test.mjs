@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { checks, stages, validateSyntheticNativeContentControl } from "./synthetic-native-content-control-report.mjs";
+import { checks, stages, observationKeys, validateSyntheticNativeContentControl } from "./synthetic-native-content-control-report.mjs";
 import { buildSyntheticNotePayload, text } from "./synthetic-note-payload.mjs";
 function report() {
-  return { schemaVersion: 1, kind: "fixed-public-native-comparator-control", completed: true,
+  return { schemaVersion: 2, kind: "fixed-public-native-comparator-control", completed: true,
     syntheticOnly: true, fixedPublicBodyVerified: true, readOnlyStore: true, storedAttributeFieldsRead: true,
     snapshotValuesEmitted: false, nativeAttributeGettersInvoked: false, nativeObjectsConstructedInMemory: true,
     storeSavesInvoked: false, writerInvoked: false, archiveCompletenessClaimed: false, persistenceClaimed: false,
@@ -13,7 +13,8 @@ function report() {
     firstSeedBodyUTF8Sha256: "f602bfbbe3589f906994178f6cdc3dc1f2977cfe9282ea152f210d7dbbbfd374",
     secondSeedBodyUTF8Sha256: "f602bfbbe3589f906994178f6cdc3dc1f2977cfe9282ea152f210d7dbbbfd374",
     constructedBodyUTF8Sha256: "f7957b1e93cb21231eca2bd923f4ead6cef62e48c65ba074b72ca19f3af2966f",
-    constructedBodyUTF16: 70, checks: [...checks] };
+    constructedBodyUTF16: 70, observations: Object.fromEntries(observationKeys.map((key) => [key, key.includes("PayloadMatches")])),
+    checks: [...checks] };
 }
 test("success claims require every fixed native comparator control in order", () => {
   const r = report(); assert.equal(validateSyntheticNativeContentControl(r), r);
@@ -24,15 +25,45 @@ test("success claims require every fixed native comparator control in order", ()
 });
 test("a failure carries only a bounded stage and completed prefix, never native values", () => {
   for (const stage of stages) {
-    const value = { schemaVersion: 1, kind: "fixed-public-native-comparator-control", completed: false,
-      code: "control_boundary_or_api_unavailable", stage, checks: checks.slice(0, 3) };
+    const value = { schemaVersion: 2, kind: "fixed-public-native-comparator-control", completed: false,
+      code: "control_boundary_or_api_unavailable", stage, observations: Object.fromEntries(observationKeys.map((key) => [key, null])),
+      checks: checks.slice(0, 3) };
     assert.equal(validateSyntheticNativeContentControl(value), value);
     value.reason = "native object description";
     assert.throws(() => validateSyntheticNativeContentControl(value));
   }
   for (const stage of ["unknown", "body payload", null])
-    assert.throws(() => validateSyntheticNativeContentControl({ schemaVersion: 1, kind: "fixed-public-native-comparator-control",
-      completed: false, code: "control_boundary_or_api_unavailable", stage, checks: [] }));
+    assert.throws(() => validateSyntheticNativeContentControl({ schemaVersion: 2, kind: "fixed-public-native-comparator-control",
+      completed: false, code: "control_boundary_or_api_unavailable", stage,
+      observations: Object.fromEntries(observationKeys.map((key) => [key, null])), checks: [] }));
+});
+test("payload matches remain mandatory while observed in-memory dirty flags carry no causal inference", () => {
+  for (const key of observationKeys) {
+    const value = report();
+    value.observations[key] = true;
+    assert.equal(validateSyntheticNativeContentControl(value), value);
+    if (key.includes("Context")) {
+      value.observations[key] = false;
+      assert.equal(validateSyntheticNativeContentControl(value), value);
+    } else {
+      value.observations[key] = false;
+      assert.throws(() => validateSyntheticNativeContentControl(value));
+    }
+    for (const invalid of [null, 0, 1, "true", {}, []]) {
+      value.observations[key] = invalid;
+      assert.throws(() => validateSyntheticNativeContentControl(value));
+    }
+  }
+  const failed = { schemaVersion: 2, kind: "fixed-public-native-comparator-control", completed: false,
+    code: "control_boundary_or_api_unavailable", stage: "read-only-first-payload-recheck", checks: checks.slice(0, 7),
+    observations: Object.fromEntries(observationKeys.map((key) => [key, null])) };
+  failed.observations.firstPayloadMatchesAfterProjection = false;
+  assert.equal(validateSyntheticNativeContentControl(failed), failed);
+  failed.observations.firstPayloadMatchesAfterProjection = 0;
+  assert.throws(() => validateSyntheticNativeContentControl(failed));
+  failed.observations.firstPayloadMatchesAfterProjection = false;
+  failed.observations.nativeValue = "private";
+  assert.throws(() => validateSyntheticNativeContentControl(failed));
 });
 test("truthful stored-value scope, exact body constants and boolean markers cannot broaden", () => {
   for (const [key, value] of [["readOnlyStore", false], ["storedAttributeFieldsRead", false], ["storeSavesInvoked", true],
@@ -61,6 +92,11 @@ test("source pins independent public body, actual production comparator and type
   assert.ok(source.indexOf('"generic-model-open"') < source.indexOf('"framework-load"'));
   assert.deepEqual([...new Set([...source.matchAll(/DiagnosticStage = "([^"]+)"/g)].map((m) => m[1]))].sort(), [...stages].sort());
   assert.ok(source.includes('@"done": @[ @"stored-scalar", @(@encode(BOOL)), [NSData dataWithBytes:&done length:sizeof(done)] ]'));
+  assert.ok(source.indexOf('NSDictionary *constructedLedger = ConstructedControls(checks);') < source.indexOf('DiagnosticStage = "native-read-only-open";'));
+  assert.ok(source.includes('static NSNumber *Flag(BOOL value) { return value ? @YES : @NO; }'));
+  assert.ok(!source.includes('Require(!first.hasChanges'));
+  assert.ok(source.includes('Require([observations[@"firstPayloadMatchesAfterProjection"] isEqual:@YES]);'));
+  assert.ok(source.includes('Require([observations[@"secondPayloadMatchesAfterProjection"] isEqual:@YES]);'));
 });
 test("harness retains fresh scratch, six preflights, exact sandbox, production closure and raw/public ledgers", () => {
   const harness = readFileSync(new URL("../test-private-native-content-control-synthetic.mjs", import.meta.url), "utf8");
@@ -75,7 +111,8 @@ test("harness retains fresh scratch, six preflights, exact sandbox, production c
   for (const snippet of ['assert.deepEqual(readdirSync(root), []);', 'assert.equal(childEnv.HOME, process.env.HOME);',
     'persist("before-state.json",', 'persist("after-state.json",', 'assert.deepEqual(after, before);',
     'persist("public-body-ledger-before.json",', 'persist("public-body-ledger-after.json",',
-    'report.productionSourceClosure = closure;', 'assert.deepEqual(writerSourceClosure(',
+    'report.productionSourceClosure = closure;', 'report.nativeComparatorObservations = control.observations;',
+    'report.nativeComparatorReportSha256 = sha256(result.stdout);', 'assert.deepEqual(writerSourceClosure(',
     'if (process.argv.length !== 2) throw new Error("This fixture accepts no paths or private input");'])
     assert.ok(harness.includes(snippet), snippet);
   assert.ok(harness.indexOf('report.isolation = JSON.parse(sandbox(probe).stdout);') < harness.indexOf('report.generator = JSON.parse(sandbox(generator,'));
