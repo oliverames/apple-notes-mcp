@@ -9,6 +9,7 @@ import { namedReferenceText } from "./htmlEntities.js";
 import {
   decodeMessage,
   decodeVarint,
+  decodeWireFields,
   embeddedMessage,
   getField,
   getFields,
@@ -61,7 +62,11 @@ export interface RichNote {
     type: string;
     mergeable: string;
     view: number | null;
+    /** Raw stored tag/object label; normalized tag names alone cannot detect a label change. */
+    altText?: string | null;
   }>;
+  /** False when duplicate database rows disagree about an object's stored payload. */
+  nativeObjectDataComplete?: boolean;
 }
 /** Stored formatting that a full-body AppleScript rewrite cannot reproduce. */
 export type HtmlLossyFormatting = "superscript" | "subscript" | "alignment" | "highlight";
@@ -128,6 +133,25 @@ function styleValue(field: ReturnType<typeof decodeMessage>[number]): unknown {
   return Buffer.from(field.value).toString("hex");
 }
 
+/** Keep unknown and fixed-width attributes too; only length and regenerated paragraph IDs vary. */
+function storedStyleSignature(data: Uint8Array): string {
+  return JSON.stringify(
+    decodeWireFields(data)
+      .filter((field) => field.fieldNumber !== 1)
+      .map((field) => [
+        field.fieldNumber,
+        field.wireType,
+        field.bytes
+          ? styleValue({
+              fieldNumber: field.fieldNumber,
+              wireType: field.wireType,
+              value: field.bytes,
+            })
+          : field.varint!.toString(),
+      ])
+  );
+}
+
 /** Options for a rich-text read. */
 export interface RichNoteReadOptions {
   /**
@@ -174,11 +198,7 @@ export function parseRichNote(
       highlight: Boolean(varintValue(getField(fields, 14))),
       start: position,
       length,
-      signature: JSON.stringify(
-        fields
-          .filter((f) => (f.fieldNumber >= 2 && f.fieldNumber <= 12) || f.fieldNumber === 14)
-          .map((f) => [f.fieldNumber, styleValue(f)])
-      ),
+      signature: storedStyleSignature(run.value as Uint8Array),
     });
     // Only runs that cover visible text matter: Notes leaves attributes on a
     // trailing newline that no rewrite could lose.
@@ -254,7 +274,7 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
   const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]+)$/i.exec(id)?.[1];
   if (!pk) throw new Error("Invalid exact note ID");
   // One read-only transaction, scoped to the requested note; no library dump.
-  const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
+  const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE,'altText',ZALTTEXT)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
   const rows = execFileSync("/usr/bin/sqlite3", ["-readonly", dbPath, sql], {
     encoding: "utf8",
     timeout: 5000,
@@ -287,7 +307,8 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
         typeof row.id !== "string" ||
         !Number.isInteger(row.pk) ||
         typeof row.mergeable !== "string" ||
-        !/^[0-9a-f]*$/i.test(row.mergeable)
+        !/^[0-9a-f]*$/i.test(row.mergeable) ||
+        (row.altText !== undefined && row.altText !== null && typeof row.altText !== "string")
     )
   )
     throw new Error("Invalid native object metadata");
@@ -298,11 +319,22 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
       .filter((row) => rich.nativeObjectIds.includes(row.id))
       .sort((a, b) => a.id.localeCompare(b.id))
   );
+  const selectedRows = new Map(rich.objectData.map((row) => [row.id, row]));
+  rich.nativeObjectDataComplete = objectData.every((candidate) => {
+    const row = selectedRows.get(candidate.id);
+    return (
+      !row ||
+      ["pk", "type", "mergeable", "view", "altText"].every(
+        (key) => candidate[key] === row[key as keyof typeof row]
+      )
+    );
+  });
   rich.revision = createHash("sha256")
     .update(rich.revision)
     .update(JSON.stringify(rich.objectData))
+    .update(JSON.stringify(rich.nativeObjectDataComplete))
     .digest("hex");
-  rich.nativeTagObjectIds = {};
+  rich.nativeTagObjectIds = Object.create(null) as Record<string, string[]>;
   for (const id of rich.nativeObjectIds)
     if (tagMap[id]) {
       const tag = tagMap[id].replace(/^#/, "");
