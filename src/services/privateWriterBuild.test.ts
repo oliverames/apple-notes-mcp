@@ -16,6 +16,8 @@ import {
   formatWriterBuild,
 } from "./privateWriterBuild.js";
 import type { HelperBuildDeps } from "./privateHelperBuild.js";
+import { writerSourceSha256 } from "./privateWriterSources.js";
+import { inspectWriterInstallation } from "./privateWriter.js";
 
 const SOURCE = "// writer source\n";
 const SOURCE_SHA = sha256Hex(SOURCE);
@@ -89,6 +91,37 @@ describe("defaultWriterBuildDeps", () => {
     expect(defaultWriterBuildDeps().sourcePath).toMatch(
       /native\/private-helper\/apple-notes-private-writer\.m$/
     );
+  });
+});
+
+describe("support-source integrity", () => {
+  it("refuses missing support source before looking for a compiler", () => {
+    writeFileSync(sourcePath, '#include "attachment-evidence.h"\n');
+    expect(buildPrivateWriter(false, deps()).steps).toContainEqual(
+      expect.objectContaining({ step: "locate source closure", ok: false })
+    );
+    expect(calls).toEqual([]);
+  });
+  it("binds the closure in compile, handshake, manifest and installation checks", () => {
+    writeFileSync(sourcePath, '#include "attachment-evidence.h"\n');
+    const header = join(root, "attachment-evidence.h");
+    writeFileSync(header, "// first support source\n");
+    const checksum = writerSourceSha256(deps());
+    const report = buildPrivateWriter(
+      false,
+      deps({
+        writer: { status: 0, stdout: JSON.stringify({ ...HELLO, sourceSha256: checksum }) },
+      })
+    );
+    expect(report.ok).toBe(true);
+    expect(
+      calls.find((call) => call.args[0] === "clang" && call.args.includes("-o"))?.args
+    ).toContain(`-DHELPER_SOURCE_SHA256="${checksum}"`);
+    expect(
+      JSON.parse(readFileSync(join(installDir, WRITER_MANIFEST_NAME), "utf8")).sourceSha256
+    ).toBe(checksum);
+    writeFileSync(header, "// changed support source\n");
+    expect(inspectWriterInstallation(deps()).reason).toBe("helper_stale");
   });
 });
 

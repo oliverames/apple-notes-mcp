@@ -13,6 +13,7 @@
  *
  * @module services/privateWriterBuild
  */
+import { writerSourceSha256 } from "./privateWriterSources.js";
 import {
   chmodSync,
   existsSync,
@@ -102,7 +103,17 @@ export function buildPrivateWriter(
     steps.push({ step: "locate source", ok: false, detail: deps.sourcePath });
     return done(false);
   }
-  const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
+  let sourceSha: string;
+  try {
+    sourceSha = writerSourceSha256(deps);
+  } catch (error) {
+    steps.push({
+      step: "locate source closure",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return done(false);
+  }
   steps.push({
     step: "locate source",
     ok: true,

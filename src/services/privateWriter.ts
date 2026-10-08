@@ -28,6 +28,7 @@
  *
  * @module services/privateWriter
  */
+import { writerSourceSha256 } from "./privateWriterSources.js";
 import { extname, join } from "node:path";
 import { notesRunningForThisUser } from "./notesRunning.js";
 import {
@@ -233,7 +234,11 @@ export function inspectWriterInstallation(
   if (deps.platform !== "darwin") return fail("unsupported_platform", "macOS only");
   if (!deps.exists(deps.sourcePath))
     return fail("helper_not_installed", `Packaged writer source is missing: ${deps.sourcePath}`);
-  base.expectedSourceSha256 = sha256Hex(deps.readFile(deps.sourcePath));
+  try {
+    base.expectedSourceSha256 = writerSourceSha256(deps);
+  } catch (error) {
+    return fail("helper_not_installed", error instanceof Error ? error.message : String(error));
+  }
   if (!deps.exists(binaryPath) || !deps.exists(manifestPath))
     return fail(
       "helper_not_installed",

@@ -50,6 +50,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "attachment-evidence.h"
 
 #define PROTOCOL_VERSION 1
 #define MAX_INPUT_BYTES (1024 * 1024)
