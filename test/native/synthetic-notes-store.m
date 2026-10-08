@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import <CoreData/CoreData.h>
 #import <objc/runtime.h>
+#import <CommonCrypto/CommonDigest.h>
 #include <unistd.h>
 extern const int SANDBOX_CHECK_NO_REPORT;
 extern int sandbox_check(pid_t, const char *, int, ...);
@@ -34,6 +35,13 @@ static BOOL IsUUID(NSString *value) {
 }
 static NSString *const InlineIdentifier = @"66666666-6666-4666-8666-666666666666";
 static NSString *const ExtraInlineIdentifier = @"88888888-8888-4888-8888-888888888888";
+static BOOL IsFixedPublicPayload(NSData *payload) {
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256(payload.bytes, (CC_LONG)payload.length, digest);
+  NSMutableString *hex = [NSMutableString string];
+  for (NSUInteger i = 0; i < sizeof(digest); i++) [hex appendFormat:@"%02x", digest[i]];
+  return [hex isEqualToString:@"ac93f271962eddbc6511ce12064ae1ac423e91546c8eff356a9ecddc765fa0d1"];
+}
 static NSManagedObject *HiddenInline(NSManagedObjectContext *context, NSManagedObject *note, NSString *identifier) {
   NSManagedObject *row = Insert(context, @"ICInlineAttachment");
   Set(row, @"identifier", identifier);
@@ -75,6 +83,9 @@ int main(int argc, const char **argv) {
           objc_getClass("ICNote") != Nil) return 10;
       NSData *payload = [NSData dataWithContentsOfFile:payloadPath];
       if (!payload.length || payload.length > 1024 * 1024) return 4;
+      // Receipt/drift modes may only consume the deterministic public seed.
+      // Mutation modes never apply these bytes to the existing note body.
+      if ((receiptFixture || mutate) && !IsFixedPublicPayload(payload)) return 4;
       NSManagedObjectModel *model = [[NSManagedObjectModel alloc] initWithContentsOfURL:
           [NSURL fileURLWithPath:@"/System/Library/PrivateFrameworks/NotesShared.framework/Resources/NoteData.mom"]];
       if (!model) return 5;
