@@ -51,6 +51,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "attachment-evidence.h"
+#include "content-preservation.h"
 
 #define PROTOCOL_VERSION 1
 #define MAX_INPUT_BYTES (1024 * 1024)
@@ -4885,6 +4886,11 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     Fail(@"unsupported_note", @"The note has no title paragraph; compose writes only below the title",
          @{@"committed" : @NO});
   Placement placement = ResolvePlacement(existing, mode, beforeHeading);
+  NSString *preservationReason = nil;
+  NSDictionary *untouchedBody = ANMContentSnapshot(existing, NSMakeRange(0, existing.length), &preservationReason);
+  if (!untouchedBody)
+    Fail(@"unsupported_note", preservationReason ?: @"The existing body cannot be fully compared",
+         @{@"committed" : @NO});
   BOOL hasObjects = UnitHasObjects(unit);
   if (hasObjects) {
     NSArray *missing = UnitHasKind(unit, @[ @"divider", @"table" ])
@@ -4956,6 +4962,7 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
       @"requiredNonSystemPaper" : @(requireNonSystemPaper),
       @"storeKind" : store.isCopy ? @"copy" : @"live",
       @"frozenAttachments" : FrozenReport(frozenStats),
+      @"contentEvidencePolicy" : ANMContentEvidencePolicy,
     } mutableCopy];
     if (beforeHeading) result[@"insertBeforeHeading"] = beforeHeading;
     if (dryRun) {
@@ -4988,6 +4995,9 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     // Before the save: the new files hold exactly the bytes read, nothing is
     // being deleted, and every existing attachment keeps its fingerprint.
     VerifyNewFilesBeforeSave(unit, created, filesRoot);
+    if (!ANMContentInsertionMatches(untouchedBody, LoadBody(note, NULL), placement.index,
+                                    insertion.length, &preservationReason))
+      Fail(@"content_drift", preservationReason, @{@"committed" : @NO});
     NSArray *drift = context.deletedObjects.count ? @[ @"deleted objects" ] : @[];
     if (!drift.count)
       drift = FrozenDrift(frozenBefore, FrozenAttachments(note, LoadBody(note, NULL), createdKeys, NULL), nil);
@@ -5047,10 +5057,14 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     if (![body isKindOfClass:[NSAttributedString class]] || ![body.string isEqualToString:expectedText]) {
       verifyDetail = @"The persisted body does not equal the previous body with the composed text inserted";
     } else {
+      // New separators are inside the insertion; every old UTF-16 unit stays
+      // protected, including the old final line and following heading.
+      if (!ANMContentInsertionMatches(untouchedBody, body, placement.index, insertion.length, &verifyDetail))
+        verifyDetail = verifyDetail ?: @"Existing attributes changed outside the composed insertion";
       persisted = UnitSignatures(body, placement.index + unitOffset, unit.ranges, placement.trailingTerminator);
-      if (![persisted isEqualToArray:expected])
+      if (!verifyDetail && ![persisted isEqualToArray:expected])
         verifyDetail = @"A composed paragraph's persisted style, checklist state, or runs differ from the request";
-      else if (hasObjects)
+      else if (!verifyDetail && hasObjects)
         verifyDetail = VerifyObjects(fresh, unit, created, identifier);
       if (!verifyDetail) {
         drift = FrozenDrift(frozenBefore, FrozenAttachments(reread, body, createdKeys, NULL), versionRaised);
@@ -5098,6 +5112,7 @@ static NSDictionary *HandleComposeNote(NSDictionary *request) {
     @"committed" : @YES,
     @"verified" : @YES,
     @"placementVerified" : @(placementVerified),
+    @"untouchedContentVerified" : @YES,
     @"revisionAfter" : after[@"revision"],
     @"modificationDate" : after[@"modificationDate"],
     @"title" : after[@"title"],
