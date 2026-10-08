@@ -35,7 +35,8 @@ static BOOL IsUUID(NSString *value) {
 int main(int argc, const char **argv) {
   @autoreleasepool {
     @try {
-      if (argc != 5) { fputs("usage: synthetic-notes-store NEW_STORE PAYLOAD NOTE_UUID NOTES_REPLICA_UUID\n", stderr); return 2; }
+      BOOL scopeFixture = argc == 6 && strcmp(argv[5], "--scope-fixture") == 0;
+      if (argc != 5 && !scopeFixture) { fputs("usage: synthetic-notes-store NEW_STORE PAYLOAD NOTE_UUID NOTES_REPLICA_UUID [--scope-fixture]\n", stderr); return 2; }
       NSString *storePath = @(argv[1]), *payloadPath = @(argv[2]);
       NSString *noteIdentifier = @(argv[3]), *notesReplicaIdentifier = @(argv[4]);
       // Caller paths are confined by the mandatory surrounding sandbox. Refuse
@@ -100,6 +101,26 @@ int main(int argc, const char **argv) {
       Set(folder, @"owner", account);
       Set(folder, @"folderType", @0);
       CloudState(context, folder);
+      if (scopeFixture) {
+        // A fixed, public hierarchy for independently exercising each scope
+        // condition. The two forbidden folders are outside the target chain.
+        NSArray *identifiers = @[
+          @"CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC",
+          @"DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD",
+          @"EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE",
+        ];
+        NSArray *titles = @[ @"Synthetic Parent", @"Synthetic Forbidden One", @"Synthetic Forbidden Two" ];
+        for (NSUInteger index = 0; index < identifiers.count; index++) {
+          NSManagedObject *extra = Insert(context, @"ICFolder");
+          Set(extra, @"identifier", identifiers[index]);
+          Set(extra, @"title", titles[index]);
+          Set(extra, @"account", account);
+          Set(extra, @"owner", account);
+          Set(extra, @"folderType", @0);
+          CloudState(context, extra);
+          if (index == 0) Set(folder, @"parent", extra);
+        }
+      }
       Set(note, @"identifier", noteIdentifier);
       Set(note, @"title", @"Synthetic fixture");
       Set(note, @"account", account);
@@ -113,7 +134,7 @@ int main(int argc, const char **argv) {
       if (![context save:&error]) { NSLog(@"Synthetic graph save failed: %@", error); return 7; }
       [context reset];
       if (![coordinator removePersistentStore:store error:&error]) { NSLog(@"Synthetic store close failed: %@", error); return 8; }
-      puts("{\"created\":true,\"frameworkLoaded\":false,\"notes\":1,\"accounts\":1,\"folders\":1}");
+      printf("{\"created\":true,\"frameworkLoaded\":false,\"notes\":1,\"accounts\":1,\"folders\":%d}\n", scopeFixture ? 4 : 1);
       return 0;
     } @catch (NSException *error) {
       NSLog(@"Synthetic generator failed: %@: %@", error.name, error.reason);

@@ -26,6 +26,7 @@ import {
   replicaIdentifier,
 } from "./lib/synthetic-note-payload.mjs";
 import { readSingleLinkFile } from "./lib/synthetic-fixture-files.mjs";
+import { snapshotSyntheticTree, summarizeSyntheticTree } from "./lib/synthetic-store-snapshot.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("This fixture test accepts no paths or private input");
@@ -44,6 +45,7 @@ const report = {
   fixtureSeedPublic: true,
   nativeOutputPrivacyReviewed: false,
   tests: [],
+  mutationChecks: [],
   completed: false,
 };
 persist("report.json", report);
@@ -137,24 +139,30 @@ try {
   compile(generatorSource, generator, ["Foundation", "CoreData"]);
   report.generatorBinarySha256 = hash(readFileSync(generator));
   const store = join(root, "NoteStore.sqlite");
-  const generated = sandbox(generator, [store, payloadPath, noteIdentifier, replicaIdentifier]);
+  const generated = sandbox(generator, [
+    store,
+    payloadPath,
+    noteIdentifier,
+    replicaIdentifier,
+    "--scope-fixture",
+  ]);
   writeFileSync(join(root, "generator.stderr"), generated.stderr, { mode: 0o600 });
   report.generator = JSON.parse(generated.stdout);
   report.generatorSourceSha256 = hash(generatorBytes);
   const initialStoreBytes = readSingleLinkFile(store);
   const sqlite = (query) => command("/usr/bin/sqlite3", ["-readonly", store, query]).stdout.trim();
   const body = () => Buffer.from(sqlite("SELECT hex(ZDATA) FROM ZICNOTEDATA;"), "hex");
-  test("one synthetic note, account and folder; no attachments; exact baseline", () => {
+  test("one synthetic note, account and four scope folders; no attachments; exact baseline", () => {
     assert.deepEqual(report.generator, {
       created: true,
       frameworkLoaded: false,
       notes: 1,
       accounts: 1,
-      folders: 1,
+      folders: 4,
     });
     assert.equal(sqlite("PRAGMA integrity_check;"), "ok");
     assert.equal(sqlite("SELECT count(*) FROM ZICNOTEDATA;"), "1");
-    assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "3");
+    assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "6");
     assert.equal(
       sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
       "0"
@@ -224,6 +232,9 @@ try {
   report.writerBinarySha256 = hash(readFileSync(writer));
   const writerEnv = { APPLE_NOTES_MCP_ENABLE_PRIVATE: "1", APPLE_NOTES_MCP_PRIVATE_STORE: store };
   let invocation = 0;
+  // Only filenames written by this harness are excluded, never native media,
+  // preferences, temporary files, database journals or other materialization.
+  const evidenceFiles = new Set(["report.json"]);
   function call(action, fields = {}, feature, expectedError) {
     invocation++;
     const env = { ...writerEnv };
@@ -235,12 +246,15 @@ try {
       cwd: root,
       input: JSON.stringify({ protocol: 1, action, ...fields }),
     });
+    evidenceFiles.add(`writer-${invocation}.stderr`);
+    evidenceFiles.add(`writer-${invocation}.json`);
     writeFileSync(join(root, `writer-${invocation}.stderr`), result.stderr ?? "", { mode: 0o600 });
     if (result.error) throw result.error;
     const response = JSON.parse(result.stdout);
     persist(`writer-${invocation}.json`, response);
     if (expectedError) {
       assert.equal(result.status, 1);
+      assert.equal(response.status, "error");
       assert.equal(response.code, expectedError);
       assert.equal(response.committed, false);
     } else {
@@ -254,6 +268,44 @@ try {
     return response;
   }
   const read = () => call("read_note_state", { identifier: noteIdentifier });
+  function snapshot() {
+    return {
+      storeSha256: hash(readSingleLinkFile(store)),
+      bodySha256: hash(body()),
+      // Covers every persistent table, property, relationship and metadata
+      // value independently of the native revision token.
+      databaseDumpSha256: hash(sqlite(".dump")),
+      entityPopulation: sqlite(
+        "SELECT Z_ENT,count(*) FROM ZICCLOUDSYNCINGOBJECT GROUP BY Z_ENT ORDER BY Z_ENT;"
+      ),
+      tree: snapshotSyntheticTree(root, evidenceFiles),
+    };
+  }
+  function unchanged(name, expectedText, fn) {
+    const beforeState = read();
+    const before = snapshot();
+    const result = fn();
+    assert.deepEqual(
+      snapshot(),
+      before,
+      "refusal/plan/no-op must preserve exact store, objects and scratch files"
+    );
+    assert.equal(read().revision, beforeState.revision);
+    checkDecoded(expectedText);
+    assert.deepEqual(
+      snapshot(),
+      before,
+      "independent read-back must also leave the store and scratch unchanged"
+    );
+    const { tree, ...countsAndHashes } = before;
+    report.mutationChecks.push({
+      name,
+      ...countsAndHashes,
+      tree: summarizeSyntheticTree(tree),
+      unchanged: true,
+    });
+    return result;
+  }
   let state = read();
   test("actual NotesShared opens generated model, body and editable note", () => {
     assert.equal(state.bodyLengthUTF16, text.length);
@@ -271,7 +323,7 @@ try {
     checkDecoded(text);
   });
   const appendText = "SYNTHETIC APPEND PROOF";
-  const afterAppend = text + appendText;
+  let afterAppend = text + appendText;
   test("actual append preserves the baseline and stores exactly the requested text", () => {
     const changed = call(
       "append_plain_text",
@@ -283,6 +335,161 @@ try {
     state = read();
     assert.equal(state.bodyLengthUTF16, afterAppend.length);
     checkDecoded(afterAppend);
+  });
+  // Folder row numbers and the fresh store UUID are discovered only inside
+  // this generated database; no production folder IDs are accepted as input.
+  const storeURI = state.objectURI.split("/ICNote/")[0];
+  assert.match(storeURI, /^x-coredata:\/\/[0-9A-Fa-f-]+$/);
+  const folderURI = (identifier) => {
+    const pk = sqlite(`SELECT Z_PK FROM ZICCLOUDSYNCINGOBJECT WHERE ZIDENTIFIER='${identifier}';`);
+    assert.match(pk, /^[0-9]+$/);
+    return `${storeURI}/ICFolder/p${pk}`;
+  };
+  const targetFolder = folderURI("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB");
+  const parentFolder = folderURI("CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC");
+  const forbidden = [
+    folderURI("DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD"),
+    folderURI("EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE"),
+  ];
+  const strongScope = {
+    ifFolderId: targetFolder,
+    ifAncestorFolderId: parentFolder,
+    forbiddenAncestorFolderIds: forbidden,
+  };
+  const without = (key) =>
+    Object.fromEntries(Object.entries(strongScope).filter(([name]) => name !== key));
+  const weakenedScopes = [
+    ["omitted exact folder", without("ifFolderId")],
+    ["omitted ancestor folder", without("ifAncestorFolderId")],
+    ["omitted forbidden list", without("forbiddenAncestorFolderIds")],
+    [
+      "removed first forbidden folder",
+      { ...strongScope, forbiddenAncestorFolderIds: [forbidden[1]] },
+    ],
+    [
+      "removed second forbidden folder",
+      { ...strongScope, forbiddenAncestorFolderIds: [forbidden[0]] },
+    ],
+    ["empty forbidden list", { ...strongScope, forbiddenAncestorFolderIds: [] }],
+    ["removed all scope guards", {}],
+  ];
+  const editRequest = (replacementText) => ({
+    identifier: noteIdentifier,
+    operations: [
+      {
+        op: "replace",
+        selector: { kind: "text", text: appendText, match: "equals" },
+        replacement: { text: replacementText },
+        expectedCount: 1,
+      },
+    ],
+  });
+  // Forward all reviewed fields unchanged. Later digest contracts can add a
+  // receipt here without silently discarding it at the plan/apply boundary.
+  const applyFields = (fields, plan) => ({
+    ...fields,
+    ifRevision: plan.revisionBefore,
+    ifPlanDigest: plan.planDigest,
+  });
+  const changedText = "SYNTHETIC EDIT PROOF";
+  const changingEdit = editRequest(changedText);
+  const noOpEdit = editRequest(appendText);
+  let changingControl;
+  for (const [kind, edit, wouldChange] of [
+    ["changing edit", changingEdit, true],
+    ["no-op edit", noOpEdit, false],
+  ]) {
+    const reviewed = { ...edit, ...strongScope };
+    let reviewedPlan;
+    test(`p3 ${kind} strong scope plan is read-only`, () => {
+      reviewedPlan = unchanged(`${kind}: strong scope plan`, afterAppend, () =>
+        call("plan_edit", reviewed)
+      );
+      assert.equal(reviewedPlan.status, "planned");
+      assert.equal(reviewedPlan.committed, false);
+      assert.equal(reviewedPlan.wouldChange, wouldChange);
+      assert.equal(reviewedPlan.revisionBefore, state.revision);
+      assert.match(reviewedPlan.planDigest, /^p3:[0-9a-f]{64}$/);
+    });
+    for (const [label, scope] of weakenedScopes) {
+      test(`p3 ${kind} refuses ${label} with exact mutation checks`, () => {
+        const refused = unchanged(`${kind}: ${label}`, afterAppend, () =>
+          call(
+            "edit_note",
+            applyFields({ ...edit, ...scope }, reviewedPlan),
+            "EDIT",
+            "plan_mismatch"
+          )
+        );
+        assert.notEqual(refused.planDigest, reviewedPlan.planDigest);
+      });
+    }
+    test(`p3 ${kind} refuses missing and mismatched digest before any persistent change`, () => {
+      unchanged(`${kind}: missing digest`, afterAppend, () =>
+        call(
+          "edit_note",
+          { ...reviewed, ifRevision: reviewedPlan.revisionBefore },
+          "EDIT",
+          "invalid_request"
+        )
+      );
+      unchanged(`${kind}: mismatched digest`, afterAppend, () =>
+        call(
+          "edit_note",
+          { ...applyFields(reviewed, reviewedPlan), ifPlanDigest: "p3:" + "0".repeat(64) },
+          "EDIT",
+          "plan_mismatch"
+        )
+      );
+    });
+    if (!wouldChange) {
+      test("p3 identical strong-scope no-op returns unchanged without mutation", () => {
+        const result = unchanged("no-op edit: exact positive control", afterAppend, () =>
+          call("edit_note", applyFields(reviewed, reviewedPlan), "EDIT")
+        );
+        assert.equal(result.status, "unchanged");
+        assert.equal(result.committed, false);
+        assert.equal(result.revisionAfter, state.revision);
+        assert.equal(result.planDigest, reviewedPlan.planDigest);
+      });
+    } else {
+      // Run the changing positive control only after the no-op matrix, so
+      // both suites compare the same loaded note revision.
+      report.changingEditPlanDigestSha256 = hash(reviewedPlan.planDigest);
+      report.changingEditRevisionSha256 = hash(reviewedPlan.revisionBefore);
+      changingControl = { fields: reviewed, plan: reviewedPlan };
+    }
+  }
+  test("p3 identical strong-scope real edit commits and independently verifies exact body", () => {
+    const beforePopulation = sqlite(
+      "SELECT Z_ENT,count(*) FROM ZICCLOUDSYNCINGOBJECT GROUP BY Z_ENT ORDER BY Z_ENT;"
+    );
+    const changed = call(
+      "edit_note",
+      applyFields(changingControl.fields, changingControl.plan),
+      "EDIT"
+    );
+    assert.equal(changed.status, "updated");
+    assert.equal(changed.committed, true);
+    assert.equal(changed.verified, true);
+    assert.equal(changed.planDigest, changingControl.plan.planDigest);
+    assert.equal(changed.preservation.formattingOutsideEditsVerified, true);
+    assert.equal(changed.preservation.attachmentRowsVerified, true);
+    assert.equal(changed.preservation.replacementFilesVerified, 0);
+    assert.equal(
+      sqlite("SELECT Z_ENT,count(*) FROM ZICCLOUDSYNCINGOBJECT GROUP BY Z_ENT ORDER BY Z_ENT;"),
+      beforePopulation
+    );
+    assert.equal(
+      sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
+      "0"
+    );
+    afterAppend = text + changedText;
+    checkDecoded(afterAppend);
+    const after = read();
+    assert.notEqual(after.revision, state.revision);
+    assert.equal(after.revision, changed.revisionAfter);
+    state = after;
   });
   const compose = {
     identifier: noteIdentifier,
@@ -300,15 +507,62 @@ try {
     checkDecoded(afterAppend);
   });
   test("compose refuses missing/mismatched digest and preserves revision", () => {
-    call("compose_note", { ...compose, ifRevision: state.revision }, "COMPOSE", "invalid_request");
-    call(
-      "compose_note",
-      { ...compose, ifRevision: state.revision, ifPlanDigest: "c1:" + "0".repeat(64) },
-      "COMPOSE",
-      "plan_mismatch"
+    unchanged("compose: missing digest", afterAppend, () =>
+      call("compose_note", { ...compose, ifRevision: state.revision }, "COMPOSE", "invalid_request")
     );
-    assert.equal(read().revision, state.revision);
-    checkDecoded(afterAppend);
+    unchanged("compose: mismatched digest", afterAppend, () =>
+      call(
+        "compose_note",
+        { ...compose, ifRevision: state.revision, ifPlanDigest: "c1:" + "0".repeat(64) },
+        "COMPOSE",
+        "plan_mismatch"
+      )
+    );
+  });
+  const prospectiveFilePath = join(root, "public-materialization-control.pdf");
+  const prospectiveFile = Buffer.from(
+    "%PDF-1.4\n% PUBLIC SYNTHETIC DIGEST REFUSAL CONTROL\n%%EOF\n"
+  );
+  writeFileSync(prospectiveFilePath, prospectiveFile, { mode: 0o600 });
+  const fileCompose = {
+    identifier: noteIdentifier,
+    mode: "append",
+    paragraphs: [
+      { kind: "file", path: prospectiveFilePath, expectedSha256: hash(prospectiveFile) },
+    ],
+  };
+  test("compose file plan and digest refusals leave exact objects, store and files unchanged", () => {
+    const filePlan = unchanged("file compose: read-only plan", afterAppend, () =>
+      call("compose_note", { ...fileCompose, dryRun: true })
+    );
+    assert.equal(filePlan.status, "planned");
+    assert.equal(filePlan.committed, false);
+    assert.equal(filePlan.objects.length, 1);
+    unchanged("file compose: missing digest before materialization", afterAppend, () =>
+      call(
+        "compose_note",
+        { ...fileCompose, ifRevision: filePlan.revisionBefore },
+        "COMPOSE",
+        "invalid_request"
+      )
+    );
+    unchanged("file compose: mismatched digest before materialization", afterAppend, () =>
+      call(
+        "compose_note",
+        {
+          ...fileCompose,
+          ifRevision: filePlan.revisionBefore,
+          ifPlanDigest: "c1:" + "0".repeat(64),
+        },
+        "COMPOSE",
+        "plan_mismatch"
+      )
+    );
+    assert.equal(hash(readSingleLinkFile(prospectiveFilePath)), hash(prospectiveFile));
+    assert.equal(
+      sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT WHERE ZTYPEUTI IS NOT NULL;"),
+      "0"
+    );
   });
   const afterCompose = afterAppend + "\nSynthetic heading\nSynthetic rich text";
   test("real rich compose preserves prior text and stores exact heading and bold runs", () => {
@@ -358,7 +612,7 @@ try {
   test("final store integrity and exact synthetic population remain intact", () => {
     assert.equal(sqlite("PRAGMA integrity_check;"), "ok");
     assert.equal(sqlite("SELECT count(*) FROM ZICNOTEDATA;"), "1");
-    assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "3");
+    assert.equal(sqlite("SELECT count(*) FROM ZICCLOUDSYNCINGOBJECT;"), "6");
   });
   report.osVersion = command("/usr/bin/sw_vers", ["-productVersion"]).stdout.trim();
   report.completed = true;
@@ -366,6 +620,9 @@ try {
     "Copy-store evidence only; no live editor merge or cloud upload proof.",
     "Preference daemon access is denied; this does not prove persistent preference behavior.",
     "Native output remains local until reviewed; only the generated baseline is designed as public fixture data.",
+    "p3 checks digest consistency with the loaded revision and request; no prior preview authentication is claimed.",
+    "No existing attachments are generated; p3 replacement-file materialization and nonempty attachment preservation are not exercised.",
+    "Prospective compose-file digest refusals prove no persistent materialization; a matching file apply is not attempted.",
   ];
   persist("report.json", report);
   console.log(
