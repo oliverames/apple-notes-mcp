@@ -197,7 +197,7 @@ try {
     assert.ok(!initialStoreBytes.includes(Buffer.from(process.env.HOME ?? "/Users/")));
     assert.ok(!initialStoreBytes.includes(Buffer.from("group.com.apple.notes")));
   });
-  // The generator has closed the journal-free database and no writer has run.
+  // The generator has closed the fixed WAL baseline and no writer has run.
   report.initialStoreSha256 = hash(initialStoreBytes);
   const decoder = join(root, "decoder.mjs");
   // Import only pure decoders. No store reader or Notes.app API is called;
