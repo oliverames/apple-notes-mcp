@@ -855,6 +855,30 @@ describe("decoded native tag attribute accounting", () => {
     const f = parsedFixture({ zeroRuns: [attributeRun(0)] });
     expect(addNativeTags(f.request, f.deps).added).toEqual(["newtag"]);
   });
+  it.each(["changed", "removed"])(
+    "rejects %s retained zero-length formatting after tag dispatch",
+    (change) => {
+      const f = parsedFixture();
+      const empty = { ...f.before.rich.styleRuns![0], length: 0 };
+      f.before.rich.styleRuns!.unshift(structuredClone(empty));
+      f.after.rich.styleRuns!.unshift(structuredClone(empty));
+      const run = f.after.rich.styleRuns![0];
+      if (change === "changed") run.signature += "changed";
+      else f.after.rich.styleRuns = f.after.rich.styleRuns!.filter((run) => run.length !== 0);
+      let failure: unknown;
+      try {
+        addNativeTags(f.request, f.deps);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect(classifyError((failure as Error).message, failure)).toMatchObject({
+        code: "verification_failed",
+        indeterminate: true,
+      });
+      expect(f.deps.run).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it("rejects duplicate paragraph UUID fields even when regeneration filtering makes signatures equal", () => {
     const uuid = byteField(9, Buffer.alloc(16, 1));

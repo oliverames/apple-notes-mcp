@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Fixed
+
+- Attachment and background write verification now requires complete native preservation metadata and checks retained text and whitespace, formatting, link ranges, checklist identities/state/ranges, and native object payloads and placement. End-appends and removal of mapped native tag pills have explicit allowed changes; known paragraph UUID regeneration retains the existing decoder policy.
+- Attachment readback failures after insertion starts now remain explicitly indeterminate, including read races and missing preservation metadata. Temporary-file cleanup cannot override that outcome or a verified receipt. Native tag additions also preserve retained zero-length formatting metadata.
+
 ## [2.14.4] - 2026-10-08
 
 ### Fixed
