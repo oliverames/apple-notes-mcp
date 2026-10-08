@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { addNativeTags, normalizeNativeTags, type NativeTagSnapshot } from "./nativeTags.js";
 import { classifyError } from "../utils/errorCodes.js";
+import { parseRichNote, type RichNote } from "../utils/noteRichText.js";
 
 const id = "x-coredata://ABCDEF/ICNote/p12";
 const request = {
@@ -11,7 +12,41 @@ const request = {
   tags: ["shamaal", "дроп"],
 };
 const tagType = "com.apple.notes.inlinetextattachment.hashtag";
-const styles = (text: string) => [{ start: 0, length: text.length, signature: "body" }];
+const semantics = (objects: Array<{ id: string; type: string }> = []) => ({
+  complete: true,
+  unknown: false,
+  structuredParagraph: false,
+  links: false,
+  objects,
+});
+const styles = (text: string, objects: NonNullable<RichNote["objects"]> = []) => {
+  const result: NonNullable<RichNote["styleRuns"]> = [];
+  let start = 0;
+  for (const object of objects) {
+    if (start < object.start)
+      result.push({
+        start,
+        length: object.start - start,
+        signature: "body",
+        nativeSemantics: semantics(),
+      });
+    result.push({
+      start: object.start,
+      length: object.length,
+      signature: "body",
+      nativeSemantics: semantics([{ id: object.id, type: object.type }]),
+    });
+    start = object.start + object.length;
+  }
+  if (start < text.length)
+    result.push({
+      start,
+      length: text.length - start,
+      signature: "body",
+      nativeSemantics: semantics(),
+    });
+  return result;
+};
 const snapshot = (): NativeTagSnapshot => ({
   title: "Идеи",
   contentHash: "before",
@@ -41,7 +76,6 @@ function fixture() {
   after.rich.nativeObjectIds = ["a", "b"];
   after.rich.hasNativeObjects = true;
   after.rich.nativeTagObjectIds = { shamaal: ["a"], дроп: ["b"] };
-  after.rich.styleRuns = styles(after.rich.text);
   after.rich.objects = ["a", "b"].map((id, i) => ({
     id,
     type: tagType,
@@ -56,6 +90,7 @@ function fixture() {
     view: null,
     altText: `#${request.tags[i]}`,
   }));
+  after.rich.styleRuns = styles(after.rich.text, after.rich.objects);
   const deps = {
     read: vi.fn().mockReturnValueOnce(before).mockReturnValueOnce(before).mockReturnValue(after),
     candidates: vi.fn(() => [id]),
@@ -264,7 +299,7 @@ function nativeFixture() {
       start: before.rich.text.indexOf("Checklist"),
     },
   ];
-  before.rich.styleRuns = styles(before.rich.text);
+  before.rich.styleRuns = styles(before.rich.text, before.rich.objects);
   after.rich = structuredClone(before.rich);
   after.rich.text = before.rich.text.replace("#shamaal", "\ufffc") + "\n\ufffc";
   after.rich.nativeTags = [...request.tags];
@@ -281,7 +316,7 @@ function nativeFixture() {
     { id: "b", type: tagType, pk: 12, mergeable: "", view: null, altText: "#дроп" }
   );
   after.rich.checklistItems![0].start -= shift;
-  after.rich.styleRuns = styles(after.rich.text);
+  after.rich.styleRuns = styles(after.rich.text, after.rich.objects);
   return { before, after, deps };
 }
 
@@ -299,7 +334,7 @@ function replaceText(
   for (const object of rich.objects!) if (object.start >= end) object.start += shift;
   for (const item of rich.checklistItems!) if (item.start >= end) item.start += shift;
   for (const link of rich.links) if (link.start >= end) link.start += shift;
-  rich.styleRuns = styles(rich.text);
+  rich.styleRuns = styles(rich.text, rich.objects);
 }
 
 function existingTagFixture() {
@@ -330,6 +365,7 @@ describe("native tag preservation", () => {
     const object = f.after.rich.objects![0];
     replaceText(f.after, object.start, 1, "#shamaal");
     object.length = 8;
+    f.after.rich.styleRuns = styles(f.after.rich.text, f.after.rich.objects);
     expect(addNativeTags(request, f.deps).added).toEqual(request.tags);
   });
 
@@ -483,7 +519,7 @@ describe("native tag preservation", () => {
       view: 1,
       altText: null,
     });
-    after.rich.styleRuns = styles(after.rich.text);
+    after.rich.styleRuns = styles(after.rich.text, after.rich.objects);
     expect(() => addNativeTags(request, deps)).toThrow(/not verified/);
   });
 
@@ -525,15 +561,36 @@ describe("native tag preservation", () => {
     const { before, after, deps } = nativeFixture();
     const start = before.rich.text.indexOf("#shamaal");
     before.rich.styleRuns = [
-      { start: 0, length: start, signature: "body" },
-      { start, length: 8, signature: "italic" },
-      { start: start + 8, length: before.rich.text.length - start - 8, signature: "body" },
+      { start: 0, length: start, signature: "body", nativeSemantics: semantics() },
+      { start, length: 8, signature: "italic", nativeSemantics: semantics() },
+      {
+        start: start + 8,
+        length: before.rich.text.length - start - 8,
+        signature: "body",
+        nativeSemantics: semantics(),
+      },
     ];
     after.rich.styleRuns = [
-      { start: 0, length: 5, signature: "body" },
-      { start: 5, length: start - 5, signature: "body" },
-      { start, length: 1, signature: "new native tag" },
-      { start: start + 1, length: after.rich.text.length - start - 1, signature: "body" },
+      { start: 0, length: 5, signature: "body", nativeSemantics: semantics() },
+      { start: 5, length: start - 5, signature: "body", nativeSemantics: semantics() },
+      {
+        start,
+        length: 1,
+        signature: "new native tag",
+        nativeSemantics: semantics([{ id: "a", type: tagType }]),
+      },
+      {
+        start: start + 1,
+        length: after.rich.text.length - start - 2,
+        signature: "body",
+        nativeSemantics: semantics(),
+      },
+      {
+        start: after.rich.text.length - 1,
+        length: 1,
+        signature: "new native tag",
+        nativeSemantics: semantics([{ id: "b", type: tagType }]),
+      },
     ];
     expect(addNativeTags(request, deps).added).toEqual(request.tags);
   });
@@ -559,5 +616,280 @@ describe("native tag preservation", () => {
     deps.read.mockReset().mockReturnValueOnce(before).mockReturnValue(current);
     expect(() => addNativeTags(request, deps)).toThrow(/preservation metadata is unavailable/);
     expect(deps.run).not.toHaveBeenCalled();
+  });
+});
+
+const encodeVarint = (value: number): number[] => {
+  const bytes = [];
+  do {
+    const byte = value & 127;
+    value = Math.floor(value / 128);
+    bytes.push(byte | (value ? 128 : 0));
+  } while (value);
+  return bytes;
+};
+const integerField = (field: number, value: number) =>
+  Buffer.from([...encodeVarint(field * 8), ...encodeVarint(value)]);
+const byteField = (field: number, value: string | Buffer) => {
+  const bytes = Buffer.from(value);
+  return Buffer.concat([
+    Buffer.from([...encodeVarint(field * 8 + 2), ...encodeVarint(bytes.length)]),
+    bytes,
+  ]);
+};
+const attributeRun = (length: number, attributes = Buffer.alloc(0)) =>
+  Buffer.concat([integerField(1, length), attributes]);
+const document = (text: string, runs: Buffer[]) =>
+  byteField(
+    2,
+    byteField(3, Buffer.concat([byteField(2, text), ...runs.map((run) => byteField(5, run))]))
+  );
+const todoAttributes = byteField(
+  2,
+  Buffer.concat([
+    integerField(1, 103),
+    byteField(5, Buffer.concat([byteField(1, Buffer.alloc(16, 1)), integerField(2, 0)])),
+  ])
+);
+const tagPayload = Buffer.concat([byteField(1, "tag"), byteField(2, tagType)]);
+
+/** Exercise the actual protobuf decoder, including metadata that deduplicated summaries hide. */
+function parsedFixture(
+  options: {
+    checklist?: boolean;
+    beforeRetainedAttributes?: Buffer;
+    afterRetainedAttributes?: Buffer;
+    retainedAttributes?: Buffer;
+    separatorAttributes?: Buffer;
+    tagAttributes?: Buffer;
+    attachment?: Buffer;
+    zeroRuns?: Buffer[];
+  } = {}
+) {
+  const scopeText = "Project scope marker";
+  const text = scopeText + (options.checklist ? "\nMilk" : "");
+  const retainedLength = text.length - (options.checklist ? 4 : 0);
+  const originalRuns = options.checklist
+    ? [
+        attributeRun(retainedLength, options.beforeRetainedAttributes),
+        attributeRun(4, todoAttributes),
+      ]
+    : [attributeRun(retainedLength, options.beforeRetainedAttributes)];
+  const beforeRich = parseRichNote(document(text, originalRuns));
+  const afterRich = parseRichNote(
+    document(text + "\n\ufffc", [
+      Buffer.concat([
+        options.afterRetainedAttributes
+          ? attributeRun(retainedLength, options.afterRetainedAttributes)
+          : originalRuns[0],
+        options.retainedAttributes || Buffer.alloc(0),
+      ]),
+      ...originalRuns.slice(1),
+      attributeRun(1, options.separatorAttributes),
+      attributeRun(
+        1,
+        Buffer.concat([
+          byteField(12, options.attachment || tagPayload),
+          options.tagAttributes || Buffer.alloc(0),
+        ])
+      ),
+      ...(options.zeroRuns || []),
+    ])
+  );
+  Object.assign(beforeRich, {
+    objectData: [],
+    nativeObjectDataComplete: true,
+    nativeTagObjectIds: {},
+  });
+  Object.assign(afterRich, {
+    nativeTags: ["newtag"],
+    nativeTagObjectIds: { newtag: ["tag"] },
+    nativeObjectDataComplete: true,
+    objectData: [
+      { id: "tag", type: tagType, pk: 1, mergeable: "", view: null, altText: "#newtag" },
+    ],
+  });
+  const before: NativeTagSnapshot = {
+    title: "Title",
+    plaintext: text,
+    rich: beforeRich,
+    contentHash: "before",
+  };
+  const after: NativeTagSnapshot = {
+    title: "Title",
+    plaintext: afterRich.text,
+    rich: afterRich,
+    contentHash: "after",
+  };
+  const deps = {
+    read: vi.fn().mockReturnValueOnce(before).mockReturnValueOnce(before).mockReturnValue(after),
+    candidates: vi.fn(() => [id]),
+    run: vi.fn(),
+  };
+  return {
+    before,
+    after,
+    deps,
+    request: { id, title: "Title", scopeText, expectedContentHash: "before", tags: ["newtag"] },
+  };
+}
+
+describe("decoded native tag attribute accounting", () => {
+  it.each([false, true])(
+    "accepts a plain tag append while preserving decoded checklist state: %s",
+    (checklist) => {
+      const f = parsedFixture({ checklist });
+      expect(addNativeTags(f.request, f.deps).added).toEqual(["newtag"]);
+      expect(f.deps.run).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    ["tag", { tagAttributes: todoAttributes }],
+    ["separator", { separatorAttributes: todoAttributes }],
+    [
+      "Body paragraph with hidden todo",
+      {
+        tagAttributes: byteField(
+          2,
+          Buffer.concat([integerField(1, 3), byteField(5, byteField(1, Buffer.alloc(16, 1)))])
+        ),
+      },
+    ],
+    [
+      "second paragraph",
+      { tagAttributes: Buffer.concat([byteField(2, integerField(1, 3)), todoAttributes]) },
+    ],
+  ] as const)(
+    "rejects checklist attributes reusing an old item ID on an added %s",
+    (_name, attributes) => {
+      const f = parsedFixture({ checklist: true, ...attributes });
+      // The public summary has deduplicated the reused ID; the full runs must still catch it.
+      expect(f.after.rich.checklistItems).toEqual(f.before.rich.checklistItems);
+      try {
+        addNativeTags(f.request, f.deps);
+        expect.fail("Expected rejected native semantic change");
+      } catch (error) {
+        expect(classifyError((error as Error).message, error)).toEqual({
+          code: "verification_failed",
+          indeterminate: true,
+        });
+      }
+      expect(f.deps.run).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    [
+      "second attachment",
+      {
+        tagAttributes: byteField(
+          12,
+          Buffer.concat([byteField(1, "hidden-table"), byteField(2, "com.apple.notes.table")])
+        ),
+      },
+    ],
+    [
+      "second attachment ID",
+      { attachment: Buffer.concat([tagPayload, byteField(1, "hidden-table")]) },
+    ],
+    [
+      "second attachment UTI",
+      { attachment: Buffer.concat([tagPayload, byteField(2, "com.apple.notes.table")]) },
+    ],
+    [
+      "unknown attachment attribute",
+      { attachment: Buffer.concat([tagPayload, byteField(99, "hidden")]) },
+    ],
+    ["attachment on a separator", { separatorAttributes: byteField(12, tagPayload) }],
+    ["wrong attachment field wire", { tagAttributes: integerField(12, 1) }],
+    ["new tag length", { tagAttributes: integerField(1, 0) }],
+    ["retained length", { retainedAttributes: integerField(1, 0) }],
+    ["retained length wire", { retainedAttributes: byteField(1, "hidden") }],
+    ["unknown tag attribute", { tagAttributes: byteField(99, "opaque") }],
+    ["unknown separator attribute", { separatorAttributes: byteField(99, "opaque") }],
+    ["hidden link attribute", { tagAttributes: integerField(9, 0) }],
+  ] as const)("rejects ambiguous or unrelated decoded native attributes: %s", (_name, options) => {
+    const f = parsedFixture(options);
+    let failure: unknown;
+    try {
+      addNativeTags(f.request, f.deps);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(classifyError((failure as Error).message, failure)).toEqual({
+      code: "verification_failed",
+      indeterminate: true,
+    });
+    expect(f.deps.run).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "reused object ID with a different UTI",
+      attributeRun(
+        0,
+        byteField(12, Buffer.concat([byteField(1, "tag"), byteField(2, "com.apple.notes.table")]))
+      ),
+    ],
+    ["reused checklist ID", attributeRun(0, todoAttributes)],
+    ["unknown semantic attribute", attributeRun(0, byteField(99, "opaque"))],
+  ] as const)("rejects unaccounted native semantics on a zero-length run: %s", (_name, run) => {
+    const f = parsedFixture({ checklist: true, zeroRuns: [run] });
+    let failure: unknown;
+    try {
+      addNativeTags(f.request, f.deps);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(classifyError((failure as Error).message, failure)).toEqual({
+      code: "verification_failed",
+      indeterminate: true,
+    });
+    expect(f.deps.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an ordinary zero-length style run readable and allows the verified append", () => {
+    const f = parsedFixture({ zeroRuns: [attributeRun(0)] });
+    expect(addNativeTags(f.request, f.deps).added).toEqual(["newtag"]);
+  });
+
+  it("rejects duplicate paragraph UUID fields even when regeneration filtering makes signatures equal", () => {
+    const uuid = byteField(9, Buffer.alloc(16, 1));
+    const f = parsedFixture({
+      beforeRetainedAttributes: byteField(2, uuid),
+      afterRetainedAttributes: byteField(
+        2,
+        Buffer.concat([uuid, byteField(9, Buffer.alloc(16, 2))])
+      ),
+    });
+    expect(f.before.rich.styleRuns![0].signature).toBe(f.after.rich.styleRuns![0].signature);
+    let failure: unknown;
+    try {
+      addNativeTags(f.request, f.deps);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(classifyError((failure as Error).message, failure)).toEqual({
+      code: "verification_failed",
+      indeterminate: true,
+    });
+    expect(f.deps.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses ambiguous singular metadata already present before dispatch", () => {
+    const f = parsedFixture();
+    const rich = parseRichNote(
+      document(f.before.rich.text, [
+        Buffer.concat([attributeRun(f.before.rich.text.length), integerField(1, 0)]),
+      ])
+    );
+    Object.assign(rich, { objectData: [], nativeObjectDataComplete: true, nativeTagObjectIds: {} });
+    f.before.rich = rich;
+    expect(() => addNativeTags(f.request, f.deps)).toThrow(/preservation metadata is unavailable/);
+    expect(f.deps.run).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ import {
   getFields,
   stringValue,
   varintValue,
+  type WireField,
 } from "./protobuf.js";
 
 export interface NoteLink {
@@ -47,6 +48,14 @@ export interface RichNote {
     paragraphStyle?: number;
     blockQuote?: boolean;
     highlight?: boolean;
+    /** Full native attribute accounting, including fields hidden by first-value summaries. */
+    nativeSemantics?: {
+      complete: boolean;
+      unknown: boolean;
+      structuredParagraph: boolean;
+      links: boolean;
+      objects: Array<{ id: string; type: string }>;
+    };
   }>;
   /**
    * Formatting present in the stored body that Notes' AppleScript HTML
@@ -152,6 +161,82 @@ function storedStyleSignature(data: Uint8Array): string {
   );
 }
 
+/** Account for singular native messages without making a lossy summary look unambiguous. */
+function nativeRunSemantics(
+  data: Uint8Array
+): NonNullable<NonNullable<RichNote["styleRuns"]>[number]["nativeSemantics"]> {
+  const result = {
+    complete: true,
+    unknown: false,
+    structuredParagraph: false,
+    links: false,
+    objects: [] as Array<{ id: string; type: string }>,
+  };
+  const check = (fields: WireField[], schema: Record<number, number>) => {
+    const seen = new Set<number>();
+    for (const field of fields) {
+      if (!Object.hasOwn(schema, field.fieldNumber)) result.unknown = true;
+      else if (seen.has(field.fieldNumber) || field.wireType !== schema[field.fieldNumber])
+        result.complete = false;
+      seen.add(field.fieldNumber);
+    }
+  };
+  const nested = (field: WireField) => {
+    if (field.wireType !== 2 || !field.bytes) {
+      result.complete = false;
+      return [];
+    }
+    return decodeWireFields(field.bytes);
+  };
+  try {
+    const fields = decodeWireFields(data);
+    check(fields, { 1: 0, 2: 2, 3: 2, 5: 0, 6: 0, 7: 0, 8: 0, 9: 2, 10: 2, 12: 2, 14: 0 });
+    if (fields.filter((f) => f.fieldNumber === 1).length !== 1) result.complete = false;
+    result.links = fields.some((f) => f.fieldNumber === 9);
+    for (const field of fields) {
+      if (field.fieldNumber === 2) {
+        const paragraph = nested(field);
+        check(paragraph, { 1: 0, 2: 0, 4: 0, 5: 2, 8: 0, 9: 2 });
+        for (const style of paragraph.filter((f) => f.fieldNumber === 1)) {
+          const type =
+            style.varint === undefined ? undefined : Number(BigInt.asIntN(64, style.varint));
+          if (type !== undefined && type >= 100 && type <= 103) result.structuredParagraph = true;
+          else if (type === undefined || ![-1, 0, 1, 2, 3, 4].includes(type)) result.unknown = true;
+        }
+        for (const uuid of paragraph.filter((f) => f.fieldNumber === 9))
+          if (uuid.bytes?.length !== 16) result.complete = false;
+        for (const todo of paragraph.filter((f) => f.fieldNumber === 5)) {
+          result.structuredParagraph = true;
+          const item = nested(todo);
+          check(item, { 1: 2, 2: 0 });
+          const id = item.filter((f) => f.fieldNumber === 1);
+          if (id.length !== 1 || id[0].bytes?.length !== 16) result.complete = false;
+        }
+      } else if (field.fieldNumber === 3) check(nested(field), { 1: 2, 2: 5, 3: 0 });
+      else if (field.fieldNumber === 10) check(nested(field), { 1: 5, 2: 5, 3: 5, 4: 5 });
+      else if (field.fieldNumber === 12) {
+        const attachment = nested(field);
+        check(attachment, { 1: 2, 2: 2 });
+        const ids = attachment.filter((f) => f.fieldNumber === 1),
+          types = attachment.filter((f) => f.fieldNumber === 2);
+        if (ids.length !== 1 || types.length !== 1 || !ids[0].bytes || !types[0].bytes) {
+          result.complete = false;
+          continue;
+        }
+        const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+        const id = utf8.decode(ids[0].bytes),
+          type = utf8.decode(types[0].bytes);
+        if (!id || !type) result.complete = false;
+        result.objects.push({ id, type });
+      }
+    }
+  } catch {
+    // Ordinary reads still expose their conservative summary; writes need complete accounting.
+    result.complete = false;
+  }
+  return result;
+}
+
 /** Options for a rich-text read. */
 export interface RichNoteReadOptions {
   /**
@@ -199,6 +284,7 @@ export function parseRichNote(
       start: position,
       length,
       signature: storedStyleSignature(run.value as Uint8Array),
+      nativeSemantics: nativeRunSemantics(run.value as Uint8Array),
     });
     // Only runs that cover visible text matter: Notes leaves attributes on a
     // trailing newline that no rewrite could lose.

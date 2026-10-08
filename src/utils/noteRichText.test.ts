@@ -123,6 +123,35 @@ describe("Notes rich text", () => {
     expect(() => style(Buffer.from([0x7d, 1]))).toThrow(/Truncated/);
     expect(() => style(Buffer.from([0x7b]))).toThrow(/Unsupported wire/);
   });
+  it.each([
+    ["duplicate run length", n(1, 0)],
+    ["wrong run-length wire", b(1, "hidden")],
+    ["duplicate paragraph", Buffer.concat([b(2, n(1, 3)), b(2, n(1, 103))])],
+    [
+      "duplicate paragraph UUID",
+      b(2, Buffer.concat([b(9, Buffer.alloc(16, 1)), b(9, Buffer.alloc(16, 2))])),
+    ],
+    [
+      "duplicate attachment ID",
+      b(12, Buffer.concat([b(1, "tag"), b(1, "other"), b(2, "hashtag")])),
+    ],
+    [
+      "duplicate attachment UTI",
+      b(12, Buffer.concat([b(1, "tag"), b(2, "hashtag"), b(2, "table")])),
+    ],
+  ] as const)(
+    "keeps ambiguous metadata readable and flags it incomplete: %s",
+    (_name, attributes) => {
+      const rich = parseRichNote(document("A", [Buffer.concat([run(1), attributes])]));
+      expect(rich.text).toBe("A");
+      expect(rich.styleRuns![0].nativeSemantics!.complete).toBe(false);
+    }
+  );
+  it("flags unknown native semantics without hiding their stored style bytes", () => {
+    const rich = parseRichNote(document("A", [Buffer.concat([run(1), b(99, "opaque")])]));
+    expect(rich.styleRuns![0].nativeSemantics).toMatchObject({ complete: true, unknown: true });
+    expect(rich.styleRuns![0].signature).toContain(Buffer.from("opaque").toString("hex"));
+  });
   it.each(["constructor", "toString", "__proto__"])(
     "reads a valid tag whose name is an inherited object property: %s",
     (tag) => {

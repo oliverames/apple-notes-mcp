@@ -24,6 +24,13 @@ const id = "x-coredata://ABCDEF/ICNote/p12";
 const body = "<div>Title</div><div>Project marker retained</div><div>Item</div>";
 const scopeText = "Project marker retained";
 const tagType = "com.apple.notes.inlinetextattachment.hashtag";
+const semantics = (objects: Array<{ id: string; type: string }> = []) => ({
+  complete: true,
+  unknown: false,
+  structuredParagraph: false,
+  links: false,
+  objects,
+});
 beforeEach(() => vi.resetAllMocks());
 
 function fixture() {
@@ -42,7 +49,15 @@ function fixture() {
     checklistItems: [{ id: "item", text: "Item", done: false, start: 30 }],
     nativeTagObjectIds: { existing: ["tag"] },
     nativeObjectDataComplete: true,
-    styleRuns: [{ start: 0, length: 36, signature: "body" }],
+    styleRuns: [
+      { start: 0, length: 35, signature: "body", nativeSemantics: semantics() },
+      {
+        start: 35,
+        length: 1,
+        signature: "tag",
+        nativeSemantics: semantics([{ id: "tag", type: tagType }]),
+      },
+    ],
   };
   const enriched = {
     content: body,
@@ -85,9 +100,17 @@ function fixture() {
       view: null,
       altText: "#newtag",
     });
+    rich.styleRuns!.push(
+      { start: rich.text.length, length: 1, signature: "body", nativeSemantics: semantics() },
+      {
+        start: rich.text.length + 1,
+        length: 1,
+        signature: "tag",
+        nativeSemantics: semantics([{ id: "new-tag", type: tagType }]),
+      }
+    );
     rich.text += "\n\ufffc";
     rich.nativeTagObjectIds!.newtag = ["new-tag"];
-    rich.styleRuns![0].length = rich.text.length;
     rich.revision = "after";
   });
   return { rich, enriched, manager, invoke, request };

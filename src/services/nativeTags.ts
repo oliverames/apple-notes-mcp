@@ -135,7 +135,13 @@ function requirePreservationMetadata(rich: RichNote) {
       run.start !== position ||
       !Number.isInteger(run.length) ||
       run.length < 0 ||
-      typeof run.signature !== "string"
+      typeof run.signature !== "string" ||
+      run.nativeSemantics?.complete !== true ||
+      (run.length === 0 &&
+        (run.nativeSemantics.unknown ||
+          run.nativeSemantics.structuredParagraph ||
+          run.nativeSemantics.links ||
+          run.nativeSemantics.objects.length > 0))
     )
       return unavailable();
     position += run.length;
@@ -151,6 +157,21 @@ function requirePreservationMetadata(rich: RichNote) {
       rich.text.slice(link.start, link.start + link.length) !== link.text
     )
       return unavailable();
+}
+
+/** Converted literals may carry visual styles, but no other native semantics. */
+function plainNativeRange(rich: RichNote, start: number, length: number) {
+  return rich.styleRuns!.every((run) => {
+    if (run.start >= start + length || run.start + run.length <= start) return true;
+    const metadata = run.nativeSemantics!;
+    return (
+      metadata.complete &&
+      !metadata.unknown &&
+      !metadata.structuredParagraph &&
+      !metadata.links &&
+      !metadata.objects.length
+    );
+  });
 }
 
 /** Align exact original text around only proven new tag conversions or end-appends. */
@@ -192,7 +213,8 @@ function preservedTextSpans(before: RichNote, after: RichNote, missing: string[]
     else if (
       before.text.startsWith(literal, oldPosition) &&
       !/[\p{L}\p{M}\p{N}_#-]/u.test(previous) &&
-      !/[\p{L}\p{M}\p{N}_-]/u.test(next)
+      !/[\p{L}\p{M}\p{N}_-]/u.test(next) &&
+      plainNativeRange(before, oldPosition, literal.length)
     )
       oldPosition += literal.length;
     else return undefined;
@@ -205,6 +227,40 @@ function preservedTextSpans(before: RichNote, after: RichNote, missing: string[]
   if (remaining.length)
     spans.push({ before: oldPosition, after: newPosition, length: remaining.length });
   return spans;
+}
+
+/** Every changed range is either one proven new tag attachment or a plain separator. */
+function preservesAddedSemantics(before: RichNote, after: RichNote, spans: PreservedSpan[]) {
+  const oldIds = new Set(before.nativeObjectIds);
+  const added = after.objects!.filter((o) => !oldIds.has(o.id));
+  const changed: Array<{ start: number; end: number }> = [];
+  let end = 0;
+  for (const span of spans) {
+    if (end < span.after) changed.push({ start: end, end: span.after });
+    end = span.after + span.length;
+  }
+  if (end < after.text.length) changed.push({ start: end, end: after.text.length });
+  for (const run of after.styleRuns!) {
+    if (!changed.some((range) => run.start < range.end && run.start + run.length > range.start))
+      continue;
+    const metadata = run.nativeSemantics!;
+    if (!metadata.complete || metadata.unknown || metadata.structuredParagraph || metadata.links)
+      return false;
+    const object = added.find((o) => run.start === o.start && run.length === o.length);
+    if (object) {
+      if (
+        metadata.objects.length !== 1 ||
+        metadata.objects[0].id !== object.id ||
+        metadata.objects[0].type !== object.type
+      )
+        return false;
+    } else if (
+      metadata.objects.length ||
+      added.some((o) => run.start < o.start + o.length && run.start + run.length > o.start)
+    )
+      return false;
+  }
+  return true;
 }
 
 /** Check exact native data, checklist/link ranges and formatting through retained text spans. */
@@ -357,6 +413,7 @@ export function addNativeTags(request: NativeTagRequest, deps: NativeTagDependen
     before.rich.nativeObjectIds.some((id) => !after.rich.nativeObjectIds.includes(id)) ||
     before.rich.hasChecklist !== after.rich.hasChecklist ||
     !spans ||
+    !preservesAddedSemantics(before.rich, after.rich, spans) ||
     !preservesNativeContent(before.rich, after.rich, spans)
   ) {
     // Keep the transport diagnosis: it names the Shortcut and the first-run
