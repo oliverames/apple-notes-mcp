@@ -95,6 +95,24 @@ jobs:
             exit 1
           fi
 
+  # Exercise the unchanged native harness on additional supported platforms.
+  # Runtime signing flags alone do not prove the host enforces DYLD restrictions;
+  # the dynamic injection assertion must pass on the actual runner each time.
+  broker-security:
+    name: native broker security (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26-intel, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Verify native broker security boundaries
+        run: node scripts/test-broker-security.mjs
+
   # The committed bundle is what npm and marketplace users actually run — prove
   # every push that it boots standalone (no node_modules) on the engines floor.
   bundle-boots:
