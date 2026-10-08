@@ -277,6 +277,13 @@ describe("private writer source contract", () => {
     expect(SOURCE).toMatch(/\{"edit_note", "[^"]*ifPlanDigest[^"]*", HandleEditNote\}/);
     const digest = CODE.slice(CODE.indexOf("static NSString *PlanDigest("));
     expect(digest.slice(0, digest.indexOf("\n}\n"))).toMatch(/requireNonSystemPaper/);
+    // Both paths must forward the request into the common planner; dropping it
+    // would silently remove the reviewed folder policy from one digest.
+    expect(handlerBody("HandlePlanEdit")).toMatch(/PlanEdit\([^;]*nil, request\)/);
+    expect(apply).toMatch(/PlanEdit\([^;]*ifRevision, request\)/);
+    expect(CODE).toMatch(
+      /PlanDigest\(identifier, plan\.revisionBefore, operations, requireNonSystemPaper, plan\.files, request\)/
+    );
   });
 
   it("creates a replacement file's attachment only on apply and removes it on failure", () => {

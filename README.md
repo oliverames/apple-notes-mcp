@@ -2997,8 +2997,8 @@ Always call it twice. `dryRun: true` is read-only and returns the plan
 (targets, `lengthBefore`/`lengthAfter`, `unchangedUTF16`, `wouldChange`),
 `revisionBefore`, and `planDigest`. Then send the identical request with
 `dryRun: false`, `ifRevision` set to that `revisionBefore`, and `ifPlanDigest`
-set to that `planDigest`. The digest covers the operations,
-`requireNonSystemPaper`, and each replacement file's bytes, so the apply
+set to that `planDigest`. The `p3:` digest covers the target identity and revision, the operations,
+`requireNonSystemPaper`, folder scope guards, and each replacement file's bytes, so the apply
 refuses (`plan_mismatch`, reported as `revision_conflict`) when anything
 differs from the dry run. The apply re-reads the note in a
 fresh Core Data stack and returns `preservation`, which says that every

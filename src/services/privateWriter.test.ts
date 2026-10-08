@@ -44,7 +44,7 @@ import { z } from "zod";
 
 const NOTE = "D629A948-0C61-43BA-8FDE-04CD6DED38C7";
 const REV = `r1:${"a".repeat(64)}`;
-const PLAN = `p2:${"b".repeat(64)}`;
+const PLAN = `p3:${"b".repeat(64)}`;
 const SOURCE = "// fake writer source\n";
 
 const FAKE_WRITER = `#!/usr/bin/env node
@@ -1251,7 +1251,7 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
 
   it("passes ifPlanDigest on apply only", () => {
     install();
-    const digest = `p2:${"b".repeat(64)}`;
+    const digest = `p3:${"b".repeat(64)}`;
     const r = editNote(
       {
         identifier: NOTE,
@@ -1305,6 +1305,33 @@ describe("rich runs, inline appends, checklist replacement, and file replacement
     );
     expect(error).toMatchObject({ code: "invalid_request", committed: false });
     expect(error.message).toMatch(/ifPlanDigest/);
+    expect(spawned).toBe(false);
+  });
+
+  it("rejects a well-shaped legacy p2 digest before an edit can spawn", () => {
+    install();
+    let spawned = false;
+    const d = {
+      ...deps(UNVERIFIED),
+      spawn: (() => {
+        spawned = true;
+        throw new Error("the writer must not start");
+      }) as PrivateHelperDeps["spawn"],
+    };
+    expect(
+      thrown(() =>
+        editNote(
+          {
+            identifier: NOTE,
+            dryRun: false,
+            ifRevision: REV,
+            ifPlanDigest: `p2:${"b".repeat(64)}`,
+            operations: REPLACE,
+          },
+          d
+        )
+      )
+    ).toMatchObject({ code: "invalid_request", committed: false });
     expect(spawned).toBe(false);
   });
 

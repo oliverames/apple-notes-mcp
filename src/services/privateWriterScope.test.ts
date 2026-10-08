@@ -180,7 +180,7 @@ describe("every writer write forwards the scope guard", () => {
             identifier: NOTE,
             dryRun: false,
             ifRevision: REV,
-            ifPlanDigest: `p2:${"b".repeat(64)}`,
+            ifPlanDigest: `p3:${"b".repeat(64)}`,
             operations: [{ op: "replace", selector: { text: "a" }, replacement: { text: "b" } }],
             scope: GUARD,
           },

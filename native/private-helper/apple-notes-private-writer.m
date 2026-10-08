@@ -3137,23 +3137,30 @@ static void Segments(NSArray<NSDictionary *> *targets, NSUInteger oldLength, NSM
     ]];
 }
 
-// A digest of everything the plan depends on besides the note: the note
-// identifier, the operations, requireNonSystemPaper, and the SHA-256 of each
+// A digest of the reviewed note snapshot and semantic request: the note
+// identifier and revision, the operations, requireNonSystemPaper, the folder scope policy,
+// and the SHA-256 of each
 // replacement file in plan order. edit_note's `ifPlanDigest` refuses an apply
 // whose request or files differ from the dry run's.
-static NSString *PlanDigest(NSString *identifier, NSArray *operations, BOOL requireNonSystemPaper,
-                            NSArray<NSDictionary *> *files) {
+static NSString *PlanDigest(NSString *identifier, NSString *revisionBefore, NSArray *operations, BOOL requireNonSystemPaper,
+                            NSArray<NSDictionary *> *files, NSDictionary *request) {
   NSMutableArray *fileDigests = [NSMutableArray array];
   for (NSDictionary *file in files) [fileDigests addObject:file[@"sha256"]];
+  NSMutableDictionary *scope = [NSMutableDictionary dictionary];
+  for (NSString *key in @[ @"ifFolderId", @"ifAncestorFolderId", @"forbiddenAncestorFolderIds" ]) {
+    if (request[key]) scope[key] = request[key];
+  }
   NSDictionary *document = @{
     @"identifier" : identifier,
+    @"revisionBefore" : revisionBefore,
     @"operations" : operations,
     @"requireNonSystemPaper" : @(requireNonSystemPaper),
     @"files" : fileDigests,
+    @"scope" : scope,
   };
   NSData *data = [NSJSONSerialization dataWithJSONObject:document options:NSJSONWritingSortedKeys error:nil];
   if (!data) Fail(@"invalid_request", @"The operations cannot be serialized", nil);
-  return [@"p2:" stringByAppendingString:SHA256Hex(data)];
+  return [@"p3:" stringByAppendingString:SHA256Hex(data)];
 }
 
 @interface EditPlan : NSObject
@@ -3197,7 +3204,8 @@ static BOOL IsSystemPaper(NSManagedObject *note, BOOL *known) {
 // `ifRevision` is given) unchanged, and resolves every operation against one
 // snapshot. Shared by plan_edit and edit_note so both compute the same plan.
 static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, NSString *identifier,
-                          NSArray *operations, BOOL requireNonSystemPaper, NSString *ifRevision) {
+                          NSArray *operations, BOOL requireNonSystemPaper, NSString *ifRevision,
+                          NSDictionary *request) {
   EditPlan *plan = [EditPlan new];
   NSManagedObject *note = FetchNote(context, identifier);
   RequireAppendableNote(note);
@@ -3294,7 +3302,7 @@ static EditPlan *PlanEdit(NSManagedObjectContext *context, StoreLocation store, 
   plan.response = [@{
     @"identifier" : identifier,
     @"revisionBefore" : plan.revisionBefore,
-    @"planDigest" : PlanDigest(identifier, operations, requireNonSystemPaper, plan.files),
+    @"planDigest" : PlanDigest(identifier, plan.revisionBefore, operations, requireNonSystemPaper, plan.files, request),
     @"requireNonSystemPaper" : @(requireNonSystemPaper),
     // Attachments and inline objects in the body, adjacent glyphs of one
     // attachment counted once (attachmentGlyphs counts every glyph).
@@ -3514,7 +3522,7 @@ static NSDictionary *HandlePlanEdit(NSDictionary *request) {
   RequireFeature(FeatureEdit);
   StoreLocation store = ResolveStore();
   NSManagedObjectContext *context = OpenContext(store, YES);
-  EditPlan *plan = PlanEdit(context, store, identifier, operations, requireNonSystemPaper, nil);
+  EditPlan *plan = PlanEdit(context, store, identifier, operations, requireNonSystemPaper, nil, request);
   // Rehearse the native edit in the read-only context, then discard it.
   if (plan.wouldChange) {
     ApplyInContext(context, plan, NO);
@@ -3538,11 +3546,11 @@ static NSDictionary *HandleEditNote(NSDictionary *request) {
 
   StoreLocation store = ResolveStore();
   NSManagedObjectContext *context = OpenContext(store, NO);
-  EditPlan *plan = PlanEdit(context, store, identifier, operations, requireNonSystemPaper, ifRevision);
+  EditPlan *plan = PlanEdit(context, store, identifier, operations, requireNonSystemPaper, ifRevision, request);
   NSMutableDictionary *response = plan.response;
   response[@"dryRun"] = @NO;
   // The dry run's planDigest: the same identifier, operations,
-  // requireNonSystemPaper, and replacement file bytes.
+  // requireNonSystemPaper, folder scope policy, and replacement file bytes.
   if (![ifPlanDigest isEqualToString:response[@"planDigest"]])
     Fail(@"plan_mismatch",
          @"The request or a replacement file differs from the dry run that produced ifPlanDigest; nothing was saved",

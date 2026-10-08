@@ -1179,15 +1179,15 @@ export interface EditNoteRequest {
   dryRun: boolean;
   /** Required to apply: the plan's revisionBefore. */
   ifRevision?: string;
-  /** Optional on apply: the plan's planDigest; the writer refuses a request or file that differs. */
+  /** Required on apply: the plan's planDigest; the writer refuses changed operations, scope or files. */
   ifPlanDigest?: string;
   requireNonSystemPaper?: boolean;
   /** Folder preconditions, checked by the writer (in the plan too). */
   scope?: ScopeGuard;
 }
 
-/** A dry run's planDigest (identifier, operations, requireNonSystemPaper, replacement file bytes). */
-export const planDigestToken = z.string().regex(/^p2:[a-f0-9]{64}$/);
+/** A dry run's planDigest (identifier, revision, operations, Quick Note policy, scope, file bytes). */
+export const planDigestToken = z.string().regex(/^p3:[a-f0-9]{64}$/);
 
 /**
  * Checks each replacement file before the writer runs, under add-attachment's
@@ -1269,7 +1269,7 @@ export function editNote(
   assertRevision(request.ifRevision, "a dry run's revisionBefore");
   if (!planDigestToken.safeParse(request.ifPlanDigest).success)
     throw refuse(
-      "Applying an edit requires ifPlanDigest from the identical dry run (p2: followed by 64 hex digits)"
+      "Applying an edit requires ifPlanDigest from the identical dry run (p3: followed by 64 hex digits)"
     );
   fields.ifPlanDigest = request.ifPlanDigest;
   requireLiveValidated(EDIT_LIVE_VALIDATED, "native-edit-note", deps.env);
