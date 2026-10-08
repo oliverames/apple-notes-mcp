@@ -1,7 +1,7 @@
 # Generated synthetic store validation
 
-`node scripts/test-private-writer-synthetic-store.mjs` builds a fresh, one-note
-SQLite store using the installed Notes Core Data model. It never reads or
+`node scripts/test-private-writer-synthetic-store.mjs` builds a fresh, one-note,
+one-account SQLite store using the installed Notes Core Data model. It never reads or
 copies a personal database and takes no private payload or path as input.
 
 The public baseline is constructed field by field in
@@ -16,6 +16,31 @@ and replica-evidence tests, then executes the unmodified production writer
 against this store. It checks model compatibility, exact baseline decoding,
 feature refusal, native append, compose planning, missing/mismatched digest
 refusal, real rich compose, fresh-coordinator verification and final integrity.
+The fixed `--scope-fixture` generator mode adds a parent for the note's folder
+and two off-chain forbidden folders, for four generated folders in total. The
+default generator mode remains the one-folder fixture.
+
+For `p3` edit plans the harness simultaneously requires the exact folder, its
+generated ancestor, and both forbidden folders. With the same loaded revision,
+operations and supplied plan digest, it refuses omission of each guard, either
+shortened forbidden list, an empty list, and removal of every guard. The same
+matrix runs for a changing replacement and an identity replacement whose plan
+is a no-op. The identical strong-scope no-op succeeds with `committed: false`;
+the identical changing request commits and verifies the entire expected body.
+Every plan, refusal and accepted no-op compares the raw database SHA-256, stored
+body SHA-256, complete SQLite dump SHA-256, entity counts, and exact scratch
+file-tree entries. Only exact harness report/response filenames are excluded
+from the tree; native media, journals, preferences and temporary files are not.
+These checks establish persistent state after each process returns, not an
+absence of transient in-process activity.
+
+Missing and mismatched digests also refuse a prospective compose-file request,
+after its read-only plan, with identical object and file checks. The file is
+constructed from literal public bytes inside scratch, and no matching file
+apply is attempted. The fixture contains no existing attachments, so it does
+not exercise nonempty attachment preservation or `p3` replacement-file
+materialization. Digest validation establishes consistency of the loaded
+revision and semantic request; it does not authenticate a prior preview.
 An unsupported model, API or sandbox fails the job; it does not count as a pass.
 The workflow uses the current hosted macOS model rather than shipping an
 OS-specific SQLite database.
