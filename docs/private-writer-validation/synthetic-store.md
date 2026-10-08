@@ -63,12 +63,14 @@ native writer. System headers remain external build inputs. Strict `c2` content
 layout pins remain unchanged; an ordinary generated rich body that cannot pass
 those pins is labelled unavailable, not counted as compose receipt coverage.
 
-Missing and mismatched digests also refuse a prospective compose-file request,
-after its read-only plan, with identical object and file checks. The file is
+When strict content pins accept the body, missing and mismatched digests also
+refuse a prospective compose-file request after its read-only plan, with
+identical object and file checks. The file is
 constructed from literal public bytes inside scratch, and no matching file
-apply is attempted. The fixture contains no existing attachments, so it does
-not exercise nonempty attachment preservation or `p3` replacement-file
-materialization. Digest validation establishes consistency of the loaded
+apply is attempted. The fixture exercises nonempty hidden inline preservation;
+it does not exercise `p4` replacement-file materialization or stale `c2` receipt
+drift. Unsupported content layouts leave these compose checks unavailable.
+Digest validation establishes consistency of the loaded
 revision and semantic request; it does not authenticate a prior preview.
 An unsupported model, API or sandbox fails the job; it does not count as a pass.
 The workflow uses the current hosted macOS model rather than shipping an
