@@ -1,36 +1,111 @@
 ## [Unreleased]
 
-## [2.15.0] - 2026-10-05
+## [2.15.0] - 2026-10-08
 
 ### Added
 
-- Opt-in permission broker (#40, #220). `apple-notes-mcp setup --broker`
-  builds `native/broker/apple-notes-mcp-broker.swift` into
-  `~/Applications/Apple Notes MCP Broker.app`, signs it, and runs it as the
-  per-user LaunchAgent `apple-notes-mcp.broker`. The broker starts this
-  package's server as its child for each client, so macOS attributes Full Disk
-  Access and Notes Automation to the broker app instead of the MCP host or the
-  Node binary. Grants then survive Node updates and work under Claude Desktop,
-  which disclaims responsibility for the servers it launches. The
-  `apple-notes-mcp` process a client starts becomes a byte-for-byte stdio relay
-  to the broker's Unix socket (created `0600` in a `0700` folder; connections
-  from other users are refused with `getpeereid`). Only `APPLE_NOTES_MCP_*`
-  settings travel with a connection. `--check` reports the installed state,
-  `--uninstall` removes it, and `--sign-identity` picks the signing identity.
-- Setup signs with the first Developer ID Application identity in the
-  keychain, then an Apple Development one, so grants persist across rebuilds.
-  With neither it signs ad hoc and warns that every rebuild needs the grants
-  again.
-- `doctor` and `get-capabilities` report a `broker` field: whether this server
-  runs under the broker, and if a broker is installed but not used, why.
-  Under the broker, doctor's Full Disk Access advice names the broker app.
+- Opt-in permission broker (#220). `apple-notes-mcp setup --broker` builds
+  `~/Applications/Apple Notes MCP Broker.app` and installs the per-user
+  LaunchAgent `apple-notes-mcp.broker`. MCP clients relay stdio to a server
+  spawned by the broker, so Full Disk Access and Notes Automation belong to
+  that signed app. `--check` reports its state, `--uninstall` removes it, and
+  `--sign-identity` selects an existing signing identity. Multiple qualifying
+  identities require an explicit choice; ad-hoc signing warns that grants
+  must be renewed after rebuilding.
+- `doctor` and `get-capabilities` report whether the broker is in use and why
+  an installed broker was bypassed. Doctor names the broker app when advising
+  a brokered client about Full Disk Access.
+- Native security regression harness (`pnpm run test:broker-security`) tests
+  direct socket requests and signed fixture bundles without accessing Notes
+  or granting permissions. CI runs it on macOS.
 
-### Unchanged by default
+### Security
 
-- Nothing changes unless `setup --broker` is run. Without an installed broker,
-  or when it does not answer within five seconds, the server runs in-process
-  as before. `APPLE_NOTES_MCP_BROKER=off` keeps it in-process with a broker
-  installed.
+- Socket configuration accepts only an explicit list of numeric resource and
+  timing limits. Helper/code paths, shortcuts, private-content access,
+  unverified writes, unknown settings and loader variables cannot be selected
+  by a client. Brokered children skip user JSON configuration and cannot run
+  the separately installed public or private helpers.
+- The server entry and runtime configuration are sealed inside the signed app.
+  The broker validates its signature and hardened runtime at startup and
+  before each spawn, pins a canonical Node runtime by SHA-256, and refuses
+  changed code. Setup requires a standalone Node runtime with only system
+  dynamic-library dependencies. Clients match both the package version and
+  entry digest, so another installation cannot silently serve stale code.
+- Broker signing enables the hardened runtime without library-validation or
+  DYLD-injection exceptions. Node and server paths are no longer accepted in
+  LaunchAgent arguments. Child stderr inherits its already-open descriptor
+  instead of opening a caller-selected path under the broker's permissions.
+- Documented the same-user trust boundary: the owner-only socket excludes
+  other users, but every process running as its owner can use the server's
+  Notes capabilities with the broker's grants. It does not authenticate MCP
+  hosts or isolate them from other applications owned by the same user.
+
+### Changed
+
+- Nothing changes unless `setup --broker` is run. Without an available,
+  matching broker the server runs in-process. `APPLE_NOTES_MCP_BROKER=off`
+  bypasses it for one client; uninstall stops the service for all clients.
+- Integration tests disable broker routing. Setting
+  `APPLE_NOTES_MCP_INTEGRATION_SKIP_LIVE=1` additionally skips Apple events and
+  note-creation fixtures while preserving pure path and MCP schema checks.
+
+## [2.14.3] - 2026-10-08
+
+### Fixed
+
+- `append-to-note` and `append-native` no longer advertise `<table>`
+  `<tbody>` `<tr>` `<td>` `<th>` `<thead>` as accepted native-append HTML.
+  `appendNative()` has always rejected table markup before any mutation
+  ("Use create-table for verified native table insertion"), but those
+  elements were still listed in `NATIVE_APPEND_ELEMENTS`, which both tool
+  descriptions and the README/skill docs build their advertised HTML subset
+  from — a guarded append built from the advertised description was a
+  guaranteed failure. The table redirect now also catches a bare fragment
+  (`<tr>`/`<td>`/... without an outer `<table>`), which previously slipped
+  past it and into the general element check (#286).
+
+## [2.14.2] - 2026-10-07
+
+### Fixed
+
+- `append-to-note` (and `update-note`) no longer report a complete HTML write
+  as unverified when the HTML uses named character references such as
+  `&mdash;`, `&rarr;`, `&hellip;`, `&rsquo;` or `&ldquo;`. Notes decodes those
+  on import and reads them back as the bare characters ("—", "→", "…"), but
+  the visible-text verifier decoded only `amp`/`lt`/`gt`/`quot`/`nbsp`/`apos`,
+  so the requested text kept `&mdash;` literal and the readback could never
+  contain it: the native append returned `verification_failed` /
+  `indeterminate: true` ("Appended text not verified") and the AppleScript
+  append "visible text did not match", although the note held the full
+  append. Reproduced live on macOS 27.0.1 through the AppleScript append path,
+  which shares the verifier. The verifier now decodes all 252 HTML 4 names
+  plus `apos` (at their HTML5 code points), and numeric references the way an
+  HTML parser does (C1 controls as their Windows-1252 characters; zero,
+  surrogates and out-of-range values as U+FFFD). A link label written with a
+  named reference is compared as its character too. A name outside that set
+  stays literal, so an append whose text is missing, changed or undecodable
+  is still reported as indeterminate, and the ID, revision, prior-body, link,
+  checklist and native-object guards are unchanged. Reported by @oliverames
+  in #283.
+
+## [2.14.1] - 2026-10-07
+
+### Security
+
+- Raised `@modelcontextprotocol/sdk` to `^1.31.0` (resolves 1.31.0) for
+  GHSA-6qxp-vccf-f47h, an OAuth client credential disclosure to a
+  server-selected authorization server. Not reachable here: the SDK's OAuth
+  client lives in its `client/auth` module, and this stdio server bundles
+  only the SDK's server, stdio and shared protocol modules — `build/index.js`
+  contains none of the OAuth client code before or after the bump. The
+  bundle's code is unchanged apart from the SDK version in its module path
+  comments. Reported by @oliverames in #278.
+- Floored `source-map-js` at `>=1.2.2 <2` in `pnpm-workspace.yaml` for
+  GHSA-68fv-2mgg-jv7q (event-loop denial of service from indexed source-map
+  offsets). Development scope only (vitest → vite → postcss, and
+  `@vitest/coverage-v8` → magicast); it is not in the shipped bundle.
+  Reported by @oliverames in #278.
 
 ## [2.14.0] - 2026-10-03
 

@@ -15,19 +15,21 @@
 // connection is checked with getpeereid() and refused unless the peer runs as
 // this user. The first line on a connection is a JSON request:
 //   {"type": "ping"}
-//     -> {"type": "pong", "protocolVersion": 1, "sourceSha256": "...", ...}
-//   {"type": "connect", "protocolVersion": 1, "env": {"APPLE_NOTES_MCP_...": "..."}}
-//     -> {"type": "ready", "protocolVersion": 1, "pid": <child>}, then the
+//     -> {"type": "pong", "protocolVersion": 2, "sourceSha256": "...", ...}
+//   {"type": "connect", "protocolVersion": 2, "packageVersion": "...",
+//    "entrySha256": "...", "env": {"APPLE_NOTES_MCP_TIMEOUT_MS": "30000"}}
+//     -> {"type": "ready", "protocolVersion": 2, "pid": <child>, ...}, then the
 //        connection carries the MCP stdio stream until either side closes.
 //   anything else -> {"type": "error", "code": "...", "message": "..."}
-// Only APPLE_NOTES_MCP_* variables are passed through from a connect request,
-// so a client's configuration reaches the child but its PATH, NODE_OPTIONS and
-// the like do not.
+// Only the numeric limits in passedEnvironmentKeys pass through. Paths,
+// helpers, shortcuts, safety overrides, and loader settings are never trusted.
 //
 // Modes:
 //   (no arguments)  read {"type": "hello"} on stdin, answer with the protocol
 //                   version and source digest, and exit (build handshake)
-//   serve --socket <path> --node <node> --entry <build/index.js> [--log <file>]
+//   serve --socket <path>
+// Code paths come exclusively from the signed app bundle. The sealed config
+// pins Node by canonical path and SHA-256; the server entry is bundled.
 //
 // Build (done by `apple-notes-mcp setup --broker`, which also generates the
 // one-line source-digest file that defines helperSourceSHA256):
@@ -35,12 +37,28 @@
 
 import Darwin
 import Foundation
+import CryptoKit
+import Security
 
-let protocolVersion = 1
+let protocolVersion = 2
 let maxRequestBytes = 65_536
 let maxChildren = 16
-let maxPassedVariables = 64
 let maxVariableBytes = 8_192
+
+// Keep in sync with BROKER_PASSED_ENV_KEYS in brokerProxy.ts. This is also
+// enforced here because any same-user process can speak the socket protocol.
+let passedEnvironmentKeys: Set<String> = [
+    "APPLE_NOTES_MCP_BLOCKS_MAX_BYTES",
+    "APPLE_NOTES_MCP_EXPORT_MAX_BYTES",
+    "APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES",
+    "APPLE_NOTES_MCP_MAX_BUFFER",
+    "APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES",
+    "APPLE_NOTES_MCP_MAX_RETRIES",
+    "APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS",
+    "APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS",
+    "APPLE_NOTES_MCP_RETRY_DELAY_MS",
+    "APPLE_NOTES_MCP_TIMEOUT_MS",
+]
 
 func writeAll(_ fd: Int32, _ data: Data) -> Bool {
     return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
@@ -90,7 +108,7 @@ func log(_ message: String) {
 
 // MARK: - Build handshake
 
-func runHello() -> Never {
+func runHello(trust: TrustedServer) -> Never {
     let input = FileHandle.standardInput.readDataToEndOfFile()
     let firstLine = input.split(separator: 0x0A).first.map { Data($0) } ?? Data()
     guard
@@ -104,6 +122,8 @@ func runHello() -> Never {
         "type": "hello",
         "protocolVersion": protocolVersion,
         "sourceSha256": helperSourceSHA256,
+        "packageVersion": trust.config.packageVersion,
+        "entrySha256": trust.config.entrySha256,
     ])
     exit(0)
 }
@@ -112,9 +132,6 @@ func runHello() -> Never {
 
 struct ServeOptions {
     let socketPath: String
-    let nodePath: String
-    let entryPath: String
-    let logPath: String?
 }
 
 func parseServeOptions(_ args: [String]) -> ServeOptions? {
@@ -122,27 +139,162 @@ func parseServeOptions(_ args: [String]) -> ServeOptions? {
     var index = 0
     while index < args.count {
         let key = args[index]
-        guard ["--socket", "--node", "--entry", "--log"].contains(key), index + 1 < args.count else {
+        guard key == "--socket", values[key] == nil,
+              index + 1 < args.count, !args[index + 1].contains("\0") else {
             return nil
         }
         values[key] = args[index + 1]
         index += 2
     }
-    guard let socket = values["--socket"], let node = values["--node"], let entry = values["--entry"] else {
+    guard let socket = values["--socket"], socket.hasPrefix("/") else {
         return nil
     }
-    return ServeOptions(socketPath: socket, nodePath: node, entryPath: entry, logPath: values["--log"])
+    return ServeOptions(socketPath: socket)
+}
+
+// MARK: - Signed code and configuration
+
+struct IntegrityError: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
+}
+
+struct ServerConfiguration: Decodable {
+    let schemaVersion: Int
+    let nodePath: String
+    let nodeSha256: String
+    let packageVersion: String
+    let entrySha256: String
+}
+
+func sha256File(_ path: String) throws -> String {
+    let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+    defer { try? file.close() }
+    var digest = SHA256()
+    while let data = try file.read(upToCount: 1_048_576), !data.isEmpty {
+        digest.update(data: data)
+    }
+    return digest.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+func isSHA256(_ value: String) -> Bool {
+    value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+}
+
+func canonicalPath(_ path: String) throws -> String {
+    guard !path.contains("\0"), let resolved = realpath(path, nil) else {
+        throw IntegrityError("Cannot resolve path: \(path)")
+    }
+    defer { free(resolved) }
+    return String(cString: resolved)
+}
+
+/// Returns only existing regular files whose path has no symlink components.
+func requireCanonicalFile(_ path: String) throws {
+    var info = stat()
+    guard path.hasPrefix("/"), !path.contains("\0"),
+          try canonicalPath(path) == path,
+          lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+        throw IntegrityError("Code path is missing, noncanonical, or not a regular file: \(path)")
+    }
+}
+
+/// The running image supplies the requirement, never a mutable external
+/// manifest. Strict validation seals resources as well as the executable.
+/// Revalidate at each spawn to detect replacement since startup. This does not
+/// make file checks atomic with Node's later reads or isolate an unsandboxed
+/// same-user process actively racing writes to the installation.
+final class TrustedServer {
+    let bundlePath: String
+    let resourcesPath: String
+    let entryPath: String
+    let config: ServerConfiguration
+    private let requirement: SecRequirement
+
+    init() throws {
+        bundlePath = try canonicalPath(Bundle.main.bundleURL.path)
+        resourcesPath = bundlePath + "/Contents/Resources"
+        entryPath = resourcesPath + "/server/build/index.js"
+        guard bundlePath.hasSuffix(".app"), let executable = Bundle.main.executableURL,
+              try canonicalPath(executable.path) ==
+                bundlePath + "/Contents/MacOS/apple-notes-mcp-broker" else {
+            throw IntegrityError("The broker must run from its signed app bundle.")
+        }
+        var running: SecCode?
+        var runningStatic: SecStaticCode?
+        var ownRequirement: SecRequirement?
+        guard SecCodeCopySelf(SecCSFlags(), &running) == errSecSuccess,
+              let running,
+              SecCodeCheckValidity(running, SecCSFlags(), nil) == errSecSuccess,
+              SecCodeCopyStaticCode(running, SecCSFlags(), &runningStatic) == errSecSuccess,
+              let runningStatic,
+              SecCodeCopyDesignatedRequirement(runningStatic, SecCSFlags(), &ownRequirement) == errSecSuccess,
+              let ownRequirement else {
+            throw IntegrityError("Cannot verify the running broker's code signature.")
+        }
+        requirement = ownRequirement
+        try Self.verifyBundle(bundlePath, requirement: ownRequirement)
+        let configPath = resourcesPath + "/broker-config.json"
+        try requireCanonicalFile(configPath)
+        let data = try Data(contentsOf: URL(fileURLWithPath: configPath))
+        guard data.count <= maxRequestBytes else { throw IntegrityError("The sealed broker config is too large.") }
+        config = try JSONDecoder().decode(ServerConfiguration.self, from: data)
+        guard config.schemaVersion == 1, isSHA256(config.nodeSha256), isSHA256(config.entrySha256),
+              !config.packageVersion.isEmpty, config.packageVersion.utf8.count <= 256 else {
+            throw IntegrityError("The sealed broker config is invalid. Run setup --broker again.")
+        }
+        try validate()
+    }
+
+    private static func verifyBundle(_ path: String, requirement: SecRequirement) throws {
+        var code: SecStaticCode?
+        let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures)
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, SecCSFlags(), &code) == errSecSuccess,
+              let code,
+              SecStaticCodeCheckValidity(code, flags, requirement) == errSecSuccess else {
+            throw IntegrityError("The broker app's signature or sealed resources changed. Run setup --broker again.")
+        }
+        var signing: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &signing) == errSecSuccess,
+              let info = signing as? [String: Any],
+              let signedFlags = info[kSecCodeInfoFlags as String] as? NSNumber,
+              signedFlags.uint32Value & 0x10000 != 0 else { // CS_RUNTIME
+            throw IntegrityError("The broker must be signed with the hardened runtime enabled.")
+        }
+        // These entitlements would defeat the broker's loader boundary.
+        let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+        for key in ["com.apple.security.cs.allow-dyld-environment-variables",
+                    "com.apple.security.cs.disable-library-validation",
+                    "com.apple.security.get-task-allow"] {
+            if (entitlements[key] as? NSNumber)?.boolValue == true {
+                throw IntegrityError("The broker has an unsafe code-signing entitlement: \(key)")
+            }
+        }
+    }
+
+    func validate() throws {
+        try Self.verifyBundle(bundlePath, requirement: requirement)
+        try requireCanonicalFile(entryPath)
+        try requireCanonicalFile(config.nodePath)
+        guard try sha256File(entryPath) == config.entrySha256,
+              try sha256File(config.nodePath) == config.nodeSha256 else {
+            throw IntegrityError("The server entry or pinned Node runtime changed. Run setup --broker again.")
+        }
+        try requireCanonicalFile(resourcesPath + "/config.json")
+    }
 }
 
 final class Broker {
     let options: ServeOptions
+    let trust: TrustedServer
     let bundlePath: String
     private let lock = NSLock()
     private var active = 0
 
-    init(options: ServeOptions) {
+    init(options: ServeOptions, trust: TrustedServer) {
         self.options = options
-        bundlePath = Bundle.main.bundlePath
+        self.trust = trust
+        bundlePath = trust.bundlePath
     }
 
     var activeChildren: Int {
@@ -232,7 +384,7 @@ final class Broker {
     func serve() -> Never {
         signal(SIGPIPE, SIG_IGN)
         let listener = listen()
-        log("listening on \(options.socketPath) (bundle \(bundlePath), node \(options.nodePath))")
+        log("listening on \(options.socketPath) (bundle \(bundlePath), node \(trust.config.nodePath))")
         while true {
             let connection = accept(listener, nil, nil)
             if connection < 0 {
@@ -278,8 +430,10 @@ final class Broker {
                 "sourceSha256": helperSourceSHA256,
                 "pid": Int(getpid()),
                 "bundlePath": bundlePath,
-                "nodePath": options.nodePath,
-                "entryPath": options.entryPath,
+                "nodePath": trust.config.nodePath,
+                "entryPath": trust.entryPath,
+                "packageVersion": trust.config.packageVersion,
+                "entrySha256": trust.config.entrySha256,
                 "activeChildren": activeChildren,
             ])
             close(connection)
@@ -289,46 +443,81 @@ final class Broker {
                        "The broker speaks protocol \(protocolVersion). Run `apple-notes-mcp setup --broker` again.")
                 return
             }
+            guard request["packageVersion"] as? String == trust.config.packageVersion,
+                  request["entrySha256"] as? String == trust.config.entrySha256 else {
+                refuse(connection, "version_mismatch",
+                       "This client does not match the broker's sealed server. Run `apple-notes-mcp setup --broker` again.")
+                return
+            }
             connect(connection, passed: request["env"] as? [String: Any] ?? [:])
         default:
             refuse(connection, "bad_request", "Unknown request type.")
         }
     }
 
-    /// The child's environment: a small fixed base plus the client's
-    /// APPLE_NOTES_MCP_* settings. Broker control variables are never taken
-    /// from the client.
+    /// Never inherit the LaunchAgent's environment. HOME and TMPDIR also
+    /// influence file/config discovery, so derive them from the OS account.
     private func childEnvironment(passed: [String: Any]) -> [String] {
-        let inherited = ProcessInfo.processInfo.environment
-        var env: [String: String] = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
-        for key in ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "SHELL", "__CFBundleIdentifier"] {
-            if let value = inherited[key] { env[key] = value }
+        var env: [String: String] = [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "LANG": "en_US.UTF-8",
+            "SHELL": "/bin/sh",
+        ]
+        // getpwuid_r is safe across concurrent connection threads.
+        var account = passwd()
+        var accountPointer: UnsafeMutablePointer<passwd>?
+        var buffer = [CChar](repeating: 0, count: 16_384)
+        if getpwuid_r(getuid(), &account, &buffer, buffer.count, &accountPointer) == 0,
+           accountPointer != nil {
+            env["HOME"] = String(cString: account.pw_dir)
+            env["USER"] = String(cString: account.pw_name)
+            env["LOGNAME"] = env["USER"]
+        } else {
+            // Fail closed rather than letting Node consult inherited values.
+            env["HOME"] = "/var/empty"
         }
-        for (key, value) in inherited where key.hasPrefix("LC_") {
-            env[key] = value
-        }
-        var count = 0
-        for (key, raw) in passed {
-            guard count < maxPassedVariables,
-                  key.hasPrefix("APPLE_NOTES_MCP_"), !key.hasPrefix("APPLE_NOTES_MCP_BROKER"),
-                  key.utf8.count <= 128,
+        var temporary = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &temporary, temporary.count)
+        env["TMPDIR"] = length > 0 && length <= temporary.count ? String(cString: temporary) : "/tmp"
+        for key in passedEnvironmentKeys {
+            guard let raw = passed[key],
                   let value = raw as? String, value.utf8.count <= maxVariableBytes,
-                  !value.contains("\0")
+                  !value.isEmpty, value.utf8.allSatisfy({ (48...57).contains($0) })
             else { continue }
+            // Match the proxy's positive Int32 range, including leading zeros.
+            let digits = value.drop(while: { $0 == "0" })
+            guard let number = Int64(digits), number > 0, number <= Int64(Int32.max) else { continue }
             env[key] = value
-            count += 1
         }
         env["APPLE_NOTES_MCP_BROKERED"] = "1"
         env["APPLE_NOTES_MCP_BROKER_APP"] = bundlePath
+        env["APPLE_NOTES_MCP_CONFIG_FILE"] = trust.resourcesPath + "/config.json"
+        // Mutable helper manifests only hash their mutable binaries; they are
+        // not a trust anchor. Helpers require a separately sealed integration.
+        // /dev/null is a root-owned non-directory, so even an already-running
+        // child cannot discover a helper added after bundle verification.
+        env["APPLE_NOTES_MCP_PUBLIC_HELPER_DIR"] = "/dev/null"
+        env["APPLE_NOTES_MCP_PRIVATE_HELPER_DIR"] = "/dev/null"
+        env["APPLE_NOTES_MCP_ENABLE_PRIVATE"] = "0"
+        env["APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS"] = "0"
+        env["APPLE_NOTES_MCP_ALLOW_UNVERIFIED"] = "0"
         return env.map { "\($0.key)=\($0.value)" }
     }
 
     private func connect(_ connection: Int32, passed: [String: Any]) {
         guard reserveChild() else {
+            log("refused a connection: child limit \(maxChildren) reached")
             refuse(connection, "busy", "The broker is already serving \(maxChildren) clients.")
             return
         }
         defer { releaseChild() }
+        do {
+            try trust.validate()
+        } catch {
+            log("refused spawn: \(error)")
+            refuse(connection, "integrity_failed", "The broker's sealed server or pinned runtime changed. Run setup --broker again.")
+            return
+        }
         var noTimeout = timeval(tv_sec: 0, tv_usec: 0)
         setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &noTimeout, socklen_t(MemoryLayout<timeval>.size))
 
@@ -337,33 +526,34 @@ final class Broker {
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_adddup2(&actions, connection, STDIN_FILENO)
         posix_spawn_file_actions_adddup2(&actions, connection, STDOUT_FILENO)
-        if let logPath = options.logPath {
-            posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, logPath, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-        } else {
-            posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0)
-        }
+        // Inherit the descriptor opened by launchd/the caller, not a writable
+        // command-line path that could make the broker append to a TCC file.
+        posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDERR_FILENO)
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
         // Close every descriptor not named above, including the listening socket.
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
 
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(options.nodePath), strdup(options.entryPath), nil]
+        // Ignore LaunchAgent WorkingDirectory as well as its environment.
+        posix_spawn_file_actions_addchdir_np(&actions, trust.resourcesPath + "/server")
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(trust.config.nodePath), strdup(trust.entryPath), nil]
         let envp: [UnsafeMutablePointer<CChar>?] = childEnvironment(passed: passed).map { strdup($0) } + [nil]
         defer {
             argv.forEach { free($0) }
             envp.forEach { free($0) }
         }
         var pid: pid_t = 0
-        let status = posix_spawn(&pid, options.nodePath, &actions, &attributes, argv, envp)
+        let status = posix_spawn(&pid, trust.config.nodePath, &actions, &attributes, argv, envp)
         guard status == 0 else {
-            log("could not start \(options.nodePath): \(String(cString: strerror(status)))")
-            refuse(connection, "spawn_failed", "The broker could not start Node at \(options.nodePath).")
+            log("could not start \(trust.config.nodePath): \(String(cString: strerror(status)))")
+            refuse(connection, "spawn_failed", "The broker could not start Node at \(trust.config.nodePath).")
             return
         }
         // The child only writes after a request, and the client sends none
         // until it reads this line, so the two never interleave.
-        sendLine(connection, ["type": "ready", "protocolVersion": protocolVersion, "pid": Int(pid)])
+        sendLine(connection, ["type": "ready", "protocolVersion": protocolVersion, "pid": Int(pid),
+                              "packageVersion": trust.config.packageVersion, "entrySha256": trust.config.entrySha256])
         close(connection)
         var exitStatus: Int32 = 0
         while waitpid(pid, &exitStatus, 0) < 0 && errno == EINTR {}
@@ -376,14 +566,19 @@ final class Broker {
 enum BrokerMain {
     static func main() {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        if arguments.isEmpty {
-            runHello()
-        }
-        if arguments.first == "serve", let options = parseServeOptions(Array(arguments.dropFirst())) {
-            Broker(options: options).serve()
+        do {
+            if arguments.isEmpty {
+                runHello(trust: try TrustedServer())
+            }
+            if arguments.first == "serve", let options = parseServeOptions(Array(arguments.dropFirst())) {
+                Broker(options: options, trust: try TrustedServer()).serve()
+            }
+        } catch {
+            log("integrity check failed: \(error)")
+            exit(78)
         }
         FileHandle.standardError.write(Data(
-            "usage: apple-notes-mcp-broker serve --socket <path> --node <node> --entry <build/index.js> [--log <file>]\n".utf8))
+            "usage: apple-notes-mcp-broker serve --socket <path>\n".utf8))
         exit(64)
     }
 }

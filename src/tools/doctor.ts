@@ -149,7 +149,7 @@ export function fdaRemediation(
   execPath: string = process.execPath,
   env: NodeJS.ProcessEnv = process.env
 ): string {
-  // Under the permission broker (#40) the grant belongs to the broker app.
+  // Under the permission broker (#220) the grant belongs to the broker app.
   if (env.APPLE_NOTES_MCP_BROKERED === "1")
     return (
       "This server runs under the permission broker, so the grant belongs to the broker app, not to Node or the MCP host. " +

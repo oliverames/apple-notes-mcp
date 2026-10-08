@@ -18,9 +18,9 @@
  * installed broker the server runs in-process exactly as before.
  *
  * Signing: a grant is tied to the bundle's designated requirement. With a
- * Developer ID or Apple Development identity in the keychain, that requirement
- * is the bundle identifier plus the team, so rebuilding or updating keeps the
- * grant. An ad-hoc signature is tied to the exact binary, so every rebuild
+ * Developer ID Application identity, the designated requirement identifies
+ * the bundle and team. Apple Development identities can change their
+ * requirement when renewed. An ad-hoc signature is tied to the exact binary, so every rebuild
  * needs the grants again; setup says so when that is the only option.
  *
  * @module services/broker
@@ -38,12 +38,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { pingBroker } from "@/services/brokerClient.js";
 import { packageRoot, sha256Hex, sourceDigestSwift } from "@/services/publicHelper.js";
 
-export const BROKER_PROTOCOL = 1;
+export const BROKER_PROTOCOL = 2;
 export const BROKER_BUNDLE_ID = "apple-notes-mcp.broker";
 export const BROKER_LABEL = BROKER_BUNDLE_ID;
 export const BROKER_APP_NAME = "Apple Notes MCP Broker.app";
@@ -66,11 +66,13 @@ export const BROKER_SIGN_IDENTITY_ENV = "APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY";
 export const MAX_SOCKET_PATH_BYTES = 103;
 
 export const brokerManifestSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   protocolVersion: z.number().int(),
   packageVersion: z.string(),
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
   binarySha256: z.string().regex(/^[a-f0-9]{64}$/),
+  nodeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  entrySha256: z.string().regex(/^[a-f0-9]{64}$/),
   appPath: z.string(),
   agentPath: z.string(),
   socketPath: z.string(),
@@ -86,6 +88,31 @@ export const brokerManifestSchema = z.object({
   compiler: z.string(),
 });
 export type BrokerManifest = z.infer<typeof brokerManifestSchema>;
+
+/** Sealed by the app signature; native code reads this fixed path itself. */
+export const brokerConfigSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    nodePath: z.string(),
+    nodeSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    packageVersion: z.string(),
+    entrySha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+/** Fixed bundle resources, never supplied in LaunchAgent arguments. */
+export function brokerResources(appPath: string) {
+  const resources = join(appPath, "Contents", "Resources");
+  return {
+    resources,
+    configPath: join(resources, "broker-config.json"),
+    entryPath: join(resources, "server", "build", "index.js"),
+    packagePath: join(resources, "server", "package.json"),
+    sourcePath: join(resources, "server", BROKER_SOURCE),
+    serverConfigPath: join(resources, "config.json"),
+    disabledHelpers: join(resources, "disabled-helpers"),
+  };
+}
 
 export interface BrokerPaths {
   stateDir: string;
@@ -213,46 +240,108 @@ export function inspectBroker(deps: BrokerDeps = defaultBrokerDeps()): BrokerIns
   } catch {
     return result("broker_manifest_invalid", `The broker manifest is unreadable. ${rebuild}`, null);
   }
-  if (!deps.exists(manifest.appPath) || !deps.exists(paths.executablePath))
-    return result(
-      "broker_not_installed",
-      `The broker app is missing from ${manifest.appPath}. ${rebuild}`,
-      manifest
-    );
+  const resources = brokerResources(paths.appPath);
   if (
-    !deps.exists(deps.sourcePath) ||
-    manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) ||
-    manifest.protocolVersion !== BROKER_PROTOCOL
+    manifest.appPath !== paths.appPath ||
+    manifest.agentPath !== paths.agentPath ||
+    manifest.socketPath !== paths.socketPath ||
+    manifest.logPath !== paths.logPath ||
+    manifest.entryPath !== resources.entryPath
   )
     return result(
-      "broker_stale",
-      `The installed broker was built from a different source than this version ships. ${rebuild}`,
+      "broker_modified",
+      `The broker manifest contains unexpected paths. ${rebuild}`,
       manifest
     );
-  if (sha256Hex(deps.readFile(paths.executablePath)) !== manifest.binarySha256)
+  if (!deps.exists(paths.appPath) || !deps.exists(paths.executablePath))
+    return result(
+      "broker_not_installed",
+      `The broker app is missing from ${paths.appPath}. ${rebuild}`,
+      manifest
+    );
+  try {
+    if (
+      !deps.exists(deps.sourcePath) ||
+      !deps.exists(deps.entryPath) ||
+      manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) ||
+      manifest.entrySha256 !== sha256Hex(deps.readFile(deps.entryPath)) ||
+      manifest.packageVersion !== deps.packageVersion ||
+      manifest.protocolVersion !== BROKER_PROTOCOL
+    )
+      return result(
+        "broker_stale",
+        `The installed broker serves a different package or build. ${rebuild}`,
+        manifest
+      );
+    if (!deps.exists(manifest.agentPath))
+      return result(
+        "broker_agent_missing",
+        `The broker's LaunchAgent is missing (${manifest.agentPath}). ${rebuild}`,
+        manifest
+      );
+    if (!deps.exists(manifest.nodePath))
+      return result(
+        "broker_node_missing",
+        `The Node binary the broker launches is gone (${manifest.nodePath}). ${rebuild} Your grants stay with the broker app.`,
+        manifest
+      );
+    if (!deps.exists(resources.entryPath))
+      return result(
+        "broker_entry_missing",
+        `The bundled server entry point is gone (${resources.entryPath}). ${rebuild}`,
+        manifest
+      );
+    const config = brokerConfigSchema.parse(
+      JSON.parse(deps.readFile(resources.configPath).toString("utf8"))
+    );
+    if (
+      sha256Hex(deps.readFile(paths.executablePath)) !== manifest.binarySha256 ||
+      sha256Hex(deps.readFile(resources.entryPath)) !== manifest.entrySha256 ||
+      sha256Hex(deps.readFile(resources.sourcePath)) !== manifest.sourceSha256 ||
+      deps.readFile(resources.serverConfigPath).toString("utf8") !== "{}\n" ||
+      !isAbsolute(manifest.nodePath) ||
+      deps.realpath(manifest.nodePath) !== manifest.nodePath ||
+      sha256Hex(deps.readFile(manifest.nodePath)) !== manifest.nodeSha256 ||
+      config.nodePath !== manifest.nodePath ||
+      config.nodeSha256 !== manifest.nodeSha256 ||
+      config.packageVersion !== manifest.packageVersion ||
+      config.entrySha256 !== manifest.entrySha256
+    )
+      return result(
+        "broker_modified",
+        `The broker bundle, sealed configuration, or Node runtime no longer matches its installation. ${rebuild}`,
+        manifest
+      );
+    const bundledPackage = JSON.parse(
+      deps.readFile(resources.packagePath).toString("utf8")
+    ) as Record<string, unknown>;
+    if (
+      bundledPackage.name !== "apple-notes-mcp" ||
+      bundledPackage.type !== "module" ||
+      bundledPackage.version !== manifest.packageVersion
+    )
+      return result(
+        "broker_modified",
+        `The bundled package metadata changed. ${rebuild}`,
+        manifest
+      );
+    const verified = deps.spawn(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--deep", paths.appPath],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+      }
+    );
+    if (verified.status !== 0)
+      return result("broker_modified", `The broker app signature is invalid. ${rebuild}`, manifest);
+  } catch {
     return result(
       "broker_modified",
-      `The broker binary no longer matches the checksum recorded when it was built. ${rebuild}`,
+      `The broker installation could not be verified. ${rebuild}`,
       manifest
     );
-  if (!deps.exists(manifest.agentPath))
-    return result(
-      "broker_agent_missing",
-      `The broker's LaunchAgent is missing (${manifest.agentPath}). ${rebuild}`,
-      manifest
-    );
-  if (!deps.exists(manifest.nodePath))
-    return result(
-      "broker_node_missing",
-      `The Node binary the broker launches is gone (${manifest.nodePath}). ${rebuild} Your grants stay with the broker app.`,
-      manifest
-    );
-  if (!deps.exists(manifest.entryPath))
-    return result(
-      "broker_entry_missing",
-      `The server entry point the broker launches is gone (${manifest.entryPath}). ${rebuild}`,
-      manifest
-    );
+  }
   return result(null, null, manifest);
 }
 
@@ -304,24 +393,11 @@ export function brokerCompileArguments(
 export function brokerLaunchAgentPlist(args: {
   executablePath: string;
   socketPath: string;
-  nodePath: string;
-  entryPath: string;
   logPath: string;
 }): string {
   const escape = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const programArguments = [
-    args.executablePath,
-    "serve",
-    "--socket",
-    args.socketPath,
-    "--node",
-    args.nodePath,
-    "--entry",
-    args.entryPath,
-    "--log",
-    args.logPath,
-  ];
+  const programArguments = [args.executablePath, "serve", "--socket", args.socketPath];
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -356,26 +432,29 @@ export interface SigningIdentity {
   name: string;
 }
 
-/**
- * Pick a signing identity: the explicit choice, else the first Developer ID
- * Application identity, else the first Apple Development identity, else ad-hoc.
- */
+/** Require an explicit choice when several qualifying signing identities exist. */
 export function chooseSigningIdentity(
   securityOutput: string,
   explicit: string | undefined
 ): SigningIdentity {
-  if (explicit && explicit.trim()) {
-    const value = explicit.trim();
-    return { identity: value, name: value === "-" ? "ad-hoc" : value };
-  }
   const identities = [...securityOutput.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/gm)].map(
     (m) => ({ identity: m[1], name: m[2] })
   );
-  for (const prefix of ["Developer ID Application:", "Apple Development:"]) {
-    const found = identities.find((id) => id.name.startsWith(prefix));
-    if (found) return found;
+  if (explicit && explicit.trim()) {
+    const value = explicit.trim();
+    const found = identities.find(
+      (identity) => identity.identity === value || identity.name === value
+    );
+    return found ?? { identity: value, name: value === "-" ? "ad-hoc" : value };
   }
-  return { identity: "-", name: "ad-hoc" };
+  const qualifying = identities.filter((identity) =>
+    /^(Developer ID Application:|Apple Development:)/.test(identity.name)
+  );
+  if (qualifying.length > 1)
+    throw new Error(
+      "Multiple signing identities qualify. Choose one explicitly with --sign-identity <certificate SHA-1 or name>."
+    );
+  return qualifying[0] ?? { identity: "-", name: "ad-hoc" };
 }
 
 /** Read the team identifier from `codesign -dv` output; null when ad-hoc or absent. */
@@ -386,32 +465,30 @@ export function parseTeamId(codesignOutput: string): string | null {
   return team && team !== "not set" ? team : null;
 }
 
-/**
- * The Node path the broker should launch. Prefer the first `node` on PATH
- * that resolves to the running binary (for example Homebrew's
- * `/opt/homebrew/bin/node` rather than its versioned Cellar path), so a
- * routine Node update does not strand the broker. The grants live on the
- * broker either way; this only spares a re-run of setup.
- */
-export function chooseNodePath(
-  deps: Pick<BrokerDeps, "env" | "execPath" | "exists" | "realpath">
-): string {
-  let target: string;
-  try {
-    target = deps.realpath(deps.execPath);
-  } catch {
-    return deps.execPath;
+/** Pin the canonical running Node executable, so PATH or symlink changes cannot redirect it. */
+export function chooseNodePath(deps: Pick<BrokerDeps, "execPath" | "realpath">): string {
+  const nodePath = deps.realpath(deps.execPath);
+  if (!isAbsolute(nodePath))
+    throw new Error("The Node executable must resolve to an absolute path.");
+  return nodePath;
+}
+
+/** Reject mutable external libraries that would bypass pinning the Node executable. */
+export function validateNodeLibraries(output: string): boolean {
+  const lines = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let libraries = 0;
+  for (const line of lines) {
+    if (line.endsWith(":")) continue; // otool's executable/architecture headings
+    const match = line.match(/^(.+?) \(compatibility version [^)]+\)$/);
+    if (!match || !/^\/(?:usr\/lib|System\/Library)\//.test(match[1])) return false;
+    // Do not let a superficially system-prefixed path escape the system roots.
+    if (match[1].split("/").includes("..")) return false;
+    libraries++;
   }
-  for (const dir of (deps.env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
-    const candidate = join(dir, "node");
-    try {
-      if (deps.exists(candidate) && deps.realpath(candidate) === target) return candidate;
-    } catch {
-      // unreadable PATH entry; keep looking
-    }
-  }
-  return deps.execPath;
+  return libraries > 0;
 }
 
 export interface BrokerSetupOptions {
@@ -486,7 +563,7 @@ export async function setupBroker(
       detail: installation.ready ? installation.paths.appPath : (installation.detail ?? undefined),
     });
     if (installation.manifest && !installation.manifest.signing.stable)
-      warnings.push(adHocWarning());
+      warnings.push(signingWarning(installation.manifest.signing.teamId));
     return finish();
   }
 
@@ -525,12 +602,32 @@ export async function setupBroker(
     });
     return finish();
   }
-  if (/[\\/]_npx[\\/]/.test(deps.entryPath))
-    warnings.push(
-      "This copy runs from the npx cache, which npx may clear or replace. For the broker, install the package globally (`npm i -g apple-notes-mcp`) and run setup from that copy."
-    );
   const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
   steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
+  let nodePath: string;
+  let nodeSha256: string;
+  const entry = deps.readFile(deps.entryPath);
+  const entrySha256 = sha256Hex(entry);
+  try {
+    nodePath = chooseNodePath(deps);
+    nodeSha256 = sha256Hex(deps.readFile(nodePath));
+    const libraries = deps.spawn("/usr/bin/otool", ["-L", nodePath], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    if (libraries.status !== 0 || !validateNodeLibraries(String(libraries.stdout ?? "")))
+      throw new Error(
+        "Node must link only to absolute /usr/lib or /System/Library libraries. Install a self-contained Node runtime (for example the official Node distribution), then run setup with it."
+      );
+    steps.push({ step: "verify Node runtime", ok: true, detail: nodePath });
+  } catch (error) {
+    steps.push({
+      step: "verify Node runtime",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return finish();
+  }
 
   const version = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
   if (version.status !== 0) {
@@ -562,6 +659,34 @@ export async function setupBroker(
     const digestPath = join(staging, "source-digest.swift");
     writeFileSync(digestPath, sourceDigestSwift(sourceSha), { mode: 0o600 });
     writeFileSync(join(stagedApp, "Contents", "Info.plist"), brokerInfoPlist(deps.packageVersion));
+    const resources = brokerResources(stagedApp);
+    mkdirSync(join(resources.entryPath, ".."), { recursive: true });
+    mkdirSync(join(resources.sourcePath, ".."), { recursive: true });
+    mkdirSync(join(resources.disabledHelpers, "public"), { recursive: true });
+    mkdirSync(join(resources.disabledHelpers, "private"), { recursive: true });
+    writeFileSync(resources.entryPath, entry);
+    writeFileSync(resources.sourcePath, deps.readFile(deps.sourcePath));
+    writeFileSync(
+      resources.packagePath,
+      JSON.stringify({ name: "apple-notes-mcp", type: "module", version: deps.packageVersion }) +
+        "\n"
+    );
+    writeFileSync(resources.serverConfigPath, "{}\n");
+    writeFileSync(
+      resources.configPath,
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          nodePath,
+          nodeSha256,
+          packageVersion: deps.packageVersion,
+          entrySha256,
+        },
+        null,
+        2
+      ) + "\n"
+    );
+
     const compile = deps.spawn(
       "/usr/bin/xcrun",
       brokerCompileArguments(deps.sourcePath, digestPath, stagedBinary),
@@ -583,10 +708,20 @@ export async function setupBroker(
       ["find-identity", "-v", "-p", "codesigning"],
       { encoding: "utf8" }
     );
-    const signing = chooseSigningIdentity(
-      String(identities.stdout ?? ""),
-      options.signIdentity ?? deps.env[BROKER_SIGN_IDENTITY_ENV]
-    );
+    let signing: SigningIdentity;
+    try {
+      signing = chooseSigningIdentity(
+        String(identities.stdout ?? ""),
+        options.signIdentity ?? deps.env[BROKER_SIGN_IDENTITY_ENV]
+      );
+    } catch (error) {
+      steps.push({
+        step: "choose signing identity",
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return finish();
+    }
     const sign = deps.spawn(
       "/usr/bin/codesign",
       [
@@ -596,6 +731,8 @@ export async function setupBroker(
         "--identifier",
         BROKER_BUNDLE_ID,
         "--timestamp=none",
+        "--options",
+        "runtime",
         stagedApp,
       ],
       { encoding: "utf8", timeout: 60_000 }
@@ -611,14 +748,32 @@ export async function setupBroker(
     const described = deps.spawn("/usr/bin/codesign", ["-dv", "--verbose=2", stagedApp], {
       encoding: "utf8",
     });
-    const teamId = parseTeamId(String(described.stderr ?? "") + String(described.stdout ?? ""));
-    const stable = teamId !== null;
+    const description = String(described.stderr ?? "") + String(described.stdout ?? "");
+    const teamId = parseTeamId(description);
+    const stable = teamId !== null && /^Authority=Developer ID Application:/m.test(description);
     steps.push({
       step: "sign",
       ok: true,
-      detail: stable ? `${signing.name} (team ${teamId})` : "ad-hoc",
+      detail: teamId ? `${signing.name} (team ${teamId})` : "ad-hoc",
     });
-    if (!stable) warnings.push(adHocWarning());
+    if (!stable) warnings.push(signingWarning(teamId));
+    const verified = deps.spawn(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--deep", stagedApp],
+      {
+        encoding: "utf8",
+        timeout: 30_000,
+      }
+    );
+    if (verified.status !== 0) {
+      steps.push({
+        step: "verify signature",
+        ok: false,
+        detail: String(verified.stderr || "The signed bundle failed verification.").trim(),
+      });
+      return finish();
+    }
+    steps.push({ step: "verify signature", ok: true });
 
     const hello = deps.spawn(stagedBinary, [], {
       input: JSON.stringify({ type: "hello" }) + "\n",
@@ -626,14 +781,25 @@ export async function setupBroker(
       timeout: 10_000,
       killSignal: "SIGKILL",
     });
-    type Handshake = { protocolVersion?: unknown; sourceSha256?: unknown };
+    type Handshake = {
+      protocolVersion?: unknown;
+      sourceSha256?: unknown;
+      packageVersion?: unknown;
+      entrySha256?: unknown;
+    };
     let handshake: Handshake | null = null;
     try {
       handshake = JSON.parse(String(hello.stdout ?? "").trim()) as Handshake | null;
     } catch {
       handshake = null;
     }
-    if (handshake?.protocolVersion !== BROKER_PROTOCOL || handshake?.sourceSha256 !== sourceSha) {
+    if (
+      hello.status !== 0 ||
+      handshake?.protocolVersion !== BROKER_PROTOCOL ||
+      handshake?.sourceSha256 !== sourceSha ||
+      handshake?.packageVersion !== deps.packageVersion ||
+      handshake?.entrySha256 !== entrySha256
+    ) {
       steps.push({
         step: "handshake",
         ok: false,
@@ -649,19 +815,20 @@ export async function setupBroker(
     launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
     rmSync(paths.appPath, { recursive: true, force: true });
     renameSync(stagedApp, paths.appPath);
-    const nodePath = chooseNodePath(deps);
     const manifest: BrokerManifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       protocolVersion: BROKER_PROTOCOL,
       packageVersion: deps.packageVersion,
       sourceSha256: sourceSha,
       binarySha256: sha256Hex(deps.readFile(paths.executablePath)),
+      nodeSha256,
+      entrySha256,
       appPath: paths.appPath,
       agentPath: paths.agentPath,
       socketPath: paths.socketPath,
       logPath: paths.logPath,
       nodePath,
-      entryPath: deps.entryPath,
+      entryPath: brokerResources(paths.appPath).entryPath,
       signing: { identity: signing.name, teamId, stable },
       builtAt: deps.now().toISOString(),
       compiler,
@@ -675,8 +842,6 @@ export async function setupBroker(
       brokerLaunchAgentPlist({
         executablePath: paths.executablePath,
         socketPath: paths.socketPath,
-        nodePath,
-        entryPath: deps.entryPath,
         logPath: paths.logPath,
       }),
       { mode: 0o644 }
@@ -704,8 +869,10 @@ export async function setupBroker(
   return finish();
 }
 
-function adHocWarning(): string {
-  return "The broker is ad-hoc signed, so macOS ties its grants to this exact build: after every rebuild, grant Full Disk Access and Automation again. A Developer ID or Apple Development identity in the keychain (or --sign-identity) keeps grants across rebuilds.";
+function signingWarning(teamId: string | null): string {
+  return teamId
+    ? "This signing identity does not establish Developer ID continuity. Apple Development certificate renewal can change the designated requirement and require granting permissions again."
+    : "The broker is ad-hoc signed, so macOS ties its grants to this exact build: after every rebuild, grant Full Disk Access and Automation again. A Developer ID Application identity can retain the bundle and team designated requirement across rebuilds.";
 }
 
 /** Terminal summary for `setup --broker`. */

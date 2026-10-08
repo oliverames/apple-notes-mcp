@@ -267,7 +267,7 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
   process.exit(code);
 }
 if (process.argv[2] === "setup" && process.argv.slice(3).includes("--broker")) {
-  // Opt-in permission broker (#40): a signed LaunchAgent app that owns the grants.
+  // Opt-in permission broker (#220): a signed LaunchAgent app that owns the grants.
   const report = await setupBroker(parseBrokerArgs(process.argv.slice(3)));
   process.stdout.write(formatBrokerSetup(report) + "\n");
   process.exit(report.ok ? 0 : 1);
@@ -287,7 +287,7 @@ if (process.argv[2] === "anchors") {
     await runAnchorsCli(process.argv.slice(3), { resolve: registryLookup(new AnchorRegistry()) })
   );
 }
-// With an installed, answering permission broker (#40), this process only
+// With an installed, answering permission broker (#220), this process only
 // relays stdio to a server the broker starts, and never initializes its own.
 if (await startBrokerProxy()) {
   await new Promise<never>(() => {});

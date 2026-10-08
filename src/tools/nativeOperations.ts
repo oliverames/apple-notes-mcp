@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { brokerStatus } from "../services/broker.js";
+import { brokerStatus } from "@/services/broker.js";
 import { exactIdInput, NOTE_ID_MESSAGE } from "../utils/noteIdentifiers.js";
 import { classifyError, CodedError, errorResult } from "../utils/errorCodes.js";
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -326,7 +326,7 @@ export function registerNativeOperations(server: McpServer, manager: AppleNotesM
         ),
         unavailable: UNAVAILABLE,
         ...getCapabilityMatrix(),
-        // Whether this process runs under the permission broker (#40).
+        // Whether this process runs under the permission broker (#220).
         broker: brokerStatus(),
       };
     },

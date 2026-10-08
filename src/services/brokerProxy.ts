@@ -27,6 +27,28 @@ import { BrokerUnreachableError, requestBroker } from "@/services/brokerClient.j
 /** How long the proxy waits for the broker before running in-process. */
 export const BROKER_CONNECT_TIMEOUT_MS = 5000;
 
+/**
+ * Only numeric resource and timing limits may cross the socket. Keep this
+ * list in sync with `passedEnvironmentKeys` in the native broker, which must
+ * enforce the same policy even for clients that bypass this proxy.
+ */
+export const BROKER_PASSED_ENV_KEYS = [
+  "APPLE_NOTES_MCP_BLOCKS_MAX_BYTES",
+  "APPLE_NOTES_MCP_EXPORT_MAX_BYTES",
+  "APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES",
+  "APPLE_NOTES_MCP_MAX_BUFFER",
+  "APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES",
+  "APPLE_NOTES_MCP_MAX_RETRIES",
+  "APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS",
+  "APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS",
+  "APPLE_NOTES_MCP_RETRY_DELAY_MS",
+  "APPLE_NOTES_MCP_TIMEOUT_MS",
+] as const;
+
+const passedEnvironmentKeys: ReadonlySet<string> = new Set(BROKER_PASSED_ENV_KEYS);
+const MAX_PASSED_VALUE = 2_147_483_647;
+const MAX_VARIABLE_BYTES = 8192;
+
 export interface BrokerProxyDeps {
   env: NodeJS.ProcessEnv;
   inspect: () => BrokerInstallation;
@@ -51,15 +73,23 @@ export function defaultBrokerProxyDeps(overrides: Partial<BrokerProxyDeps> = {})
 }
 
 /**
- * The client settings that travel to the brokered server: every
- * APPLE_NOTES_MCP_* variable except the broker's own controls. The broker
- * applies the same filter on its side.
+ * The client's harmless numeric settings that travel to the brokered server.
+ * Paths, executable/helper choices, safety overrides and unknown future
+ * settings never travel over the socket. The native broker repeats this
+ * allowlist check; a same-user client must not choose privileged server code.
  */
 export function passedEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   const passed: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) continue;
-    if (!key.startsWith("APPLE_NOTES_MCP_") || key.startsWith("APPLE_NOTES_MCP_BROKER")) continue;
+    if (
+      !passedEnvironmentKeys.has(key) ||
+      typeof value !== "string" ||
+      value.length > MAX_VARIABLE_BYTES ||
+      !/^[0-9]+$/.test(value)
+    )
+      continue;
+    const numeric = Number(value);
+    if (!Number.isInteger(numeric) || numeric < 1 || numeric > MAX_PASSED_VALUE) continue;
     passed[key] = value;
   }
   return passed;
@@ -87,6 +117,8 @@ export async function startBrokerProxy(
     return false;
   };
   if (!installation.ready) return fallBack(installation.detail ?? "the broker is not ready.");
+  const manifest = installation.manifest;
+  if (!manifest) return fallBack("the broker has no verified runtime manifest.");
 
   let socket: Socket;
   let leftover: Buffer;
@@ -96,6 +128,8 @@ export async function startBrokerProxy(
       {
         type: "connect",
         protocolVersion: BROKER_PROTOCOL,
+        packageVersion: manifest.packageVersion,
+        entrySha256: manifest.entrySha256,
         env: passedEnvironment(deps.env),
       },
       BROKER_CONNECT_TIMEOUT_MS
@@ -105,6 +139,16 @@ export async function startBrokerProxy(
       const message =
         typeof result.answer.message === "string" ? result.answer.message : "no reason given";
       return fallBack(`the broker refused the connection (${message})`);
+    }
+    if (
+      result.answer.protocolVersion !== BROKER_PROTOCOL ||
+      result.answer.packageVersion !== manifest.packageVersion ||
+      result.answer.entrySha256 !== manifest.entrySha256
+    ) {
+      result.socket.destroy();
+      return fallBack(
+        "the running broker serves a different server version. Run `apple-notes-mcp setup --broker` again."
+      );
     }
     socket = result.socket;
     leftover = result.leftover;

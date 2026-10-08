@@ -1331,9 +1331,9 @@ fixed HTML subset rather than anything Notes.app can render:
 
 | | Native append |
 |---|---|
-| Elements | `<a>` `<b>` `<br>` `<code>` `<del>` `<div>` `<em>` `<h1>` `<h2>` `<h3>` `<i>` `<li>` `<ol>` `<p>` `<s>` `<span>` `<strong>` `<table>` `<tbody>` `<td>` `<th>` `<thead>` `<tr>` `<tt>` `<u>` `<ul>` |
+| Elements | `<a>` `<b>` `<br>` `<code>` `<del>` `<div>` `<em>` `<h1>` `<h2>` `<h3>` `<i>` `<li>` `<ol>` `<p>` `<s>` `<span>` `<strong>` `<tt>` `<u>` `<ul>` |
 | Attributes | `href` on `<a>` (`https:`, `http:`, `notes:`, `applenotes:`, `mailto:` only) and a `font-size` style on `<span>`, e.g. `<span style="font-size: 18px">` — the form Notes itself stores a heading as |
-| Refused | every other element and attribute, by name, naming the accepted subset; `<table>` here (use [`create-table`](#create-table)); comments, doctype and processing instructions |
+| Refused | every other element and attribute, by name, naming the accepted subset; a table, in whole or in part (`<table>` `<thead>` `<tbody>` `<tr>` `<td>` `<th>`) — use [`create-table`](#create-table) instead; comments, doctype and processing instructions |
 
 Ordinary notes take the guarded HTML path and are not restricted to that subset.
 
@@ -2771,6 +2771,10 @@ Private API can break on any macOS update; see
 [TECHNICAL_NOTES.md](TECHNICAL_NOTES.md#private-helper-notesshared) for the
 API surface, risks, and safety contract.
 
+If you installed the [permission broker](#permission-broker-opt-in), set
+`APPLE_NOTES_MCP_BROKER=off` for this client first. Broker sessions do not load
+external native helpers.
+
 To use it:
 
 1. Build it on your Mac from the packaged source (needs the Command Line
@@ -2934,7 +2938,7 @@ The entrypoint is written as (an excerpt of that file, not a whole config):
 
 ### Environment variables
 
-All configuration is optional — the server works out of the box. Override behavior with these variables (set them in your MCP client's `env` block, or via the [config file](#configuration-file-when-the-host-strips-env) below):
+All configuration is optional — the server works out of the box. Override behavior with these variables (set them in your MCP client's `env` block, or via the [config file](#configuration-file-when-the-host-strips-env) below). The opt-in [permission broker](#permission-broker-opt-in) accepts only a short, explicit allowlist of numeric limits and timeouts; code paths, helper paths, Shortcut overrides, and settings that relax safety checks do not carry over:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -2983,6 +2987,11 @@ overriding** anything already set there (so an explicit `env` still wins). This
 is the recommended way to configure the server under Claude Desktop. Apple Notes
 MCP stores no secrets, but as a general rule keep only non-secret config here.
 
+For a brokered session, the client forwards only the broker's allowed numeric
+settings from this file. The brokered server skips JSON configuration files
+entirely; editing this file cannot enable helper paths or safety overrides in
+that server.
+
 ---
 
 ## Full Disk Access
@@ -2997,7 +3006,8 @@ Several tools read directly from the Apple Notes SQLite database, which lives in
 2. Go to **Privacy & Security > Full Disk Access**
 3. Click the **+** button
 4. Add the entry that matches how the server runs:
-   - **Claude Desktop**: add the **Node binary** that runs the server (the `doctor` tool prints its path, e.g. `~/.nvm/versions/node/v24.11.1/bin/node`; press ⌘⇧G in the file picker to paste it). Claude Desktop launches MCP servers as their own responsible process, so a grant on `/Applications/Claude.app` alone does not reach them ([#220](https://github.com/sweetrb/apple-notes-mcp/issues/220)). To keep one grant that survives Node updates, use the [permission broker](#permission-broker-opt-in) instead.
+   - **Permission broker**: if you opted in with `setup --broker`, add `~/Applications/Apple Notes MCP Broker.app`. Read the [broker's trust trade-off](#permission-broker-opt-in) before enabling it.
+   - **Claude Desktop without the broker**: add the **Node binary** that runs the server (the `doctor` tool prints its path, e.g. `~/.nvm/versions/node/v24.11.1/bin/node`; press ⌘⇧G in the file picker to paste it). Claude Desktop launches MCP servers as their own responsible process, so a grant on `/Applications/Claude.app` alone does not reach them ([#220](https://github.com/sweetrb/apple-notes-mcp/issues/220)).
    - **Terminal**: Add `/Applications/Utilities/Terminal.app`
    - **VS Code**: Add `/Applications/Visual Studio Code.app`
    - **iTerm**: Add `/Applications/iTerm.app`
@@ -3041,7 +3051,7 @@ For each missing grant the report names the System Settings pane and its URL, fo
 
 Automation is the one item that cannot be read without talking to Notes.app, so it is opt-in. By default the command sends no Apple event, and the Automation line reads `unknown` (not probed) with the command that checks it. Add `--probe-automation` to send one read-only event; the first time, macOS may ask whether the app may control Notes, and **Allow** is the only way to add an Automation grant. The probe never runs under `--check` (which reports state only) or when `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt. In those cases the line reads `unknown` even if `--probe-automation` was passed. An unprobed Automation line does not change the exit code and the report says Automation was not checked, so run the probe from a terminal on the Mac itself when you need to know. A probe that runs and fails (denied, or no answer) does exit 1.
 
-macOS attributes these grants to the app that launched the process, so the report names it (for example `/Applications/iTerm.app`). Run the check from the app you use as the MCP host when you can. Claude Desktop launches servers as their own responsible process, so for it use the `doctor` tool inside Claude Desktop, and add the Node binary it names to Full Disk Access. The Speech item reads `unknown` until the [public native helper](#public-native-helper) is built.
+macOS attributes these grants to the app that launched the process, so the report names it (for example `/Applications/iTerm.app`). Run the check from the app you use as the MCP host when you can. Under Claude Desktop, use the `doctor` tool inside the client: for a brokered session, grant Full Disk Access to `~/Applications/Apple Notes MCP Broker.app`; otherwise add the Node binary it names. The Speech item reads `unknown` until the [public native helper](#public-native-helper) is built.
 
 ### Optional checklist window
 
@@ -3060,7 +3070,11 @@ Setup compiles `native/permissions-window/apple-notes-permissions-window.swift`,
 
 ## Public native helper
 
-`get-note-drawings` needs Apple's PencilKit framework and `transcribe-note-audio` needs the Speech framework; neither has an AppleScript or command-line interface. For them, the server uses a small Swift helper that links public Apple frameworks only (AppKit, PencilKit, AVFoundation, and Speech). No prebuilt binary ships with the package. Build it once on your Mac:
+`get-note-drawings` needs Apple's PencilKit framework and `transcribe-note-audio` needs the Speech framework; neither has an AppleScript or command-line interface. For them, the server uses a small Swift helper that links public Apple frameworks only (AppKit, PencilKit, AVFoundation, and Speech). No prebuilt binary ships with the package.
+
+If you installed the [permission broker](#permission-broker-opt-in), set `APPLE_NOTES_MCP_BROKER=off` for this client to use these tools. Broker sessions do not load external native helpers.
+
+Build it once on your Mac:
 
 ```bash
 apple-notes-mcp setup --public-helper          # compile, sign, verify, install
@@ -3075,7 +3089,11 @@ The helper never opens the Notes database and never writes under the Notes group
 
 ## Permission broker (opt-in)
 
-Under Claude Desktop, macOS holds the Node binary responsible for Full Disk Access and Automation, so the grants break whenever Node moves or updates ([#220](https://github.com/sweetrb/apple-notes-mcp/issues/220)). The permission broker moves both grants to one signed app that stays put:
+Under Claude Desktop, macOS holds the Node binary responsible for Full Disk Access and Automation, so moving or replacing Node can require new grants ([#220](https://github.com/sweetrb/apple-notes-mcp/issues/220)). The permission broker moves both grants to one signed app at a fixed path.
+
+**Trust trade-off:** while the broker is running, every process running as your macOS user can connect and use the server's Notes capabilities under the broker's Full Disk Access and Notes Automation grants. The socket's ownership, file permissions, and `getpeereid` check exclude other users; they do **not** authenticate or distinguish apps running as you. Any such app can request the same Notes reads and writes as your MCP client. This is comparable trust exposure to granting Full Disk Access to a general-purpose Node binary. The broker consolidates permission management; it does not isolate Notes access between same-user apps. Enable it only if you accept that boundary.
+
+Run setup with a standalone Node runtime whose dynamic library dependencies are all under `/usr/lib/` or `/System/Library/`. Setup rejects runtimes linked to other locations, including common Homebrew Node builds, because pinning Node alone would not protect those libraries. The [dedicated Node instructions](docs/NODE-RUNTIME-AND-TCC-PERMISSIONS.md) show how to install an official runtime at a fixed path. To select it for setup, run `/path/to/node /path/to/apple-notes-mcp/build/index.js setup --broker`.
 
 ```bash
 apple-notes-mcp setup --broker             # build, sign, install, and start the broker
@@ -3084,13 +3102,25 @@ apple-notes-mcp setup --broker --uninstall # stop and remove it
 apple-notes-mcp setup --broker --sign-identity "Developer ID Application: You (TEAMID)"
 ```
 
-Setup compiles `native/broker/apple-notes-mcp-broker.swift` into `~/Applications/Apple Notes MCP Broker.app`, signs it, runs its `hello` handshake, and starts it as the per-user LaunchAgent `apple-notes-mcp.broker` (`~/Library/LaunchAgents/apple-notes-mcp.broker.plist`). Then grant the app once: add it under **Privacy & Security > Full Disk Access**, and click **Allow** when macOS first asks whether "Apple Notes MCP Broker" may control Notes. Restart your MCP client afterwards.
+Setup compiles `native/broker/apple-notes-mcp-broker.swift` into `~/Applications/Apple Notes MCP Broker.app`, copies the server into the bundle before signing with the hardened runtime, runs its `hello` handshake, and starts it as the per-user LaunchAgent `apple-notes-mcp.broker` (`~/Library/LaunchAgents/apple-notes-mcp.broker.plist`). Then add the app under **Privacy & Security > Full Disk Access**, and click **Allow** when macOS first asks whether "Apple Notes MCP Broker" may control Notes. Restart your MCP client afterwards and check `doctor`.
 
-How it works: the broker listens on a Unix socket in `~/Library/Application Support/apple-notes-mcp/broker/`, created `0600` inside a `0700` folder, and refuses any connection from another user (`getpeereid`). For each client it starts this package's own `build/index.js` as its child, so macOS attributes the server's database reads and Apple events to the broker app. The `apple-notes-mcp` process your MCP client launches only relays its stdin and stdout to that server. Your client's `APPLE_NOTES_MCP_*` settings travel with the connection; nothing else from its environment does. The broker never reads Notes itself.
+How it works: the broker listens on a Unix socket in `~/Library/Application Support/apple-notes-mcp/broker/`, created `0600` inside a `0700` folder. For each client it starts the bundled server as its child, so macOS attributes the server's database reads and Apple events to the broker app. The `apple-notes-mcp` process your MCP client launches relays its stdin and stdout to that server. The broker never reads Notes itself.
 
-Signing decides whether the grants survive a rebuild. Setup uses the first **Developer ID Application** identity in your keychain, then an **Apple Development** one; either keeps the grants across rebuilds and upgrades, because macOS matches the bundle identifier and team. Without one it signs ad hoc and warns you: an ad-hoc grant belongs to that exact build, so you grant again after every `setup --broker`. Grants never depend on which Node the broker launches. If that Node or the package moves, the broker reports itself not ready and the server runs in-process until you run setup again.
+The broker verifies its app signature and sealed resources at startup and before spawning a server. Its signed configuration pins the Node executable's canonical path and SHA-256 digest, and the server entry point has a fixed location inside the signed bundle. Neither the LaunchAgent's arguments nor a socket request can select a Node binary or server entry point. Changes detected at startup or before spawn are refused until you run setup again. These are pre-spawn tamper checks: they do not make later filesystem reads atomic or provide OS isolation against a hostile, unsandboxed same-user process that can modify the user-writable bundle or runtime after validation.
 
-Nothing changes unless you run `setup --broker`. When the broker is not installed, or is installed but not answering, the server runs in-process exactly as before. `APPLE_NOTES_MCP_BROKER=off` keeps it in-process even with a broker installed. `doctor` and `get-capabilities` report a `broker` field saying whether the server is running under the broker and, if not, why. Install the package globally (`npm i -g apple-notes-mcp`) before running setup, since the npx cache can be cleared. `APPLE_NOTES_MCP_BROKER_DIR`, `APPLE_NOTES_MCP_BROKER_APP_DIR`, and `APPLE_NOTES_MCP_BROKER_AGENT_DIR` override the socket, app, and LaunchAgent folders, and `APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY` the signing identity.
+Only an explicit allowlist of harmless numeric limits and timeouts travels from a client to the broker. Code and helper paths, `NODE_OPTIONS`, Shortcut overrides, `APPLE_NOTES_MCP_ENABLE_PRIVATE`, `APPLE_NOTES_MCP_ALLOW_UNVERIFIED`, and `APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS` are not accepted over the socket. External public and private native helpers are unavailable in broker sessions; use an in-process server for tools that require them. These checks constrain the code and settings the broker executes, but do not authenticate same-user clients.
+
+Installed Shortcuts remain user-managed trusted integrations. The broker does not authenticate their contents; preventing a client from overriding a Shortcut's name does not verify the workflow installed under that name.
+
+The allowed settings are `APPLE_NOTES_MCP_BLOCKS_MAX_BYTES`, `APPLE_NOTES_MCP_EXPORT_MAX_BYTES`, `APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES`, `APPLE_NOTES_MCP_MAX_BUFFER`, `APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES`, `APPLE_NOTES_MCP_MAX_RETRIES`, `APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS`, `APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS`, `APPLE_NOTES_MCP_RETRY_DELAY_MS`, and `APPLE_NOTES_MCP_TIMEOUT_MS`. Values must be decimal integers from 1 to 2,147,483,647; other keys or values are ignored. Helper timeouts have no effect while external helpers are disabled.
+
+Signing affects whether the grants survive a rebuild. Setup automatically selects an identity only when exactly one **Developer ID Application** or **Apple Development** identity qualifies. If more than one qualifies across those types, specify `--sign-identity`. Permission continuity depends on the app's designated code requirement and macOS permission state, not just its bundle identifier and team. In particular, do not assume an Apple Development grant will survive certificate renewal or a signing identity change. Without a suitable identity, setup signs ad hoc and warns that rebuilding may require you to grant permissions again. See [Node runtime and TCC permissions](docs/NODE-RUNTIME-AND-TCC-PERMISSIONS.md) for details.
+
+Nothing changes unless you run `setup --broker`. When the broker is absent, stale, or unavailable, the server runs in-process using that process's own permissions. `doctor` and `get-capabilities` report whether the session is brokered and, if not, why. After updating the package or replacing its Node runtime, run `setup --broker` again to install the matching server and runtime pin, then restart your MCP clients.
+
+Set `APPLE_NOTES_MCP_BROKER=off` in a client's environment to keep **that client** in-process. This does not stop the broker or remove other same-user processes' access to its socket. To remove that access, run `apple-notes-mcp setup --broker --uninstall` to stop and remove the broker; you can also revoke its Full Disk Access and Notes Automation grants in System Settings. Restart your MCP clients afterwards.
+
+Install the package globally (`npm i -g apple-notes-mcp`) before running setup. `APPLE_NOTES_MCP_BROKER_DIR`, `APPLE_NOTES_MCP_BROKER_APP_DIR`, and `APPLE_NOTES_MCP_BROKER_AGENT_DIR` override the socket, app, and LaunchAgent folders, and `APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY` the signing identity.
 
 ---
 
@@ -3140,6 +3170,8 @@ paragraph or note.
 
 - **Local only** - All operations happen locally, through AppleScript, the packaged Shortcuts, read-only reads of the Notes database, and helpers you build on your own Mac. The server makes no network requests, and `transcribe-note-audio` uses on-device speech recognition only. Whatever your MCP client does with the results is governed by that client.
 - **Permission required** - macOS will prompt for automation permission on first use.
+- **Optional broker trusts all same-user processes** - With the [permission broker](#permission-broker-opt-in) running, every process under your macOS user can use its Notes capabilities with the broker's Full Disk Access and Notes Automation grants. The socket checks exclude other users, but do not authenticate same-user apps. This is comparable trust exposure to granting Full Disk Access to Node. `APPLE_NOTES_MCP_BROKER=off` bypasses it for one client; `apple-notes-mcp setup --broker --uninstall` stops and removes the shared service.
+- **Broker checks have limits** - Signature and hash checks detect tampering present before spawn; they do not isolate the user-writable bundle and runtime from a hostile, unsandboxed same-user process modifying them after validation. Installed Shortcuts are user-managed trusted integrations whose contents the broker does not authenticate.
 - **Password-protected notes** - Notes with passwords cannot be read or modified via this server.
 - **No credential storage** - The server doesn't store any passwords or authentication tokens.
 
@@ -3331,4 +3363,6 @@ Part of a family of macOS MCP servers:
 
 ## Recurring macOS permission prompts
 
-If macOS keeps re-prompting for Full Disk Access or Automation for `node` (often after a `brew upgrade`), the cause is almost always an **ad-hoc-signed Node** (typically Homebrew's): its code signature (cdhash) changes on every update, so macOS TCC treats each new build as a brand-new binary and silently drops the grants you already made. The fix is to run this server under an official, **Developer-ID-signed Node at a stable path** — its signing identity stays the same across updates, so you grant the permission once and it persists. The `doctor` tool detects the ad-hoc-signature case and the full walkthrough is in [docs/NODE-RUNTIME-AND-TCC-PERMISSIONS.md](https://github.com/sweetrb/apple-notes-mcp/blob/main/docs/NODE-RUNTIME-AND-TCC-PERMISSIONS.md).
+If macOS keeps re-prompting for Full Disk Access or Automation for `node` after a Node update, check its path and code signature with `doctor`. An **ad-hoc-signed Node** has no stable certificate identity, and version managers may also move the executable when they update it.
+
+You can opt in to the [permission broker](#permission-broker-opt-in) to put the grants on a signed app at a fixed path; review its same-user trust trade-off first. After a package or runtime update, run `setup --broker` again. Alternatively, keep the server in-process and use an official **Developer-ID-signed Node at a stable path**. Neither approach guarantees that grants survive a change in signing identity or macOS policy. The walkthrough and signing caveats are in [docs/NODE-RUNTIME-AND-TCC-PERMISSIONS.md](docs/NODE-RUNTIME-AND-TCC-PERMISSIONS.md).

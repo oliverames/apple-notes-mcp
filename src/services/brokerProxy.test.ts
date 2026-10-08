@@ -1,15 +1,18 @@
 import { Duplex, PassThrough } from "node:stream";
 import type { Socket } from "node:net";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   brokerPaths,
   brokerStatus,
+  BROKER_PROTOCOL,
   recordBrokerFallback,
   type BrokerInstallation,
 } from "@/services/broker.js";
 import { BrokerUnreachableError, type requestBroker } from "@/services/brokerClient.js";
 import {
   BROKER_CONNECT_TIMEOUT_MS,
+  BROKER_PASSED_ENV_KEYS,
   defaultBrokerProxyDeps,
   passedEnvironment,
   startBrokerProxy,
@@ -17,13 +20,43 @@ import {
 } from "@/services/brokerProxy.js";
 
 function installation(overrides: Partial<BrokerInstallation> = {}): BrokerInstallation {
+  const paths = brokerPaths({ APPLE_NOTES_MCP_BROKER_DIR: "/state" });
   return {
     installed: true,
     ready: true,
     reason: null,
     detail: null,
-    paths: brokerPaths({ APPLE_NOTES_MCP_BROKER_DIR: "/state" }),
-    manifest: null,
+    paths,
+    manifest: {
+      schemaVersion: 2,
+      protocolVersion: BROKER_PROTOCOL,
+      packageVersion: "2.15.0",
+      sourceSha256: "a".repeat(64),
+      binarySha256: "b".repeat(64),
+      nodeSha256: "c".repeat(64),
+      entrySha256: "d".repeat(64),
+      appPath: paths.appPath,
+      agentPath: paths.agentPath,
+      socketPath: paths.socketPath,
+      logPath: paths.logPath,
+      nodePath: "/node",
+      entryPath: `${paths.appPath}/Contents/Resources/server/build/index.js`,
+      signing: { identity: "-", teamId: null, stable: false },
+      builtAt: "2026-10-08T00:00:00.000Z",
+      compiler: "swiftc",
+    },
+    ...overrides,
+  };
+}
+
+function readyAnswer(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const manifest = installation().manifest!;
+  return {
+    type: "ready",
+    protocolVersion: BROKER_PROTOCOL,
+    packageVersion: manifest.packageVersion,
+    entrySha256: manifest.entrySha256,
+    pid: 9,
     ...overrides,
   };
 }
@@ -49,7 +82,7 @@ function deps(overrides: Partial<BrokerProxyDeps> = {}) {
   const logs: string[] = [];
   const exit = vi.fn();
   const d: BrokerProxyDeps = {
-    env: { APPLE_NOTES_MCP_DEFAULT_FOLDER: "Work" },
+    env: { APPLE_NOTES_MCP_TIMEOUT_MS: "45000" },
     inspect: () => installation(),
     request: vi.fn() as unknown as typeof requestBroker,
     stdin,
@@ -64,17 +97,92 @@ function deps(overrides: Partial<BrokerProxyDeps> = {}) {
 afterEach(() => recordBrokerFallback(null));
 
 describe("passedEnvironment", () => {
-  it("passes APPLE_NOTES_MCP_* settings but not broker controls or anything else", () => {
+  it("passes only the explicit numeric resource and timing limits", () => {
+    const allowed = Object.fromEntries(BROKER_PASSED_ENV_KEYS.map((key) => [key, "1000"]));
+    expect(passedEnvironment(allowed)).toEqual(allowed);
+  });
+
+  it("never passes helper, code, path, safety, broker or unknown settings", () => {
     expect(
       passedEnvironment({
-        APPLE_NOTES_MCP_DEFAULT_FOLDER: "Work",
+        APPLE_NOTES_MCP_TIMEOUT_MS: "45000",
+        APPLE_NOTES_MCP_PUBLIC_HELPER_DIR: "/attacker/public-helper",
+        APPLE_NOTES_MCP_PRIVATE_HELPER_DIR: "/attacker/private-helper",
+        APPLE_NOTES_MCP_ENABLE_PRIVATE: "1",
+        APPLE_NOTES_MCP_ALLOW_UNVERIFIED: "1",
+        APPLE_NOTES_MCP_ALLOW_PRIVATE_CONTENT_PATHS: "1",
+        APPLE_NOTES_MCP_CONFIG_FILE: "/attacker/config.json",
+        APPLE_NOTES_MCP_PRIVATE_STORE: "/attacker/store.sqlite",
+        APPLE_NOTES_MCP_PERMISSIONS_WINDOW_DIR: "/attacker/window",
+        APPLE_NOTES_MCP_TEMPLATE_DIR: "/attacker/templates",
+        APPLE_NOTES_MCP_ANCHOR_FILE: "/attacker/anchors.json",
+        APPLE_NOTES_MCP_BACKGROUND_SHORTCUT: "attacker shortcut",
+        APPLE_NOTES_MCP_MARKDOWN_SHORTCUT: "attacker shortcut",
+        APPLE_NOTES_MCP_TAGS_SHORTCUT: "attacker shortcut",
+        APPLE_NOTES_MCP_PASTEBOARD_NAME: "attacker pasteboard",
+        APPLE_NOTES_MCP_ANCHORS_TOKEN: "attacker token",
+        APPLE_NOTES_MCP_FUTURE_SETTING: "1",
+        APPLE_NOTES_MCP_MAX_BUFFER_EXECUTABLE: "/attacker/code",
         APPLE_NOTES_MCP_BROKER: "on",
         APPLE_NOTES_MCP_BROKERED: "1",
+        APPLE_NOTES_MCP_BROKER_APP: "/attacker/app",
+        APPLE_NOTES_MCP_BROKER_DIR: "/attacker/broker",
+        APPLE_NOTES_MCP_BROKER_APP_DIR: "/attacker/apps",
+        APPLE_NOTES_MCP_BROKER_AGENT_DIR: "/attacker/agents",
+        APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY: "attacker identity",
         APPLE_NOTES_MCP_UNSET: undefined,
-        PATH: "/bin",
-        NODE_OPTIONS: "--inspect",
+        PATH: "/attacker/bin",
+        HOME: "/attacker/home",
+        NODE_OPTIONS: "--import=/attacker/code.js",
+        NODE_PATH: "/attacker/modules",
+        DYLD_INSERT_LIBRARIES: "/attacker/code.dylib",
+        DYLD_LIBRARY_PATH: "/attacker/libraries",
       })
-    ).toEqual({ APPLE_NOTES_MCP_DEFAULT_FOLDER: "Work" });
+    ).toEqual({ APPLE_NOTES_MCP_TIMEOUT_MS: "45000" });
+  });
+
+  it.each([
+    undefined,
+    "",
+    "0",
+    "-1",
+    "+1",
+    "1.5",
+    "1e3",
+    " 1000 ",
+    "NaN",
+    "Infinity",
+    "2147483648",
+    "1000\0NODE_OPTIONS=--inspect",
+    "１",
+    "0".repeat(8192) + "1",
+  ])("ignores non-positive, non-decimal or oversized numeric values (%j)", (value) => {
+    expect(passedEnvironment({ APPLE_NOTES_MCP_TIMEOUT_MS: value })).toEqual({});
+  });
+
+  it("accepts the numeric boundaries and ignores inherited object properties", () => {
+    const env: NodeJS.ProcessEnv = Object.create({ APPLE_NOTES_MCP_MAX_BUFFER: "1000" });
+    env.APPLE_NOTES_MCP_MAX_RETRIES = "1";
+    env.APPLE_NOTES_MCP_TIMEOUT_MS = "2147483647";
+    env.APPLE_NOTES_MCP_RETRY_DELAY_MS = "00010";
+    expect(passedEnvironment(env)).toEqual({
+      APPLE_NOTES_MCP_MAX_RETRIES: "1",
+      APPLE_NOTES_MCP_TIMEOUT_MS: "2147483647",
+      APPLE_NOTES_MCP_RETRY_DELAY_MS: "00010",
+    });
+  });
+
+  it("keeps the native socket enforcement allowlist identical", () => {
+    const swift = readFileSync(
+      new URL("../../native/broker/apple-notes-mcp-broker.swift", import.meta.url),
+      "utf8"
+    );
+    const declaration = swift.match(/let passedEnvironmentKeys: Set<String> = \[([\s\S]*?)\]/);
+    expect(declaration).not.toBeNull();
+    const nativeKeys = [...declaration![1].matchAll(/"(APPLE_NOTES_MCP_[A-Z_]+)"/g)].map(
+      (match) => match[1]
+    );
+    expect(nativeKeys.sort()).toEqual([...BROKER_PASSED_ENV_KEYS].sort());
   });
 });
 
@@ -104,6 +212,36 @@ describe("startBrokerProxy", () => {
     expect(await startBrokerProxy(d)).toBe(false);
     expect(logs[0]).toMatch(/running in-process: Stale build\./);
     expect(brokerStatus({ ...defaultEnvDeps() }).fallbackReason).toBe("Stale build.");
+  });
+
+  it("requires a verified runtime manifest before connecting", async () => {
+    const { d, logs } = deps({ inspect: () => installation({ manifest: null }) });
+    expect(await startBrokerProxy(d)).toBe(false);
+    expect(d.request).not.toHaveBeenCalled();
+    expect(logs[0]).toContain("no verified runtime manifest");
+  });
+
+  it.each([
+    { protocolVersion: undefined },
+    { protocolVersion: BROKER_PROTOCOL - 1 },
+    { packageVersion: undefined },
+    { packageVersion: "2.14.3" },
+    { entrySha256: undefined },
+    { entrySha256: "e".repeat(64) },
+  ])("rejects a ready answer from a different runtime (%j)", async (overrides) => {
+    const { socket } = fakeSocket();
+    const destroy = vi.spyOn(socket, "destroy");
+    const { d, output, logs } = deps({
+      request: vi.fn(async () => ({
+        answer: readyAnswer(overrides),
+        socket,
+        leftover: Buffer.from("unverified output"),
+      })) as unknown as typeof requestBroker,
+    });
+    expect(await startBrokerProxy(d)).toBe(false);
+    expect(destroy).toHaveBeenCalled();
+    expect(output).toEqual([]);
+    expect(logs[0]).toContain("different server version");
   });
 
   it("falls back when the broker cannot be reached or refuses", async () => {
@@ -145,7 +283,7 @@ describe("startBrokerProxy", () => {
   it("relays stdio through the broker after a ready answer", async () => {
     const { socket, sent, remote } = fakeSocket();
     const request = vi.fn(async () => ({
-      answer: { type: "ready", pid: 9 },
+      answer: readyAnswer(),
       socket,
       leftover: Buffer.from("early "),
     }));
@@ -155,7 +293,13 @@ describe("startBrokerProxy", () => {
     expect(await startBrokerProxy(d)).toBe(true);
     expect(request).toHaveBeenCalledWith(
       "/state/broker.sock",
-      { type: "connect", protocolVersion: 1, env: { APPLE_NOTES_MCP_DEFAULT_FOLDER: "Work" } },
+      {
+        type: "connect",
+        protocolVersion: BROKER_PROTOCOL,
+        packageVersion: "2.15.0",
+        entrySha256: "d".repeat(64),
+        env: { APPLE_NOTES_MCP_TIMEOUT_MS: "45000" },
+      },
       BROKER_CONNECT_TIMEOUT_MS
     );
     stdin.write('{"jsonrpc":"2.0","id":1}\n');
@@ -178,7 +322,7 @@ describe("startBrokerProxy", () => {
     const { d, exit } = deps({
       stdout,
       request: vi.fn(async () => ({
-        answer: { type: "ready" },
+        answer: readyAnswer(),
         socket,
         leftover: Buffer.alloc(0),
       })) as unknown as typeof requestBroker,
@@ -200,7 +344,7 @@ describe("startBrokerProxy", () => {
       const { d, exit } = deps({
         stdout,
         request: vi.fn(async () => ({
-          answer: { type: "ready" },
+          answer: readyAnswer(),
           socket,
           leftover: Buffer.alloc(0),
         })) as unknown as typeof requestBroker,

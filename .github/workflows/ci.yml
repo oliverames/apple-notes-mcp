@@ -67,6 +67,10 @@ jobs:
       - name: Run tests with coverage
         run: pnpm run test:coverage
 
+      - name: Verify native broker security boundaries
+        if: matrix.node-version == 22
+        run: pnpm run test:broker-security
+
       - name: Upload coverage reports
         if: matrix.node-version == 22
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

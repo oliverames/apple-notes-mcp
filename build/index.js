@@ -24090,10 +24090,10 @@ var require_turndown_cjs = __commonJS({
         if (!content) return "";
         content = content.replace(/\r?\n|\r/g, " ");
         var extraSpace = /^`|^ .*?[^ ].* $|`$/.test(content) ? " " : "";
-        var delimiter2 = "`";
+        var delimiter = "`";
         var matches = content.match(/`+/gm) || [];
-        while (matches.indexOf(delimiter2) !== -1) delimiter2 = delimiter2 + "`";
-        return delimiter2 + extraSpace + content + extraSpace + delimiter2;
+        while (matches.indexOf(delimiter) !== -1) delimiter = delimiter + "`";
+        return delimiter + extraSpace + content + extraSpace + delimiter;
       }
     };
     rules.image = {
@@ -32403,7 +32403,7 @@ function object(shape, params) {
   return new ZodMiniObject(def);
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -33258,7 +33258,7 @@ function preprocess(fn, schema) {
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/classic/external.js
 config(en_default2());
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION = "2025-11-25";
 var SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
 var RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
@@ -34789,7 +34789,7 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
@@ -36078,7 +36078,7 @@ var zodToJsonSchema = (schema, options) => {
   return combined;
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function mapMiniTarget(t) {
   if (!t)
     return "draft-7";
@@ -36120,7 +36120,7 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -37074,7 +37074,7 @@ function mergeCapabilities(base, additional) {
   return result;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -37142,7 +37142,7 @@ var AjvJsonSchemaValidator = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks = class {
   constructor(_server) {
     this._server = _server;
@@ -37355,7 +37355,7 @@ var ExperimentalServerTasks = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -37390,7 +37390,7 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server = class extends Protocol {
   /**
    * Initializes this server with the given name and version information.
@@ -37761,7 +37761,7 @@ var Server = class extends Protocol {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
 var COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
@@ -37775,7 +37775,7 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
 var MAX_TEMPLATE_LENGTH = 1e6;
 var MAX_VARIABLE_LENGTH = 1e6;
 var MAX_TEMPLATE_EXPRESSIONS = 1e4;
@@ -37997,7 +37997,7 @@ var UriTemplate = class _UriTemplate {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name) {
   const warnings = [];
@@ -38055,7 +38055,7 @@ function validateAndWarnToolName(name) {
   return result.isValid;
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
 var ExperimentalMcpServerTasks = class {
   constructor(_mcpServer) {
     this._mcpServer = _mcpServer;
@@ -38070,7 +38070,7 @@ var ExperimentalMcpServerTasks = class {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -38886,10 +38886,10 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
   constructor(options) {
@@ -38926,7 +38926,7 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// node_modules/.pnpm/@modelcontextprotocol+sdk@1.30.1_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// node_modules/.pnpm/@modelcontextprotocol+sdk@1.31.0_zod@3.25.76/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
   constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
@@ -40014,6 +40014,316 @@ function uniqueById(items) {
   return result;
 }
 
+// src/utils/htmlEntities.ts
+var NAMED_CHARACTER_REFERENCES = {
+  Aacute: 193,
+  aacute: 225,
+  Acirc: 194,
+  acirc: 226,
+  acute: 180,
+  AElig: 198,
+  aelig: 230,
+  Agrave: 192,
+  agrave: 224,
+  alefsym: 8501,
+  Alpha: 913,
+  alpha: 945,
+  amp: 38,
+  and: 8743,
+  ang: 8736,
+  apos: 39,
+  Aring: 197,
+  aring: 229,
+  asymp: 8776,
+  Atilde: 195,
+  atilde: 227,
+  Auml: 196,
+  auml: 228,
+  bdquo: 8222,
+  Beta: 914,
+  beta: 946,
+  brvbar: 166,
+  bull: 8226,
+  cap: 8745,
+  Ccedil: 199,
+  ccedil: 231,
+  cedil: 184,
+  cent: 162,
+  Chi: 935,
+  chi: 967,
+  circ: 710,
+  clubs: 9827,
+  cong: 8773,
+  copy: 169,
+  crarr: 8629,
+  cup: 8746,
+  curren: 164,
+  Dagger: 8225,
+  dagger: 8224,
+  dArr: 8659,
+  darr: 8595,
+  deg: 176,
+  Delta: 916,
+  delta: 948,
+  diams: 9830,
+  divide: 247,
+  Eacute: 201,
+  eacute: 233,
+  Ecirc: 202,
+  ecirc: 234,
+  Egrave: 200,
+  egrave: 232,
+  empty: 8709,
+  emsp: 8195,
+  ensp: 8194,
+  Epsilon: 917,
+  epsilon: 949,
+  equiv: 8801,
+  Eta: 919,
+  eta: 951,
+  ETH: 208,
+  eth: 240,
+  Euml: 203,
+  euml: 235,
+  euro: 8364,
+  exist: 8707,
+  fnof: 402,
+  forall: 8704,
+  frac12: 189,
+  frac14: 188,
+  frac34: 190,
+  frasl: 8260,
+  Gamma: 915,
+  gamma: 947,
+  ge: 8805,
+  gt: 62,
+  hArr: 8660,
+  harr: 8596,
+  hearts: 9829,
+  hellip: 8230,
+  Iacute: 205,
+  iacute: 237,
+  Icirc: 206,
+  icirc: 238,
+  iexcl: 161,
+  Igrave: 204,
+  igrave: 236,
+  image: 8465,
+  infin: 8734,
+  int: 8747,
+  Iota: 921,
+  iota: 953,
+  iquest: 191,
+  isin: 8712,
+  Iuml: 207,
+  iuml: 239,
+  Kappa: 922,
+  kappa: 954,
+  Lambda: 923,
+  lambda: 955,
+  lang: 10216,
+  laquo: 171,
+  lArr: 8656,
+  larr: 8592,
+  lceil: 8968,
+  ldquo: 8220,
+  le: 8804,
+  lfloor: 8970,
+  lowast: 8727,
+  loz: 9674,
+  lrm: 8206,
+  lsaquo: 8249,
+  lsquo: 8216,
+  lt: 60,
+  macr: 175,
+  mdash: 8212,
+  micro: 181,
+  middot: 183,
+  minus: 8722,
+  Mu: 924,
+  mu: 956,
+  nabla: 8711,
+  nbsp: 160,
+  ndash: 8211,
+  ne: 8800,
+  ni: 8715,
+  not: 172,
+  notin: 8713,
+  nsub: 8836,
+  Ntilde: 209,
+  ntilde: 241,
+  Nu: 925,
+  nu: 957,
+  Oacute: 211,
+  oacute: 243,
+  Ocirc: 212,
+  ocirc: 244,
+  OElig: 338,
+  oelig: 339,
+  Ograve: 210,
+  ograve: 242,
+  oline: 8254,
+  Omega: 937,
+  omega: 969,
+  Omicron: 927,
+  omicron: 959,
+  oplus: 8853,
+  or: 8744,
+  ordf: 170,
+  ordm: 186,
+  Oslash: 216,
+  oslash: 248,
+  Otilde: 213,
+  otilde: 245,
+  otimes: 8855,
+  Ouml: 214,
+  ouml: 246,
+  para: 182,
+  part: 8706,
+  permil: 8240,
+  perp: 8869,
+  Phi: 934,
+  phi: 966,
+  Pi: 928,
+  pi: 960,
+  piv: 982,
+  plusmn: 177,
+  pound: 163,
+  Prime: 8243,
+  prime: 8242,
+  prod: 8719,
+  prop: 8733,
+  Psi: 936,
+  psi: 968,
+  quot: 34,
+  radic: 8730,
+  rang: 10217,
+  raquo: 187,
+  rArr: 8658,
+  rarr: 8594,
+  rceil: 8969,
+  rdquo: 8221,
+  real: 8476,
+  reg: 174,
+  rfloor: 8971,
+  Rho: 929,
+  rho: 961,
+  rlm: 8207,
+  rsaquo: 8250,
+  rsquo: 8217,
+  sbquo: 8218,
+  Scaron: 352,
+  scaron: 353,
+  sdot: 8901,
+  sect: 167,
+  shy: 173,
+  Sigma: 931,
+  sigma: 963,
+  sigmaf: 962,
+  sim: 8764,
+  spades: 9824,
+  sub: 8834,
+  sube: 8838,
+  sum: 8721,
+  sup: 8835,
+  sup1: 185,
+  sup2: 178,
+  sup3: 179,
+  supe: 8839,
+  szlig: 223,
+  Tau: 932,
+  tau: 964,
+  there4: 8756,
+  Theta: 920,
+  theta: 952,
+  thetasym: 977,
+  thinsp: 8201,
+  THORN: 222,
+  thorn: 254,
+  tilde: 732,
+  times: 215,
+  trade: 8482,
+  Uacute: 218,
+  uacute: 250,
+  uArr: 8657,
+  uarr: 8593,
+  Ucirc: 219,
+  ucirc: 251,
+  Ugrave: 217,
+  ugrave: 249,
+  uml: 168,
+  upsih: 978,
+  Upsilon: 933,
+  upsilon: 965,
+  Uuml: 220,
+  uuml: 252,
+  weierp: 8472,
+  Xi: 926,
+  xi: 958,
+  Yacute: 221,
+  yacute: 253,
+  yen: 165,
+  Yuml: 376,
+  yuml: 255,
+  Zeta: 918,
+  zeta: 950,
+  zwj: 8205,
+  zwnj: 8204
+};
+var LEGACY = { amp: "&", lt: "<", gt: ">", quot: '"', nbsp: "\xA0" };
+var C1_REPLACEMENTS = {
+  128: 8364,
+  130: 8218,
+  131: 402,
+  132: 8222,
+  133: 8230,
+  134: 8224,
+  135: 8225,
+  136: 710,
+  137: 8240,
+  138: 352,
+  139: 8249,
+  140: 338,
+  142: 381,
+  145: 8216,
+  146: 8217,
+  147: 8220,
+  148: 8221,
+  149: 8226,
+  150: 8211,
+  151: 8212,
+  152: 732,
+  153: 8482,
+  154: 353,
+  155: 8250,
+  156: 339,
+  158: 382,
+  159: 376
+};
+function numericReferenceText(value) {
+  if (!Number.isSafeInteger(value) || value === 0 || value > 1114111) return "\uFFFD";
+  if (value >= 55296 && value <= 57343) return "\uFFFD";
+  return String.fromCodePoint(C1_REPLACEMENTS[value] ?? value);
+}
+function namedReferenceText(name) {
+  return Object.hasOwn(NAMED_CHARACTER_REFERENCES, name) ? String.fromCodePoint(NAMED_CHARACTER_REFERENCES[name]) : void 0;
+}
+function decodeHtmlEntities(text2) {
+  return text2.replace(
+    /&(?:#(\d+);?|#[xX]([0-9a-fA-F]+);?|([A-Za-z][A-Za-z0-9]*)(;?))/g,
+    (match, dec, hex3, name, semicolon) => {
+      if (dec !== void 0) return numericReferenceText(Number(dec));
+      if (hex3 !== void 0) return numericReferenceText(Number.parseInt(hex3, 16));
+      const named = semicolon ? namedReferenceText(name) : void 0;
+      if (named !== void 0) return named;
+      const legacy = /^(?:amp|lt|gt|quot|nbsp)/i.exec(name);
+      if (!legacy) return match;
+      const rest = name.slice(legacy[0].length);
+      return LEGACY[legacy[0].toLowerCase()] + rest + (rest ? semicolon : "");
+    }
+  );
+}
+
 // src/utils/noteRichText.ts
 var HTML_LOSSY_ORDER = [
   "superscript",
@@ -40191,15 +40501,14 @@ function readRichNote(id2, options = {}) {
   ];
   return rich;
 }
+var LEGACY_NAMED = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  nbsp: " "
+};
 function decodeEntity(value) {
-  const named = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " "
-  };
   if (!value.startsWith("&") || value === "&") return value;
   const name = value.slice(1).replace(/;$/, "");
   if (name.startsWith("#")) {
@@ -40207,8 +40516,11 @@ function decodeEntity(value) {
     if (!Number.isInteger(cp) || cp < 0 || cp > 1114111) throw new Error("Invalid HTML entity");
     return String.fromCodePoint(cp);
   }
-  if (!(name in named)) throw new Error("Unsupported HTML entity");
-  return named[name];
+  const legacy = name.toLowerCase();
+  if (Object.hasOwn(LEGACY_NAMED, legacy)) return LEGACY_NAMED[legacy];
+  const named = value.endsWith(";") ? namedReferenceText(name) : void 0;
+  if (named === void 0) throw new Error("Unsupported HTML entity");
+  return named;
 }
 function visibleCharacters(html) {
   const chars = [];
@@ -40217,18 +40529,16 @@ function visibleCharacters(html) {
     token++;
     if (part[0].startsWith("<")) continue;
     for (const item of part[0].matchAll(
-      /&(?:#[0-9]+;?|#x[0-9a-f]+;?|(?:amp|lt|gt|quot|nbsp);?|apos;)|[\s\S]/gi
+      /&(?:#[0-9]+;?|#x[0-9a-f]+;?|(?:amp|lt|gt|quot|nbsp);?)|&(?<name>[a-z][a-z0-9]*);|[\s\S]/gi
     )) {
-      const value = decodeEntity(item[0]);
-      for (let i = 0; i < value.length; i++) {
-        if (/\s/u.test(value[i])) continue;
-        chars.push({
-          value: value[i],
-          start: part.index + item.index,
-          end: part.index + item.index + item[0].length,
-          token
-        });
-      }
+      const start = part.index + item.index;
+      const name = item.groups?.name;
+      const pieces = name !== void 0 && namedReferenceText(name) === void 0 ? [...item[0]].map((value, i) => ({ value, start: start + i, end: start + i + 1 })) : [{ value: decodeEntity(item[0]), start, end: start + item[0].length }];
+      for (const piece of pieces)
+        for (let i = 0; i < piece.value.length; i++) {
+          if (/\s/u.test(piece.value[i])) continue;
+          chars.push({ value: piece.value[i], start: piece.start, end: piece.end, token });
+        }
     }
   }
   return chars;
@@ -47091,7 +47401,7 @@ var BLOCK_END_RE = /<\/(?:div|h[1-6]|p|li)>/gi;
 var BREAK_RE = /<br\s*\/?\s*>/gi;
 var TAG_RE = /<[^>]*>/g;
 var NON_RENDERED_BLOCK_RE = /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi;
-function decodeHtmlEntities(text2) {
+function decodeHtmlEntities2(text2) {
   const decodeCodePoint = (match, value, radix) => {
     const codePoint = Number.parseInt(value, radix);
     if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 1114111 || codePoint >= 55296 && codePoint <= 57343) {
@@ -47113,7 +47423,7 @@ function firstVisibleHtmlLine(html) {
     previous = text2;
     text2 = text2.replace(TAG_RE, "");
   } while (text2 !== previous);
-  return decodeHtmlEntities(text2).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
+  return decodeHtmlEntities2(text2).split(/[\r\n\u2028\u2029]+/).map((line) => line.replace(/\s+/g, " ").trim()).find(Boolean);
 }
 function resolveUpdateResponseTitle(currentTitle, newTitle, format, newContent) {
   if (format === "html") return firstVisibleHtmlLine(newContent) ?? currentTitle;
@@ -48479,25 +48789,9 @@ function appendMarkdownHtml(markdown, options = {}) {
 
 // src/utils/noteRevision.ts
 var INLINE_TAG = /^<\/?(?:b|i|u|s|strike|em|strong|span|a|font|sub|sup|code|tt|small|big|mark)\b/i;
-var LEGACY_ENTITIES = {
-  nbsp: " ",
-  quot: '"',
-  lt: "<",
-  gt: ">",
-  amp: "&"
-};
-function codePointText(value) {
-  return Number.isSafeInteger(value) && value <= 1114111 ? String.fromCodePoint(value) : "\uFFFD";
-}
 function comparableVisibleText(html) {
-  return html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ").replace(
-    /&(?:(nbsp|quot|lt|gt|amp);?|apos;|#(\d+);|#x([0-9a-f]+);)/gi,
-    (_match, legacy, dec, hex3) => {
-      if (legacy) return LEGACY_ENTITIES[legacy.toLowerCase()];
-      if (dec) return codePointText(Number(dec));
-      if (hex3) return codePointText(Number.parseInt(hex3, 16));
-      return "'";
-    }
+  return decodeHtmlEntities(
+    html.replace(/<br\s*\/?\s*>/gi, " ").replace(/<[^>]*>/g, (tag) => INLINE_TAG.test(tag) ? "" : " ")
   ).replace(/\s+/g, " ").trim();
 }
 
@@ -48549,18 +48843,12 @@ var NATIVE_APPEND_ELEMENTS = [
   "s",
   "span",
   "strong",
-  "table",
-  "tbody",
-  "td",
-  "th",
-  "thead",
-  "tr",
   "tt",
   "u",
   "ul"
 ];
 var NATIVE_APPEND_SPAN_STYLE = /^font-size\s*:\s*\d{1,3}(?:\.\d+)?(?:px|pt)\s*;?$/i;
-var NATIVE_APPEND_HTML_SUBSET = `Native append accepts ${NATIVE_APPEND_ELEMENTS.map((e) => `<${e}>`).join(" ")}, with href on <a> and a font-size style on <span> as the only attributes; everything else needs update-note.`;
+var NATIVE_APPEND_HTML_SUBSET = `Native append accepts ${NATIVE_APPEND_ELEMENTS.map((e) => `<${e}>`).join(" ")}, with href on <a> and a font-size style on <span> as the only attributes; a native table is refused here \u2014 use create-table; everything else needs update-note.`;
 var UNDERSCORES_OUTSIDE_A_WORD = "underscores outside a word";
 var UNMODELED_MARKDOWN = [
   [/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/mu, UNDERSCORES_OUTSIDE_A_WORD],
@@ -48831,9 +49119,9 @@ function assertAppendedVisibleText(beforeHtml, afterHtml, expected) {
   if (!suffix || !suffix.includes(wanted)) throw new Error("Appended text not verified");
 }
 function appendNative(manager, request) {
-  validateAppendContent(request.content, request.format);
-  if (request.format === "html" && /<table\b/i.test(request.content))
+  if (request.format === "html" && /<\/?\s*(?:table|thead|tbody|tr|td|th)\b/i.test(request.content))
     throw new Error("Use create-table for verified native table insertion");
+  validateAppendContent(request.content, request.format);
   const markdownHtml = request.format === "markdown" ? appendMarkdownHtml(request.content) : null;
   const op = request.format === "plaintext" ? "append-text" : request.format === "markdown" ? "append-markdown" : "append-html";
   const text2 = request.format === "html" ? "<div><br></div>" + request.content : "\n\n" + request.content;
@@ -49443,6 +49731,7 @@ function fileConfigPath(env = process.env) {
   return join18(homedir15(), "Library", "Application Support", "apple-notes-mcp", "config.json");
 }
 function loadFileConfig(env = process.env, path10 = fileConfigPath(env)) {
+  if (env.APPLE_NOTES_MCP_BROKERED === "1") return [];
   const applied = [];
   try {
     if (!existsSync12(path10)) return applied;
@@ -58034,7 +58323,7 @@ import {
   writeFileSync as writeFileSync7
 } from "node:fs";
 import { homedir as homedir21 } from "node:os";
-import { delimiter, join as join28 } from "node:path";
+import { isAbsolute as isAbsolute6, join as join28 } from "node:path";
 
 // src/services/brokerClient.ts
 import { connect as netConnect } from "node:net";
@@ -58116,7 +58405,7 @@ async function pingBroker(socketPath, timeoutMs = 1500) {
 }
 
 // src/services/broker.ts
-var BROKER_PROTOCOL = 1;
+var BROKER_PROTOCOL = 2;
 var BROKER_BUNDLE_ID = "apple-notes-mcp.broker";
 var BROKER_LABEL = BROKER_BUNDLE_ID;
 var BROKER_APP_NAME = "Apple Notes MCP Broker.app";
@@ -58134,11 +58423,13 @@ var BROKER_AGENT_DIR_ENV = "APPLE_NOTES_MCP_BROKER_AGENT_DIR";
 var BROKER_SIGN_IDENTITY_ENV = "APPLE_NOTES_MCP_BROKER_SIGN_IDENTITY";
 var MAX_SOCKET_PATH_BYTES = 103;
 var brokerManifestSchema = external_exports.object({
-  schemaVersion: external_exports.literal(1),
+  schemaVersion: external_exports.literal(2),
   protocolVersion: external_exports.number().int(),
   packageVersion: external_exports.string(),
   sourceSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
   binarySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  nodeSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  entrySha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
   appPath: external_exports.string(),
   agentPath: external_exports.string(),
   socketPath: external_exports.string(),
@@ -58153,6 +58444,25 @@ var brokerManifestSchema = external_exports.object({
   builtAt: external_exports.string(),
   compiler: external_exports.string()
 });
+var brokerConfigSchema = external_exports.object({
+  schemaVersion: external_exports.literal(1),
+  nodePath: external_exports.string(),
+  nodeSha256: external_exports.string().regex(/^[a-f0-9]{64}$/),
+  packageVersion: external_exports.string(),
+  entrySha256: external_exports.string().regex(/^[a-f0-9]{64}$/)
+}).strict();
+function brokerResources(appPath) {
+  const resources = join28(appPath, "Contents", "Resources");
+  return {
+    resources,
+    configPath: join28(resources, "broker-config.json"),
+    entryPath: join28(resources, "server", "build", "index.js"),
+    packagePath: join28(resources, "server", "package.json"),
+    sourcePath: join28(resources, "server", BROKER_SOURCE),
+    serverConfigPath: join28(resources, "config.json"),
+    disabledHelpers: join28(resources, "disabled-helpers")
+  };
+}
 function brokerPaths(env = process.env) {
   const home = homedir21();
   const stateDir = env[BROKER_DIR_ENV]?.trim() || join28(home, "Library", "Application Support", "apple-notes-mcp", "broker");
@@ -58217,42 +58527,79 @@ function inspectBroker(deps = defaultBrokerDeps()) {
   } catch {
     return result("broker_manifest_invalid", `The broker manifest is unreadable. ${rebuild}`, null);
   }
-  if (!deps.exists(manifest.appPath) || !deps.exists(paths.executablePath))
-    return result(
-      "broker_not_installed",
-      `The broker app is missing from ${manifest.appPath}. ${rebuild}`,
-      manifest
-    );
-  if (!deps.exists(deps.sourcePath) || manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) || manifest.protocolVersion !== BROKER_PROTOCOL)
-    return result(
-      "broker_stale",
-      `The installed broker was built from a different source than this version ships. ${rebuild}`,
-      manifest
-    );
-  if (sha256Hex(deps.readFile(paths.executablePath)) !== manifest.binarySha256)
+  const resources = brokerResources(paths.appPath);
+  if (manifest.appPath !== paths.appPath || manifest.agentPath !== paths.agentPath || manifest.socketPath !== paths.socketPath || manifest.logPath !== paths.logPath || manifest.entryPath !== resources.entryPath)
     return result(
       "broker_modified",
-      `The broker binary no longer matches the checksum recorded when it was built. ${rebuild}`,
+      `The broker manifest contains unexpected paths. ${rebuild}`,
       manifest
     );
-  if (!deps.exists(manifest.agentPath))
+  if (!deps.exists(paths.appPath) || !deps.exists(paths.executablePath))
     return result(
-      "broker_agent_missing",
-      `The broker's LaunchAgent is missing (${manifest.agentPath}). ${rebuild}`,
+      "broker_not_installed",
+      `The broker app is missing from ${paths.appPath}. ${rebuild}`,
       manifest
     );
-  if (!deps.exists(manifest.nodePath))
+  try {
+    if (!deps.exists(deps.sourcePath) || !deps.exists(deps.entryPath) || manifest.sourceSha256 !== sha256Hex(deps.readFile(deps.sourcePath)) || manifest.entrySha256 !== sha256Hex(deps.readFile(deps.entryPath)) || manifest.packageVersion !== deps.packageVersion || manifest.protocolVersion !== BROKER_PROTOCOL)
+      return result(
+        "broker_stale",
+        `The installed broker serves a different package or build. ${rebuild}`,
+        manifest
+      );
+    if (!deps.exists(manifest.agentPath))
+      return result(
+        "broker_agent_missing",
+        `The broker's LaunchAgent is missing (${manifest.agentPath}). ${rebuild}`,
+        manifest
+      );
+    if (!deps.exists(manifest.nodePath))
+      return result(
+        "broker_node_missing",
+        `The Node binary the broker launches is gone (${manifest.nodePath}). ${rebuild} Your grants stay with the broker app.`,
+        manifest
+      );
+    if (!deps.exists(resources.entryPath))
+      return result(
+        "broker_entry_missing",
+        `The bundled server entry point is gone (${resources.entryPath}). ${rebuild}`,
+        manifest
+      );
+    const config2 = brokerConfigSchema.parse(
+      JSON.parse(deps.readFile(resources.configPath).toString("utf8"))
+    );
+    if (sha256Hex(deps.readFile(paths.executablePath)) !== manifest.binarySha256 || sha256Hex(deps.readFile(resources.entryPath)) !== manifest.entrySha256 || sha256Hex(deps.readFile(resources.sourcePath)) !== manifest.sourceSha256 || deps.readFile(resources.serverConfigPath).toString("utf8") !== "{}\n" || !isAbsolute6(manifest.nodePath) || deps.realpath(manifest.nodePath) !== manifest.nodePath || sha256Hex(deps.readFile(manifest.nodePath)) !== manifest.nodeSha256 || config2.nodePath !== manifest.nodePath || config2.nodeSha256 !== manifest.nodeSha256 || config2.packageVersion !== manifest.packageVersion || config2.entrySha256 !== manifest.entrySha256)
+      return result(
+        "broker_modified",
+        `The broker bundle, sealed configuration, or Node runtime no longer matches its installation. ${rebuild}`,
+        manifest
+      );
+    const bundledPackage = JSON.parse(
+      deps.readFile(resources.packagePath).toString("utf8")
+    );
+    if (bundledPackage.name !== "apple-notes-mcp" || bundledPackage.type !== "module" || bundledPackage.version !== manifest.packageVersion)
+      return result(
+        "broker_modified",
+        `The bundled package metadata changed. ${rebuild}`,
+        manifest
+      );
+    const verified = deps.spawn(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--deep", paths.appPath],
+      {
+        encoding: "utf8",
+        timeout: 3e4
+      }
+    );
+    if (verified.status !== 0)
+      return result("broker_modified", `The broker app signature is invalid. ${rebuild}`, manifest);
+  } catch {
     return result(
-      "broker_node_missing",
-      `The Node binary the broker launches is gone (${manifest.nodePath}). ${rebuild} Your grants stay with the broker app.`,
+      "broker_modified",
+      `The broker installation could not be verified. ${rebuild}`,
       manifest
     );
-  if (!deps.exists(manifest.entryPath))
-    return result(
-      "broker_entry_missing",
-      `The server entry point the broker launches is gone (${manifest.entryPath}). ${rebuild}`,
-      manifest
-    );
+  }
   return result(null, null, manifest);
 }
 function brokerInfoPlist(packageVersion) {
@@ -58292,18 +58639,7 @@ function brokerCompileArguments(sourcePath, digestPath, outputPath) {
 }
 function brokerLaunchAgentPlist(args) {
   const escape3 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const programArguments = [
-    args.executablePath,
-    "serve",
-    "--socket",
-    args.socketPath,
-    "--node",
-    args.nodePath,
-    "--entry",
-    args.entryPath,
-    "--log",
-    args.logPath
-  ];
+  const programArguments = [args.executablePath, "serve", "--socket", args.socketPath];
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -58331,18 +58667,24 @@ function brokerLaunchAgentPlist(args) {
   ].join("\n");
 }
 function chooseSigningIdentity(securityOutput, explicit) {
-  if (explicit && explicit.trim()) {
-    const value = explicit.trim();
-    return { identity: value, name: value === "-" ? "ad-hoc" : value };
-  }
   const identities = [...securityOutput.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/gm)].map(
     (m) => ({ identity: m[1], name: m[2] })
   );
-  for (const prefix of ["Developer ID Application:", "Apple Development:"]) {
-    const found = identities.find((id2) => id2.name.startsWith(prefix));
-    if (found) return found;
+  if (explicit && explicit.trim()) {
+    const value = explicit.trim();
+    const found = identities.find(
+      (identity) => identity.identity === value || identity.name === value
+    );
+    return found ?? { identity: value, name: value === "-" ? "ad-hoc" : value };
   }
-  return { identity: "-", name: "ad-hoc" };
+  const qualifying = identities.filter(
+    (identity) => /^(Developer ID Application:|Apple Development:)/.test(identity.name)
+  );
+  if (qualifying.length > 1)
+    throw new Error(
+      "Multiple signing identities qualify. Choose one explicitly with --sign-identity <certificate SHA-1 or name>."
+    );
+  return qualifying[0] ?? { identity: "-", name: "ad-hoc" };
 }
 function parseTeamId(codesignOutput) {
   if (/Signature=adhoc/.test(codesignOutput)) return null;
@@ -58351,21 +58693,22 @@ function parseTeamId(codesignOutput) {
   return team && team !== "not set" ? team : null;
 }
 function chooseNodePath(deps) {
-  let target;
-  try {
-    target = deps.realpath(deps.execPath);
-  } catch {
-    return deps.execPath;
+  const nodePath = deps.realpath(deps.execPath);
+  if (!isAbsolute6(nodePath))
+    throw new Error("The Node executable must resolve to an absolute path.");
+  return nodePath;
+}
+function validateNodeLibraries(output) {
+  const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
+  let libraries = 0;
+  for (const line of lines) {
+    if (line.endsWith(":")) continue;
+    const match = line.match(/^(.+?) \(compatibility version [^)]+\)$/);
+    if (!match || !/^\/(?:usr\/lib|System\/Library)\//.test(match[1])) return false;
+    if (match[1].split("/").includes("..")) return false;
+    libraries++;
   }
-  for (const dir of (deps.env.PATH ?? "").split(delimiter)) {
-    if (!dir) continue;
-    const candidate = join28(dir, "node");
-    try {
-      if (deps.exists(candidate) && deps.realpath(candidate) === target) return candidate;
-    } catch {
-    }
-  }
-  return deps.execPath;
+  return libraries > 0;
 }
 function parseBrokerArgs(args) {
   const index = args.indexOf("--sign-identity");
@@ -58409,7 +58752,7 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
       detail: installation.ready ? installation.paths.appPath : installation.detail ?? void 0
     });
     if (installation.manifest && !installation.manifest.signing.stable)
-      warnings.push(adHocWarning());
+      warnings.push(signingWarning(installation.manifest.signing.teamId));
     return finish();
   }
   if (mode === "uninstall") {
@@ -58445,12 +58788,32 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
     });
     return finish();
   }
-  if (/[\\/]_npx[\\/]/.test(deps.entryPath))
-    warnings.push(
-      "This copy runs from the npx cache, which npx may clear or replace. For the broker, install the package globally (`npm i -g apple-notes-mcp`) and run setup from that copy."
-    );
   const sourceSha = sha256Hex(deps.readFile(deps.sourcePath));
   steps.push({ step: "locate source", ok: true, detail: `sha256 ${sourceSha}` });
+  let nodePath;
+  let nodeSha256;
+  const entry = deps.readFile(deps.entryPath);
+  const entrySha256 = sha256Hex(entry);
+  try {
+    nodePath = chooseNodePath(deps);
+    nodeSha256 = sha256Hex(deps.readFile(nodePath));
+    const libraries = deps.spawn("/usr/bin/otool", ["-L", nodePath], {
+      encoding: "utf8",
+      timeout: 3e4
+    });
+    if (libraries.status !== 0 || !validateNodeLibraries(String(libraries.stdout ?? "")))
+      throw new Error(
+        "Node must link only to absolute /usr/lib or /System/Library libraries. Install a self-contained Node runtime (for example the official Node distribution), then run setup with it."
+      );
+    steps.push({ step: "verify Node runtime", ok: true, detail: nodePath });
+  } catch (error2) {
+    steps.push({
+      step: "verify Node runtime",
+      ok: false,
+      detail: error2 instanceof Error ? error2.message : String(error2)
+    });
+    return finish();
+  }
   const version3 = deps.spawn("/usr/bin/xcrun", ["swiftc", "--version"], { encoding: "utf8" });
   if (version3.status !== 0) {
     steps.push({
@@ -58474,6 +58837,32 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
     const digestPath = join28(staging, "source-digest.swift");
     writeFileSync7(digestPath, sourceDigestSwift(sourceSha), { mode: 384 });
     writeFileSync7(join28(stagedApp, "Contents", "Info.plist"), brokerInfoPlist(deps.packageVersion));
+    const resources = brokerResources(stagedApp);
+    mkdirSync9(join28(resources.entryPath, ".."), { recursive: true });
+    mkdirSync9(join28(resources.sourcePath, ".."), { recursive: true });
+    mkdirSync9(join28(resources.disabledHelpers, "public"), { recursive: true });
+    mkdirSync9(join28(resources.disabledHelpers, "private"), { recursive: true });
+    writeFileSync7(resources.entryPath, entry);
+    writeFileSync7(resources.sourcePath, deps.readFile(deps.sourcePath));
+    writeFileSync7(
+      resources.packagePath,
+      JSON.stringify({ name: "apple-notes-mcp", type: "module", version: deps.packageVersion }) + "\n"
+    );
+    writeFileSync7(resources.serverConfigPath, "{}\n");
+    writeFileSync7(
+      resources.configPath,
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          nodePath,
+          nodeSha256,
+          packageVersion: deps.packageVersion,
+          entrySha256
+        },
+        null,
+        2
+      ) + "\n"
+    );
     const compile = deps.spawn(
       "/usr/bin/xcrun",
       brokerCompileArguments(deps.sourcePath, digestPath, stagedBinary),
@@ -58494,10 +58883,20 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
       ["find-identity", "-v", "-p", "codesigning"],
       { encoding: "utf8" }
     );
-    const signing = chooseSigningIdentity(
-      String(identities.stdout ?? ""),
-      options.signIdentity ?? deps.env[BROKER_SIGN_IDENTITY_ENV]
-    );
+    let signing;
+    try {
+      signing = chooseSigningIdentity(
+        String(identities.stdout ?? ""),
+        options.signIdentity ?? deps.env[BROKER_SIGN_IDENTITY_ENV]
+      );
+    } catch (error2) {
+      steps.push({
+        step: "choose signing identity",
+        ok: false,
+        detail: error2 instanceof Error ? error2.message : String(error2)
+      });
+      return finish();
+    }
     const sign = deps.spawn(
       "/usr/bin/codesign",
       [
@@ -58507,6 +58906,8 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
         "--identifier",
         BROKER_BUNDLE_ID,
         "--timestamp=none",
+        "--options",
+        "runtime",
         stagedApp
       ],
       { encoding: "utf8", timeout: 6e4 }
@@ -58522,14 +58923,32 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
     const described = deps.spawn("/usr/bin/codesign", ["-dv", "--verbose=2", stagedApp], {
       encoding: "utf8"
     });
-    const teamId = parseTeamId(String(described.stderr ?? "") + String(described.stdout ?? ""));
-    const stable = teamId !== null;
+    const description = String(described.stderr ?? "") + String(described.stdout ?? "");
+    const teamId = parseTeamId(description);
+    const stable = teamId !== null && /^Authority=Developer ID Application:/m.test(description);
     steps.push({
       step: "sign",
       ok: true,
-      detail: stable ? `${signing.name} (team ${teamId})` : "ad-hoc"
+      detail: teamId ? `${signing.name} (team ${teamId})` : "ad-hoc"
     });
-    if (!stable) warnings.push(adHocWarning());
+    if (!stable) warnings.push(signingWarning(teamId));
+    const verified = deps.spawn(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--deep", stagedApp],
+      {
+        encoding: "utf8",
+        timeout: 3e4
+      }
+    );
+    if (verified.status !== 0) {
+      steps.push({
+        step: "verify signature",
+        ok: false,
+        detail: String(verified.stderr || "The signed bundle failed verification.").trim()
+      });
+      return finish();
+    }
+    steps.push({ step: "verify signature", ok: true });
     const hello = deps.spawn(stagedBinary, [], {
       input: JSON.stringify({ type: "hello" }) + "\n",
       encoding: "utf8",
@@ -58542,7 +58961,7 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
     } catch {
       handshake = null;
     }
-    if (handshake?.protocolVersion !== BROKER_PROTOCOL || handshake?.sourceSha256 !== sourceSha) {
+    if (hello.status !== 0 || handshake?.protocolVersion !== BROKER_PROTOCOL || handshake?.sourceSha256 !== sourceSha || handshake?.packageVersion !== deps.packageVersion || handshake?.entrySha256 !== entrySha256) {
       steps.push({
         step: "handshake",
         ok: false,
@@ -58554,19 +58973,20 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
     launchctl(deps, ["bootout", `${domain}/${BROKER_LABEL}`]);
     rmSync8(paths.appPath, { recursive: true, force: true });
     renameSync3(stagedApp, paths.appPath);
-    const nodePath = chooseNodePath(deps);
     const manifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       protocolVersion: BROKER_PROTOCOL,
       packageVersion: deps.packageVersion,
       sourceSha256: sourceSha,
       binarySha256: sha256Hex(deps.readFile(paths.executablePath)),
+      nodeSha256,
+      entrySha256,
       appPath: paths.appPath,
       agentPath: paths.agentPath,
       socketPath: paths.socketPath,
       logPath: paths.logPath,
       nodePath,
-      entryPath: deps.entryPath,
+      entryPath: brokerResources(paths.appPath).entryPath,
       signing: { identity: signing.name, teamId, stable },
       builtAt: deps.now().toISOString(),
       compiler
@@ -58579,8 +58999,6 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
       brokerLaunchAgentPlist({
         executablePath: paths.executablePath,
         socketPath: paths.socketPath,
-        nodePath,
-        entryPath: deps.entryPath,
         logPath: paths.logPath
       }),
       { mode: 420 }
@@ -58606,8 +59024,8 @@ async function setupBroker(options, deps = defaultBrokerDeps()) {
   });
   return finish();
 }
-function adHocWarning() {
-  return "The broker is ad-hoc signed, so macOS ties its grants to this exact build: after every rebuild, grant Full Disk Access and Automation again. A Developer ID or Apple Development identity in the keychain (or --sign-identity) keeps grants across rebuilds.";
+function signingWarning(teamId) {
+  return teamId ? "This signing identity does not establish Developer ID continuity. Apple Development certificate renewal can change the designated requirement and require granting permissions again." : "The broker is ad-hoc signed, so macOS ties its grants to this exact build: after every rebuild, grant Full Disk Access and Automation again. A Developer ID Application identity can retain the bundle and team designated requirement across rebuilds.";
 }
 function formatBrokerSetup(report) {
   const lines = ["Apple Notes MCP permission broker", ""];
@@ -58891,7 +59309,7 @@ function registerNativeOperations(server2, manager) {
         ),
         unavailable: UNAVAILABLE,
         ...getCapabilityMatrix(),
-        // Whether this process runs under the permission broker (#40).
+        // Whether this process runs under the permission broker (#220).
         broker: brokerStatus()
       };
     },
@@ -60768,6 +61186,21 @@ function runPermissionsWindow(binaryPath, session) {
 
 // src/services/brokerProxy.ts
 var BROKER_CONNECT_TIMEOUT_MS = 5e3;
+var BROKER_PASSED_ENV_KEYS = [
+  "APPLE_NOTES_MCP_BLOCKS_MAX_BYTES",
+  "APPLE_NOTES_MCP_EXPORT_MAX_BYTES",
+  "APPLE_NOTES_MCP_MAX_ATTACHMENT_BYTES",
+  "APPLE_NOTES_MCP_MAX_BUFFER",
+  "APPLE_NOTES_MCP_MAX_INLINE_IMAGE_BYTES",
+  "APPLE_NOTES_MCP_MAX_RETRIES",
+  "APPLE_NOTES_MCP_PRIVATE_HELPER_TIMEOUT_MS",
+  "APPLE_NOTES_MCP_PUBLIC_HELPER_TIMEOUT_MS",
+  "APPLE_NOTES_MCP_RETRY_DELAY_MS",
+  "APPLE_NOTES_MCP_TIMEOUT_MS"
+];
+var passedEnvironmentKeys = new Set(BROKER_PASSED_ENV_KEYS);
+var MAX_PASSED_VALUE = 2147483647;
+var MAX_VARIABLE_BYTES = 8192;
 function defaultBrokerProxyDeps(overrides = {}) {
   return {
     env: process.env,
@@ -60784,8 +61217,10 @@ function defaultBrokerProxyDeps(overrides = {}) {
 function passedEnvironment(env) {
   const passed = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value === void 0) continue;
-    if (!key.startsWith("APPLE_NOTES_MCP_") || key.startsWith("APPLE_NOTES_MCP_BROKER")) continue;
+    if (!passedEnvironmentKeys.has(key) || typeof value !== "string" || value.length > MAX_VARIABLE_BYTES || !/^[0-9]+$/.test(value))
+      continue;
+    const numeric = Number(value);
+    if (!Number.isInteger(numeric) || numeric < 1 || numeric > MAX_PASSED_VALUE) continue;
     passed[key] = value;
   }
   return passed;
@@ -60805,6 +61240,8 @@ async function startBrokerProxy(deps = defaultBrokerProxyDeps()) {
     return false;
   };
   if (!installation.ready) return fallBack(installation.detail ?? "the broker is not ready.");
+  const manifest = installation.manifest;
+  if (!manifest) return fallBack("the broker has no verified runtime manifest.");
   let socket;
   let leftover;
   try {
@@ -60813,6 +61250,8 @@ async function startBrokerProxy(deps = defaultBrokerProxyDeps()) {
       {
         type: "connect",
         protocolVersion: BROKER_PROTOCOL,
+        packageVersion: manifest.packageVersion,
+        entrySha256: manifest.entrySha256,
         env: passedEnvironment(deps.env)
       },
       BROKER_CONNECT_TIMEOUT_MS
@@ -60821,6 +61260,12 @@ async function startBrokerProxy(deps = defaultBrokerProxyDeps()) {
       result.socket.destroy();
       const message = typeof result.answer.message === "string" ? result.answer.message : "no reason given";
       return fallBack(`the broker refused the connection (${message})`);
+    }
+    if (result.answer.protocolVersion !== BROKER_PROTOCOL || result.answer.packageVersion !== manifest.packageVersion || result.answer.entrySha256 !== manifest.entrySha256) {
+      result.socket.destroy();
+      return fallBack(
+        "the running broker serves a different server version. Run `apple-notes-mcp setup --broker` again."
+      );
     }
     socket = result.socket;
     leftover = result.leftover;
@@ -62114,7 +62559,7 @@ import {
   writeSync as writeSync6
 } from "node:fs";
 import { homedir as homedir24 } from "node:os";
-import { dirname as dirname10, isAbsolute as isAbsolute6, join as join33, resolve as resolve9 } from "node:path";
+import { dirname as dirname10, isAbsolute as isAbsolute7, join as join33, resolve as resolve9 } from "node:path";
 var MAX_ANCHORS = 2e4;
 var MAX_REGISTRY_BYTES = 32 * 1024 * 1024;
 var LOCK_WAIT_MS = 3e3;
@@ -62138,7 +62583,7 @@ var AnchorRegistryError = class extends CodedError {
 function anchorRegistryPath(env = process.env) {
   const override = env.APPLE_NOTES_MCP_ANCHOR_FILE?.trim();
   if (override) {
-    if (!isAbsolute6(override))
+    if (!isAbsolute7(override))
       throw new AnchorRegistryError(
         "unsafe-path",
         "APPLE_NOTES_MCP_ANCHOR_FILE must be an absolute path."

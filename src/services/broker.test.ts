@@ -1,4 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { spawnSync } from "node:child_process";
@@ -12,6 +22,7 @@ import {
   brokerInfoPlist,
   brokerLaunchAgentPlist,
   brokerPaths,
+  brokerResources,
   brokerStatus,
   chooseNodePath,
   chooseSigningIdentity,
@@ -22,6 +33,7 @@ import {
   parseTeamId,
   recordBrokerFallback,
   setupBroker,
+  validateNodeLibraries,
   type BrokerDeps,
   type BrokerManifest,
 } from "@/services/broker.js";
@@ -31,6 +43,8 @@ const SECURITY_OUTPUT = `  1) 1111111111111111111111111111111111111111 "Apple De
   2) 2222222222222222222222222222222222222222 "Developer ID Application: Dev Person (TEAM123456)"
      2 valid identities found
 `;
+
+const DEVELOPER_ID_OUTPUT = SECURITY_OUTPUT.split("\n")[1];
 
 let root: string;
 let env: NodeJS.ProcessEnv;
@@ -59,6 +73,13 @@ function makeSpawn(handler: SpawnHandler, calls: Array<[string, string[]]>): typ
 function toolchain(overrides: Partial<Record<string, SpawnResult>> = {}): SpawnHandler {
   const sourceSha = sha256Hex(readFileSync(sourcePath));
   return (cmd, args) => {
+    if (cmd === "/usr/bin/otool")
+      return (
+        overrides.libraries ?? {
+          status: 0,
+          stdout: `${args[1]}:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n`,
+        }
+      );
     if (cmd === "/usr/bin/xcrun" && args[1] === "--version")
       return overrides.version ?? { status: 0, stdout: "Apple Swift version 6.3\nTarget: arm64" };
     if (cmd === "/usr/bin/xcrun") {
@@ -67,14 +88,17 @@ function toolchain(overrides: Partial<Record<string, SpawnResult>> = {}): SpawnH
       return { status: 0 };
     }
     if (cmd === "/usr/bin/security")
-      return overrides.security ?? { status: 0, stdout: SECURITY_OUTPUT };
+      return overrides.security ?? { status: 0, stdout: DEVELOPER_ID_OUTPUT };
     if (cmd === "/usr/bin/codesign" && args[0] === "-dv")
       return (
         overrides.describe ?? {
           status: 0,
-          stderr: "Identifier=apple-notes-mcp.broker\nTeamIdentifier=TEAM123456\n",
+          stderr:
+            "Identifier=apple-notes-mcp.broker\nAuthority=Developer ID Application: Dev Person (TEAM123456)\nTeamIdentifier=TEAM123456\n",
         }
       );
+    if (cmd === "/usr/bin/codesign" && args[0] === "--verify")
+      return overrides.verify ?? { status: 0 };
     if (cmd === "/usr/bin/codesign") return overrides.sign ?? { status: 0 };
     if (cmd === "/bin/launchctl" && args[0] === "bootstrap")
       return overrides.bootstrap ?? { status: 0 };
@@ -87,6 +111,8 @@ function toolchain(overrides: Partial<Record<string, SpawnResult>> = {}): SpawnH
           type: "hello",
           protocolVersion: BROKER_PROTOCOL,
           sourceSha256: sourceSha,
+          packageVersion: "9.9.9",
+          entrySha256: sha256Hex(readFileSync(entryPath)),
         }),
       }
     );
@@ -102,6 +128,7 @@ function deps(overrides: Partial<BrokerDeps> = {}): BrokerDeps {
     execPath: nodePath,
     packageVersion: "9.9.9",
     uid: 501,
+    spawn: makeSpawn(toolchain(), []),
     ping: async () => true,
     sleep: async () => {},
     now: () => new Date("2026-10-05T12:00:00Z"),
@@ -117,17 +144,19 @@ function writeManifest(overrides: Partial<BrokerManifest> = {}): BrokerManifest 
   writeFileSync(paths.agentPath, "<plist/>");
   mkdirSync(paths.stateDir, { recursive: true });
   const manifest: BrokerManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolVersion: BROKER_PROTOCOL,
     packageVersion: "9.9.9",
     sourceSha256: sha256Hex(readFileSync(sourcePath)),
     binarySha256: sha256Hex("binary"),
+    nodeSha256: sha256Hex(readFileSync(nodePath)),
+    entrySha256: sha256Hex(readFileSync(entryPath)),
     appPath: paths.appPath,
     agentPath: paths.agentPath,
     socketPath: paths.socketPath,
     logPath: paths.logPath,
     nodePath,
-    entryPath,
+    entryPath: brokerResources(paths.appPath).entryPath,
     signing: {
       identity: "Developer ID Application: Dev Person (TEAM123456)",
       teamId: "TEAM123456",
@@ -137,12 +166,34 @@ function writeManifest(overrides: Partial<BrokerManifest> = {}): BrokerManifest 
     compiler: "Apple Swift version 6.3",
     ...overrides,
   };
+  const resources = brokerResources(paths.appPath);
+  mkdirSync(join(resources.entryPath, ".."), { recursive: true });
+  mkdirSync(join(resources.sourcePath, ".."), { recursive: true });
+  mkdirSync(join(resources.disabledHelpers, "public"), { recursive: true });
+  mkdirSync(join(resources.disabledHelpers, "private"), { recursive: true });
+  writeFileSync(resources.entryPath, readFileSync(entryPath));
+  writeFileSync(resources.sourcePath, readFileSync(sourcePath));
+  writeFileSync(resources.serverConfigPath, "{}\n");
+  writeFileSync(
+    resources.packagePath,
+    JSON.stringify({ name: "apple-notes-mcp", type: "module", version: manifest.packageVersion })
+  );
+  writeFileSync(
+    resources.configPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      nodePath: manifest.nodePath,
+      nodeSha256: manifest.nodeSha256,
+      packageVersion: manifest.packageVersion,
+      entrySha256: manifest.entrySha256,
+    })
+  );
   writeFileSync(paths.manifestPath, JSON.stringify(manifest));
   return manifest;
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "anm-broker-"));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "anm-broker-")));
   env = {
     APPLE_NOTES_MCP_BROKER_DIR: join(root, "state"),
     APPLE_NOTES_MCP_BROKER_APP_DIR: join(root, "Applications"),
@@ -237,6 +288,66 @@ describe("inspectBroker", () => {
     expect(inspectBroker(deps()).reason).toBe("broker_modified");
   });
 
+  it("rejects an outdated package even when the Swift source is unchanged", () => {
+    writeManifest();
+    expect(inspectBroker(deps({ packageVersion: "10.0.0" })).reason).toBe("broker_stale");
+    writeFileSync(entryPath, "// newer server build at the same version");
+    expect(inspectBroker(deps()).reason).toBe("broker_stale");
+  });
+
+  it.each(["entryPath", "sourcePath", "serverConfigPath", "packagePath", "configPath"] as const)(
+    "rejects a modified sealed %s",
+    (resource) => {
+      writeManifest();
+      writeFileSync(brokerResources(brokerPaths(env).appPath)[resource], "tampered");
+      expect(inspectBroker(deps()).reason).toBe("broker_modified");
+    }
+  );
+
+  it("rejects a replaced Node runtime", () => {
+    writeManifest();
+    writeFileSync(nodePath, "replacement executable");
+    expect(inspectBroker(deps()).reason).toBe("broker_modified");
+  });
+
+  it("rejects manifest redirection to code outside the bundle", () => {
+    writeManifest({ entryPath });
+    expect(inspectBroker(deps()).reason).toBe("broker_modified");
+    writeManifest({ appPath: join(root, "other.app") });
+    expect(inspectBroker(deps()).reason).toBe("broker_modified");
+  });
+
+  it("rejects a mutable symlink as the configured Node path", () => {
+    const alias = join(root, "node-alias");
+    symlinkSync(nodePath, alias);
+    writeManifest({ nodePath: alias });
+    expect(inspectBroker(deps()).reason).toBe("broker_modified");
+  });
+
+  it("rejects manifest edits that disagree with the sealed configuration", () => {
+    const manifest = writeManifest();
+    const replacement = join(root, "replacement-node");
+    writeFileSync(replacement, "replacement");
+    writeFileSync(
+      brokerPaths(env).manifestPath,
+      JSON.stringify({ ...manifest, nodePath: replacement, nodeSha256: sha256Hex("replacement") })
+    );
+    expect(inspectBroker(deps()).reason).toBe("broker_modified");
+  });
+
+  it("requires strict deep signature verification even when all recorded hashes match", () => {
+    writeManifest();
+    const calls: Array<[string, string[]]> = [];
+    const installation = inspectBroker(
+      deps({ spawn: makeSpawn(toolchain({ verify: { status: 1 } }), calls) })
+    );
+    expect(installation.reason).toBe("broker_modified");
+    expect(calls).toContainEqual([
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "--deep", brokerPaths(env).appPath],
+    ]);
+  });
+
   it("reports a missing LaunchAgent, Node binary, or entry point", () => {
     writeManifest();
     rmSync(brokerPaths(env).agentPath);
@@ -244,7 +355,8 @@ describe("inspectBroker", () => {
     writeManifest({ nodePath: join(root, "gone", "node") });
     expect(inspectBroker(deps()).reason).toBe("broker_node_missing");
     expect(inspectBroker(deps()).detail).toMatch(/grants stay with the broker app/);
-    writeManifest({ entryPath: join(root, "gone.js") });
+    writeManifest();
+    rmSync(brokerResources(brokerPaths(env).appPath).entryPath);
     expect(inspectBroker(deps()).reason).toBe("broker_entry_missing");
   });
 });
@@ -275,22 +387,27 @@ describe("generated files", () => {
     const plist = brokerLaunchAgentPlist({
       executablePath: "/A&B/broker",
       socketPath: "/s.sock",
-      nodePath: "/node",
-      entryPath: "/index.js",
       logPath: "/log",
     });
     expect(plist).toContain("<string>/A&amp;B/broker</string>\n    <string>serve</string>");
     expect(plist).toContain("<string>--socket</string>\n    <string>/s.sock</string>");
-    expect(plist).toContain("<string>--node</string>\n    <string>/node</string>");
-    expect(plist).toContain("<string>--entry</string>\n    <string>/index.js</string>");
+    expect(plist).not.toContain("--node");
+    expect(plist).not.toContain("--entry");
+    expect(plist).not.toContain("--log");
     expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
     expect(plist).toContain("<key>AssociatedBundleIdentifiers</key>");
   });
 });
 
 describe("signing", () => {
-  it("prefers Developer ID, then Apple Development, then ad-hoc", () => {
-    expect(chooseSigningIdentity(SECURITY_OUTPUT, undefined)).toEqual({
+  it("requires an explicit choice across qualifying certificate types or teams", () => {
+    expect(() => chooseSigningIdentity(SECURITY_OUTPUT, undefined)).toThrow("--sign-identity");
+    expect(
+      chooseSigningIdentity(SECURITY_OUTPUT, "2222222222222222222222222222222222222222").name
+    ).toBe("Developer ID Application: Dev Person (TEAM123456)");
+  });
+  it("uses the only qualifying identity, or ad-hoc when none qualify", () => {
+    expect(chooseSigningIdentity(DEVELOPER_ID_OUTPUT, undefined)).toEqual({
       identity: "2222222222222222222222222222222222222222",
       name: "Developer ID Application: Dev Person (TEAM123456)",
     });
@@ -308,7 +425,7 @@ describe("signing", () => {
       name: "My Cert",
     });
     expect(chooseSigningIdentity(SECURITY_OUTPUT, "-")).toEqual({ identity: "-", name: "ad-hoc" });
-    expect(chooseSigningIdentity(SECURITY_OUTPUT, "  ").name).toMatch(/^Developer ID/);
+    expect(chooseSigningIdentity(DEVELOPER_ID_OUTPUT, "  ").name).toMatch(/^Developer ID/);
   });
 
   it("reads the team identifier", () => {
@@ -320,44 +437,54 @@ describe("signing", () => {
 });
 
 describe("chooseNodePath", () => {
-  const exists = () => true;
-  it("prefers a PATH entry that resolves to the running Node", () => {
-    const realpath = (p: string) => (p === "/opt/homebrew/bin/node" ? "/cellar/26/node" : p);
+  it("pins the canonical running executable", () => {
     expect(
-      chooseNodePath({
-        env: { PATH: "/usr/bin::/opt/homebrew/bin" },
-        execPath: "/cellar/26/node",
-        exists,
-        realpath,
-      })
-    ).toBe("/opt/homebrew/bin/node");
+      chooseNodePath({ execPath: "/opt/homebrew/bin/node", realpath: () => "/cellar/26/node" })
+    ).toBe("/cellar/26/node");
   });
 
-  it("falls back to the running binary", () => {
-    expect(chooseNodePath({ env: {}, execPath: "/x/node", exists, realpath: (p) => p })).toBe(
-      "/x/node"
-    );
-    expect(
+  it("fails closed when the executable cannot be resolved", () => {
+    expect(() =>
       chooseNodePath({
-        env: {},
-        execPath: "/x/node",
-        exists,
+        execPath: "/gone/node",
         realpath: () => {
           throw new Error("gone");
         },
       })
-    ).toBe("/x/node");
+    ).toThrow("gone");
+    expect(() => chooseNodePath({ execPath: "node", realpath: () => "node" })).toThrow(
+      "absolute path"
+    );
+  });
+});
+
+describe("validateNodeLibraries", () => {
+  it("accepts only system libraries, including universal binary headings", () => {
     expect(
-      chooseNodePath({
-        env: { PATH: "/bad" },
-        execPath: "/x/node",
-        exists,
-        realpath: (p) => {
-          if (p.startsWith("/bad")) throw new Error("unreadable");
-          return p;
-        },
-      })
-    ).toBe("/x/node");
+      validateNodeLibraries(
+        "/node (architecture arm64):\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n/node (architecture x86_64):\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 3200.0.0)\n"
+      )
+    ).toBe(true);
+  });
+
+  it.each([
+    "@rpath/libnode.dylib",
+    "@loader_path/libnode.dylib",
+    "/opt/homebrew/lib/libicu.dylib",
+    "/usr/lib/../../tmp/evil.dylib",
+    "relative.dylib",
+  ])("rejects %s", (library) => {
+    expect(
+      validateNodeLibraries(
+        `/node:\n\t${library} (compatibility version 1.0.0, current version 1.0.0)\n`
+      )
+    ).toBe(false);
+  });
+
+  it("rejects empty or malformed output", () => {
+    expect(validateNodeLibraries("")).toBe(false);
+    expect(validateNodeLibraries("/node:\n")).toBe(false);
+    expect(validateNodeLibraries("/node:\n\tunexpected output")).toBe(false);
   });
 });
 
@@ -375,6 +502,150 @@ describe("parseBrokerArgs", () => {
 });
 
 describe("setupBroker install", () => {
+  it("copies fixed resources before signing and verifies before running any bundled code", async () => {
+    let signed = false;
+    let verified = false;
+    const handler = toolchain();
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: false },
+      deps({
+        spawn: makeSpawn((cmd, args, opts) => {
+          if (cmd === "/usr/bin/codesign" && args[0] === "--force") {
+            const resources = brokerResources(args.at(-1)!);
+            expect(readFileSync(resources.entryPath)).toEqual(readFileSync(entryPath));
+            expect(readFileSync(resources.sourcePath)).toEqual(readFileSync(sourcePath));
+            expect(JSON.parse(readFileSync(resources.packagePath, "utf8"))).toEqual({
+              name: "apple-notes-mcp",
+              type: "module",
+              version: "9.9.9",
+            });
+            expect(JSON.parse(readFileSync(resources.configPath, "utf8"))).toEqual({
+              schemaVersion: 1,
+              nodePath,
+              nodeSha256: sha256Hex(readFileSync(nodePath)),
+              packageVersion: "9.9.9",
+              entrySha256: sha256Hex(readFileSync(entryPath)),
+            });
+            expect(readFileSync(resources.serverConfigPath, "utf8")).toBe("{}\n");
+            expect(readdirSync(join(resources.disabledHelpers, "public"))).toEqual([]);
+            expect(readdirSync(join(resources.disabledHelpers, "private"))).toEqual([]);
+            expect(readdirSync(join(resources.resources, "server", "native"))).toEqual(["broker"]);
+            expect(args).not.toContain("--entitlements");
+            signed = true;
+          }
+          if (cmd === "/usr/bin/codesign" && args[0] === "--verify") {
+            expect(signed).toBe(true);
+            verified = true;
+          }
+          if (cmd.endsWith(BROKER_EXECUTABLE)) {
+            expect(verified).toBe(true);
+            expect(args).toEqual([]);
+          }
+          return handler(cmd, args, opts);
+        }, []),
+      })
+    );
+    expect(report.ok).toBe(true);
+    expect(signed && verified).toBe(true);
+    const agent = readFileSync(brokerPaths(env).agentPath, "utf8");
+    expect(agent).not.toContain("--node");
+    expect(agent).not.toContain("--entry");
+  });
+
+  it("stops before installing or executing code when signature verification fails", async () => {
+    const calls: Array<[string, string[]]> = [];
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: false },
+      deps({ spawn: makeSpawn(toolchain({ verify: { status: 1 } }), calls) })
+    );
+    expect(report.ok).toBe(false);
+    expect(calls.some(([cmd]) => cmd.endsWith(BROKER_EXECUTABLE))).toBe(false);
+    expect(calls.some(([cmd]) => cmd === "/bin/launchctl")).toBe(false);
+    expect(existsSync(brokerPaths(env).appPath)).toBe(false);
+  });
+
+  it("refuses a Node runtime linked to mutable external libraries", async () => {
+    const calls: Array<[string, string[]]> = [];
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: false },
+      deps({
+        spawn: makeSpawn(
+          toolchain({
+            libraries: {
+              status: 0,
+              stdout: `${nodePath}:\n\t/opt/homebrew/lib/libicu.dylib (compatibility version 1.0.0, current version 1.0.0)\n`,
+            },
+          }),
+          calls
+        ),
+      })
+    );
+    expect(report.steps.at(-1)).toMatchObject({ step: "verify Node runtime", ok: false });
+    expect(calls.some(([cmd]) => cmd === "/usr/bin/codesign")).toBe(false);
+  });
+
+  it("requires an explicit identity when the keychain is ambiguous", async () => {
+    const calls: Array<[string, string[]]> = [];
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: false },
+      deps({
+        spawn: makeSpawn(toolchain({ security: { status: 0, stdout: SECURITY_OUTPUT } }), calls),
+      })
+    );
+    expect(report.steps.at(-1)).toMatchObject({ step: "choose signing identity", ok: false });
+    expect(calls.some(([cmd]) => cmd === "/usr/bin/codesign")).toBe(false);
+  });
+
+  it("does not promise permission continuity for Apple Development certificates", async () => {
+    const report = await setupBroker(
+      { checkOnly: false, uninstall: false },
+      deps({
+        spawn: makeSpawn(
+          toolchain({
+            security: { status: 0, stdout: SECURITY_OUTPUT.split("\n")[0] },
+            describe: {
+              status: 0,
+              stderr:
+                "Authority=Apple Development: Dev Person (AAAAAAAAAA)\nTeamIdentifier=AAAAAAAAAA\n",
+            },
+          }),
+          []
+        ),
+      })
+    );
+    expect(report.ok).toBe(true);
+    expect(report.installation.manifest?.signing.stable).toBe(false);
+    expect(report.warnings.join(" ")).toContain("certificate renewal");
+    expect(report.warnings.join(" ")).not.toContain("ad-hoc signed");
+  });
+
+  it.each(["packageVersion", "entrySha256"])(
+    "rejects a hello with a different %s",
+    async (field) => {
+      const report = await setupBroker(
+        { checkOnly: false, uninstall: false },
+        deps({
+          spawn: makeSpawn(
+            toolchain({
+              hello: {
+                status: 0,
+                stdout: JSON.stringify({
+                  protocolVersion: BROKER_PROTOCOL,
+                  sourceSha256: sha256Hex(readFileSync(sourcePath)),
+                  packageVersion: "9.9.9",
+                  entrySha256: sha256Hex(readFileSync(entryPath)),
+                  [field]: "mismatch",
+                }),
+              },
+            }),
+            []
+          ),
+        })
+      );
+      expect(report.steps.at(-1)).toMatchObject({ step: "handshake", ok: false });
+    }
+  );
+
   it("builds, signs, installs, starts, and verifies the broker", async () => {
     const calls: Array<[string, string[]]> = [];
     const report = await setupBroker(
@@ -389,7 +660,9 @@ describe("setupBroker install", () => {
     expect(manifest).toMatchObject({
       packageVersion: "9.9.9",
       nodePath,
-      entryPath,
+      entryPath: brokerResources(paths.appPath).entryPath,
+      nodeSha256: sha256Hex(readFileSync(nodePath)),
+      entrySha256: sha256Hex(readFileSync(entryPath)),
       signing: { teamId: "TEAM123456", stable: true },
     });
     expect(readFileSync(join(paths.appPath, "Contents", "Info.plist"), "utf8")).toContain(
@@ -404,6 +677,8 @@ describe("setupBroker install", () => {
       "--identifier",
       BROKER_BUNDLE_ID,
       "--timestamp=none",
+      "--options",
+      "runtime",
       expect.stringContaining(BROKER_APP_NAME),
     ]);
     expect(calls).toContainEqual(["/bin/launchctl", ["bootout", "gui/501/apple-notes-mcp.broker"]]);
@@ -429,22 +704,31 @@ describe("setupBroker install", () => {
     expect(formatBrokerSetup(report)).toContain("! The broker is ad-hoc signed");
   });
 
-  it("warns when run from the npx cache", async () => {
+  it("seals a copy when run from the npx cache", async () => {
     const npxEntry = join(root, "_npx", "abc", "build", "index.js");
     mkdirSync(join(npxEntry, ".."), { recursive: true });
-    writeFileSync(npxEntry, "//");
+    writeFileSync(npxEntry, readFileSync(entryPath));
     const report = await setupBroker(
       { checkOnly: false, uninstall: false },
       deps({ entryPath: npxEntry, spawn: makeSpawn(toolchain(), []) })
     );
-    expect(report.warnings.join(" ")).toMatch(/npx cache/);
+    expect(report.ok).toBe(true);
+    expect(report.installation.manifest?.entryPath).toBe(
+      brokerResources(brokerPaths(env).appPath).entryPath
+    );
+    rmSync(npxEntry);
+    expect(readFileSync(brokerResources(brokerPaths(env).appPath).entryPath, "utf8")).toBe(
+      "// entry"
+    );
   });
 
   it.each([
+    ["verify Node runtime", { libraries: { status: 1 } }],
     ["find compiler", { version: { status: 1 } }],
     ["compile", { compile: { status: 1, stderr: "error: nope" } }],
     ["compile", { compile: { status: null, error: new Error("timeout") } }],
     ["sign", { sign: { status: 1, stderr: "no identity" } }],
+    ["verify signature", { verify: { status: 1, stderr: "resource envelope invalid" } }],
     ["handshake", { hello: { status: 1, stdout: "" } }],
     ["handshake", { hello: { status: 0, stdout: JSON.stringify({ protocolVersion: 99 }) } }],
     ["start LaunchAgent", { bootstrap: { status: 5, stderr: "Bootstrap failed" } }],

@@ -26,6 +26,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:broker-security": "node scripts/test-broker-security.mjs",
     "test:all": "vitest run && vitest run --config vitest.integration.config.ts",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
@@ -74,7 +75,7 @@
     "darwin"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "turndown": "^7.2.2",
     "zod": "^3.22.4"
   },
