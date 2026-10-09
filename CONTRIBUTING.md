@@ -74,8 +74,8 @@ fixtures, applies ad-hoc signatures, and tests direct socket requests, sealed
 resource and runtime tampering, and harmless DYLD injection. It does not install
 a LaunchAgent, use signing credentials, invoke Notes, or request TCC grants.
 
-The command first runs host-classification and bounded marker-read regression
-tests. The native harness then checks the actual host capability using
+The command first runs host-classification, bounded marker-read and CI-result
+regression tests. The native harness then checks the actual host capability using
 identity-bound injection positive controls and independent hardened C controls
 in both synchronous and detached launches. A static `runtime` signature or the
 SIP status alone does not prove enforcement. Signing checks, running process
@@ -99,10 +99,23 @@ The native harness distinguishes three results:
 The full hostile inherited environment remains in the test on a confirmed-gap
 host. Only the exact validated startup constructor record is permitted there;
 additional or child-process injection records remain fatal. Runtime security
-restrictions are unchanged. The current required CI step rejects **both** nonzero
-results. Accepting a confirmed gap requires a separate, explicit maintainer
-agreement about CI policy; never use a blanket `continue-on-error` or report
-unavailable enforcement coverage as passed.
+restrictions are unchanged. CI runs the host-classification and marker-read tests
+in their own fatal step, then runs CI-result regression tests separately before
+invoking the native harness directly with a persistent report. The required step
+accepts exit 0 or a strictly validated exit 2 report: `host-gap`, matching exit
+code, no failures, completed checks, successful cleanup, unchanged markers, a
+written report and explicitly disabled SIP must all agree. The empirical host
+classification is rechecked from the report. Exit 1, unknown statuses, missing or
+malformed evidence and any field mismatch remain fatal.
+
+An accepted gap emits a warning and a job summary headed **DYLD injection
+enforcement NOT VALIDATED on this host**, including the check count and SIP
+evidence. CI always uploads the native report, including failure evidence. This
+policy follows the maintainer's explicit approval in
+[review 5471653001](https://github.com/sweetrb/apple-notes-mcp/pull/276#pullrequestreview-5471653001).
+There is no blanket `continue-on-error` and unavailable enforcement coverage is
+never reported as verified. The standalone harness still returns exit 2 for a
+confirmed gap; CI acceptance does not change runtime security restrictions.
 
 For a persistent evidence file, run
 `node scripts/test-broker-security.mjs --report /absolute/path/report.json`.
