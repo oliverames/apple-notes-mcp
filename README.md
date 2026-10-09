@@ -1261,10 +1261,11 @@ folder ids from `list-folders`.
   the destination must not be either.
 
 The checks read Notes.app's live folders inside the same AppleScript as the
-write, immediately before it, so a note moved after you reviewed it is left
-alone and the call fails with `Scope guard failed: …`. The one exception is a
-native append to a protected note (it runs through Shortcuts): there the check
-is a separate read just before the append, so it is not atomic.
+write, immediately before it. If the folder observed by the check fails a
+precondition, the write is refused with `Scope guard failed: …`. The check and
+write are separate Notes operations; another actor can move the note between
+them. A native append to a protected note runs through Shortcuts, so its
+precheck runs in a separate AppleScript before the append.
 
 For `batch-move-notes`, the same preconditions apply to every supplied note ID.
 Each note is checked independently immediately before its move. A scope mismatch
@@ -1810,10 +1811,12 @@ note IDs and reasons remain in the failure text.
 }
 ```
 
-The source-folder check and each move run together in one AppleScript. If one
-note is no longer in that inbox, its result reports `Scope guard failed: …`
-while a note still there can move. The checks are atomic per note; the batch
-is not a transaction and successful moves are not rolled back after a refusal.
+The source-folder check runs immediately before each move in the same
+AppleScript. If the check finds that a note is no longer in that inbox, its
+result reports `Scope guard failed: …` while a note still there can move.
+The check does not lock the note against another actor moving it before the
+move. The batch is not a transaction, and successful moves are not rolled
+back after a refusal.
 
 ---
 
