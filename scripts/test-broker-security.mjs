@@ -32,6 +32,7 @@ import { userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { readFixtureFile } from "./broker-fixture-files.mjs";
 import {
   assessProbe,
   classifyHostCapability,
@@ -737,7 +738,7 @@ async function stop(broker) {
 }
 
 function launchCount(fx) {
-  return existsSync(fx.marker) ? readFileSync(fx.marker, "utf8") : "";
+  return readFixtureFile(fx.marker, { allowAppend: true })?.toString("utf8") ?? "";
 }
 
 async function assertNoSpawn(fx, value, code) {
@@ -760,12 +761,7 @@ function assertNoUnexpectedExecution() {
 }
 
 function markerRecords() {
-  if (!existsSync(injectionMarker)) return null;
-  assert.ok(
-    statSync(injectionMarker).size <= 128 * 1024,
-    "constructor evidence exceeded its bound"
-  );
-  return readFileSync(injectionMarker);
+  return readFixtureFile(injectionMarker);
 }
 
 function assertInjectionUnchanged(stage) {

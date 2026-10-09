@@ -74,12 +74,12 @@ fixtures, applies ad-hoc signatures, and tests direct socket requests, sealed
 resource and runtime tampering, and harmless DYLD injection. It does not install
 a LaunchAgent, use signing credentials, invoke Notes, or request TCC grants.
 
-The command first runs the pure host-classification regression tests. The native
-harness then checks the actual host capability using identity-bound injection
-positive controls and independent hardened C controls in both synchronous and
-detached launches. A static `runtime` signature or the SIP status alone does not
-prove enforcement. Signing checks, running process flags and constructor records
-must agree before the host can be classified.
+The command first runs host-classification and bounded marker-read regression
+tests. The native harness then checks the actual host capability using
+identity-bound injection positive controls and independent hardened C controls
+in both synchronous and detached launches. A static `runtime` signature or the
+SIP status alone does not prove enforcement. Signing checks, running process
+flags and constructor records must agree before the host can be classified.
 
 The native harness distinguishes three results:
 
