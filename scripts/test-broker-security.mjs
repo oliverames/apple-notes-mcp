@@ -513,6 +513,37 @@ async function openConnection(path) {
     write(value) {
       socket.write(`${JSON.stringify(value)}\n`);
     },
+    async waitForEnd() {
+      // The exit frame precedes native group cleanup and slot release. Only
+      // peer EOF, after handle() closes its descriptor, is that barrier.
+      if (socket.errored) throw socket.errored;
+      if (!socket.readableEnded) {
+        if (socket.destroyed) throw new Error("broker socket closed without peer EOF");
+        await new Promise((resolve, reject) => {
+          const complete = (error) => {
+            clearTimeout(timer);
+            socket.off("end", onEnd);
+            socket.off("error", onError);
+            socket.off("close", onClose);
+            if (error) reject(error);
+            else resolve();
+          };
+          const onEnd = () => complete();
+          const onError = (error) => complete(error);
+          const onClose = () => complete(new Error("broker socket closed without peer EOF"));
+          const timer = setTimeout(() => {
+            const error = new Error("timed out waiting for broker peer EOF after its response");
+            complete(error);
+            socket.destroy(error);
+          }, 5000);
+          socket.once("end", onEnd);
+          socket.once("error", onError);
+          socket.once("close", onClose);
+        });
+      }
+      assert.equal(buffer.length, 0, "broker ended with a partial output frame");
+      assert.equal(messages.length, 0, "broker sent output after its terminal response");
+    },
     async read() {
       if (messages.length) return messages.shift();
       if (ended) throw ended;
@@ -544,6 +575,7 @@ async function outputUntilExit(connection) {
     if (frame.channel === 3) {
       const status = frame.payload.readUInt32BE();
       assert.ok(status <= 255);
+      await connection.waitForEnd();
       return { stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), status };
     }
     (frame.channel === 1 ? stdout : stderr).push(frame.payload);
@@ -566,7 +598,10 @@ async function request(fx, value, echo = false) {
   try {
     connection.write(value);
     const answer = await connection.read();
-    if (!echo) return answer;
+    if (!echo) {
+      if (answer.type !== "ready") await connection.waitForEnd();
+      return answer;
+    }
     assert.equal(answer.type, "ready", JSON.stringify(answer));
     assert.equal(answer.protocolVersion, 3);
     assert.equal(answer.packageVersion, "fixture");
@@ -1160,6 +1195,62 @@ try {
     assertNoUnexpectedExecution();
     await stop(running);
   }
+
+  await check("the 16-client cap refuses a 17th spawn and recovers after peer EOF", async () => {
+    const fx = fixture();
+    const broker = await start(fx);
+    const held = [];
+    try {
+      for (let index = 0; index < 16; index++) held.push(await readyConnection(fx));
+      // ready is sent after posix_spawn, before every C main necessarily runs.
+      // Wait for all intended launches before measuring a forbidden extra one.
+      const expectedLaunches = "spawn\n".repeat(16);
+      await waitFor(
+        () => launchCount(fx) === expectedLaunches,
+        "all 16 fixture runtimes started",
+        5000
+      );
+      assert.equal((await request(fx, { type: "ping" })).activeChildren, 16);
+      assert.ok(
+        held.every(({ pid }) => processExists(pid)),
+        "all capped sessions must be live"
+      );
+
+      const refused = await request(fx, connectRequest(fx));
+      assert.equal(refused.type, "error", JSON.stringify(refused));
+      assert.equal(refused.code, "busy");
+      assert.equal(launchCount(fx), expectedLaunches, "the 17th request launched a child");
+      assert.equal((await request(fx, { type: "ping" })).activeChildren, 16);
+
+      for (const connection of held) connection.socket.end();
+      for (const result of await Promise.all(held.map(outputUntilExit))) {
+        assert.equal(result.status, 0);
+        assert.equal(result.stdout.length, 0);
+        assert.equal(result.stderr.length, 0);
+      }
+      assert.ok(
+        held.every(({ pid }) => !processExists(pid)),
+        "peer EOF must follow child reaping"
+      );
+      assert.equal((await request(fx, { type: "ping" })).activeChildren, 0);
+      assert.equal(launchCount(fx), expectedLaunches, "a refused child appeared during teardown");
+
+      assertEnvironment(fx, await request(fx, connectRequest(fx), true));
+      assert.equal(
+        launchCount(fx),
+        expectedLaunches + "spawn\n",
+        "recovery must launch exactly one child"
+      );
+      assert.equal((await request(fx, { type: "ping" })).activeChildren, 0);
+      // Continue detecting a delayed forbidden spawn after accounting for the
+      // one explicitly authorized recovery request.
+      refusedExecutionCounts.set(fx, launchCount(fx));
+    } finally {
+      for (const connection of held) connection.socket.destroy();
+      await stop(broker);
+    }
+    assertNoUnexpectedExecution();
+  });
 
   const streams = fixture();
   const streamBroker = await start(streams);
