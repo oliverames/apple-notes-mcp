@@ -1249,21 +1249,27 @@ actual destination folder ID matches the requested folder.
 
 #### Folder scope guards
 
-`update-note`, `append-to-note`, `delete-note`, and `move-note` accept three
-optional folder preconditions. Use exact folder ids from `list-folders`.
+`update-note`, `append-to-note`, `delete-note`, `move-note`, and
+`batch-move-notes` accept three optional folder preconditions. Use exact
+folder ids from `list-folders`.
 
 - `ifFolderId`: the note must currently be in exactly this folder.
 - `ifAncestorFolderId`: the note must be inside this folder or any of its
   subfolders.
 - `forbiddenAncestorFolderIds` (up to 50): the note must not be inside any of
-  these folders or their subfolders. For `move-note`, the destination must not
-  be either.
+  these folders or their subfolders. For `move-note` and `batch-move-notes`,
+  the destination must not be either.
 
 The checks read Notes.app's live folders inside the same AppleScript as the
 write, immediately before it, so a note moved after you reviewed it is left
 alone and the call fails with `Scope guard failed: …`. The one exception is a
 native append to a protected note (it runs through Shortcuts): there the check
 is a separate read just before the append, so it is not atomic.
+
+For `batch-move-notes`, the same preconditions apply to every supplied note ID.
+Each note is checked independently immediately before its move. A scope mismatch
+leaves that note unchanged and appears in its failure result; the remaining
+items continue. A batch can therefore move some notes and refuse others.
 
 **Example - retire a note only while it is still in the inbox:**
 ```json
@@ -1788,9 +1794,26 @@ Moves multiple notes to a folder.
 | `ids` | string[] | Yes | Array of note IDs to move (max 500 per request) |
 | `folder` | string | Yes | Destination folder name or nested path (e.g., `"Work/Clients"`). Must already exist — create it with [`create-folder`](#create-folder). A smart folder is refused for the whole call before any note moves |
 | `account` | string | No | Account containing the folder |
+| `ifFolderId`, `ifAncestorFolderId`, `forbiddenAncestorFolderIds` | string, string, string[] | No | Shared folder preconditions applied independently to each note; see [Folder scope guards](#folder-scope-guards). Forbidden folders also apply to the destination |
 
 **Returns:** Summary of successes and failures. Each success is reported only
 after the note's actual container folder ID matches the destination folder ID.
+If every note fails, the call returns its existing error response; the exact
+note IDs and reasons remain in the failure text.
+
+**Example - move only notes that are still in the reviewed inbox:**
+```json
+{
+  "ids": ["x-coredata://ABC123/ICNote/p456", "x-coredata://ABC123/ICNote/p457"],
+  "folder": "Archive",
+  "ifFolderId": "x-coredata://ABC123/ICFolder/p12"
+}
+```
+
+The source-folder check and each move run together in one AppleScript. If one
+note is no longer in that inbox, its result reports `Scope guard failed: …`
+while a note still there can move. The checks are atomic per note; the batch
+is not a transaction and successful moves are not rolled back after a refusal.
 
 ---
 

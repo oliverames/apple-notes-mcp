@@ -43277,8 +43277,9 @@ function buildAccountScopedScript(scope2, command) {
     end tell
   `;
 }
-function buildAppLevelScript(command) {
+function buildAppLevelScript(command, handlers = "") {
   return `
+    ${handlers}
     tell application "Notes"
       ${command}
     end tell
@@ -45652,6 +45653,9 @@ var AppleNotesManager = class {
    * per-note implementation. See {@link batchMoveNotes}.
    */
   mapBatchStatus(id2, status, op) {
+    const scopeFailure = parseScopeFailure(status ?? "");
+    if (scopeFailure !== null)
+      return this.createBatchResult(id2, false, scopeConflictMessage(scopeFailure));
     switch (status) {
       case "ok":
         return this.createBatchResult(id2, true);
@@ -45680,6 +45684,7 @@ var AppleNotesManager = class {
    * @param ids - Array of CoreData URL identifiers for notes to move
    * @param folder - Destination folder name
    * @param account - Account containing the folder (defaults to Notes.app's default account)
+   * @param scope - Shared folder preconditions checked independently before each move
    * @returns Array of results with id, success status, and optional error message
    *
    * @example
@@ -45690,8 +45695,24 @@ var AppleNotesManager = class {
    * );
    * ```
    */
-  batchMoveNotes(ids, folder, account) {
+  batchMoveNotes(ids, folder, account, scope2) {
     if (ids.length === 0) return [];
+    const scopeChecks = buildScopeGuardScript("noteRef", scope2, "destFolder");
+    const moveHandler = `
+      on moveBatchNote(noteRef, destFolder, theId)
+        tell application "Notes"
+          ${scopeChecks}
+          move noteRef to destFolder
+          set movedNoteRef to note id theId
+          set actualFolder to container of movedNoteRef
+          if (id of actualFolder) is (id of destFolder) then
+            return "ok"
+          else
+            return "wrongfolder"
+          end if
+        end tell
+      end moveBatchNote
+    `;
     const targetAccount = this.resolveAccount(account);
     const destFolderSetup = buildLiveFolderResolution(folder, "destFolder", {
       excludeFolderIds: this.smartFolderIds()
@@ -45711,7 +45732,8 @@ var AppleNotesManager = class {
     });
     if (runnable.length > 0) {
       const idList2 = runnable.map((r) => `"${r.safe}"`).join(", ");
-      const script = buildAppLevelScript(`
+      const script = buildAppLevelScript(
+        `
         ${buildAccountResolution(targetAccount)}
         ${destFolderSetup}
         set out to ""
@@ -45732,14 +45754,8 @@ var AppleNotesManager = class {
               set out to out & "pw" & ${AS_RECORD_SEP}
             else
               try
-                move noteRef to destFolder
-                set movedNoteRef to note id theId
-                set actualFolder to container of movedNoteRef
-                if (id of actualFolder) is (id of destFolder) then
-                  set out to out & "ok" & ${AS_RECORD_SEP}
-                else
-                  set out to out & "wrongfolder" & ${AS_RECORD_SEP}
-                end if
+                set itemStatus to my moveBatchNote(noteRef, destFolder, theId)
+                set out to out & itemStatus & ${AS_RECORD_SEP}
               on error
                 set out to out & "fail" & ${AS_RECORD_SEP}
               end try
@@ -45747,7 +45763,9 @@ var AppleNotesManager = class {
           end if
         end repeat
         return out
-      `);
+      `,
+        moveHandler
+      );
       const res = executeMutationAppleScript(script);
       if (!res.success) {
         throwIfAccountResolutionFailed(res.error);
@@ -62160,7 +62178,7 @@ var scopeGuardInputs = {
       maxItems: MAX_FORBIDDEN_FOLDERS
     }
   ).optional().describe(
-    "Precondition: the note must not be inside any of these folders or their subfolders (for move-note, neither may the destination). Re-checked immediately before the write."
+    "Precondition: the note must not be inside any of these folders or their subfolders (for move-note and batch-move-notes, neither may the destination). Re-checked immediately before the write."
   )
 };
 function scopeFrom(args) {
@@ -64711,8 +64729,9 @@ registerTool(
 registerTool(
   "batch-move-notes",
   {
-    description: "Use when: moving multiple notes by id into one destination folder.\nReturns: per-id success/failure counts after destination-folder verification.\nDo not use when: moving a single note (move-note).\nSafety: each moved note's actual container ID is compared with the destination folder ID before success is reported. The destination folder must already exist (create-folder); a smart folder is refused for the whole call (code unsupported) before any note moves.",
+    description: "Use when: moving multiple notes by id into one destination folder.\nReturns: per-id success/failure counts after destination-folder verification.\nDo not use when: moving a single note (move-note).\nSafety: optional folder preconditions apply independently to every note, checked live immediately before its move in the same AppleScript; a scope mismatch leaves that note unchanged and other items continue. Each moved note's actual container ID is compared with the destination folder ID before success is reported. The destination folder must already exist (create-folder); a smart folder is refused for the whole call (code unsupported) before any note moves.",
     inputSchema: {
+      ...scopeGuardInputs,
       ids: noteIdArrayInput.describe(
         `Array of note IDs to move (max ${MAX.BATCH_IDS} per request)`
       ),
@@ -64731,11 +64750,12 @@ registerTool(
       results: external_exports.array(external_exports.object({}).passthrough()).optional()
     }
   },
-  withErrorHandling(({ ids, folder, account }) => {
+  withErrorHandling((args) => {
+    const { ids, folder, account } = args;
     if (ids.length === 0) {
       return errorResponse("No note IDs provided");
     }
-    const results = notesManager.batchMoveNotes(ids, folder, account);
+    const results = notesManager.batchMoveNotes(ids, folder, account, scopeFrom(args));
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
     const lines = [`Batch move to "${folder}": ${succeeded} succeeded, ${failed} failed`];

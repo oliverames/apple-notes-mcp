@@ -1011,10 +1011,12 @@ function buildAccountScopedScript(scope: AccountScope, command: string): string 
  * ```
  *
  * @param command - The AppleScript command to execute
+ * @param handlers - Optional handlers declared outside the application tell
  * @returns Complete AppleScript ready for execution
  */
-function buildAppLevelScript(command: string): string {
+function buildAppLevelScript(command: string, handlers = ""): string {
   return `
+    ${handlers}
     tell application "Notes"
       ${command}
     end tell
@@ -4059,6 +4061,9 @@ export class AppleNotesManager {
     status: string | undefined,
     op: "delete" | "move"
   ): { id: string; success: boolean; error?: string } {
+    const scopeFailure = parseScopeFailure(status ?? "");
+    if (scopeFailure !== null)
+      return this.createBatchResult(id, false, scopeConflictMessage(scopeFailure));
     switch (status) {
       case "ok":
         return this.createBatchResult(id, true);
@@ -4088,6 +4093,7 @@ export class AppleNotesManager {
    * @param ids - Array of CoreData URL identifiers for notes to move
    * @param folder - Destination folder name
    * @param account - Account containing the folder (defaults to Notes.app's default account)
+   * @param scope - Shared folder preconditions checked independently before each move
    * @returns Array of results with id, success status, and optional error message
    *
    * @example
@@ -4101,9 +4107,29 @@ export class AppleNotesManager {
   batchMoveNotes(
     ids: string[],
     folder: string,
-    account?: string
+    account?: string,
+    scope?: ScopeGuard
   ): { id: string; success: boolean; error?: string }[] {
     if (ids.length === 0) return [];
+
+    // The public builder returns on a failed precondition. Keep those returns
+    // inside a per-note handler so refusing one item never exits the batch.
+    const scopeChecks = buildScopeGuardScript("noteRef", scope, "destFolder");
+    const moveHandler = `
+      on moveBatchNote(noteRef, destFolder, theId)
+        tell application "Notes"
+          ${scopeChecks}
+          move noteRef to destFolder
+          set movedNoteRef to note id theId
+          set actualFolder to container of movedNoteRef
+          if (id of actualFolder) is (id of destFolder) then
+            return "ok"
+          else
+            return "wrongfolder"
+          end if
+        end tell
+      end moveBatchNote
+    `;
 
     // Collapse the whole batch into ONE osascript spawn (#26). The old path
     // spawned 5+ processes per note (getNoteById + isNotePasswordProtectedById +
@@ -4136,7 +4162,8 @@ export class AppleNotesManager {
 
     if (runnable.length > 0) {
       const idList = runnable.map((r) => `"${r.safe}"`).join(", ");
-      const script = buildAppLevelScript(`
+      const script = buildAppLevelScript(
+        `
         ${buildAccountResolution(targetAccount)}
         ${destFolderSetup}
         set out to ""
@@ -4157,14 +4184,8 @@ export class AppleNotesManager {
               set out to out & "pw" & ${AS_RECORD_SEP}
             else
               try
-                move noteRef to destFolder
-                set movedNoteRef to note id theId
-                set actualFolder to container of movedNoteRef
-                if (id of actualFolder) is (id of destFolder) then
-                  set out to out & "ok" & ${AS_RECORD_SEP}
-                else
-                  set out to out & "wrongfolder" & ${AS_RECORD_SEP}
-                end if
+                set itemStatus to my moveBatchNote(noteRef, destFolder, theId)
+                set out to out & itemStatus & ${AS_RECORD_SEP}
               on error
                 set out to out & "fail" & ${AS_RECORD_SEP}
               end try
@@ -4172,7 +4193,9 @@ export class AppleNotesManager {
           end if
         end repeat
         return out
-      `);
+      `,
+        moveHandler
+      );
       const res = executeMutationAppleScript(script);
 
       if (!res.success) {
