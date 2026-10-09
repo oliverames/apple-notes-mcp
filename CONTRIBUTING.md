@@ -74,12 +74,39 @@ fixtures, applies ad-hoc signatures, and tests direct socket requests, sealed
 resource and runtime tampering, and harmless DYLD injection. It does not install
 a LaunchAgent, use signing credentials, invoke Notes, or request TCC grants.
 
-The injection assertion must remain fatal. A static `runtime` signature does not
-prove that the host enforces it: hosts with disabled system protections can admit
-injection into both the broker and an independently signed hardened control. On
-failure, the harness records host policy, process identity, signing flags, and
-control results. Do not turn that failure into a skip or passing check; run the
-same harness on an enforcing host and retain it in a required CI check.
+The command first runs the pure host-classification regression tests. The native
+harness then checks the actual host capability using identity-bound injection
+positive controls and independent hardened C controls in both synchronous and
+detached launches. A static `runtime` signature or the SIP status alone does not
+prove enforcement. Signing checks, running process flags and constructor records
+must agree before the host can be classified.
+
+The native harness distinguishes three results:
+
+- **Exit 0: verified.** The positive controls work, both hardened controls and the
+  broker block injection, and every remaining native check passes.
+- **Exit 2: confirmed host coverage gap.** Both hardened controls and the broker
+  admit the exact challenged startup injection on a host reporting SIP disabled.
+  All remaining checks pass. The injection boundary is explicitly **NOT
+  VALIDATED**, with a warning and structured report; it is never counted as a
+  passed assertion.
+- **Exit 1: failure or inconclusive evidence.** Injection reaches the broker on
+  an enforcing host, control results disagree, required identity/signature evidence
+  is missing or invalid, policy cannot corroborate an observed injection gap, or
+  any other assertion or cleanup fails. Unsupported
+  hosts also report failure rather than verified coverage.
+
+The full hostile inherited environment remains in the test on a confirmed-gap
+host. Only the exact validated startup constructor record is permitted there;
+additional or child-process injection records remain fatal. Runtime security
+restrictions are unchanged. The current required CI step rejects **both** nonzero
+results. Accepting a confirmed gap requires a separate, explicit maintainer
+agreement about CI policy; never use a blanket `continue-on-error` or report
+unavailable enforcement coverage as passed.
+
+For a persistent evidence file, run
+`node scripts/test-broker-security.mjs --report /absolute/path/report.json`.
+The report supplements the console evidence and does not change exit semantics.
 
 ## Pull Request Process
 

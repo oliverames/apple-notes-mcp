@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   appendFileSync,
@@ -29,17 +29,49 @@ import {
 } from "node:fs";
 import { createConnection } from "node:net";
 import { userInfo } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import {
+  assessProbe,
+  classifyHostCapability,
+  finalizeNativeResult,
+} from "./broker-host-capability.mjs";
 
-if (process.platform !== "darwin") {
-  console.log("SKIP: native broker security checks require macOS.");
-  process.exit(0);
+const args = process.argv.slice(2);
+let reportPath;
+if (
+  args.length !== 0 &&
+  (args.length !== 2 ||
+    args[0] !== "--report" ||
+    !args[1] ||
+    args[1].startsWith("--") ||
+    args[1].includes("\0"))
+) {
+  console.error("usage: node scripts/test-broker-security.mjs [--report <path>]");
+  process.exit(1);
 }
-if (process.argv.length !== 2) {
-  console.error("usage: node scripts/test-broker-security.mjs");
-  process.exit(64);
+if (args.length) reportPath = resolve(args[1]);
+if (process.platform !== "darwin") {
+  const report = {
+    schemaVersion: 1,
+    result: {
+      state: "failure",
+      exitCode: 1,
+      reasons: ["NOT VERIFIED: native broker checks require macOS"],
+    },
+    checks: { passed: 0, completed: false },
+  };
+  console.error(report.result.reasons[0]);
+  if (reportPath) {
+    try {
+      writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
+    } catch (error) {
+      console.error(`Could not write report: ${error.message}`);
+    }
+  }
+  console.log(JSON.stringify(report, null, 2));
+  process.exit(1);
 }
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -54,6 +86,13 @@ const injectionMarker = join(temporary, "dyld-loaded");
 const injectionSource = join(temporary, "injection.c");
 const diagnosticFixtures = [];
 let positiveControlRecords;
+let expectedInjectionSnapshot = null;
+let hostEvidence;
+let capability;
+let checksCompleted = false;
+let cleanupSucceeded = false;
+let markersUnchanged = false;
+const failures = [];
 const brokers = new Set();
 const connections = new Set();
 const refusedExecutionCounts = new Map();
@@ -273,6 +312,7 @@ int main(int argc, char **argv) {
 #include <mach-o/dyld.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/file.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -298,6 +338,9 @@ __attribute__((constructor)) static void injected(void) {
   flock(fileno(f), LOCK_EX);
   fprintf(f, "{\"pid\":%d,\"ppid\":%d,\"executable\":", getpid(), getppid());
   json_string(f, path_status == 0 ? executable : "<path unavailable>");
+  fputs(",\"nonce\":", f);
+  const char *nonce = getenv("BROKER_SECURITY_PROBE_NONCE");
+  json_string(f, nonce ? nonce : "");
   fprintf(f, ",\"executablePathStatus\":%d,\"csopsStatus\":%d,\"csopsErrno\":%d,\"csopsFlags\":%u}\n",
           path_status, cs_status, cs_errno, flags);
   fflush(f);
@@ -681,16 +724,116 @@ function assertNoUnexpectedExecution() {
   }
 }
 
-function markerRecords(path = injectionMarker) {
-  return existsSync(path) ? readFileSync(path, "utf8") : null;
+function markerRecords() {
+  if (!existsSync(injectionMarker)) return null;
+  assert.ok(
+    statSync(injectionMarker).size <= 128 * 1024,
+    "constructor evidence exceeded its bound"
+  );
+  return readFileSync(injectionMarker);
 }
 
-function assertInjectionAbsent(stage) {
-  assert.equal(
-    existsSync(injectionMarker),
-    false,
-    `the injected dylib constructor ran ${stage}: ${markerRecords()}`
+function assertInjectionUnchanged(stage) {
+  assert.deepEqual(
+    markerRecords(),
+    expectedInjectionSnapshot,
+    `constructor evidence changed ${stage}; an unexpected child, stale record, deletion or rewrite is fatal`
   );
+}
+
+function newMarkerRecords(before) {
+  const snapshot = markerRecords();
+  if (before !== null)
+    assert.ok(
+      snapshot !== null && snapshot.subarray(0, before.length).equals(before),
+      "constructor evidence was deleted or rewritten"
+    );
+  const added = (snapshot ?? Buffer.alloc(0)).subarray(before?.length ?? 0);
+  if (!added.length) return { records: [], snapshot };
+  assert.equal(added.at(-1), 10, "constructor record was truncated");
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(added);
+  return {
+    records: text
+      .slice(0, -1)
+      .split("\n")
+      .map((line) => JSON.parse(line)),
+    snapshot,
+  };
+}
+
+function signatureEvidence(path) {
+  command("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", path]);
+  const display = command("/usr/bin/codesign", ["-d", "--verbose=4", "--entitlements", ":-", path]);
+  const flags = [...display.stderr.matchAll(/CodeDirectory[^\n]* flags=0x([0-9a-f]+)/gi)];
+  assert.equal(flags.length, 1, "signature runtime flags were ambiguous or missing");
+  const rawEntitlements = display.stdout.trim();
+  const entitlements = rawEntitlements
+    ? JSON.parse(
+        command("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], { input: rawEntitlements })
+          .stdout
+      )
+    : {};
+  return {
+    verified: true,
+    flags: Number.parseInt(flags[0][1], 16),
+    entitlements,
+    display: display.stderr,
+  };
+}
+
+function signedControl(name, hardened) {
+  const path = join(temporary, name);
+  copyFileSync(compiledRuntime, path);
+  command("/usr/bin/codesign", [
+    "--force",
+    "--sign",
+    "-",
+    ...(hardened ? ["--options", "runtime"] : []),
+    path,
+  ]);
+  return { path, signature: signatureEvidence(path) };
+}
+
+async function controlProbe(control, mode, runtime) {
+  assertInjectionUnchanged(`before ${mode} control`);
+  const before = expectedInjectionSnapshot;
+  const nonce = randomUUID();
+  const env = {
+    ...cleanEnvironment,
+    DYLD_INSERT_LIBRARIES: injectionLibrary,
+    BROKER_SECURITY_PROBE_NONCE: nonce,
+  };
+  const result =
+    mode === "sync"
+      ? diagnosticCommand(control.path, [], { env, input: "{}\n" })
+      : await detachedDiagnostic(control.path, env);
+  let main;
+  try {
+    main = JSON.parse(result.stdout).codeSigning;
+  } catch {
+    main = null;
+  }
+  const markerEvidence = newMarkerRecords(before);
+  const probe = {
+    mode,
+    nonce,
+    pid: result.pid,
+    parentPid: process.pid,
+    executable: control.path,
+    signature: control.signature,
+    status: result.status,
+    signal: result.signal,
+    error: result.error ?? null,
+    main,
+    records: markerEvidence.records,
+  };
+  assert.deepEqual(
+    assessProbe(probe, { runtime, positive: !runtime }).errors,
+    [],
+    `${mode} control evidence was invalid`
+  );
+  expectedInjectionSnapshot = markerEvidence.snapshot;
+  return probe;
 }
 
 function diagnosticCommand(executable, args, options = {}) {
@@ -704,6 +847,7 @@ function diagnosticCommand(executable, args, options = {}) {
   });
   return {
     command: [executable, ...args],
+    pid: result.pid,
     status: result.status,
     signal: result.signal,
     error: result.error?.message,
@@ -759,18 +903,18 @@ async function detachedDiagnostic(executable, env) {
     clearTimeout(timer);
     return result;
   } finally {
-    await stop(processRecord);
+    if (!processRecord.exited) await stop(processRecord);
+    else brokers.delete(processRecord);
   }
 }
 
 async function reportFailureDiagnostics() {
-  // Preserve the broker's marker. Independent probes use a separately compiled
-  // dylib/marker and run only after the original security assertion has failed.
   const report = {
     node: process.version,
     architecture: process.arch,
     positiveControlRecords,
-    brokerInjectionRecords: markerRecords(),
+    constructorSnapshotBase64: markerRecords()?.toString("base64") ?? null,
+    hostEvidence,
     fixtures: diagnosticFixtures,
     system: [
       diagnosticCommand("/usr/bin/sw_vers", []),
@@ -779,63 +923,8 @@ async function reportFailureDiagnostics() {
       diagnosticCommand("/usr/bin/csrutil", ["status"]),
     ],
   };
-  if (diagnosticFixtures.length) {
-    report.brokerSignature = diagnosticCommand("/usr/bin/codesign", [
-      "-d",
-      "--verbose=4",
-      "--entitlements",
-      ":-",
-      diagnosticFixtures[0].app,
-    ]);
-  }
-  if (report.brokerInjectionRecords && existsSync(compiledRuntime) && existsSync(injectionSource)) {
-    const control = join(temporary, "hardened-control");
-    const controlSource = join(temporary, "control-injection.c");
-    const controlLibrary = join(temporary, "control-injection.dylib");
-    const controlMarker = join(temporary, "control-dyld-loaded");
-    copyFileSync(compiledRuntime, control);
-    writeFileSync(
-      controlSource,
-      readFileSync(injectionSource, "utf8").replace(
-        /^#define INJECTION_MARKER .*$/m,
-        `#define INJECTION_MARKER ${JSON.stringify(controlMarker)}`
-      )
-    );
-    report.controlSetup = [
-      diagnosticCommand("/usr/bin/codesign", [
-        "--force",
-        "--sign",
-        "-",
-        "--options",
-        "runtime",
-        control,
-      ]),
-      diagnosticCommand("/usr/bin/xcrun", [
-        "clang",
-        "-dynamiclib",
-        controlSource,
-        "-o",
-        controlLibrary,
-      ]),
-      diagnosticCommand("/usr/bin/codesign", [
-        "-d",
-        "--verbose=4",
-        "--entitlements",
-        ":-",
-        control,
-      ]),
-    ];
-    if (report.controlSetup.every((result) => result.status === 0)) {
-      const env = { ...cleanEnvironment, DYLD_INSERT_LIBRARIES: controlLibrary };
-      report.synchronousHardenedControl = diagnosticCommand(control, [], { env, input: "{}\n" });
-      report.synchronousHardenedControl.injectionRecords = markerRecords(controlMarker);
-      rmSync(controlMarker, { force: true });
-      report.detachedHardenedControl = await detachedDiagnostic(control, env);
-      report.detachedHardenedControl.injectionRecords = markerRecords(controlMarker);
-    }
-  }
   console.error(
-    `Native broker failure diagnostics (read-only host queries; ephemeral controls):\n${JSON.stringify(report, null, 2)}`
+    `Native broker failure diagnostics (read-only host queries):\n${JSON.stringify(report, null, 2)}`
   );
 }
 
@@ -861,6 +950,11 @@ function assertEnvironment(fx, actual, expectedNumeric = {}) {
   for (const [key, value] of Object.entries(controlled)) {
     assert.equal(actual.env[key], value, `${key} did not use the broker's trusted value`);
   }
+  assert.equal(
+    actual.env.BROKER_SECURITY_PROBE_NONCE,
+    undefined,
+    "constructor nonce escaped into a child"
+  );
   assert.ok(actual.env.TMPDIR?.startsWith("/"), "TMPDIR must be derived from the OS");
   assert.notEqual(actual.env.TMPDIR, hostileEnvironment.TMPDIR, "inherited TMPDIR escaped");
   for (const key of Object.keys(hostileEnvironment)) {
@@ -870,14 +964,22 @@ function assertEnvironment(fx, actual, expectedNumeric = {}) {
   for (const key of numericKeys) {
     assert.equal(actual.env[key], expectedNumeric[key], `${key} violated the numeric policy`);
   }
-  assertInjectionAbsent("while checking the runtime environment");
+  assertInjectionUnchanged("while checking the runtime environment");
 }
 
 function cleanup() {
   cleaningUp ??= (async () => {
     for (const socket of connections) socket.destroy();
     for (const broker of [...brokers]) await stop(broker);
+    let markerError;
+    try {
+      assertInjectionUnchanged("after all fixture processes stopped");
+      markersUnchanged = true;
+    } catch (error) {
+      markerError = error;
+    }
     rmSync(temporary, { recursive: true, force: true });
+    if (markerError) throw markerError;
   })();
   return cleaningUp;
 }
@@ -893,16 +995,28 @@ for (const [signal, status] of [
 
 try {
   compileFixtures();
-  await check("harmless DYLD injection fixture works before testing the boundary", () => {
-    command(compiledRuntime, [], {
-      input: "{}\n",
-      env: { ...cleanEnvironment, DYLD_INSERT_LIBRARIES: injectionLibrary },
-    });
-    assert.equal(existsSync(injectionMarker), true, "injection fixture did not load");
-    positiveControlRecords = markerRecords();
-    rmSync(injectionMarker);
-    assertInjectionAbsent("after removing the positive-control marker");
-  });
+  const plain = signedControl("plain-control", false);
+  const hardened = signedControl("hardened-control", true);
+  const positives = {};
+  const controls = {};
+  await check(
+    "the actual DYLD fixture loads in both signed plain control launch modes",
+    async () => {
+      for (const mode of ["sync", "detached"])
+        positives[mode] = await controlProbe(plain, mode, false);
+      positiveControlRecords = positives;
+    }
+  );
+  for (const mode of ["sync", "detached"])
+    controls[mode] = await controlProbe(hardened, mode, true);
+  const sipCommand = diagnosticCommand("/usr/bin/csrutil", ["status"]);
+  const sip =
+    sipCommand.status === 0 && !sipCommand.error && sipCommand.signal === null
+      ? ({
+          "System Integrity Protection status: enabled.": "enabled",
+          "System Integrity Protection status: disabled.": "disabled",
+        }[sipCommand.stdout.trim()] ?? "unknown")
+      : "unknown";
 
   const base = fixture();
   await check("sealed, hardened bundle returns a protocol 3 build fingerprint", () => {
@@ -935,16 +1049,45 @@ try {
       assertRefusedStartup(fixture({ entitlement }), entitlement);
   });
 
+  const brokerNonce = randomUUID();
   const inherited = {
     ...cleanEnvironment,
     ...hostileEnvironment,
     ...Object.fromEntries(numericKeys.map((key) => [key, "9999"])),
+    BROKER_SECURITY_PROBE_NONCE: brokerNonce,
   };
-  assertInjectionAbsent("before launching the broker");
+  assertInjectionUnchanged("before launching the broker");
+  const brokerSignature = signatureEvidence(base.app);
+  const beforeBroker = expectedInjectionSnapshot;
   const running = await start(base, inherited);
   try {
-    assertInjectionAbsent("after broker ping, before any child request");
-    await check("hardened launch ignores DYLD and all inherited overrides", async () => {
+    const brokerMarkerEvidence = newMarkerRecords(beforeBroker);
+    hostEvidence = {
+      platform: process.platform,
+      sip,
+      sipCommand,
+      positives,
+      controls,
+      broker: {
+        mode: "detached",
+        nonce: brokerNonce,
+        pid: running.child.pid,
+        parentPid: process.pid,
+        executable: base.executable,
+        signature: brokerSignature,
+        healthy: true,
+        records: brokerMarkerEvidence.records,
+      },
+    };
+    capability = classifyHostCapability(hostEvidence);
+    assert.notEqual(capability.state, "failure", capability.reasons.join("; "));
+    // Only records already bound to completed controls and this exact broker
+    // startup may enter the baseline. Every later byte change remains fatal.
+    expectedInjectionSnapshot = brokerMarkerEvidence.snapshot;
+    if (capability.state === "host-gap")
+      console.error(`COVERAGE GAP (exit 2 if other checks pass): ${capability.reasons.join("; ")}`);
+    else console.log(`HOST VERIFIED: ${capability.reasons.join("; ")}`);
+    await check("children discard all hostile inherited overrides, including DYLD", async () => {
       assertEnvironment(base, await request(base, connectRequest(base), true));
       assert.equal(statSync(base.socket).mode & 0o777, 0o600);
       assert.equal(statSync(base.directory).mode & 0o777, 0o700);
@@ -1239,10 +1382,11 @@ try {
     });
   }
   assertNoUnexpectedExecution();
-  console.log(`PASS: ${checks} isolated native broker security checks.`);
+  assertInjectionUnchanged("after all regression checks");
+  checksCompleted = true;
 } catch (error) {
   console.error(error.stack ?? error);
-  process.exitCode = 1;
+  failures.push(error.stack ?? String(error));
   try {
     await reportFailureDiagnostics();
   } catch (diagnosticError) {
@@ -1251,5 +1395,51 @@ try {
     );
   }
 } finally {
-  await cleanup();
+  try {
+    await cleanup();
+    cleanupSucceeded = true;
+  } catch (error) {
+    failures.push(`Cleanup failed: ${error.stack ?? error}`);
+  }
 }
+
+const finish = () =>
+  finalizeNativeResult(capability, {
+    failures,
+    checksCompleted,
+    cleanupSucceeded,
+    markersUnchanged,
+  });
+const report = {
+  schemaVersion: 1,
+  sourceSha256,
+  node: process.version,
+  architecture: process.arch,
+  result: finish(),
+  checks: { passed: checks, completed: checksCompleted },
+  cleanupSucceeded,
+  markersUnchanged,
+  hostEvidence,
+  failures,
+  reportPath: reportPath ?? null,
+  reportWritten: reportPath ? true : null,
+};
+if (reportPath) {
+  try {
+    writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
+  } catch (error) {
+    failures.push(`Report write failed: ${error.message}`);
+    report.reportWritten = false;
+    report.result = finish();
+  }
+}
+const label = {
+  verified: "PASS",
+  "host-gap": "COVERAGE GAP — NOT VERIFIED",
+  failure: "FAIL — NOT VERIFIED",
+}[report.result.state];
+console.log(
+  `${label}: ${checks} regression checks passed; host enforcement ${report.result.state}; exit ${report.result.exitCode}.`
+);
+console.log(JSON.stringify(report, null, 2));
+process.exitCode = report.result.exitCode;
