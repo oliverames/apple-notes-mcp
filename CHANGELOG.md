@@ -10,6 +10,10 @@
   immediately before its move. A scope mismatch reports a failure for that
   exact note ID and leaves it unchanged while the other items continue;
   successful moves still verify the note's actual destination folder ID.
+  Batch error certainty is derived from every item's outcome: a scope
+  refusal cannot make a separate move/readback failure claim no writes.
+  Unknown outcomes remain indeterminate and require exact-ID readback
+  before retrying.
 
 ## [2.14.3] - 2026-10-08
 

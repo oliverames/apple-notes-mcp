@@ -87,7 +87,13 @@ describe("batch moves check each note's live scope in its own handler", () => {
   ])("maps a per-note refusal and preserves the following successful item: %s", (reason) => {
     exec.mockReturnValue({ success: true, output: `SAFETY_SCOPE:${reason}${R}ok${R}` });
     expect(manager.batchMoveNotes([ID1, ID2], "Archive", undefined, { ifFolderId: F1 })).toEqual([
-      { id: ID1, success: false, error: scopeConflictMessage(reason) },
+      {
+        id: ID1,
+        success: false,
+        error: scopeConflictMessage(reason, "batch-move"),
+        committed: false,
+        indeterminate: false,
+      },
       { id: ID2, success: true },
     ]);
     expect(exec).toHaveBeenCalledTimes(1);
@@ -141,7 +147,8 @@ describe("batch moves check each note's live scope in its own handler", () => {
     });
     expect(results.map((r) => r.id)).toEqual([ID1, invalidId, paddedId, ID3]);
     expect(results.map((r) => r.success)).toEqual([false, false, true, false]);
-    expect(results[0].error).toBe(scopeConflictMessage(reason));
+    expect(results[0].error).toBe(scopeConflictMessage(reason, "batch-move"));
+    expect(results[0]).toMatchObject({ committed: false, indeterminate: false });
     expect(results[1].error).toMatch(/ICNote/);
     expect(results[3].error).toBe("Destination folder verification failed");
     expect(exec.mock.calls[0][0]).not.toContain(invalidId);
@@ -156,11 +163,22 @@ describe("batch moves check each note's live scope in its own handler", () => {
     });
     expect(manager.batchMoveNotes(ids, "Archive")).toEqual([
       { id: ID1, success: true },
-      { id: ID1, success: false, error: "Note not found" },
-      { id: ID2, success: false, error: "Note is password-protected" },
-      { id: ID3, success: false, error: "Move failed" },
-      { id: ID1, success: false, error: "Destination folder verification failed" },
-      { id: ID2, success: false, error: "Unknown error" },
+      { id: ID1, success: false, error: "Note not found", committed: false, indeterminate: false },
+      {
+        id: ID2,
+        success: false,
+        error: "Note is password-protected",
+        committed: false,
+        indeterminate: false,
+      },
+      { id: ID3, success: false, error: "Move failed", indeterminate: true },
+      {
+        id: ID1,
+        success: false,
+        error: "Destination folder verification failed",
+        indeterminate: true,
+      },
+      { id: ID2, success: false, error: "Unknown error", indeterminate: true },
       { id: ID3, success: true },
     ]);
   });
@@ -189,8 +207,30 @@ describe("batch moves check each note's live scope in its own handler", () => {
   it("preserves whole-script failures for every runnable note", () => {
     exec.mockReturnValue({ success: false, output: "", error: "Destination unavailable" });
     expect(manager.batchMoveNotes([ID1, ID2], "Archive", undefined, { ifFolderId: F1 })).toEqual([
-      { id: ID1, success: false, error: "Destination unavailable" },
-      { id: ID2, success: false, error: "Destination unavailable" },
+      { id: ID1, success: false, error: "Destination unavailable", indeterminate: true },
+      { id: ID2, success: false, error: "Destination unavailable", indeterminate: true },
     ]);
+  });
+
+  it("does not infer prewrite certainty from whole-script scope error prose", () => {
+    const error = scopeConflictMessage("the note is not in the expected folder");
+    exec.mockReturnValue({ success: false, output: "", error });
+    const results = manager.batchMoveNotes([ID1, ID2], "Archive", undefined, { ifFolderId: F1 });
+    for (const result of results) {
+      expect(result).toMatchObject({ success: false, error, indeterminate: true });
+      expect(result).not.toHaveProperty("committed");
+    }
+  });
+
+  it("keeps missing status rows uncertain rather than claiming no move", () => {
+    exec.mockReturnValue({ success: true, output: "missing" + R });
+    const results = manager.batchMoveNotes([ID1, ID2], "Archive");
+    expect(results[0]).toMatchObject({ committed: false, indeterminate: false });
+    expect(results[1]).toEqual({
+      id: ID2,
+      success: false,
+      error: "Unknown error",
+      indeterminate: true,
+    });
   });
 });

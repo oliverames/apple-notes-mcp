@@ -92,6 +92,7 @@ import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
 import { withJsonSchema2020_12 } from "@/utils/jsonSchemaDialect.js";
 import {
   CodedError,
+  classifyError,
   errorResult,
   installSdkErrorCodes,
   unavailableWriteEnvelope,
@@ -4109,15 +4110,28 @@ registerTool(
       }
     }
 
-    return succeeded > 0
-      ? successResponse(lines.join("\n"), {
-          ok: failed === 0,
-          folder,
-          succeeded,
-          failed,
-          results,
-        })
-      : errorResponse(lines.join("\n"));
+    if (succeeded > 0)
+      return successResponse(lines.join("\n"), {
+        ok: failed === 0,
+        folder,
+        succeeded,
+        failed,
+        results,
+      });
+
+    // Certainty belongs to the entire batch, not whichever row's prose the
+    // classifier matches first. Unknown or post-dispatch failures may follow
+    // a move even when a different item was refused by a scope guard.
+    const allRefusedBeforeMove =
+      results.length === ids.length &&
+      results.every((result) => result.committed === false && result.indeterminate === false);
+    if (!allRefusedBeforeMove)
+      lines.push("\nBatch move outcome is uncertain; read each exact note ID before retrying.");
+    const message = lines.join("\n");
+    const envelope: ErrorEnvelope = allRefusedBeforeMove
+      ? { ...classifyError(message), committed: false, indeterminate: false }
+      : { code: "verification_failed", indeterminate: true };
+    return errorResponse(message, new CodedError(message, envelope));
   }, "Error performing batch move")
 );
 

@@ -93,7 +93,9 @@ describe("registered batch-move-notes scope contract", () => {
       {
         id: ID1,
         success: false,
-        error: scopeConflictMessage("the note is not in the expected folder"),
+        error: scopeConflictMessage("the note is not in the expected folder", "batch-move"),
+        committed: false,
+        indeterminate: false,
       },
       { id: ID2, success: true },
     ];
@@ -114,7 +116,9 @@ describe("registered batch-move-notes scope contract", () => {
       {
         id: ID1,
         success: false,
-        error: scopeConflictMessage("the destination is inside a forbidden folder"),
+        error: scopeConflictMessage("the destination is inside a forbidden folder", "batch-move"),
+        committed: false,
+        indeterminate: false,
       },
     ]);
     const response = await call({
@@ -125,6 +129,98 @@ describe("registered batch-move-notes scope contract", () => {
     expect(response.isError).toBe(true);
     expect(response.content[0].text).toContain("0 succeeded, 1 failed");
     expect(response.content[0].text).toContain(`${ID1}: Scope guard failed: the destination`);
+    expect(response.structuredContent).toMatchObject({
+      code: "revision_conflict",
+      committed: false,
+      indeterminate: false,
+    });
+  });
+
+  it.each(["Destination folder verification failed", "Move failed", "Unknown error"])(
+    "keeps scope refusal plus a post-move/unknown failure uncertain: %s",
+    async (error) => {
+      manager.batchMoveNotes.mockReturnValue([
+        {
+          id: ID1,
+          success: false,
+          error: scopeConflictMessage("the note is not in the expected folder", "batch-move"),
+          committed: false,
+          indeterminate: false,
+        },
+        { id: ID2, success: false, error, indeterminate: true },
+      ]);
+      const response = await call({ ids: [ID1, ID2], folder: "Archive", ifFolderId: F1 });
+      expect(response.isError).toBe(true);
+      expect(response.structuredContent).toMatchObject({
+        code: "verification_failed",
+        indeterminate: true,
+      });
+      expect(response.structuredContent).not.toHaveProperty("committed");
+      expect(response.content[0].text).toContain(`${ID1}: Scope guard failed:`);
+      expect(response.content[0].text).toContain(`${ID2}: ${error}`);
+      expect(response.content[0].text).toContain("Batch move outcome is uncertain");
+      expect(response.content[0].text).not.toContain("Nothing was changed");
+    }
+  );
+
+  it("keeps a batch of only proven prewrite refusals uncommitted", async () => {
+    manager.batchMoveNotes.mockReturnValue([
+      { id: ID1, success: false, error: "Note not found", committed: false, indeterminate: false },
+      {
+        id: ID2,
+        success: false,
+        error: "Note is password-protected",
+        committed: false,
+        indeterminate: false,
+      },
+    ]);
+    const response = await call({ ids: [ID1, ID2], folder: "Archive" });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      code: "not_found",
+      committed: false,
+      indeterminate: false,
+    });
+    expect(response.content[0].text).not.toContain("outcome is uncertain");
+  });
+
+  it("does not promote whole-script scope prose to an uncommitted batch", async () => {
+    manager.batchMoveNotes.mockReturnValue([
+      {
+        id: ID1,
+        success: false,
+        error: "Scope guard failed: a reported script error",
+        indeterminate: true,
+      },
+      {
+        id: ID2,
+        success: false,
+        error: "Scope guard failed: a reported script error",
+        indeterminate: true,
+      },
+    ]);
+    const response = await call({ ids: [ID1, ID2], folder: "Archive" });
+    expect(response.structuredContent).toMatchObject({
+      code: "verification_failed",
+      indeterminate: true,
+    });
+    expect(response.structuredContent).not.toHaveProperty("committed");
+  });
+
+  it("refuses to infer certainty when manager rows lack outcome metadata", async () => {
+    manager.batchMoveNotes.mockReturnValue([{ id: ID1, success: false, error: "Note not found" }]);
+    const response = await call({ ids: [ID1], folder: "Archive" });
+    expect(response.structuredContent).toMatchObject({ indeterminate: true });
+    expect(response.structuredContent).not.toHaveProperty("committed");
+  });
+
+  it("does not claim a complete prewrite refusal from an incomplete result list", async () => {
+    manager.batchMoveNotes.mockReturnValue([
+      { id: ID1, success: false, error: "Note not found", committed: false, indeterminate: false },
+    ]);
+    const response = await call({ ids: [ID1, ID2], folder: "Archive" });
+    expect(response.structuredContent).toMatchObject({ indeterminate: true });
+    expect(response.structuredContent).not.toHaveProperty("committed");
   });
 
   it("preserves unguarded calls and empty forbidden lists", async () => {

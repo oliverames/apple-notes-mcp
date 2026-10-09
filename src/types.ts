@@ -546,6 +546,17 @@ export interface BatchMoveNotesParams extends ScopeGuard {
   account?: string;
 }
 
+/** Per-ID batch move outcome; certainty is set at the manager's outcome source. */
+export interface BatchMoveResult {
+  id: string;
+  success: boolean;
+  error?: string;
+  /** false only when this item's move was refused before dispatch */
+  committed?: false;
+  /** true when dispatch/readback or the whole script did not establish the outcome */
+  indeterminate?: boolean;
+}
+
 // =============================================================================
 // Health Check
 // =============================================================================

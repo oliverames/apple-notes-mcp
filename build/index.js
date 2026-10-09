@@ -42927,8 +42927,9 @@ function parseScopeFailure(output) {
   const trimmed = output.trim();
   return trimmed.startsWith(`${SCOPE_MARKER}:`) ? trimmed.slice(SCOPE_MARKER.length + 1) : null;
 }
-function scopeConflictMessage(reason) {
-  return `Scope guard failed: ${reason}. Nothing was changed; read the note's current folder and review before retrying.`;
+function scopeConflictMessage(reason, operation) {
+  const refusal = operation === "batch-move" ? "This note's move was refused" : "Nothing was changed";
+  return `Scope guard failed: ${reason}. ${refusal}; read the note's current folder and review before retrying.`;
 }
 
 // src/services/appleNotesManager.ts
@@ -45644,8 +45645,8 @@ var AppleNotesManager = class {
   /**
    * Result of a batch operation on a single item.
    */
-  createBatchResult(id2, success, error2) {
-    return error2 ? { id: id2, success, error: error2 } : { id: id2, success };
+  createBatchResult(id2, success, error2, certainty) {
+    return { ...error2 ? { id: id2, success, error: error2 } : { id: id2, success }, ...certainty };
   }
   /**
    * Maps a per-item status token emitted by a batch AppleScript loop to a
@@ -45653,26 +45654,39 @@ var AppleNotesManager = class {
    * per-note implementation. See {@link batchMoveNotes}.
    */
   mapBatchStatus(id2, status, op) {
+    const beforeMove = op === "move" ? { committed: false, indeterminate: false } : void 0;
+    const uncertainMove = op === "move" ? { indeterminate: true } : void 0;
     const scopeFailure = parseScopeFailure(status ?? "");
     if (scopeFailure !== null)
-      return this.createBatchResult(id2, false, scopeConflictMessage(scopeFailure));
+      return this.createBatchResult(
+        id2,
+        false,
+        scopeConflictMessage(scopeFailure, op === "move" ? "batch-move" : void 0),
+        beforeMove
+      );
     switch (status) {
       case "ok":
         return this.createBatchResult(id2, true);
       case "pw":
-        return this.createBatchResult(id2, false, "Note is password-protected");
+        return this.createBatchResult(id2, false, "Note is password-protected", beforeMove);
       case "missing":
-        return this.createBatchResult(id2, false, "Note not found");
+        return this.createBatchResult(id2, false, "Note not found", beforeMove);
       case "fail":
         return this.createBatchResult(
           id2,
           false,
-          op === "delete" ? "Deletion failed" : "Move failed"
+          op === "delete" ? "Deletion failed" : "Move failed",
+          uncertainMove
         );
       case "wrongfolder":
-        return this.createBatchResult(id2, false, "Destination folder verification failed");
+        return this.createBatchResult(
+          id2,
+          false,
+          "Destination folder verification failed",
+          uncertainMove
+        );
       default:
-        return this.createBatchResult(id2, false, "Unknown error");
+        return this.createBatchResult(id2, false, "Unknown error", uncertainMove);
     }
   }
   /**
@@ -45726,7 +45740,8 @@ var AppleNotesManager = class {
         results[i] = this.createBatchResult(
           id2,
           false,
-          e instanceof Error ? e.message : "Invalid note ID"
+          e instanceof Error ? e.message : "Invalid note ID",
+          { committed: false, indeterminate: false }
         );
       }
     });
@@ -45774,7 +45789,8 @@ var AppleNotesManager = class {
           results[r.index] = this.createBatchResult(
             ids[r.index],
             false,
-            res.error ?? "Batch move failed"
+            res.error ?? "Batch move failed",
+            { indeterminate: true }
           );
         }
       } else {
@@ -64765,13 +64781,20 @@ registerTool(
         lines.push(`  - ${result.id}: ${result.error}`);
       }
     }
-    return succeeded > 0 ? successResponse(lines.join("\n"), {
-      ok: failed === 0,
-      folder,
-      succeeded,
-      failed,
-      results
-    }) : errorResponse(lines.join("\n"));
+    if (succeeded > 0)
+      return successResponse(lines.join("\n"), {
+        ok: failed === 0,
+        folder,
+        succeeded,
+        failed,
+        results
+      });
+    const allRefusedBeforeMove = results.length === ids.length && results.every((result) => result.committed === false && result.indeterminate === false);
+    if (!allRefusedBeforeMove)
+      lines.push("\nBatch move outcome is uncertain; read each exact note ID before retrying.");
+    const message = lines.join("\n");
+    const envelope = allRefusedBeforeMove ? { ...classifyError(message), committed: false, indeterminate: false } : { code: "verification_failed", indeterminate: true };
+    return errorResponse(message, new CodedError(message, envelope));
   }, "Error performing batch move")
 );
 registerTool(

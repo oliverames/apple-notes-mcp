@@ -1802,6 +1802,13 @@ after the note's actual container folder ID matches the destination folder ID.
 If every note fails, the call returns its existing error response; the exact
 note IDs and reasons remain in the failure text.
 
+Failure rows carry `committed: false, indeterminate: false` only when that
+item was refused before its move. Move/readback failures and an unknown
+whole-script outcome carry `indeterminate: true`, with `committed` omitted.
+If every item fails, the batch reports `committed: false` only when every row
+is a proven pre-move refusal. Otherwise its error result is indeterminate;
+read each exact note ID before retrying, even if another row has a scope refusal.
+
 **Example - move only notes that are still in the reviewed inbox:**
 ```json
 {
