@@ -75,6 +75,17 @@ test("fixture is deterministic, accepts no external input, and returns fresh byt
   assert.throws(() => buildSyntheticNotePayload({ text: "override" }), /accepts no input/);
 });
 
+test("canonical gzip bytes retain the native allowlist across Node and zlib versions", () => {
+  assert.equal(
+    createHash("sha256").update(buildSyntheticNotePayload()).digest("hex"),
+    "ac93f271962eddbc6511ce12064ae1ac423e91546c8eff356a9ecddc765fa0d1"
+  );
+  assert.equal(
+    createHash("sha256").update(buildSyntheticAttributeFreePayload()).digest("hex"),
+    "6bb02b4ffb24959c11f54849f86996f28bb3d8d6fcd53cd5b7bb2d106043a45c"
+  );
+});
+
 test("native receipt fixture pins precisely the public generated payload", () => {
   const source = readFileSync(
     new URL("../../test/native/synthetic-notes-store.m", import.meta.url),

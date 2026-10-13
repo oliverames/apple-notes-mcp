@@ -3,7 +3,7 @@
 // This encodes the complete small topotext graph, including character/attribute
 // clocks and child indexes; the read-only decoder's minimal test graph is not
 // sufficient evidence that NotesShared can edit a document.
-import { gzipSync } from "node:zlib";
+import { gunzipSync } from "node:zlib";
 
 export const text =
   "PUBLIC SYNTHETIC WRITER FIXTURE\n" +
@@ -43,6 +43,13 @@ export function buildSyntheticAttributeFreePayload(...inputs) {
   if (inputs.length) throw new TypeError("Synthetic payload construction accepts no input");
   return buildPublicPayload(false);
 }
+
+// Canonical gzip encodings of the public fields constructed below. zlib releases
+// can encode identical input as different valid DEFLATE streams. Pin the bytes
+// accepted by the native fixture and verify their complete decoded contents on
+// every call; these constants never come from a saved Notes document.
+const styledGzip = "H4sIAAAAAAAC/32Qy06DQBSGmV4nsxGINg3eJqwIC17AdEFNGzHGmJbGuiRlaidBMDBtdGd9By/P4BN0pyu3voMvoqdTrC6IZ3P++f5z/mHAiv5ewYqqGK8VfYHOBu0T75D2L079o44P6rzn+Z0e7XpDf9DrEDeK6CiJBYtFRoM4pDwEycecpRnlMRUTntE4EYwGKaOXLGZpIFjoEH9tLNcDHi9PdJqxlIaBCGgCnc34iP1NdEgXOAwto3mWRMssOuY3YgrpsyDisMuT2CGGSuQr4B2yW0gSBKRlyG6VctJSh5Igq2xopArqEQ75UCVHTz+oZFVz9IxUmk/VcvTwO1U3GgTDzV9QG/AVa23ukm2iarJcbb4Sml7GC6SXcNk+wC19s4mOVVNW27xfCdPYJw3Hvb6OWP82E+xq4HXhz7WTKNxSlDe3iSxkN/GweNnew6jYmdx9frzU7B1c1/V/XKPQnUu3AdkF7jccmDzzSwIAAA==";
+const attributeFreeGzip = "H4sIAAAAAAAC/02Pz0rEMBDGm3bXDbnY9uAhIgyeioe+QQ+rdLEgIrWL9Ri2WQ2UFNrs4tW7N/HPo+zb6aTG1YFhvvnlm0lCvfg1oF7o8Zcg3pGb5flVcQG399fVZV6huiuLKi9hUdTVsszZvG1h1WkjtRlA6AZUg1KtlewHUBrMoxpAd0aC6CU8SC17YWSTsmp/YMeF0raDzSB7aIQR0GGVW7WS/zembIEcTXa1GrrW7oK1ejIb3L4VrcJZ1emU8ZBN7C/wH2NNyEgIkoyPNfEdycJ6JCQJeMSmqN6xcaaJQx+/yE+mDn2SEJzrwKG3P9eMHzGKN39hHOIr9vr0hB2zMBpjHj3/iCgO6I7EPg3OfJph1pgEc4bJrf4Goxi7KJgBAAA=";
 
 function buildPublicPayload(styled) {
   // owner, character counter, length, attribute owner/counter, child index.
@@ -110,9 +117,10 @@ function buildPublicPayload(styled) {
     ...attributeRuns
   );
   const version = concat(number(1, 0), number(2, 0), bytes(3, string));
-  // Node's gzip encoder emits zero mtime and no filename/comment. Normalize the
-  // informational OS byte so the header carries no host platform information.
-  const compressed = gzipSync(concat(number(1, 0), bytes(2, version)), { level: 9 });
-  compressed[9] = 255;
+  const publicDocument = concat(number(1, 0), bytes(2, version));
+  const compressed = Buffer.from(styled ? styledGzip : attributeFreeGzip, "base64");
+  if (!gunzipSync(compressed).equals(publicDocument)) {
+    throw new Error("Canonical fixture encoding does not match the generated public fields");
+  }
   return compressed;
 }
