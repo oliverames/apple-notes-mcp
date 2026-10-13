@@ -42,6 +42,13 @@ static BOOL IsFixedPublicPayload(NSData *payload) {
   for (NSUInteger i = 0; i < sizeof(digest); i++) [hex appendFormat:@"%02x", digest[i]];
   return [hex isEqualToString:@"ac93f271962eddbc6511ce12064ae1ac423e91546c8eff356a9ecddc765fa0d1"];
 }
+static BOOL IsFixedAttributeFreePayload(NSData *payload) {
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CC_SHA256(payload.bytes, (CC_LONG)payload.length, digest);
+  NSMutableString *hex = [NSMutableString string];
+  for (NSUInteger i = 0; i < sizeof(digest); i++) [hex appendFormat:@"%02x", digest[i]];
+  return [hex isEqualToString:@"6bb02b4ffb24959c11f54849f86996f28bb3d8d6fcd53cd5b7bb2d106043a45c"];
+}
 static NSManagedObject *HiddenInline(NSManagedObjectContext *context, NSManagedObject *note, NSString *identifier) {
   NSManagedObject *row = Insert(context, @"ICInlineAttachment");
   Set(row, @"identifier", identifier);
@@ -58,7 +65,8 @@ int main(int argc, const char **argv) {
   @autoreleasepool {
     @try {
       NSString *mode = argc == 6 ? @(argv[5]) : @"";
-      BOOL receiptFixture = [mode isEqualToString:@"--receipt-fixture"];
+      BOOL attributeFreeFixture = [mode isEqualToString:@"--attribute-free-receipt-fixture"];
+      BOOL receiptFixture = [mode isEqualToString:@"--receipt-fixture"] || attributeFreeFixture;
       BOOL mutate = [@[@"--inline-token", @"--inline-tombstone", @"--inline-add-hidden", @"--inline-restore"] containsObject:mode];
       BOOL scopeFixture = [mode isEqualToString:@"--scope-fixture"] || receiptFixture;
       if (argc != 5 && !(argc == 6 && (scopeFixture || mutate))) return 2;
@@ -88,7 +96,9 @@ int main(int argc, const char **argv) {
       if (!payload.length || payload.length > 1024 * 1024) return 4;
       // Receipt/drift modes may only consume the deterministic public seed.
       // Mutation modes never apply these bytes to the existing note body.
-      if ((receiptFixture || mutate) && !IsFixedPublicPayload(payload)) return 4;
+      if (attributeFreeFixture && !IsFixedAttributeFreePayload(payload)) return 4;
+      if ((receiptFixture || mutate) && !attributeFreeFixture && !IsFixedPublicPayload(payload) &&
+          !(mutate && IsFixedAttributeFreePayload(payload))) return 4;
       if (mutate) {
         NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:storePath];
         NSData *header = [file readDataOfLength:20];
@@ -111,7 +121,7 @@ int main(int argc, const char **argv) {
         // Fresh generation closes a journal-free baseline. Fixed drift must
         // retain the WAL mode already established by the production writer,
         // rather than make its next refusal reopen/convert the database.
-        NSSQLitePragmasOption: @{ @"journal_mode": mutate ? @"WAL" : @"DELETE" },
+        NSSQLitePragmasOption: @{ @"journal_mode": (mutate || attributeFreeFixture) ? @"WAL" : @"DELETE" },
       };
       NSError *error = nil;
       NSPersistentStore *store = [coordinator addPersistentStoreWithType:NSSQLiteStoreType configuration:nil

@@ -9,6 +9,7 @@ on:
       - "native/private-helper/content-preservation.h"
       - "test/native/synthetic-notes-store.m"
       - "scripts/test-private-writer-synthetic-store.mjs"
+      - "scripts/test-private-writer-compose-receipt-synthetic-store.mjs"
       - "scripts/test-private-writer-replica-identity-synthetic.mjs"
       - "scripts/test-private-writer-replica-identity-copy-store.sh"
       - "scripts/prepare-replica-notes-app-control.mjs"
@@ -46,6 +47,7 @@ jobs:
       - name: Check evidence entrypoint syntax
         run: |
           node --check scripts/test-private-writer-synthetic-store.mjs
+          node --check scripts/test-private-writer-compose-receipt-synthetic-store.mjs
           node --check scripts/test-private-writer-replica-identity-synthetic.mjs
           node --check scripts/prepare-replica-notes-app-control.mjs
           bash -n scripts/test-private-writer-replica-identity-copy-store.sh
@@ -53,6 +55,8 @@ jobs:
         run: node --test scripts/lib/synthetic-note-payload.test.mjs scripts/lib/replica-identity-evidence.test.mjs scripts/lib/synthetic-fixture-files.test.mjs scripts/lib/synthetic-store-snapshot.test.mjs scripts/lib/writer-source-closure.test.mjs
       - name: Test actual native writer with generated data in a denying sandbox
         run: node scripts/test-private-writer-synthetic-store.mjs
+      - name: Probe c2 receipts on a separate fixed attribute-free public target
+        run: node scripts/test-private-writer-compose-receipt-synthetic-store.mjs
       # Never upload the generated DB, preferences or native reserialized data.
       # Public source contains literal test identities only; runtime artifacts
       # stay private until independently reviewed.

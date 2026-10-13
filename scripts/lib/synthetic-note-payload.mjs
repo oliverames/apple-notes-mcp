@@ -35,7 +35,16 @@ const clock = (replica, counter) => concat(number(1, replica), number(2, counter
 /** Return a fresh gzip document built entirely from public fixture constants. */
 export function buildSyntheticNotePayload(...inputs) {
   if (inputs.length) throw new TypeError("Synthetic payload construction accepts no input");
+  return buildPublicPayload(true);
+}
 
+/** Same public nonempty body/topology, with length-only attribute dictionaries. */
+export function buildSyntheticAttributeFreePayload(...inputs) {
+  if (inputs.length) throw new TypeError("Synthetic payload construction accepts no input");
+  return buildPublicPayload(false);
+}
+
+function buildPublicPayload(styled) {
   // owner, character counter, length, attribute owner/counter, child index.
   // Replica zero at the two boundaries is structural, not a clock-table owner.
   const topology = [
@@ -75,6 +84,7 @@ export function buildSyntheticNotePayload(...inputs) {
     number(3, 1)
   );
   const attributeRuns = [61, 88, 1, 7, 26, 1].map((length, index) => {
+    if (!styled) return bytes(5, number(1, length));
     const style = concat(
       index < 3 ? number(3, 1) : Buffer.alloc(0),
       bytes(9, uuid(paragraphIdentifier))
