@@ -30,11 +30,13 @@ test("root symlinks and nonfixture roots are rejected without traversal", () => 
 });
 
 test("native equivalent boundary uses POSIX canonical paths and rejects root symlinks", () => {
-  const source = readFileSync(new URL("../../test/native/synthetic-native-layout-extended.m", import.meta.url), "utf8");
+  for (const path of ["../../test/native/synthetic-native-layout.m", "../../test/native/synthetic-native-layout-extended.m"]) {
+  const source = readFileSync(new URL(path, import.meta.url), "utf8");
   assert.ok(source.includes("EquivalentFixtureRoots(root, Metadata(resolvedRoot))"));
   assert.ok(source.includes("realpath(root.fileSystemRepresentation, resolvedRoot)"));
   assert.ok(source.includes("lstat(root.fileSystemRepresentation, &rootStat)"));
   assert.ok(source.includes("S_ISDIR(rootStat.st_mode)"));
   assert.ok(!source.includes("stringByResolvingSymlinksInPath"));
   assert.ok(source.includes('[@[ @"/tmp", @"/private/tmp" ] containsObject:parent]'));
+  }
 });
