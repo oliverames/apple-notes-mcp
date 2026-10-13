@@ -342,9 +342,10 @@ export function defaultSidecarDir(output: string): string {
  * `<stem>.assets`) and linked by relative URL.
  *
  * Classic PencilKit drawings are placed as SVG, decoded through the public
- * native helper, unless `vectorDrawings` is false. Any drawing that cannot be
- * decoded or placed falls back to Notes' raster rendering; it never fails the
- * export.
+ * native helper, only when `vectorDrawings` is true; by default every drawing
+ * keeps Notes' raster rendering and the helper is never run. A drawing that
+ * cannot be decoded or placed falls back to the raster rendering; it never
+ * fails the export.
  */
 export function exportNotesHtml(
   request: NotesExportRequest,
@@ -375,9 +376,9 @@ export function exportNotesHtml(
     ? new SidecarWriter(assetsDir, dirname(output))
     : new DataUrlWriter();
   const vector =
-    request.vectorDrawings === false
-      ? undefined
-      : prepareVectorDrawings(notes, writer, deps.readDrawings);
+    request.vectorDrawings === true
+      ? prepareVectorDrawings(notes, writer, deps.readDrawings)
+      : undefined;
   const ctx: ExportContext = {
     stats: emptyStats(),
     writer,

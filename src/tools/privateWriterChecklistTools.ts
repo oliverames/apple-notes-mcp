@@ -37,23 +37,30 @@ import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriter
 export function registerPrivateWriterChecklistTools(
   server: McpServer,
   manager: AppleNotesManager,
-  depsFactory: () => WriterToolDeps = defaultWriterToolDeps
+  depsFactory: () => WriterToolDeps = defaultWriterToolDeps,
+  { includeReadState = true }: { includeReadState?: boolean } = {}
 ) {
-  registerWriterTool(
-    server,
-    depsFactory,
-    "native-checklist-state",
-    "Use when: you need a note's native checklist items with their stable todo identifiers and done state, and the note's revision token, before native-set-checklist-item.\n" +
-      "Returns: items (todoIdentifier as 32 hex digits, uuid, index, done, text, line and styled-character offsets, contiguous/consistent flags), total, checked, and `revision` (pass it as ifRevision).\n" +
-      "Do not use when: the writer is off; get-checklist-state and get-native-objects read the same state from the database without it.\n" +
-      "Safety: read-only; the writer opens the store with Core Data's read-only option. Runs through the private writer, so it needs APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
-    {
-      identifier: notesUuid.optional().describe("Notes UUID (the notes://showNote identifier)"),
-      id: coreDataId.optional().describe("x-coredata note id; resolved to a UUID via the database"),
-    },
-    { readOnlyHint: true, openWorldHint: false },
-    (args, deps) => ({ ...readNativeChecklist(resolveIdentifier(manager, args), deps.writer) })
-  );
+  // The full server already provides this tool through the read-only helper.
+  // Standalone registrations can retain the writer-backed reader for compatibility.
+  if (includeReadState) {
+    registerWriterTool(
+      server,
+      depsFactory,
+      "native-checklist-state",
+      "Use when: you need a note's native checklist items with their stable todo identifiers and done state, and the note's revision token, before native-set-checklist-item.\n" +
+        "Returns: items (todoIdentifier as 32 hex digits, uuid, index, done, text, line and styled-character offsets, contiguous/consistent flags), total, checked, and `revision` (pass it as ifRevision).\n" +
+        "Do not use when: the writer is off; get-checklist-state and get-native-objects read the same state from the database without it.\n" +
+        "Safety: read-only; the writer opens the store with Core Data's read-only option. Runs through the private writer, so it needs APPLE_NOTES_MCP_ENABLE_PRIVATE=1, APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1, and a built writer (setup --native-writer).",
+      {
+        identifier: notesUuid.optional().describe("Notes UUID (the notes://showNote identifier)"),
+        id: coreDataId
+          .optional()
+          .describe("x-coredata note id; resolved to a UUID via the database"),
+      },
+      { readOnlyHint: true, openWorldHint: false },
+      (args, deps) => ({ ...readNativeChecklist(resolveIdentifier(manager, args), deps.writer) })
+    );
+  }
 
   registerWriterTool(
     server,

@@ -2,8 +2,8 @@
  * Operations the anchor tools and the resolver service share: record anchors
  * for paragraphs just read, resolve a stored anchor (optionally refreshing it
  * or asking an installed writer to re-mint its paragraph ID), and prune stale
- * anchors. Notes data is only read; the registry file is the only thing
- * written.
+ * anchors. Ordinary resolution writes only the registry; an explicit remint
+ * can update Notes through the separately enabled private writer.
  *
  * @module services/paragraphAnchorOps
  */

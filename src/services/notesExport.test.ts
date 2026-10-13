@@ -372,7 +372,10 @@ describe("exportNotesHtml", () => {
   it("embeds classic drawings as SVG and keeps Notes' PNG for Paper", () => {
     const output = join(dir, "html", "vector.html");
     const read = vi.fn((id: string) => drawings(id, {}));
-    const receipt = exportNotesHtml({ id: ID(4), outputPath: output }, drawingDeps(read));
+    const receipt = exportNotesHtml(
+      { id: ID(4), outputPath: output, vectorDrawings: true },
+      drawingDeps(read)
+    );
     expect(read).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledWith(ID(4));
     expect(receipt).toMatchObject({ embedded: 2, vectorDrawings: { rendered: 1, fallback: 0 } });
@@ -387,7 +390,7 @@ describe("exportNotesHtml", () => {
   it("writes drawing SVG files to the sidecar directory", () => {
     const output = join(dir, "html", "vector-side.html");
     const receipt = exportNotesHtml(
-      { id: ID(4), outputPath: output, embedAssets: false },
+      { id: ID(4), outputPath: output, embedAssets: false, vectorDrawings: true },
       drawingDeps((id) => drawings(id, {}))
     );
     expect(receipt).toMatchObject({ assets: { files: 2 }, vectorDrawings: { rendered: 1 } });
@@ -395,8 +398,20 @@ describe("exportNotesHtml", () => {
     expect(readFileSync(output, "utf8")).toContain('src="vector-side.assets/Drawing.svg"');
   });
 
-  it("keeps every PNG when vectorDrawings is false", () => {
+  it("keeps every PNG, and never runs the helper, by default", () => {
     const output = join(dir, "html", "raster.html");
+    const read = vi.fn((id: string) => drawings(id, {}));
+    const receipt = exportNotesHtml({ id: ID(4), outputPath: output }, drawingDeps(read));
+    expect(read).not.toHaveBeenCalled();
+    expect(receipt.vectorDrawings).toBeUndefined();
+    expect(receipt.stats).toMatchObject({ attachments: 2, placed: 2 });
+    const html = readFileSync(output, "utf8");
+    expect(html).not.toContain("image/svg+xml");
+    expect(html.match(/src="data:image\/png;base64,/g)).toHaveLength(2);
+  });
+
+  it("keeps every PNG when vectorDrawings is false", () => {
+    const output = join(dir, "html", "raster-false.html");
     const read = vi.fn((id: string) => drawings(id, {}));
     const receipt = exportNotesHtml(
       { id: ID(4), outputPath: output, vectorDrawings: false },
@@ -410,7 +425,7 @@ describe("exportNotesHtml", () => {
   it("omits the vector summary when no note has a classic drawing", () => {
     const read = vi.fn((id: string) => drawings(id, {}));
     const receipt = exportNotesHtml(
-      { id: ID(3), outputPath: join(dir, "html", "no-drawing.html") },
+      { id: ID(3), outputPath: join(dir, "html", "no-drawing.html"), vectorDrawings: true },
       deps({ readDrawings: read })
     );
     expect(read).not.toHaveBeenCalled();
@@ -422,7 +437,10 @@ describe("exportNotesHtml", () => {
     const read = vi.fn((): NoteDrawingsResult => {
       throw new PublicHelperError("helper_not_installed", "not built");
     });
-    const receipt = exportNotesHtml({ folder: "Sketches", outputPath: output }, drawingDeps(read));
+    const receipt = exportNotesHtml(
+      { folder: "Sketches", outputPath: output, vectorDrawings: true },
+      drawingDeps(read)
+    );
     expect(read).toHaveBeenCalledTimes(1);
     expect(receipt).toMatchObject({
       count: 2,
@@ -440,7 +458,10 @@ describe("exportNotesHtml", () => {
         return drawings(id, { status: "error", code: "undecodable", svg: undefined });
       throw Object.assign(new Error("schema"), { kind: "schema" });
     });
-    const receipt = exportNotesHtml({ folder: "Sketches", outputPath: output }, drawingDeps(read));
+    const receipt = exportNotesHtml(
+      { folder: "Sketches", outputPath: output, vectorDrawings: true },
+      drawingDeps(read)
+    );
     expect(read).toHaveBeenCalledTimes(2);
     expect(receipt.vectorDrawings).toEqual({
       rendered: 0,
@@ -448,7 +469,7 @@ describe("exportNotesHtml", () => {
       fallbackReasons: { undecodable: 1, schema: 1 },
     });
     const truncated = exportNotesHtml(
-      { id: ID(4), outputPath: join(dir, "html", "truncated.html") },
+      { id: ID(4), outputPath: join(dir, "html", "truncated.html"), vectorDrawings: true },
       drawingDeps((id) => drawings(id, { truncated: true }))
     );
     expect(truncated.vectorDrawings).toEqual({
@@ -457,7 +478,7 @@ describe("exportNotesHtml", () => {
       fallbackReasons: { truncated: 1 },
     });
     const missing = exportNotesHtml(
-      { id: ID(4), outputPath: join(dir, "html", "missing.html") },
+      { id: ID(4), outputPath: join(dir, "html", "missing.html"), vectorDrawings: true },
       drawingDeps((id) => ({ id, drawingCount: 0, status: "none", drawings: [] }))
     );
     expect(missing.vectorDrawings?.fallbackReasons).toEqual({ not_decoded: 1 });
@@ -468,7 +489,7 @@ describe("exportNotesHtml", () => {
       drawings(id, { status: "error", code: "timeout", svg: undefined })
     );
     const receipt = exportNotesHtml(
-      { folder: "Sketches", outputPath: join(dir, "html", "timeout.html") },
+      { folder: "Sketches", outputPath: join(dir, "html", "timeout.html"), vectorDrawings: true },
       drawingDeps(read)
     );
     expect(read).toHaveBeenCalledTimes(1);
@@ -478,7 +499,7 @@ describe("exportNotesHtml", () => {
   it("falls back when the SVG is over the embedded-asset limit", () => {
     const huge = `<svg xmlns="http://www.w3.org/2000/svg">${" ".repeat(10 * 1024 * 1024)}</svg>`;
     const receipt = exportNotesHtml(
-      { id: ID(4), outputPath: join(dir, "html", "huge.html") },
+      { id: ID(4), outputPath: join(dir, "html", "huge.html"), vectorDrawings: true },
       drawingDeps((id) => drawings(id, { svg: huge }))
     );
     expect(receipt.vectorDrawings?.fallbackReasons).toEqual({ "too-large": 1 });

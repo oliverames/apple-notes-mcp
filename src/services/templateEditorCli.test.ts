@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseTemplatesArgs,
   runTemplatesCommand,
+  TEMPLATES_USAGE,
   type TemplatesCliDeps,
 } from "./templateEditorCli.js";
 import type { TemplateEditorHandle, TemplateEditorOptions } from "./templateEditor.js";
@@ -116,6 +117,36 @@ describe("runTemplatesCommand", () => {
     expect(await runTemplatesCommand(["edit", "--tailnet"], h.deps)).toBe(0);
     expect(h.started[0].host).toBe("100.101.1.2");
     expect(h.err.join("")).toMatch(/Any device on your tailnet/);
+  });
+
+  it("--tailnet warning says --note exposes the full note body to anyone with the URL", async () => {
+    const h = harness({ tailnetAddress: () => ({ address: "100.101.1.2", interface: "utun4" }) });
+    await runTemplatesCommand(["edit", "--tailnet"], h.deps);
+    expect(h.err.join("")).toContain("--note exposes the full note body to anyone with this URL");
+  });
+
+  it("--tailnet with --note warns that this run exposes the full note body", async () => {
+    const sample = templateSamples()[0];
+    const h = harness({
+      tailnetAddress: () => ({ address: "100.101.1.2", interface: "utun4" }),
+      readNote: () => ({ note: sample.note, meta: sample.meta }),
+    });
+    await runTemplatesCommand(["edit", "--tailnet", "--note", "x-coredata://A/ICNote/p7"], h.deps);
+    const err = h.err.join("");
+    expect(err).toContain("--note is set: the full body of that note is shown in the preview");
+    expect(err).toContain("anyone with this URL can read the entire note");
+    expect(err).not.toContain("token=");
+  });
+
+  it("without --tailnet there is no exposure warning", async () => {
+    const sample = templateSamples()[0];
+    const h = harness({ readNote: () => ({ note: sample.note, meta: sample.meta }) });
+    await runTemplatesCommand(["edit", "--note", "x-coredata://A/ICNote/p7"], h.deps);
+    expect(h.err.join("")).not.toMatch(/tailnet address/);
+  });
+
+  it("the --help text states the --note exposure under --tailnet", () => {
+    expect(TEMPLATES_USAGE).toMatch(/with --note can read the full body of that note/);
   });
 
   it("--tailnet refuses when there is no Tailscale address", async () => {

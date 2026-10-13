@@ -19,6 +19,7 @@ vi.mock("../utils/pasteboardFreeze.js", async (original) => ({
   freezePasteboard: pasteboard.freeze,
 }));
 import { registerDirectOperations } from "./directOperations.js";
+import { plainRichNote, syntheticRichNote } from "../utils/__fixtures__/retainedRichNote.js";
 import { PasteboardError } from "../utils/pasteboardFreeze.js";
 
 const directories: string[] = [];
@@ -45,19 +46,7 @@ describe("direct Notes operations", () => {
     symlinkSync(target, path);
 
     rich.enrich.mockReturnValue({ complete: true, revision: "rich-before" });
-    rich.read.mockReturnValue({
-      text: "existing",
-      links: [],
-      nativeTags: [],
-      nativeObjectIds: [],
-      hasNativeObjects: false,
-      hasChecklist: false,
-      revision: "rich-before",
-      objects: [],
-      checklistItems: [],
-      styleRuns: [],
-      objectData: [],
-    });
+    rich.read.mockReturnValue({ ...plainRichNote("existing"), revision: "rich-before" });
     rich.hash.mockReturnValue("revision");
     const manager = {
       getNoteById: vi.fn(() => ({ id, title: "Example", passwordProtected: false })),
@@ -86,24 +75,15 @@ describe("direct Notes operations", () => {
     directories.push(directory);
     const path = join(directory, "example.txt");
     writeFileSync(path, bytes);
-    const before = {
-      text: "existing",
-      links: [],
-      nativeTags: [],
-      nativeObjectIds: [],
-      hasNativeObjects: false,
-      hasChecklist: false,
-      revision: "rich-before",
-      objects: [],
-      checklistItems: [],
-      styleRuns: [],
-      objectData: [],
-    };
+    const before = { ...plainRichNote("existing"), revision: "rich-before" };
     const after = {
-      ...before,
+      ...syntheticRichNote("existing\ufffc", {
+        objects: [{ id: "new-object", type: "file", start: 8, length: 1 }],
+      }),
       revision: "rich-after",
-      nativeObjectIds: ["new-object"],
-      objectData: [{ id: "new-object", pk: 3, type: "file", mergeable: "", view: null }],
+      objectData: [
+        { id: "new-object", pk: 3, type: "file", mergeable: "", view: null, altText: null },
+      ],
     };
     rich.enrich
       .mockReturnValueOnce({ complete: true, revision: "rich-before" })
@@ -146,19 +126,7 @@ describe("direct Notes operations", () => {
     const path = join(directory, "large.png");
     writeFileSync(path, bytes);
     rich.enrich.mockReturnValue({ complete: true, revision: "rich" });
-    rich.read.mockReturnValue({
-      text: "existing",
-      links: [],
-      nativeTags: [],
-      nativeObjectIds: [],
-      hasNativeObjects: false,
-      hasChecklist: false,
-      revision: "rich",
-      objects: [],
-      checklistItems: [],
-      styleRuns: [],
-      objectData: [],
-    });
+    rich.read.mockReturnValue({ ...plainRichNote("existing"), revision: "rich" });
     rich.hash.mockReturnValue("revision");
     const manager = {
       getNoteById: vi.fn(() => ({ id, title: "Example", passwordProtected: false })),
@@ -196,19 +164,7 @@ describe("direct Notes operations", () => {
     const path = join(directory, "large.png");
     writeFileSync(path, bytes);
     rich.enrich.mockReturnValue({ complete: true, revision: "rich" });
-    rich.read.mockReturnValue({
-      text: "existing",
-      links: [],
-      nativeTags: [],
-      nativeObjectIds: [],
-      hasNativeObjects: false,
-      hasChecklist: false,
-      revision: "rich",
-      objects: [],
-      checklistItems: [],
-      styleRuns: [],
-      objectData: [],
-    });
+    rich.read.mockReturnValue({ ...plainRichNote("existing"), revision: "rich" });
     rich.hash.mockReturnValue("revision");
     const manager = {
       getNoteById: vi.fn(() => ({ id, title: "Example", passwordProtected: false })),
@@ -235,19 +191,7 @@ describe("attachment filename override and create-then-attach", () => {
   const id = "x-coredata://ABC/ICNote/p1";
   const attachmentId = "x-coredata://ABC/ICAttachment/p3";
   const bytes = Buffer.from("synthetic bytes");
-  const richBase = {
-    text: "existing",
-    links: [],
-    nativeTags: [],
-    nativeObjectIds: [],
-    hasNativeObjects: false,
-    hasChecklist: false,
-    revision: "rich",
-    objects: [],
-    checklistItems: [],
-    styleRuns: [],
-    objectData: [],
-  };
+  const richBase = { ...plainRichNote("existing"), revision: "rich" };
   const source = () => {
     const directory = mkdtempSync(join(tmpdir(), "direct-operation-name-test-"));
     directories.push(directory);
@@ -283,6 +227,52 @@ describe("attachment filename override and create-then-attach", () => {
       }>;
     return { manager, handler };
   };
+
+  it.each(["format", "metadata", "revision", "read"])(
+    "keeps attachment %s readback failure indeterminate after dispatch",
+    async (failure) => {
+      const { manager, handler } = setup("source.txt");
+      const before = { ...plainRichNote("existing"), revision: "rich" };
+      const after = structuredClone(before);
+      if (failure === "format") after.styleRuns![0].signature = "changed";
+      if (failure === "metadata") delete after.styleRuns;
+      if (failure === "revision") after.revision = "raced";
+      rich.read
+        .mockReturnValueOnce(before)
+        .mockReturnValueOnce(before)
+        .mockImplementationOnce(() => {
+          if (failure === "read") throw new Error("Locked notes are unavailable during readback");
+          return after;
+        });
+      const result = await handler("add-attachment")({
+        id,
+        expectedContentHash: "revision",
+        path: source(),
+      });
+      expect(manager.addAttachmentById).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: { code: "verification_failed", indeterminate: true },
+      });
+      expect(result.structuredContent).not.toHaveProperty("committed", false);
+      expect(result.content[0].text).toMatch(/read the exact note before any retry/);
+    }
+  );
+  it("refuses unavailable attachment preservation metadata before dispatch", async () => {
+    const { manager, handler } = setup("source.txt");
+    rich.read.mockReturnValue({
+      ...plainRichNote("existing"),
+      revision: "rich",
+      styleRuns: undefined,
+    });
+    const result = await handler("add-attachment")({
+      id,
+      expectedContentHash: "revision",
+      path: source(),
+    });
+    expect(result.isError).toBe(true);
+    expect(manager.addAttachmentById).not.toHaveBeenCalled();
+  });
 
   /** A frozen pasteboard copy named like the real one would be. */
   const frozen = (name: string, kind: "data" | "file" = "data", type = "public.png") => {
@@ -756,24 +746,13 @@ describe("attachment filename override and create-then-attach", () => {
 describe("add-attachment verifies through NoteStore when AppleScript lists nothing (#236)", () => {
   const id = "x-coredata://ABC/ICNote/p1";
   const bytes = Buffer.from("%PDF-1.7 synthetic");
-  const richBase = {
-    text: "existing",
-    links: [],
-    nativeTags: [],
-    nativeObjectIds: [],
-    hasNativeObjects: false,
-    hasChecklist: false,
-    revision: "rich",
-    objects: [],
-    checklistItems: [],
-    styleRuns: [],
-    objectData: [],
-  };
+  const richBase = { ...plainRichNote("existing"), revision: "rich" };
   const row = (
     pk: number,
     identifier: string,
     assetPaths: string[],
-    parent: string | null = null
+    parent: string | null = null,
+    overrides: Record<string, unknown> = {}
   ) => ({
     pk,
     identifier,
@@ -785,6 +764,7 @@ describe("add-attachment verifies through NoteStore when AppleScript lists nothi
     assetPaths,
     previewPath: null,
     paths: assetPaths,
+    ...overrides,
   });
   const setup = (stored: () => unknown, returnedId = "") => {
     rich.enrich.mockReturnValue({ complete: true, revision: "rich" });
@@ -893,5 +873,100 @@ describe("add-attachment verifies through NoteStore when AppleScript lists nothi
     const result = await run();
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/outcome uncertain.*Full Disk Access/);
+  });
+
+  describe("checks the new row against the file and the note body", () => {
+    // The store polls with a blocking Atomics.wait; skip the real waiting.
+    const skipWaits = () => vi.spyOn(Atomics, "wait").mockReturnValue("ok");
+    afterEach(() => vi.restoreAllMocks());
+    const OLD = (bodyIndex: number | null = 0) => row(4, "OLD", [], null, { bodyIndex });
+
+    it("waits for the note body to reference the new attachment, then succeeds", async () => {
+      skipWaits();
+      let media = "";
+      let calls = 0;
+      const { manager, directory, run } = setup(() => {
+        calls++;
+        // Call 1 is the snapshot. Calls 2 and 3 see the row before the body
+        // lists it; call 4 sees the body updated.
+        if (calls === 1) return { orderSource: "body", attachments: [OLD()] };
+        return {
+          orderSource: "body",
+          attachments: [OLD(), row(9, "NEW", [media], null, { bodyIndex: calls >= 4 ? 1 : null })],
+        };
+      });
+      media = mediaFile(directory, bytes);
+      const result = await run();
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        attachmentId: "x-coredata://ABC/ICAttachment/p9",
+        verifiedBy: "database",
+      });
+      // One snapshot read, then three reads before the body listed the file.
+      expect(manager.getAttachmentAssetsById).toHaveBeenCalledTimes(4);
+      expect(manager.addAttachmentById).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses a new row the note body never references, and says not to attach again", async () => {
+      skipWaits();
+      let media = "";
+      let calls = 0;
+      const { manager, directory, run } = setup(() => ({
+        orderSource: "body",
+        attachments:
+          calls++ === 0 ? [OLD()] : [OLD(), row(9, "NEW", [media], null, { bodyIndex: null })],
+      }));
+      media = mediaFile(directory, bytes);
+      const result = await run();
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(
+        /ICAttachment\/p9.*body does not reference it.*do not attach the file again/
+      );
+      // One snapshot read, then the full eight attempts.
+      expect(manager.getAttachmentAssetsById).toHaveBeenCalledTimes(9);
+    });
+
+    it("refuses a new row whose type does not fit the file extension, without polling", async () => {
+      skipWaits();
+      let media = "";
+      let calls = 0;
+      const { manager, directory, run } = setup(() => ({
+        orderSource: "creation",
+        attachments:
+          calls++ === 0 ? [] : [row(9, "NEW", [media], null, { uti: "public.png", kind: "image" })],
+      }));
+      media = mediaFile(directory, bytes);
+      const result = await run();
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toMatch(
+        /ICAttachment\/p9.*public\.png.*does not fit report\.pdf.*do not attach the file again/
+      );
+      // One snapshot read and one verification read: a wrong type is not lag.
+      expect(manager.getAttachmentAssetsById).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns the content hash read after verification, not the one read right after insertion", async () => {
+      skipWaits();
+      let media = "";
+      let calls = 0;
+      const { run, directory } = setup(() => ({
+        orderSource: "creation",
+        attachments: calls++ === 0 ? [] : [row(9, "NEW", [media])],
+      }));
+      media = mediaFile(directory, bytes);
+      // Reads: before, the pre-insert check, right after insertion, final.
+      rich.hash
+        .mockReset()
+        .mockReturnValueOnce("revision")
+        .mockReturnValueOnce("revision")
+        .mockReturnValueOnce("sha256:stale")
+        .mockReturnValue("sha256:fresh");
+      const result = await run();
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        verifiedBy: "database",
+        contentHash: "sha256:fresh",
+      });
+    });
   });
 });

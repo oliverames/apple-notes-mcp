@@ -1,11 +1,18 @@
 ## [Unreleased]
 
-## [2.9.35] - 2026-10-02
+## [2.16.0] - 2026-10-13
 
-### Unreleased Writer Design and Safety
+### Fork Integration
 
-These private-writer changes have not shipped. They are design safeguards,
-not security fixes to an earlier released writer.
+- Reconcile the opt-in private writer and its safety fixtures with upstream
+  2.15.8. Preserve the upstream read-only checklist tool, route writer setup
+  through the current CLI, and resolve exact note IDs without an automation
+  fallback. This version is maintained in the Oliver Ames fork.
+
+### Private Writer Design and Safety
+
+These private-writer safeguards remain experimental and have not shipped
+upstream. They do not establish live validation on a personal Notes store.
 
 - Writer tools are registered only with the private-write switch. Unvalidated
   features require separate opt-ins and any future validation flag needs an
@@ -23,313 +30,239 @@ not security fixes to an earlier released writer.
   #260): approved roots, regular files, private-path restrictions, and descriptor
   identity checks. Edit replacement-file requests remain refused.
 
-### Fixed
-
-- Attachment tool descriptions and text labels distinguish the legacy
-  `contentType`/`contentId` compatibility alias from the actual `uti` returned
-  by `list-attachments` with `includePaths`. Response fields remain unchanged.
-- Reconciled the roadmap and contributor guidance with shipped work, the open
-  split PRs, and the remaining writer evidence requirements.
-
-- The development replica-table decoder no longer treats paired zero-length
-  start/end records as character owners. Those sentinels had shifted one-based
-  replica attribution; disposable live fixtures and four constructed regressions
-  now verify complete character mapping.
+## [2.15.8] - 2026-10-13
 
 ### Added
 
-- `compose-note` takes local files (`{"type":"file","path":…}`, with
-  `add-attachment`'s rules) and rich link cards (`{"type":"urlCard","url":…}`)
-  as blocks, placed in order among the text and created in the same verified
-  save; a Markdown image alone on a line becomes one. A failure before the
-  save rolls back every row and deletes every attachment file the writer
-  wrote. The probe reports them as the writer's `composeAttachments` feature.
-- `compose-note` append and prepend prove that a note's existing attachments
-  are unchanged: every attachment row, media row, file, inline attachment,
-  and glyph position is fingerprinted before, just before the save
-  (`attachment_drift`, nothing written), and after it (`frozenAttachments`).
-- Folder scope guards on every private-writer write tool: `ifFolderId`,
-  `ifAncestorFolderId`, and `forbiddenAncestorFolderIds`, with the same shapes
-  as the AppleScript tools' guards. The writer checks them in the write's own
-  Core Data transaction just before the save, and in dry runs. Every id must
-  name an existing folder; an unknown id, or a forbidden id naming a deleted
-  folder, refuses the call (`scope_folder_not_found`) instead of matching
-  nothing. Smart-folder writes guard the smart folder's parent.
-  `compose-note` takes them in append and prepend mode.
-- `native-repair-purge-flag` finds notes that carry Notes' permanent-deletion
-  flag while still in an ordinary folder and, after a dry run and with
-  `confirm: true`, finishes an ordinary delete: it clears the flag and moves
-  the note to Recently Deleted, verified by a fresh read-back. It never
-  purges. Needs the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in until live-validated.
-- `resolve-paragraph-anchor` with `remint: true` gives a `needs-reminting`
-  paragraph a new ID through the writer's `set_paragraph_id` (with a fresh
-  revision and the matched block's text) and resolves again, when both writer
-  switches are on. Otherwise it still reports `writer-unavailable`; a writer
-  refusal is `writer-failed` with its `committed` state.
-- `native-sync-push` relaunch and the smart-folder writes report
-  `adoptedByNotesApp` per folder: whether Notes.app shows the folder (or no
-  longer shows a deleted one), read through AppleScript.
-- `native-read-paper` (writer, read-only) decodes one Paper drawing: its
-  strokes with points, its typed shapes (kind, frame, rotation, colors, line
-  markers, text, and an SVG path) on macOS 27 or later, and the painted paths
-  of Notes' fallback PDF when the drawing has one. Each layer reports whether
-  it ran and why not; `native-writer-status` lists `readPaper` and
-  `readPaperShapes`. `format: "svg"` or `"both"` also renders the pen strokes
-  as an SVG document (`svg`, `svgStrokeCount`, `svgSkippedStrokes`), drawn from
-  the recorded points with each stroke's transform applied, through the same
-  renderer `get-note-drawings` uses for classic drawings. `"svg"` leaves
-  `strokes` out, and an SVG always asks the writer for points whatever
-  `includePoints` says. It is a faithful outline, not a pixel match for
-  PencilKit's ink. Typed shapes and fallback geometry are not drawn; a warning
-  says so when the drawing has any, and another when the `maxPoints` budget
-  left strokes without points. The SVG is built in the server from the same
-  read, so it needs no new writer action and sits behind the same two writer
-  switches as `native-read-paper`.
-- Opt-in private **writer**, a separate layer over the read-only helper.
-  `native/private-helper/apple-notes-private-writer.m` is its own
-  program with its own binary, checksum manifest (`writer-manifest.json`), and
-  setup command, `apple-notes-mcp setup --native-writer`, which refuses a
-  writer whose actions differ from the client's table. The read-only helper,
-  its setup, and its client are unchanged, and the read-only source test now
-  also checks that nothing on that build path can reach the writer.
-- Two switches gate every writer call: `APPLE_NOTES_MCP_ENABLE_PRIVATE=1` and
-  the new `APPLE_NOTES_MCP_ENABLE_PRIVATE_WRITES=1`. The writer checks the
-  second itself before opening the live store read-write. Writes that have not
-  passed live validation also need the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in.
-- Write contract shared by every write action: `ifRevision` compare-and-swap,
-  a save with optimistic locking, a fresh read-back through a new Core Data
-  stack, and `committed` / `indeterminate` on every uncertain outcome.
-- `native-writer-status` and `native-append-plain-text` (plain paragraphs,
-  optional `nudge`). The writer's `read_sync_state` action and the
-  move-in-place nudge report Notes' own upload counters after a write and ask
-  Notes.app to upload a note it would otherwise skip.
-- `native-sync-push` gets writer-saved changes uploaded after the fact.
-  `method: "status"` only reads Notes' upload counters, `"nudge"` (default)
-  moves each pending note into its own folder, and `"relaunch"` quits and
-  reopens Notes.app so its launch sweep uploads everything pending, folders
-  included; relaunch requires `confirm: true`. Per target it reports the
-  counters before and after and `uploadRecorded`. It never writes to the store.
-- `scripts/test-private-helper-copy-store.sh` runs the writer against a copy
-  of the store and checks that the live store is refused as a copy, that a
-  read-write open of the live store is refused without the write switch, and
-  that the live note is unchanged.
-- `native-edit-note`: in-place edits through the writer (replace literal text,
-  insert or delete paragraphs, retitle) that leave attachments and formatting
-  outside the edited ranges untouched. `dryRun: true` runs the read-only
-  `plan_edit` action; the apply (`edit_note`) needs the plan's
-  `revisionBefore` as `ifRevision` and `planDigest` as `ifPlanDigest`, refuses any edit that would change
-  another object, and re-reads the note to prove the text, every attribute
-  run outside the edits, the attachment glyph sequence, and the attachment
-  rows (reported as `preservation`). Optional `nudge`. Not yet
-  live-validated, so applying also needs the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in.
-- `native-edit-note` attachment selectors (`identifier`, `id`, or `ordinal`)
-  support inserting text beside an attachment and anchoring inserted paragraphs.
-  Planning and applying removal or replacement refuse with
-  `unsupported_attachment_change` until safe tombstoning is implemented. The
-  copy-store harness checks these refusals and unchanged attachment data.
-- `native-edit-note` operation `trim_blank_lines`: removes redundant empty
-  paragraphs (`mode: "runs"` keeps the first `keep` of every run of blank
-  lines, `"end"` trims trailing blank lines, `"around"` trims the blank lines
-  before and/or after one anchored paragraph). Only whitespace-only title,
-  heading, subheading, and body paragraphs are removed, each with its own
-  newline; the title paragraph, list, checklist, monospaced, and attachment
-  rows are never touched. The dry run lists every paragraph it would remove.
-  The copy-store script adds a trim round trip.
-- `native-writer-status` reports every writer feature from one
-  `WRITER_FEATURES` table (key, probe key, live-validation flag), each behind
-  its own gate: `appendPlainText`, `planEdit`, `editNote`, `composeNote`,
-  `composeObjects`, `checklistToggle`, `highlight`, `linkCard`,
-  `setParagraphId`, `addSectionLink`, `readTables`, `editTables`,
-  `pruneOrphanTable`, `readSmartFolders`, `editSmartFolders`, and `addPaper`.
-  The writer probe can check model properties per feature.
-- The copy-store script runs a plan, apply, and restore round trip on up to
-  eight notes and checks each step with `scripts/check-edit-preservation.mjs`,
-  an independent decoder of the stored note.
-- `compose-note`: structured, natively formatted writes through the writer's
-  new `compose_note` action. Content comes as ordered blocks (heading,
-  subheading, body/paragraph, quote, code/monospaced, bulleted, dashed, and
-  numbered lists with indent, and checklists with checked state) whose runs
-  carry bold, italic, underline, strikethrough, links, named highlights, and
-  `#RRGGBB` color, or as Markdown imported into the same native styles. Modes:
-  `create` (Notes.app creates the note, then the writer appends below the
-  title under a fresh revision), `append` (optionally before one exact
-  Heading, `insertBeforeHeading`), and `prepend` (below the title). Apply
-  requires a `dryRun` plan's `planDigest` as `ifPlanDigest`, and existing-note
-  modes also require its `revisionBefore` as `ifRevision`. The writer
-  compares every written paragraph's style, indent, block quote, checklist
-  state, and runs in a fresh read-only stack, reports `unitStart` and
-  `objectURI`, and the server cross-checks the same paragraphs with its own
-  NoteStore decoder (`databaseReadBack`). Every refusal before the save
-  reports `committed: false`. Optional `nudge`. Gated by
-  `COMPOSE_LIVE_VALIDATED = false`, so writes also need
-  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. The writer probe and
-  `native-writer-status` report a `composeNote` feature, and the copy-store
-  script exercises plan, apply, stale and replayed revisions, prepend,
-  heading placement, and the Quick Note refusal.
-- `compose-note` blocks `divider` (Notes' native divider line), `table` (a
-  native table filled cell by cell from rectangular `rows`), and `noteLink`
-  (body text linking to another note by its UUID, which must exist). The
-  Markdown importer turns `---` into a divider and pipe tables into native
-  tables. Each divider and table is created only on apply, in the same single
-  save as the text, and verified in a fresh read: the object exists, belongs
-  to the note, sits under its glyph, and a table holds exactly the requested
-  cells. The writer probe and `native-writer-status` report the needed API as
-  the `composeObjects` feature, and the copy-store script creates two
-  dividers and a table on the copy.
-- `native-checklist-state` and `native-set-checklist-item` on the writer
-  (actions `read_checklist` and `set_checklist_item`). The first lists a
-  note's native checklist items with their todo identifiers, done state, and
-  the note's `revision`. The second checks or unchecks one item by identifier
-  under `ifRevision`, changing only that item's done bit through the note's
-  CRDT, verifies it in a fresh Core Data stack (`persistedDone`), and writes
-  nothing when the item already has the requested state. Items are located by
-  the exact characters that carry each todo identity, not by line boundaries.
-  Optional `nudge`. Until it passes live validation it also requires
-  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. Ported from the earlier combined
-  helper branch.
-- `scripts/test-private-writer-checklist-copy-store.sh` exercises the
-  checklist actions on a store copy, with shared setup in
-  `scripts/private-writer-copy-store-lib.sh`.
-- `native-highlight-text` on the writer (action `set_highlight`). Applies or
-  removes Notes' highlight (purple, pink, orange, mint, blue: the
-  `TTEmphasis` attribute, protobuf AttributeRun field 14, values 1 to 5) on
-  every exact, case-sensitive occurrence of a literal string, only when it
-  occurs exactly `expectedCount` times. It supports `dryRun`, requires
-  `ifRevision` for a write, changes nothing but the highlight attribute of the
-  matched characters, and re-reads the note in a fresh Core Data stack to
-  verify the text, every highlight run, and Notes' `hasEmphasis` flag. A
-  request that is already satisfied writes nothing. Optional `nudge`. Until
-  it passes live validation, writes also require
-  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. Ported from the earlier combined
-  helper branch.
-- `native-highlight-text` takes `scope: "note"` to highlight (or with
-  `color: "none"`, un-highlight) the whole body after the title paragraph.
-  It skips the title paragraph through its newline and every attachment glyph
-  (U+FFFC: images, files, tables, drawings, inline tags), whose contents it
-  never changes, and keeps paragraph separators in the body. `match` and
-  `expectedCount` are refused with this scope. Results, including `dryRun`,
-  report `rangeCount`, `characterCount`, and `skipped` (`titleUTF16`,
-  `attachmentGlyphs`, `highlightedAttachmentGlyphs`); a note with nothing
-  left to highlight is refused as `nothing_to_highlight`. Both scopes now
-  report `characterCount`. Verification, including the `hasEmphasis` check,
-  is the same as for the text scope.
-- `scripts/test-private-writer-highlight-copy-store.sh` exercises the
-  highlight action on a store copy, with shared setup in
-  `scripts/private-writer-copy-store-lib.sh`.
-- `native-add-url-card` on the writer (action `add_url_card`). Adds a rich
-  web link card: NotesShared creates the `public.url` attachment
-  (`addURLAttachmentWithURL:`) and the writer inserts its attachment glyph on
-  its own line at the end of the note or after the one paragraph that exactly
-  equals `afterParagraph`. It supports `dryRun`, requires `ifRevision` for a
-  write, marks both the note and the attachment for upload, and re-reads the
-  note in a fresh Core Data stack to verify the text, the glyph position, and
-  the attachment's type, URL, and owning note. The writer makes no network
-  request; Notes fetches the card preview itself. Optional `nudge`. Until it
-  passes live validation, writes also require
-  the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in. Ported from the earlier combined
-  helper branch.
-- `scripts/test-private-writer-link-card-copy-store.sh` exercises the link
-  card action on a store copy, with shared setup in
-  `scripts/private-writer-copy-store-lib.sh`.
-- `native-set-paragraph-id` (writer action `set_paragraph_id`) gives one
-  paragraph a unique paragraph identifier, so `get-paragraph-link` can link a
-  paragraph whose identifier was `shared` or `missing`. It selects the
-  paragraph by `blockIndex` and `text` from the read-only
-  `list-note-paragraphs`, uses the same uniqueness rules, returns `unchanged`
-  without writing when the identifier is already unique, and takes the
-  optional `nudge`. Gated by `PARAGRAPH_IDS_LIVE_VALIDATED`.
-- `native-add-section-link` (writer action `add_section_link`, macOS 27)
-  inserts a native section-link chip that opens a paragraph in the same or
-  another note, selected by `blockIndex`, `paragraphId`, `heading`, or the
-  first heading. It mints the paragraph's identifier in the same save when it
-  is not unique, can clear the note's existing section chips, needs
-  `ifTargetRevision` for another note, and takes the optional `nudge`. Gated
-  by `SECTION_LINKS_LIVE_VALIDATED`. `list-note-links` reports the chips it
-  makes as kind `section`, which the copy-store script checks.
-- The copy-store script checks paragraph identifiers with the
-  `list-note-paragraphs` reader against the copy, and confirms that every live
-  note a feature check uses is unchanged.
-- Native table edits through the writer: `native-read-tables`,
-  `native-delete-table-row`, `native-insert-table-row`,
-  `native-set-table-cell`, and `native-prune-orphan-table`. Rows, columns,
-  and tables are addressed by native identifier. Writes need the note
-  `revision` and the table `digest`; row deletion and the orphan prune are
-  two-phase (a read-only dry run, then an apply with both tokens). Applies
-  accept `nudge` and are gated by `TABLE_WRITES_LIVE_VALIDATED`.
-- The copy-store script exercises the four table writes, their stale-token
-  refusals, and the live-store gate.
-- Smart-folder writes through the writer (#181): `native-read-smart-folder`,
-  `native-create-smart-folder`, `native-update-smart-folder`, and
-  `native-delete-smart-folder`. Queries go through Notes' own parser and are
-  stored in the form Notes regenerates; one whose meaning Notes would change
-  is refused. The update and delete compare an `f1:` folder revision; the
-  delete is two-phase and only takes empty smart folders. A smart folder is
-  refused as a parent with `reason: "smart_folder_destination"`, matching the
-  destination guard. Writes are gated by `SMART_FOLDERS_LIVE_VALIDATED`.
-- The copy-store script exercises the smart-folder create, update, and delete
-  paths, their refusals, and the live-store gate, and fingerprints the live
-  smart-folder rows before and after.
-- `native-add-paper` (#181): the writer's `add_paper` action adds a drawing to
-  the end of a note as a Paper attachment, or a classic drawing
-  (`com.apple.drawing.2`) when Paper is unavailable or not wanted. Input is
-  stroke JSON plus eight shape kinds written as tracing strokes, or an SVG
-  converted by the `analyze-svg` analyzer; a lossy SVG is written only with
-  `ifSvgAnalysis` equal to its `analysisDigest` and `allowSvgLosses` equal to
-  its `requiredLosses`. Guarded by `ifRevision`, plannable with `dryRun`,
-  verified by decoding the saved drawing in a fresh Core Data stack, and
-  behind the corresponding `APPLE_NOTES_MCP_ALLOW_UNVERIFIED_<FEATURE>=1` opt-in until live-validated. On a copy
-  store the writer redirects every Notes file directory beside the copy. The
-  writer now links PencilKit and embeds a bundle identifier, which PencilKit
-  needs to build a drawing. `native-writer-status` reports `addPaper`.
-- `scripts/test-private-writer-paper-copy-store.sh` runs `add_paper` in both
-  formats against a copy of the store and checks the read-back counts, the
-  replay refusal, and that no file for the new attachments appears in the
-  live Notes container.
-- `query-notes` has three more predicates: `has:url` (a link preview card,
-  which still counts as `has:link`), `has:map` (a map attachment), and the
-  flag `quicknote` (or `is:quicknote`), read from the same Quick Note flag as
-  `list-special-notes kind=quick-notes`. A bare `quicknote` is now that flag;
-  quote it to search the word. `scanLimit` now goes up to 10000 (default
-  still 500). `search-notes`' database body search keeps its 5000-note window.
-- `export-notes-html` renders classic PencilKit drawings as SVG, decoded
-  through the public native helper as `get-note-drawings` does, instead of
-  Notes' fixed-size PNG. The SVG is embedded or written to the sidecar
-  directory under the same size limits as other assets. Paper drawings keep
-  the PNG. A drawing that cannot be decoded (helper not built, decode error,
-  stroke limit, too large) falls back to the PNG without failing the export,
-  and the new receipt field `vectorDrawings` counts SVG and PNG drawings with
-  the fallback reasons. `vectorDrawings: false` turns it off.
-- `apple-notes-mcp setup --permissions` checks Full Disk Access, Automation of
-  Notes.app, the Shortcut bridges, and Speech Recognition for the app that
-  launched it, with the same read-only probes as `doctor` and
-  `get-capabilities`. For each missing grant it names the System Settings pane
-  and its `x-apple.systempreferences:` URL, opens the pane only with `--open`,
-  and checks again each time the user presses Enter (`--once` and `--json` for
-  scripts). It never changes a setting or a grant.
-- An optional checklist window with Open Settings and Re-check buttons:
-  `apple-notes-mcp setup --permissions-window` compiles it from the packaged
-  Swift source, signs it ad hoc and installs it in Application Support like the
-  public helper; `setup --permissions --window` opens it. The window probes
-  nothing itself, and the server never uses it.
-- The public native helper gains a `speech_status` action that reads the Speech
-  Recognition status without prompting. Changing the helper source means an
-  installed helper reports stale until `apple-notes-mcp setup --public-helper`
-  runs again.
-- `apple-notes-mcp templates edit [name]` starts a local web editor for
-  Markdown export templates. It validates the template JSON as you type with
-  the same validator as `validate-markdown-template`, previews it with the
-  export renderer against built-in sample notes, and saves through the
-  template library (create-only unless "replace" is ticked). A real note is
-  read only with `--note <id>`, once and read-only. The server listens on
-  `127.0.0.1` on a free port, requires a per-run token on every request,
-  refuses foreign `Host` headers and cross-origin requests, serves one page
-  with no external resources, and stops on Ctrl-C or after 30 idle minutes
-  (`--idle-minutes`).
-- `templates edit --tailnet` listens on this Mac's Tailscale IPv4 address
-  instead, with the same token and origin checks, so the editor can be used
-  from another device on the tailnet. It is off unless the flag is given,
-  refuses to start without a Tailscale address, and never changes Tailscale,
-  Serve/Funnel or firewall settings.
+- `setup --gemini-spark` prints the Server Name, Description, and Command for
+  Gemini Spark macOS builds offering Local MCP. The guide exits before server
+  configuration loading or effectful setup, rejects mixed setup options, and
+  leaves client registration and permissions to the user. README instructions
+  cover sandbox and runtime permission diagnostics and distinguish the local
+  stdio integration from URL-based Cloud MCP. Gemini tool execution has not
+  been verified end to end.
+
+## [2.15.7] - 2026-10-13
+
+### Fixed
+
+- `batch-move-notes` accepts the existing `ifFolderId`, `ifAncestorFolderId`
+  and `forbiddenAncestorFolderIds` preconditions. Each note's live folder and
+  the destination's forbidden ancestry are checked in the same AppleScript
+  immediately before its move. A scope mismatch reports a failure for that
+  exact note ID and leaves it unchanged while the other items continue;
+  successful moves still verify the note's actual destination folder ID.
+  Batch error certainty is derived from every item's outcome: a scope
+  refusal cannot make a separate move/readback failure claim no writes.
+  Unknown outcomes remain indeterminate and require exact-ID readback
+  before retrying. Empty status slots retain their exact note position rather
+  than borrowing a later note's success or refusal. The per-note handler is
+  declared in a script object so the generated batch remains valid inside
+  the executor's bounded timeout block.
+
+## [2.15.6] - 2026-10-13
+
+### Fixed
+
+- `get-note-tables` pages whole tables under a configurable UTF-8 response
+  budget that includes the structured-content text mirror and repeated
+  Markdown. Oversized individual tables return explicit metadata-only
+  entries, and paging advances without dropping or truncating table rows.
+  The default budget is 4 MiB and the maximum is 8 MiB (#193).
+
+## [2.15.5] - 2026-10-13
+
+### Fixed
+
+- Native write preflight refuses object placeholders without a matching ID/type in their covering native attribute run and stored payload metadata. Object summaries must match the first reference's type and range; repeated later references backed by the same attachment remain valid. Metadata loss after dispatch still reports an indeterminate outcome.
+- Checklist appends now refuse before dispatch when existing items are followed by text or native objects, or form separate groups. Notes can insert into the earlier group rather than append to the note; the strict retained-content end-append check remains unchanged.
+- Attachment and background write verification now requires complete native preservation metadata and checks retained text and whitespace, formatting, link ranges, checklist identities/state/ranges, and native object payloads and placement. End-appends and removal of mapped native tag pills have explicit allowed changes; known paragraph UUID regeneration retains the existing decoder policy.
+- Attachment readback failures after insertion starts now remain explicitly indeterminate, including read races and missing preservation metadata. Temporary-file cleanup cannot override that outcome or a verified receipt. Native tag additions also preserve retained zero-length formatting metadata.
+
+## [2.15.4] - 2026-10-13
+
+### Fixed
+
+- `add-native-tags` advertises uppercase Core Data store identifiers as valid,
+  matching its existing runtime validation. Fresh hashes and scope requirements
+  are unchanged.
+- Native tag readback accepts revision-consistent rich metadata even when the
+  note cannot be represented completely as AppleScript HTML. Missing or
+  inconsistent preservation metadata still refuses the write.
+- Native tag verification now preserves retained text and whitespace, links,
+  formatting, checklist identities/state/ranges, native object payloads and
+  existing tag labels around only proven new tag additions. Ambiguous objects
+  or unsupported conversion ranges fail closed. A post-dispatch read failure
+  reports `verification_failed` with an indeterminate outcome and keeps the
+  Shortcut diagnosis, so callers read before retrying.
+
+## [2.15.3] - 2026-10-13
+
+### Added
+
+- `native-checklist-state` reads exact native todo identifiers and checked state
+  through the existing opt-in read-only helper, with contiguous, consistent,
+  and multi-line flags for ambiguous runs. The helper's `read_checklist` action
+  preserves read-only stores and disabled migration. Private note reads resolve
+  exact Core Data IDs directly from the database after helper readiness checks,
+  without an AppleScript fallback.
+
+## [2.15.2] - 2026-10-12
+
+### Fixed
+
+- Preserve initial exact-ID note metadata read errors in `get-note-content`.
+  Automation refusals, timeouts and malformed metadata are reported with their
+  diagnostics instead of being collapsed into a missing-note result. The
+  legacy nullable metadata getter and title-based lookup retain their behavior.
+- Validate command-line arguments before loading configuration or initializing
+  the MCP runtime. Unknown commands and setup flags fail with usage instead of
+  importing Shortcuts; help and version commands exit without setup side effects.
+  Preserve the shipped broker setup target and require its uninstall/signing
+  options to select that target with a nonempty signing identity.
+- Capability and doctor reports now distinguish stored transcripts from new
+  transcription and classic drawing decode, verify public-helper integrity and
+  status with bounded non-prompting calls, and retain unknown Shortcut consent
+  and language/model readiness as unverified requirements. Full Disk Access
+  guidance includes native verification and guarded mutations.
+
+## [2.15.1] - 2026-10-12
+
+### Fixed
+
+- Native HTML append verification now treats `<del>` as inline text. Notes
+  rewrites `one<del>two</del>three` as `one<strike>two</strike>three`, but the
+  verifier inserted spaces around `<del>` and reported the complete append
+  as indeterminate. Reproduced through Background Operations v5 on macOS
+  27.2. The shared comparator now agrees with that readback without changing
+  revision, identity, link, native object, checklist or formatting guards.
+  This fixes a demonstrated trigger related to #283; the trigger in the
+  original private-note reports has not been established.
+
+## [2.15.0] - 2026-10-09
+
+### Added
+
+- Opt-in permission broker (#220). `apple-notes-mcp setup --broker` builds
+  `~/Applications/Apple Notes MCP Broker.app` and installs the per-user
+  LaunchAgent `apple-notes-mcp.broker`. MCP clients relay stdio to a server
+  spawned by the broker, so Full Disk Access and Notes Automation belong to
+  that signed app. `--check` reports its state, `--uninstall` removes it, and
+  `--sign-identity` selects an existing signing identity. Multiple qualifying
+  identities require an explicit choice; ad-hoc signing warns that grants
+  must be renewed after rebuilding.
+- `doctor` and `get-capabilities` report whether the broker is in use and why
+  an installed broker was bypassed. Doctor names the broker app when advising
+  a brokered client about Full Disk Access. Per-tool permission failures also
+  identify the broker app when the request runs in a brokered session.
+- Native security regression harness (`pnpm run test:broker-security`) tests
+  direct socket requests and signed fixture bundles without accessing Notes
+  or granting permissions. CI runs it on macOS.
+
+### Security
+
+- Socket configuration accepts only an explicit list of numeric resource and
+  timing limits. Helper/code paths, shortcuts, private-content access,
+  unverified writes, unknown settings and loader variables cannot be selected
+  by a client. Brokered children skip user JSON configuration and cannot run
+  the separately installed public or private helpers.
+- The server entry and runtime configuration are sealed inside the signed app.
+  The broker validates its signature and hardened runtime at startup and
+  before each spawn, pins a canonical Node runtime by SHA-256, and refuses
+  changed code. Setup requires a standalone Node runtime with only system
+  dynamic-library dependencies. Clients match both the package version and
+  entry digest, so another installation cannot silently serve stale code.
+- Broker signing enables the hardened runtime without library-validation or
+  DYLD-injection exceptions. Node and server paths are no longer accepted in
+  LaunchAgent arguments. Child stderr travels back to its own client's stderr
+  over the existing socket, separate from MCP stdout; no caller-selected log
+  path is opened under the broker's permissions.
+- Documented the same-user trust boundary: the owner-only socket excludes
+  other users, but every process running as its owner can use the server's
+  Notes capabilities with the broker's grants. It does not authenticate MCP
+  hosts or isolate them from other applications owned by the same user.
+
+### Changed
+
+- Reinstall and uninstall confirm that launchd has removed the old service
+  before replacing or deleting installed files. Stop and cleanup failures are
+  reported; uninstall removes the legacy log and empty state directory while
+  preserving unrelated files.
+- Broker protocol 3 carries separate stdout, stderr and exit status with bounded
+  frames and backpressure. Broker diagnostics use macOS unified logging instead
+  of an unbounded shared file; child diagnostics return to the originating MCP
+  client.
+- Nothing changes unless `setup --broker` is run. Without an available,
+  matching broker the server runs in-process. `APPLE_NOTES_MCP_BROKER=off`
+  bypasses it for one client; uninstall stops the service for all clients.
+- Integration tests disable broker routing. Setting
+  `APPLE_NOTES_MCP_INTEGRATION_SKIP_LIVE=1` additionally skips Apple events and
+  note-creation fixtures while preserving pure path and MCP schema checks.
+
+## [2.14.3] - 2026-10-08
+
+### Fixed
+
+- `append-to-note` and `append-native` no longer advertise `<table>`
+  `<tbody>` `<tr>` `<td>` `<th>` `<thead>` as accepted native-append HTML.
+  `appendNative()` has always rejected table markup before any mutation
+  ("Use create-table for verified native table insertion"), but those
+  elements were still listed in `NATIVE_APPEND_ELEMENTS`, which both tool
+  descriptions and the README/skill docs build their advertised HTML subset
+  from — a guarded append built from the advertised description was a
+  guaranteed failure. The table redirect now also catches a bare fragment
+  (`<tr>`/`<td>`/... without an outer `<table>`), which previously slipped
+  past it and into the general element check (#286).
+
+## [2.14.2] - 2026-10-07
+
+### Fixed
+
+- `append-to-note` (and `update-note`) no longer report a complete HTML write
+  as unverified when the HTML uses named character references such as
+  `&mdash;`, `&rarr;`, `&hellip;`, `&rsquo;` or `&ldquo;`. Notes decodes those
+  on import and reads them back as the bare characters ("—", "→", "…"), but
+  the visible-text verifier decoded only `amp`/`lt`/`gt`/`quot`/`nbsp`/`apos`,
+  so the requested text kept `&mdash;` literal and the readback could never
+  contain it: the native append returned `verification_failed` /
+  `indeterminate: true` ("Appended text not verified") and the AppleScript
+  append "visible text did not match", although the note held the full
+  append. Reproduced live on macOS 27.0.1 through the AppleScript append path,
+  which shares the verifier. The verifier now decodes all 252 HTML 4 names
+  plus `apos` (at their HTML5 code points), and numeric references the way an
+  HTML parser does (C1 controls as their Windows-1252 characters; zero,
+  surrogates and out-of-range values as U+FFFD). A link label written with a
+  named reference is compared as its character too. A name outside that set
+  stays literal, so an append whose text is missing, changed or undecodable
+  is still reported as indeterminate, and the ID, revision, prior-body, link,
+  checklist and native-object guards are unchanged. Reported by @oliverames
+  in #283.
+
+## [2.14.1] - 2026-10-07
+
+### Security
+
+- Raised `@modelcontextprotocol/sdk` to `^1.31.0` (resolves 1.31.0) for
+  GHSA-6qxp-vccf-f47h, an OAuth client credential disclosure to a
+  server-selected authorization server. Not reachable here: the SDK's OAuth
+  client lives in its `client/auth` module, and this stdio server bundles
+  only the SDK's server, stdio and shared protocol modules — `build/index.js`
+  contains none of the OAuth client code before or after the bump. The
+  bundle's code is unchanged apart from the SDK version in its module path
+  comments. Reported by @oliverames in #278.
+- Floored `source-map-js` at `>=1.2.2 <2` in `pnpm-workspace.yaml` for
+  GHSA-68fv-2mgg-jv7q (event-loop denial of service from indexed source-map
+  offsets). Development scope only (vitest → vite → postcss, and
+  `@vitest/coverage-v8` → magicast); it is not in the shipped bundle.
+  Reported by @oliverames in #278.
+
+## [2.14.0] - 2026-10-03
+
+Split out of #262 per review: paragraph anchors and the opt-in anchor
+resolver, without the private writer.
+
+### Added
+
 - Paragraph anchors, so a paragraph can be found again after it is edited,
   moved, or given a new ID by Notes. `create-paragraph-anchor`, or
   `get-paragraph-link` with `recordAnchor` and `list-note-paragraphs` with
@@ -343,126 +276,153 @@ not security fixes to an earlier released writer.
   reports `needs-reminting` with the matched block when the paragraph's ID is
   shared or missing. `list-paragraph-anchors`, `get-paragraph-anchor` and
   `prune-paragraph-anchors` (a dry run by default) manage the registry. None
-  of these tools changes Notes.
+  of these tools changes Notes. `resolve-paragraph-anchor` has no `remint`
+  input: this package cannot set a paragraph ID.
 - `apple-notes-mcp anchors serve`, an opt-in resolver that answers
   `GET /a/<anchor-id>` with a redirect to the paragraph's current link. It
   binds 127.0.0.1 unless `--tailnet` is given, needs a token on every
   request, checks the Host header, and never changes Tailscale or firewall
-  settings. `APPLE_NOTES_MCP_ANCHOR_FILE` and `APPLE_NOTES_MCP_ANCHORS_TOKEN`
-  configure the registry path and a stable token.
+  settings. After 20 failed token checks in a minute from one peer address,
+  that peer gets 429. The count is per peer, so one bad client cannot lock
+  out another, and requests refused for their method or Host never count.
+  `APPLE_NOTES_MCP_ANCHOR_FILE` and `APPLE_NOTES_MCP_ANCHORS_TOKEN` configure
+  the registry path and a stable token.
+- `src/utils/localServer.ts`: the tailnet address scan, token generation,
+  Bearer parsing, constant-time comparison and Host authority the resolver
+  uses, kept in one module so another opt-in local server can share them.
+
+### Changed
+
+- `list-note-paragraphs` and `get-paragraph-link` are no longer annotated
+  read-only. With `recordAnchors` or `recordAnchor` they write the local
+  anchor registry, and MCP annotations are static per tool. Without those
+  parameters they still write nothing, and their descriptions say which
+  parameter writes.
+
+## [2.13.0] - 2026-10-03
+
+Split out of #262 per review: the local template editor, on its own.
+
+### Added
+
+- `apple-notes-mcp templates edit [name]` starts a local web editor for
+  Markdown export templates. It validates the template JSON as you type with
+  the same validator as `validate-markdown-template`, previews it with the
+  export renderer against built-in sample notes, and saves through the
+  template library (create-only unless "replace" is ticked). A real note is
+  read only with `--note <id>`, once and read-only. The server listens on
+  `127.0.0.1` on a free port, requires a per-run token on every request,
+  refuses foreign `Host` headers and cross-origin requests, serves one page
+  with no external resources, and stops on Ctrl-C or after 30 idle minutes
+  (`--idle-minutes`). It is a command-line tool: the MCP server never starts
+  it and registers no new tool.
+- `templates edit --tailnet` listens on this Mac's Tailscale IPv4 address
+  instead, with the same token and origin checks, so the editor can be used
+  from another device on the tailnet. It is off unless the flag is given,
+  refuses to start without a Tailscale address, and never changes Tailscale,
+  Serve/Funnel or firewall settings. The startup warning, `--help`, the docs
+  and `SECURITY.md` say that `--note` with `--tailnet` exposes the full note
+  body to anyone who has the URL.
+- `src/utils/localServer.ts`: the Tailscale address scan, per-run token,
+  Bearer parsing, constant-time token comparison, Host authority and
+  cross-origin check that the editor uses, kept in one module so a second
+  local server can share them.
+
+## [2.12.0] - 2026-10-03
+
+### Added
+
+- `apple-notes-mcp setup --permissions` checks Full Disk Access, Automation of
+  Notes.app, the Shortcut bridges, and Speech Recognition for the app that
+  launched it, with the same read-only probes as `doctor` and
+  `get-capabilities`. For each missing grant it names the System Settings pane
+  and its `x-apple.systempreferences:` URL, opens the pane only with `--open`,
+  and checks again each time the user presses Enter (`--once` and `--json` for
+  scripts). It never changes a setting or a grant.
+- The Automation check is opt-in. It sends one read-only Apple event to
+  Notes.app, which can raise macOS's consent prompt, so it runs only with
+  `--probe-automation`. By default the Automation item reports `unknown` (not
+  probed) with the command that checks it, and it does not count as a pending
+  item and does not change the exit code. It also reports `unknown` under
+  `--check`, which reports state only and never sends an Apple event, and
+  whenever `SSH_CONNECTION` is set, because nobody at the remote shell can
+  answer the prompt. The exit code is 1 only when a required grant is missing
+  or a probe that ran could not verify it.
+- An optional checklist window with Open Settings and Re-check buttons:
+  `apple-notes-mcp setup --permissions-window` compiles it from the packaged
+  Swift source, signs it ad hoc and installs it in Application Support like the
+  public helper; `setup --permissions --window` opens it (add
+  `--probe-automation` to include the Automation check; otherwise the window
+  shows Automation as "Not checked" with no Open Settings button). The window
+  probes nothing itself, and the server never uses it.
+- The public native helper gains a `speech_status` action that reads the Speech
+  Recognition status without prompting. Changing the helper source means an
+  installed helper reports stale until `apple-notes-mcp setup --public-helper`
+  runs again: until then `get-note-drawings` and `transcribe-note-audio` stop
+  with `helper_stale`, and `export-notes-html` with `vectorDrawings: true`
+  keeps every drawing's PNG (`fallbackReasons: { helper_stale }`).
+
+## [2.11.0] - 2026-10-03
+
+### Added
+
+- `export-notes-html` can render classic PencilKit drawings as SVG. Pass
+  `vectorDrawings: true` to decode them through the public native helper, as
+  `get-note-drawings` does, instead of using Notes' fixed-size PNG. The SVG is
+  embedded or written to the sidecar directory under the same size limits as
+  other assets. The option is off by default: without it every drawing keeps
+  the PNG and the helper never runs. Paper drawings keep the PNG either way. A
+  drawing that cannot be decoded (helper not built, decode error, stroke limit,
+  too large) falls back to the PNG without failing the export, and the new
+  receipt field `vectorDrawings` counts SVG and PNG drawings with the fallback
+  reasons.
+
+## [2.10.0] - 2026-10-02
+
+Split out of #262 per the maintainer's review.
+
+### Added
+
+- `query-notes` has two more `has:` facets. `has:url` matches a link preview
+  card (a `public.url` attachment), which still counts as `has:link`, as
+  inline links do. `has:map` matches a map attachment
+  (`com.apple.mapkit.map`).
+- `query-notes` has a `quicknote` flag, also written `is:quicknote`. It reads
+  the database's Quick Note flag (`ZISSYSTEMPAPER`), the same one
+  `list-special-notes kind=quick-notes` uses. On a store without that column
+  it matches nothing, like the other metadata flags.
+
+### Changed
+
+- **Behavior change in `query-notes`:** a bare `quicknote` (or `-quicknote`)
+  in a query used to be an ordinary word that matched a note's title or body.
+  It is now the Quick Note flag, so those queries return different notes.
+  Quote the word (`"quicknote"`) to search it as text, as with `"pinned"`.
+  `search-notes` is not affected: it passes the caller's text as one literal
+  term and never parses query syntax.
+- `query-notes` `scanLimit` now goes up to 10000 (it was 5000). The default
+  stays 500. A larger scan decodes more note bodies, so it takes longer.
+  `search-notes`' database body search keeps its 5000-note window, now a
+  fixed `SEARCH_CONTENT_SCAN_LIMIT` rather than following the query ceiling,
+  because `search-notes` has no scan parameter.
+
+## [2.9.35] - 2026-10-02
 
 ### Fixed
 
-- `native-add-paper`'s `svgPath` reads the file through `readAllowedFile`,
-  under the same policy as `analyze-svg`'s `path` (#260), in place of the
-  removed `analyzeSvgFile`.
-- A writer timeout during a write reports `timeout_indeterminate` again. It
-  had fallen through to the read-only helper's mapping, which #257 changed to
-  `operation_failed` because the helper's actions only read.
-- A `compose-note` table was created with a NotesShared call that saved the
-  note's context by itself, so a compose that failed after creating a table
-  left the table and earlier objects saved while reporting
-  `committed: false`. Tables no longer save early, and any early save by
-  NotesShared is now reported as `committed: true`, `indeterminate: true`.
-- `compose-note` checks every writer limit before `create` makes a note
-  (table cell text counts toward the 200,000-unit limit, at most 10,000 per
-  cell, 20,000 runs, and the writer's 1 MiB request size), and a create whose
-  compose then fails with nothing written moves the empty new note to
-  Recently Deleted when it is unchanged.
-- "Verified" now means the stored paragraphs match the request: the server
-  compares each run's attribute values and each created object with what it
-  sent, and `databaseReadBack` compares values and text, not per-attribute
-  character totals. Links that the writer would re-encode are refused.
-- Note links in runs and Markdown are checked like `noteLink` blocks, and a
-  link to a locked note or one in Recently Deleted is refused.
-- The Markdown importer accepts a table only when the delimiter row has pipes
-  and the header's cell count (one dash per cell is enough), and warns when
-  it drops extra cells from a row.
-- Compose refuses a note with no body at all instead of writing into its
-  title position.
-- `native-edit-note` runs take `link`, `highlight`, and `color`, the same
-  fields as `compose-note` runs, in replacements, inserted blocks, and the new
-  operations below. A run's formatting is exactly what it states: a run
-  without `link` over linked text removes the link (before, runs inherited the
-  replaced text's link, highlight, and color).
-- `native-edit-note` operation `append_to_paragraph`: adds runs, such as a
-  source link, at the end of one exact existing paragraph on its own line.
-- `native-edit-note` operation `replace_checklist`: replaces one contiguous
-  checklist, or with `select: "all"` every checklist row, with new items and
-  their checked states, leaving every other paragraph and attachment as it
-  is. The dry run lists the rows it would remove.
-- `native-edit-note` attachment removal and file replacement remain unavailable.
-  Both dry run and apply refuse with `unsupported_attachment_change`, and the
-  writer probe reports `editReplaceFile` unavailable until the old attachment
-  row and media can be safely tombstoned.
-- `native-edit-note` apply takes `ifPlanDigest`, the dry run's `planDigest`,
-  and refuses a request or `requireNonSystemPaper` value that differs from
-  the dry run (`plan_mismatch`).
-- `native-edit-note` attachment selectors count and edit attachments, not
-  glyphs. Notes stores some attachments (for example an image added through
-  AppleScript) as two adjacent glyphs; `ordinal`, `expectedCount`, and text
-  beside the attachment now treat them as one. Removal remains refused.
-- The edit read-back compares every stored field of paragraph styles
-  (including list numbering and hints), checklist todos, attachment
-  references, fonts, and colors explicitly instead of through `description`,
-  and a note holding formatting it cannot compare is refused at the dry run.
-- `delete_paragraph` on the last paragraph no longer removes the previous
-  paragraph's line break (or an empty paragraph before it), and adjacent
-  paragraphs deleted by one operation no longer conflict with each other.
-- A text selector that would match part of an emoji or of a letter with a
-  combining mark is refused instead of splitting the character, and text with
-  an unpaired surrogate is rejected.
-- The client rejects edit requests the writer would refuse before starting
-  it: `occurrence` above `expectedCount`, empty text in a non-body block,
-  empty text beside an attachment, duplicate operation ids, and runs over
-  10,000 UTF-16 units together.
-- `native-sync-push` relaunch counted another logged-in user's Notes.app
-  process as running, and read any `pgrep` failure as "Notes.app quit". It now
-  checks only this user's process and stops without relaunching when it cannot
-  tell. A failure to read the counters after the relaunch now says Notes.app
-  was already restarted (`relaunched: true`). The tool is annotated as
-  destructive, since relaunch quits Notes.app.
-- The per-feature copy-store test scripts now link PencilKit, which the writer
-  needs since paper authoring.
-- `native-add-section-link` no longer fails with `internal_error` when
-  clearing chips from a note whose last two lines are chips, and a separator
-  it adds below the title copies only the paragraph style.
-- Writer lookups by attachment identifier no longer match a row whose
-  identifier is missing.
-- `native-add-url-card` places a card after a paragraph's own line break, so
-  it no longer takes that paragraph's style (a card after a checklist item
-  became part of the item); the read-back checks the card line's style.
-- `native-set-checklist-item` refuses an identifier that two adjacent lines
-  share (`ambiguous_target`) instead of toggling both.
-- `native-highlight-text` refuses a match that would split a composed
-  character, and its dry run, like `native-add-url-card`'s, reports
-  `writeAvailable`.
-- `native-prune-orphan-table` refuses a note with an unidentifiable
-  attachment glyph, refuses unexpected staged changes before saving, and
-  requires the pruned table row on read-back.
-- `native-add-paper` verifies that the new glyph is the only change to the
-  note text, and a dry-run timeout is no longer described as a possible save.
-- Highlight and link-card dry runs pass `dryRun` to the transport too, so a
-  dry-run timeout is no longer described as a possible save.
-- The copy-store table step picks a table the live store holds in the same
-  state instead of one an earlier step created in the copy, and the highlight
-  whole-note step accepts a body that opens with an attachment.
-- `native-update-smart-folder` reports a missing title or parent timestamp in
-  `timestampsMissing` instead of stamping it, and the writer probes the
-  account deletion flag it reads.
-- Every write action reports `committed: false` for every refusal before its
-  save (a locked, shared or trashed note, bad input, a missing API), and an
-  exception after a successful save reports a committed, unverified write
-  instead of an unknown outcome. Each write handler marks itself before it
-  can save, every save goes through one bracketed `SaveOrFailFor()`, and
-  every read-back catches any exception.
-- Written text may contain format characters (emoji joiners, ZWNJ, soft
-  hyphens, BOMs, bidi marks); only C0/C1 control characters (plus U+FFFC,
-  U+2028 and U+2029) are refused, through one shared character set in the
-  writer, matching the client's checks.
-- The probe checks the folder fields `read_sync_state` reads, and a copy of
-  the store (`APPLE_NOTES_MCP_PRIVATE_STORE`) still needs
-  `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`.
+- `add-attachment`'s NoteStore verification of a PDF on macOS 27 (#236) now
+  checks more than the new row's bytes. The row's type must fit the file's
+  extension, and when the decoded note body lists attachments it must
+  reference the new one, so a stray row or a file Notes has not placed in the
+  note is no longer reported as success. A row that fails either check is an
+  error that names the attachment and says not to attach the file again. The
+  existing poll for database lag now also waits for the body to reference the
+  row, and the returned `contentHash` is read after verification finishes
+  instead of right after insertion, so it matches the note when Notes writes
+  the body late and the next guarded write does not fail with a revision
+  conflict. Follow-up to #240. Only the database path changed. A note whose
+  body lists no attachment yet cannot be checked against the body, and that
+  part of the check is skipped.
 
 ## [2.9.34] - 2026-10-02
 
@@ -471,7 +431,9 @@ not security fixes to an earlier released writer.
 - **`brace-expansion` 1.1.18 → 1.1.21 and 5.0.9 → 5.0.12, clearing GHSA-q2hr-2g5m-vwhr (medium) — dev toolchain only, not in the shipped bundle.** A further incomplete-fix variant of the same unbounded-expansion class as GHSA-mh99-v99m-4gvg. Per the advisory's reported ranges, only the 1.x and 5.x lines were vulnerable; the 2.x floor (2.1.4) is untouched. Reached via eslint → minimatch on both lines, so development scope only. `pnpm-workspace.yaml`'s two-sided override ranges are raised accordingly. Clears Dependabot alerts #33 and #32.
 
 ## [2.9.33] - 2026-09-30
+
 ### Changed
+
 - Dependency bump via Dependabot; committed bundle rebuilt. (automated)
 
 ## [2.9.32] - 2026-09-29

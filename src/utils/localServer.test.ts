@@ -1,5 +1,5 @@
 /**
- * Shared helpers of the template editor and the anchor resolver: tailnet
+ * Shared helpers of the local servers (the template editor today): tailnet
  * address detection, token handling, the Host authority and the cross-origin
  * check. Pure functions; nothing listens.
  */

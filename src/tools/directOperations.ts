@@ -1,3 +1,4 @@
+import { fdaRemediation } from "@/utils/fullDiskAccess.js";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -22,10 +23,14 @@ import {
 import { classifyError, CodedError, errorResult } from "../utils/errorCodes.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
 import { readAllowedFile } from "../utils/attachmentFs.js";
-import { attachmentCoreDataId, type AttachmentAssetRecord } from "../utils/attachmentAssets.js";
+import {
+  attachmentCoreDataId,
+  type AttachmentAssetRecord,
+  type AttachmentKind,
+  type NoteAttachmentAssets,
+} from "../utils/attachmentAssets.js";
 import {
   enrichNoteRead,
-  linkSignature,
   readRichNote,
   richContentHash,
   type RichNote,
@@ -36,6 +41,10 @@ import {
   pasteboardFilename,
 } from "../utils/pasteboardFreeze.js";
 import type { PasteboardAttachmentSource } from "../types.js";
+import {
+  assertRetainedRichContent,
+  requirePreservationMetadata,
+} from "../utils/richContentPreservation.js";
 
 // Accepts the x-coredata id as before, plus the note's Notes UUID or numeric
 // Core Data key, resolved to the x-coredata id before the handler runs.
@@ -71,34 +80,14 @@ function readSnapshot(manager: AppleNotesManager, id: string): Snapshot {
   // background writes do; assertExistingContentPreserved checks the objects.
   if (enriched.revision !== rich.revision)
     throw new Error("Native metadata changed during read; read the note again");
+  requirePreservationMetadata(rich);
   return { id, title: note.title, body, rich, hash: richContentHash(body, enriched) };
 }
 
 function assertExistingContentPreserved(before: Snapshot, after: Snapshot) {
   if (before.id !== after.id || before.title !== after.title)
     throw new Error("Note identity changed");
-  const tidy = (text: string) => text.replace(/\r\n/g, "\n").replace(/[\s\ufffc]+$/gu, "");
-  if (!tidy(after.rich.text).startsWith(tidy(before.rich.text)))
-    throw new Error("Existing note text was not preserved");
-  if (
-    linkSignature(before.rich.links) !==
-    linkSignature(after.rich.links.slice(0, before.rich.links.length))
-  )
-    throw new Error("Existing links were not preserved");
-  if (before.rich.nativeObjectIds.some((id) => !after.rich.nativeObjectIds.includes(id)))
-    throw new Error("Existing native object was lost");
-  if (before.rich.nativeTags.some((tag) => !after.rich.nativeTags.includes(tag)))
-    throw new Error("Existing native tag was lost");
-  for (const item of before.rich.checklistItems || []) {
-    const actual = after.rich.checklistItems?.find((current) => current.id === item.id);
-    if (!actual || actual.text !== item.text || actual.done !== item.done)
-      throw new Error("Existing checklist item identity or state changed");
-  }
-  for (const object of before.rich.objectData || []) {
-    const actual = after.rich.objectData?.find((current) => current.id === object.id);
-    if (!actual || actual.mergeable !== object.mergeable || actual.view !== object.view)
-      throw new Error("Existing native object content or presentation changed");
-  }
+  assertRetainedRichContent(before.rich, after.rich, { kind: "append" });
 }
 
 function localAttachment(path: string): Buffer {
@@ -435,32 +424,67 @@ function storedAttachmentIds(manager: AppleNotesManager, id: string): Set<string
 }
 
 /**
+ * The attachment kind a file name implies, for the extensions Notes records a
+ * stable type for. Unknown extensions are not checked.
+ */
+const KIND_BY_EXTENSION: Record<string, AttachmentKind> = {
+  ".pdf": "pdf",
+  ".png": "image",
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".heic": "image",
+  ".tif": "image",
+  ".tiff": "image",
+  ".gif": "image",
+};
+
+/**
+ * Whether the note body references a stored attachment: true or false when the
+ * decoded body gave the order, undefined when it did not (a note whose body
+ * did not decode, or that holds no attachment the body references).
+ */
+function referencedByBody(assets: NoteAttachmentAssets, row: AttachmentAssetRecord) {
+  return assets.orderSource === "body" ? row.bodyIndex !== null : undefined;
+}
+
+/**
  * Find the one attachment row this insertion added to the note in NoteStore
- * and check its media file against the source bytes (#236). Notes' AppleScript
- * on macOS 27 never lists PDF attachments, so this is the only way to see a
- * new PDF. Returns null when no new row appears; throws when a row appears but
- * its bytes cannot be verified, so the caller does not attach a duplicate.
+ * and check it against the source file (#236). Notes' AppleScript on macOS 27
+ * never lists PDF attachments, so this is the only way to see a new PDF.
+ *
+ * Besides the media bytes, the row's type must fit the file's extension and
+ * the decoded note body must reference the row, so a stray row or an orphaned
+ * file is not reported as an attachment the note shows. The database can lag
+ * the write, so the read repeats until the row has its file and its place in
+ * the body. Returns null when no new row appears; throws when a row appears
+ * but cannot be verified, so the caller does not attach a duplicate.
  */
 function storedInsertion(
   manager: AppleNotesManager,
   id: string,
   before: Set<string>,
   bytes: Buffer,
+  name: string,
   returnedId: string | undefined
 ): { attachmentId: string; name: string | null } | null {
   let added: AttachmentAssetRecord[] = [];
+  let assets: NoteAttachmentAssets | undefined;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (attempt > 0) pause(250);
     try {
-      added = manager
-        .getAttachmentAssetsById(id)
-        .attachments.filter(
-          (item) => item.parentIdentifier === null && !before.has(item.identifier.toLowerCase())
-        );
+      assets = manager.getAttachmentAssetsById(id);
+      added = assets.attachments.filter(
+        (item) => item.parentIdentifier === null && !before.has(item.identifier.toLowerCase())
+      );
     } catch {
       added = [];
     }
-    if (added.length === 1 && added[0].assetPaths.length > 0) break;
+    if (
+      added.length === 1 &&
+      added[0].assetPaths.length > 0 &&
+      referencedByBody(assets!, added[0]) !== false
+    )
+      break;
   }
   if (added.length === 0) return null;
   if (added.length > 1) throw new Error(UNCERTAIN);
@@ -468,6 +492,15 @@ function storedInsertion(
   const attachmentId = attachmentCoreDataId(id, row.pk);
   if (returnedId && /\/ICAttachment\/p\d+$/.test(returnedId) && returnedId !== attachmentId)
     throw new Error(UNCERTAIN);
+  const expectedKind = KIND_BY_EXTENSION[extname(name).toLowerCase()];
+  if (expectedKind && row.kind !== expectedKind)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but its type (${row.uti ?? "unknown"}) does not fit ${name}; read the exact note and do not attach the file again`
+    );
+  if (referencedByBody(assets!, row) === false)
+    throw new Error(
+      `Notes' database shows new attachment ${attachmentId} on this note, but the note body does not reference it; read the exact note and do not attach the file again`
+    );
   const expected = sha256(bytes);
   const matches = row.assetPaths.some((path) => fileMatches(path, bytes.length, expected));
   if (!matches)
@@ -550,12 +583,12 @@ function attachFile(
       // attachment, so check the read-only NoteStore database instead.
       const stored =
         inserted.length === 0 && beforeStored
-          ? storedInsertion(manager, id, beforeStored, bytes, returnedId)
+          ? storedInsertion(manager, id, beforeStored, bytes, name, returnedId)
           : null;
       if (!stored)
         throw new Error(
           inserted.length === 0 && !beforeStored
-            ? `${UNCERTAIN}. Notes' AppleScript does not list some attachments (PDFs on macOS 27); grant Full Disk Access so the server can verify through the Notes database`
+            ? `${UNCERTAIN}. Notes' AppleScript does not list some attachments (PDFs on macOS 27); Full Disk Access is required to verify through the Notes database. ${fdaRemediation()}`
             : UNCERTAIN
         );
       attachmentId = stored.attachmentId;
@@ -563,11 +596,20 @@ function attachFile(
       verifiedBy = "database";
     }
     const nameVerified = reportedName === name;
+    // The database path can wait seconds for Notes to write the new file into
+    // the body, so `after` may predate that. Return the revision the note has
+    // now, which the next guarded write needs.
+    let contentHash = after.hash;
+    if (verifiedBy === "database") {
+      const final = readSnapshot(manager, id);
+      assertExistingContentPreserved(before, final);
+      contentHash = final.hash;
+    }
     return {
       ok: true,
       id,
       attachmentId,
-      contentHash: after.hash,
+      contentHash,
       bytes: bytes.length,
       name: reportedName,
       ...(verifiedBy === "database" ? { verifiedBy } : {}),
@@ -589,7 +631,20 @@ function attachFile(
           }
         : {}),
     };
+  } catch (error) {
+    if (progress.insertionStarted)
+      throw new CodedError(
+        `Attachment outcome uncertain; read the exact note before any retry: ${error instanceof Error ? error.message : String(error)}`,
+        { code: "verification_failed", indeterminate: true }
+      );
+    throw error;
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      rmSync(directory, { recursive: true, force: true });
+    } catch {
+      // A cleanup failure cannot turn a verified write or an indeterminate
+      // insertion into a pre-dispatch error that suggests a safe retry.
+      console.error("Could not remove private temporary attachment files");
+    }
   }
 }

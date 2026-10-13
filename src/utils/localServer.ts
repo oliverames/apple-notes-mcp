@@ -1,6 +1,6 @@
 /**
- * Shared pieces of the two opt-in local HTTP servers, the template editor
- * (`templates edit`) and the paragraph anchor resolver (`anchors serve`).
+ * Shared pieces of the opt-in local HTTP servers that the command line starts
+ * (today the template editor, `templates edit`).
  *
  * - Address: `findTailnetAddress` finds this Mac's Tailscale IPv4 address for
  *   `--tailnet`. Tailscale gives each device an address in the carrier-grade
@@ -10,13 +10,12 @@
  *   firewall.
  * - Token: `newServerToken` makes the per-run token, `bearerToken` reads an
  *   `Authorization: Bearer` header, and `tokenMatches` compares in constant
- *   time. Each server decides which of `?token=` and the header wins.
+ *   time. A server decides which of `?token=` and the header wins.
  * - Host: `hostAuthority` is the `host:port` a request's Host header must
  *   name, which blocks DNS rebinding (a hostile name resolving to this
  *   address).
  * - Origin: `crossOriginRefusal` refuses requests a browser marks as coming
- *   from another site. The template editor uses it; the anchor resolver does
- *   not, because its links are meant to be opened from other apps and pages.
+ *   from another site.
  *
  * @module utils/localServer
  */

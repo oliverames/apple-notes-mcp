@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+
+vi.mock(import("../utils/noteIdentifiers.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  lookupStableIdentifiers: vi.fn(),
+}));
 
 vi.mock(import("../services/privateWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -87,6 +93,7 @@ const available = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(lookupStableIdentifiers).mockReturnValue(new Map([[CD, { identifier: NOTE }]]));
   vi.mocked(composeNote).mockImplementation((request) =>
     request.dryRun
       ? ({
@@ -135,7 +142,8 @@ describe("compose-note append and prepend", () => {
       { mode: "prepend", id: CD, markdown: "- [x] done\n---\n<div>", ifRevision: REV },
       rt
     );
-    expect(rt.manager.getNoteLinkById).toHaveBeenCalledWith(CD);
+    expect(lookupStableIdentifiers).toHaveBeenCalledWith([CD], "ICNote");
+    expect(rt.manager.getNoteLinkById).not.toHaveBeenCalled();
     expect(composeNote).toHaveBeenCalledWith(
       {
         identifier: NOTE,

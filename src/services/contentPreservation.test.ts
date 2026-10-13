@@ -44,7 +44,12 @@ describe.skipIf(!MACOS)("pure untouched content preservation", () => {
       execFileSync(binary, [], {
         encoding: "utf8",
         timeout: 20_000,
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, CFFIXED_USER_HOME: directory, TMPDIR: directory },
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          CFFIXED_USER_HOME: directory,
+          TMPDIR: directory,
+        },
       })
     );
     expect(result.fixture).toBe("pure-attributed-text");
@@ -57,7 +62,12 @@ describe.skipIf(!MACOS)("pure untouched content preservation", () => {
         execFileSync(binary, [mode], {
           encoding: "utf8",
           timeout: 20_000,
-          env: { PATH: process.env.PATH, HOME: process.env.HOME, CFFIXED_USER_HOME: directory, TMPDIR: directory },
+          env: {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            CFFIXED_USER_HOME: directory,
+            TMPDIR: directory,
+          },
         })
       );
       expect(result.checks).toBeGreaterThanOrEqual(3);

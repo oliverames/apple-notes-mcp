@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+
+vi.mock(import("../utils/noteIdentifiers.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  lookupStableIdentifiers: vi.fn(),
+}));
 import { z } from "zod";
 
 vi.mock(import("../services/privateWriterParagraphs.js"), async (importOriginal) => ({
@@ -28,6 +34,10 @@ const WRITER = { sourcePath: "writer.m" };
 
 function fixture() {
   const registerTool = vi.fn();
+  const identifier = NOTE;
+  vi.mocked(lookupStableIdentifiers).mockReturnValue(
+    identifier ? new Map([[CD, { identifier }]]) : new Map()
+  );
   const manager = {
     getNoteLinkById: vi.fn(() => `notes://showNote?identifier=${NOTE}`),
   } as unknown as AppleNotesManager;
@@ -71,7 +81,8 @@ describe("native-set-paragraph-id", () => {
     vi.mocked(setParagraphId).mockReturnValueOnce({ status: "updated" } as never);
     const { call, manager } = fixture();
     const r = await call("native-set-paragraph-id", { ...args, identifier: undefined, id: CD });
-    expect(manager.getNoteLinkById).toHaveBeenCalledWith(CD);
+    expect(lookupStableIdentifiers).toHaveBeenCalledWith([CD], "ICNote");
+    expect(manager.getNoteLinkById).not.toHaveBeenCalled();
     expect(r.structuredContent).toEqual({ ok: true, status: "updated" });
     expect(setParagraphId).toHaveBeenCalledWith({ ...args, paragraphId: undefined }, WRITER);
     expect(nudgeInPlace).not.toHaveBeenCalled();
@@ -146,7 +157,8 @@ describe("native-add-section-link", () => {
       ifTargetRevision: REV,
       targetScope: { ifAncestorFolderId: "x-coredata://8FA9/ICFolder/p1" },
     });
-    expect(manager.getNoteLinkById).toHaveBeenCalledWith(CD);
+    expect(lookupStableIdentifiers).toHaveBeenCalledWith([CD], "ICNote");
+    expect(manager.getNoteLinkById).not.toHaveBeenCalled();
     expect(r.structuredContent).toEqual({ ok: true, status: "updated" });
     expect(addSectionLink).toHaveBeenCalledWith(
       {

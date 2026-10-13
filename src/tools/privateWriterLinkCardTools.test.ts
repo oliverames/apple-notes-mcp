@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+
+vi.mock(import("../utils/noteIdentifiers.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  lookupStableIdentifiers: vi.fn(),
+}));
 
 vi.mock(import("../services/privateWriterLinkCard.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -23,6 +29,10 @@ const NUDGE = { nudge: true };
 
 function fixture() {
   const registerTool = vi.fn();
+  const identifier = NOTE;
+  vi.mocked(lookupStableIdentifiers).mockReturnValue(
+    identifier ? new Map([[CD, { identifier }]]) : new Map()
+  );
   const manager = {
     getNoteLinkById: vi.fn(() => `notes://showNote?identifier=${NOTE}`),
   } as unknown as AppleNotesManager;

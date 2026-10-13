@@ -3,6 +3,11 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import type { AppleNotesManager } from "./appleNotesManager.js";
 import type { BackgroundSnapshot } from "./backgroundNotes.js";
+import {
+  highlightedRichNote,
+  plainRichNote,
+  syntheticRichNote,
+} from "../utils/__fixtures__/retainedRichNote.js";
 
 const mock = vi.hoisted(() => ({
   status: vi.fn(() => ({ installed: true, identifier: "11111111-1111-4111-8111-111111111111" })),
@@ -19,12 +24,14 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual, writeFileSync: vi.fn(actual.writeFileSync) };
 });
-vi.mock("./nativeTags.js", () => ({
+vi.mock("./nativeTags.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./nativeTags.js")>()),
   nativeTagsStatus: mock.status,
   normalizeNativeTags: (tags: string[]) => tags.map((tag) => tag.replace(/^#/, "")),
   runNativeTagsShortcut: mock.runTags,
 }));
-vi.mock("../utils/noteRichText.js", () => ({
+vi.mock("../utils/noteRichText.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../utils/noteRichText.js")>()),
   enrichNoteRead: mock.enrich,
   readRichNote: mock.readRich,
   richContentHash: mock.hash,
@@ -58,12 +65,7 @@ function snapshot(overrides: Partial<BackgroundSnapshot> = {}): BackgroundSnapsh
     pinned: false,
     checklist: [],
     rich: {
-      text: scopeText,
-      links: [],
-      nativeTags: [],
-      nativeObjectIds: [],
-      hasNativeObjects: false,
-      hasChecklist: false,
+      ...plainRichNote(scopeText),
       revision: "r1",
     },
     ...overrides,
@@ -160,7 +162,7 @@ describe("native append and tags", () => {
     const after = snapshot({
       hash: "h2",
       html: `<div>${scopeText}</div><div><br></div><div>Added text</div>`,
-      rich: { ...before.rich, text: `${scopeText}\n\nAdded text`, revision: "r2" },
+      rich: { ...plainRichNote(`${scopeText}\n\nAdded text`), revision: "r2" },
     });
     expect(
       appendNative(managerFor([before, before, after]), {
@@ -172,12 +174,126 @@ describe("native append and tags", () => {
     expect(vi.mocked(execFileSync)).toHaveBeenCalledTimes(1);
   });
 
+  describe("HTML append readback with adjacent del text (#283)", () => {
+    const content = "<div>one<del>two</del>three</div>";
+    const before = snapshot({
+      rich: highlightedRichNote(scopeText),
+    });
+    const appended = (html: string, text: string) =>
+      snapshot({
+        hash: "h2",
+        html: before.html + "<div><br></div>" + html,
+        rich: {
+          ...highlightedRichNote(scopeText + "\n\n" + text, scopeText.length),
+          revision: "r2",
+        },
+      });
+
+    it("verifies the complete append while preserving the existing protected formatting", () => {
+      const after = appended("<div>one<strike>two</strike>three</div>", "onetwothree");
+      expect(
+        appendNative(managerFor([before, before, after]), { ...request, content, format: "html" })
+      ).toMatchObject({ ok: true, contentHash: "h2" });
+      expect(vi.mocked(execFileSync)).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["missing struck text", "<div>onethree</div>", "onethree"],
+      ["changed struck text", "<div>one<strike>Two</strike>three</div>", "oneTwothree"],
+    ])("reports %s as indeterminate", (_label, html, text) => {
+      const after = appended(html, text);
+      expect(() =>
+        appendNative(managerFor([before, before, after]), { ...request, content, format: "html" })
+      ).toThrow(/^Operation outcome uncertain.*Appended text not verified/);
+      expect(vi.mocked(execFileSync)).toHaveBeenCalledTimes(1);
+    });
+
+    it("still reports a changed prior body as indeterminate", () => {
+      const after = appended("<div>one<strike>two</strike>three</div>", "onetwothree");
+      after.html = after.html.replace(scopeText, "Changed project marker");
+      after.rich = {
+        ...highlightedRichNote(
+          after.rich.text.replace(scopeText, "Changed project marker"),
+          "Changed project marker".length
+        ),
+        revision: "r2",
+      };
+      expect(() =>
+        appendNative(managerFor([before, before, after]), { ...request, content, format: "html" })
+      ).toThrow(/^Operation outcome uncertain.*Existing note text was not preserved/);
+    });
+  });
+
+  describe("HTML append readback with named character references (#283)", () => {
+    // A note shaped like the report: a heading, paragraphs, a list and a
+    // monospaced line, with a unique body phrase as scope. The appended HTML
+    // uses named references; Notes reads them back as bare characters, in the
+    // AppleScript HTML forms observed live (semicolonless &lt/&amp/&quot,
+    // <font face="Courier"><tt> for monospace, <b><span> for a heading).
+    const priorHtml =
+      `<div><b><span style="font-size: 24px">Ideas</span></b><br></div>\n` +
+      `<div>${scopeText}</div>\n<ul>\n<li>seed item</li>\n</ul>\n` +
+      `<div><font face="Courier"><tt>git -C /tmp status</tt></font></div>`;
+    const priorText = `Ideas\n${scopeText}\nseed item\ngit -C /tmp status`;
+    const content =
+      "<h2>Next steps &mdash; review</h2>" +
+      "<ul><li>Ship it&hellip; then &ldquo;verify&rdquo;</li><li>a &rarr; b &amp; c &lt;d&gt;</li></ul>" +
+      "<div><tt>pnpm run build &amp;&amp; echo &quot;ok&quot;</tt></div>";
+    const appendedHtml =
+      `<div><br></div>\n<div><b><span style="font-size: 18px">Next steps — review</span></b><br></div>\n` +
+      `<ul>\n<li>Ship it… then “verify”</li>\n<li>a → b &amp c &ltd&gt</li>\n</ul>\n` +
+      `<div><font face="Courier"><tt>pnpm run build &amp&amp echo &quotok&quot</tt></font></div>`;
+    const appendedText =
+      '\nNext steps — review\nShip it… then “verify”\na → b & c <d>\npnpm run build && echo "ok"';
+    const before = snapshot({
+      html: priorHtml,
+      rich: { ...plainRichNote(priorText), revision: "r1" },
+    });
+
+    it("verifies a complete append instead of reporting it indeterminate", () => {
+      const after = snapshot({
+        hash: "h2",
+        html: priorHtml + "\n" + appendedHtml,
+        rich: { ...plainRichNote(priorText + "\n" + appendedText), revision: "r2" },
+      });
+      expect(
+        appendNative(managerFor([before, before, after]), { ...request, content, format: "html" })
+      ).toMatchObject({ ok: true, contentHash: "h2" });
+    });
+
+    it("still reports an append missing part of the requested text as indeterminate", () => {
+      const partialHtml = appendedHtml.replace("\n<li>a → b &amp c &ltd&gt</li>", "");
+      const after = snapshot({
+        hash: "h2",
+        html: priorHtml + "\n" + partialHtml,
+        rich: {
+          ...plainRichNote(priorText + "\n" + appendedText.replace("\na → b & c <d>", "")),
+          revision: "r2",
+        },
+      });
+      expect(() =>
+        appendNative(managerFor([before, before, after]), { ...request, content, format: "html" })
+      ).toThrow(/^Operation outcome uncertain.*Appended text not verified/);
+    });
+
+    it("still reports a changed prior body as indeterminate", () => {
+      const after = snapshot({
+        hash: "h2",
+        html: priorHtml.replace("seed item", "seed ITEM") + "\n" + appendedHtml,
+        rich: { ...plainRichNote(priorText + "\n" + appendedText), revision: "r2" },
+      });
+      expect(() =>
+        appendNative(managerFor([before, before, after]), { ...request, content, format: "html" })
+      ).toThrow(/^Operation outcome uncertain.*Appended text not verified/);
+    });
+  });
+
   it("converts bounded Markdown to semantic HTML and rejects HTML tables", () => {
     const before = snapshot();
     const after = snapshot({
       hash: "h2",
       html: `<div>${scopeText}</div><div><br></div><h2>Added</h2>`,
-      rich: { ...before.rich, text: `${scopeText}\nAdded`, revision: "r2" },
+      rich: { ...plainRichNote(`${scopeText}\nAdded`), revision: "r2" },
     });
     expect(
       appendNative(managerFor([before, before, after]), {
@@ -193,6 +309,22 @@ describe("native append and tags", () => {
         format: "html",
       })
     ).toThrow(/create-table/);
+    // #286 — a bare table fragment (no outer <table>) used to slip past this
+    // check and into validateAppendContent's now-corrected element list, so
+    // it must get the same specific redirect, not a generic rejection or a
+    // silent accept. Confirmed without touching the manager: the content is
+    // rejected before the note is ever read.
+    for (const fragment of [
+      "<tbody><tr><td>x</td></tr></tbody>",
+      "<tr><td>x</td></tr>",
+      "<td>x</td>",
+    ]) {
+      const manager = managerFor([before]);
+      expect(() =>
+        appendNative(manager, { ...request, content: fragment, format: "html" })
+      ).toThrow(/create-table/);
+      expect(manager.getNoteById).not.toHaveBeenCalled();
+    }
   });
 
   it("sends Markdown to the bridge's native Markdown import, not converted HTML (#172)", () => {
@@ -206,7 +338,7 @@ describe("native append and tags", () => {
     const after = snapshot({
       hash: "h2",
       html: `<div>${scopeText}</div><div><br></div><h3>Added</h3>`,
-      rich: { ...before.rich, text: `${scopeText}\nAdded`, revision: "r2" },
+      rich: { ...plainRichNote(`${scopeText}\nAdded`), revision: "r2" },
     });
     expect(
       appendNative(managerFor([before, before, after]), {
@@ -240,26 +372,29 @@ describe("native append and tags", () => {
   });
 
   it("removes only the requested native tag object", () => {
+    const tagType = "com.apple.notes.inlinetextattachment.hashtag";
+    const tableType = "com.apple.notes.table";
     const before = snapshot({
       rich: {
-        ...snapshot().rich,
-        text: `${scopeText} #old \ufffc`,
-        nativeTags: ["old"],
-        nativeObjectIds: ["tag-id", "table-id"],
-        nativeTagObjectIds: { old: ["tag-id"] },
-        objectData: [{ id: "table-id", mergeable: "AA", view: 1 }],
+        ...syntheticRichNote(`${scopeText} #old \ufffc`, {
+          objects: [
+            { id: "tag-id", type: tagType, start: scopeText.length + 1, length: 4, tag: "old" },
+            { id: "table-id", type: tableType, start: scopeText.length + 6, length: 1 },
+          ],
+        }),
+        revision: "r1",
       },
     });
     const after = snapshot({
       hash: "h2",
       rich: {
-        ...snapshot().rich,
-        text: scopeText,
-        nativeObjectIds: ["table-id"],
-        objectData: [{ id: "table-id", mergeable: "AA", view: 1 }],
+        ...syntheticRichNote(`${scopeText}  \ufffc`, {
+          objects: [{ id: "table-id", type: tableType, start: scopeText.length + 2, length: 1 }],
+        }),
         revision: "r2",
       },
     });
+    after.rich.objectData![0].pk = before.rich.objectData![1].pk;
     expect(
       setNativeTag(managerFor([before, before, before, after]), {
         ...request,
@@ -277,10 +412,17 @@ describe("native append and tags", () => {
     const after = snapshot({
       hash: "h2",
       rich: {
-        ...before.rich,
-        text: `${scopeText} \ufffc`,
-        nativeTags: ["new"],
-        nativeObjectIds: ["tag-id"],
+        ...syntheticRichNote(`${scopeText} \ufffc`, {
+          objects: [
+            {
+              id: "tag-id",
+              type: "com.apple.notes.inlinetextattachment.hashtag",
+              start: scopeText.length + 1,
+              length: 1,
+              tag: "new",
+            },
+          ],
+        }),
         revision: "r2",
       },
     });
@@ -338,8 +480,7 @@ describe("create-note Markdown bridge (#172)", () => {
     };
     mock.enrich.mockReturnValue({ revision: "r1" });
     mock.readRich.mockImplementation((noteId: string) => ({
-      ...snapshot().rich,
-      text: read(noteId).text,
+      ...plainRichNote(read(noteId).text),
       revision: "r1",
     }));
     mock.hash.mockReturnValue("h-created");

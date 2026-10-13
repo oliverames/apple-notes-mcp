@@ -244,8 +244,7 @@ stores. The sources below were checked against a live store on macOS 27.2 on
 | Folder, path | note `ZFOLDER` → folder `ZTITLE2`, walked up `ZPARENT` |
 | Account | folder `ZOWNER` (inherited from the parent) → account `ZNAME` |
 | Recently Deleted | folder `ZFOLDERTYPE = 1` (identifier `TrashFolder-…`); also `ZMARKEDFORDELETION` and `ZFOLDER IS NULL` |
-| `pinned`, `locked` | `ZISPINNED`, `ZISPASSWORDPROTECTED` |
-| `quicknote` | `ZISSYSTEMPAPER`, the flag `list-special-notes kind=quick-notes` reads |
+| `pinned`, `locked`, `quicknote` | `ZISPINNED`, `ZISPASSWORDPROTECTED`, `ZISSYSTEMPAPER` (the flag `list-special-notes` reads for Quick Notes) |
 | `shared` | `ZSERVERSHAREDATA IS NOT NULL` on the note or any ancestor folder. On the live store this set equalled AppleScript's `shared` set exactly |
 | Text, words, links, checklists, attachments | The gzipped `ZICNOTEDATA.ZDATA` document, decoded per note: text (field 2), attribute-run links (field 9), `AttachmentInfo` type UTIs (field 12.2), checklist style 103 with done state (field 2.5.2) |
 | `tag:` | `ICInlineAttachment` rows with `ZTYPEUTI1 = 'com.apple.notes.inlinetextattachment.hashtag'`, `ZNOTE1` = note, `ZALTTEXT` = `#tag`, counted only when their `ZIDENTIFIER` is still an object in the body |
@@ -254,8 +253,8 @@ Facets come from the body's `AttachmentInfo` types rather than from `ICAttachmen
 rows, because rows outlive their objects: on the live store, some top-level
 attachment rows (tables and URL previews) were no longer referenced by any note
 body, while every referenced row's UTI equalled the body's UTI. The UTI mapping is
-`public.url` (link preview cards) → `has:url` and `has:link`; inline note links →
-`has:link` (as are attribute-run links); `com.apple.mapkit.map` → `has:map`;
+`public.url` and inline note links → `has:link` (as are attribute-run links), and
+`public.url` alone also → `has:url`, so a link preview card matches both; `com.apple.mapkit.map` → `has:map`;
 `com.apple.notes.table` → `has:table`; `com.apple.paper.doc.scan` and the legacy
 `com.apple.notes.gallery` → `has:scan`; `com.adobe.pdf` and `com.apple.paper.doc.pdf`
 → `has:pdf`; `com.apple.paper` and the legacy `com.apple.drawing*` /
@@ -289,7 +288,7 @@ AST directly — the caller's text is one literal `text` term, never tokenized, 
 `title:`, `OR`, `-` and quotes in it are searched literally — plus `folder:`,
 `account:` and a `modified >=` node for the other parameters. With no `account`,
 it scopes to Notes.app's default account, as the AppleScript path does. It scans
-the 5000 most recently modified notes (`SEARCH_CONTENT_SCAN_LIMIT`) and discloses a truncated
+the 5000 most recently modified notes (`SEARCH_CONTENT_SCAN_LIMIT`, fixed below query-notes' own `QUERY_SCAN.MAX` of 10000, because search-notes has no scan parameter) and discloses a truncated
 window; `limit` is applied as given, not capped at query-notes' 500.
 
 Differences from the AppleScript path, by design: text is matched against the
@@ -478,7 +477,10 @@ included unless the caller turns that off.
 
 `export-notes-html` renders classic PencilKit drawings (`com.apple.drawing.2`,
 `com.apple.drawing`) as SVG instead of Notes' `FallbackImage.png`
-(`src/services/exportVectorDrawings.ts`). Before rendering, it decodes every
+(`src/services/exportVectorDrawings.ts`) only when the caller passes
+`vectorDrawings: true`. The default is `false`: every drawing keeps the PNG and
+the helper is never run, so an export has no dependency on the optional public
+helper unless the caller asks for it. When it is on, the export decodes every
 classic drawing in the selected notes through the same path as
 `get-note-drawings`: the PencilKit bytes are read read-only from the
 attachment row's `ZMERGEABLEDATA1` (`ZMERGEABLEDATA` on older schemas) and
@@ -611,6 +613,16 @@ rest: a changed note is `revision_conflict`, a changed paragraph is
 copy-store script records an anchor for a shared or missing paragraph on the
 copy and heals it this way.
 
+**Tool annotations.** `list-note-paragraphs` and `get-paragraph-link` read
+Notes and write nothing by default, but with `recordAnchors` or
+`recordAnchor` they write the registry file. MCP annotations are static per
+tool, so both are registered with `readOnlyHint: false`,
+`destructiveHint: false` and `idempotentHint: true` (recording the same
+paragraph again returns the existing anchor), and their descriptions say
+which parameter writes. `list-paragraph-anchors` and `get-paragraph-anchor`
+read only the registry and stay read-only. `paragraphAnchorAnnotations.test.ts`
+pins all of this.
+
 **Registry.** One JSON file, `{ "version": 1, "anchors": [...] }`, at
 `APPLE_NOTES_MCP_ANCHOR_FILE` or `~/Library/Application
 Support/apple-notes-mcp/paragraph-anchors.json`. Changes take
@@ -625,14 +637,20 @@ corrupt file is never rewritten. The limit is 20,000 anchors.
 (`src/services/anchorServer.ts`) answers `GET /a/<anchor-id>` with a 302 to
 the current `applenotes://` link when the anchor resolves, and a plain-text
 409 or 404 otherwise. It binds 127.0.0.1, or with `--tailnet` the first IPv4
-in 100.64.0.0/10 found by `os.networkInterfaces()` (utun interfaces first),
-through the same `findTailnetAddress` as the template editor
-(`src/utils/localServer.ts`). It never runs `tailscale` or changes any
-configuration. The request checks
-run in this order: the failed-token limit (429), the method (GET or HEAD),
-the Host header (the bound address, or `localhost` on loopback), and the
-token (`?token=` or `Authorization: Bearer`, compared with `timingSafeEqual`),
-before the path is looked at. The token is in the query string because a link
+in 100.64.0.0/10 found by `os.networkInterfaces()` (utun interfaces first).
+It never runs `tailscale` or changes any configuration. The tailnet scan,
+token generation, Bearer parsing, constant-time comparison and the Host
+authority come from `src/utils/localServer.ts`. The request checks
+run in this order: the failed-token limit for the peer (429), the method (GET
+or HEAD), the Host header (the bound address, or `localhost` on loopback), and
+the token (`?token=` or `Authorization: Bearer`, compared with
+`timingSafeEqual`), before the path is looked at. The limit counts failed
+token checks per peer address (`req.socket.remoteAddress`) over a sliding
+minute, 20 by default, so a peer that guesses tokens locks out only itself. A
+request refused for its method or Host never reaches the token check and never
+counts. Over the tailnet each device has its own address, so peers are
+distinguishable. On loopback every client is `127.0.0.1`, which is one peer by
+construction. The token is in the query string because a link
 opened from another app cannot add a header; `Referrer-Policy: no-referrer`
 and `Cache-Control: no-store` keep it from leaking onward, and the request
 log records only the method, path and status.
@@ -887,10 +905,29 @@ One JSON object on stdin (1 MiB cap), one on stdout, exit 0 on success and 1
 on error with `{status:"error", code, message}`. Every request carries
 `protocol: 1`; a mismatch is `protocol_mismatch`. Unknown actions and unknown
 request fields are refused. Actions: `hello` (context-free handshake,
-reports the source SHA-256 compiled in and `readOnly: true`), `probe`, and
-`read_note_state`. There is no write action; `append_plain_text` or any other
+reports the source SHA-256 compiled in and `readOnly: true`), `probe`,
+`read_note_state`, and `read_checklist`. The checklist read probes only
+`ICTTParagraphStyle`'s `style`/`todo` and `ICTTTodo`'s `uuid`/`done` getters,
+separately from ordinary note-state reads. It groups `TTStyle` runs by native
+todo UUID and reports `contiguous`, `consistent`, and `spansLines` ambiguity
+flags; it does not infer native items from visible checkbox text. The native
+synthetic harness (`node scripts/test-private-checklist.mjs`) exercises this
+snapshot parser and context-free dispatcher without NotesShared or any store.
+CI runs it on macOS. A separate, authorized read-only trial on 2026-10-12 used
+a temporary current-source helper on macOS 27.2 / Notes 4.13 and one newly
+created native checklist fixture. The probe reported the checklist getters
+available; two exact-ID reads returned the expected two unchecked rows with
+distinct native identities and unambiguous flags. Note revisions and
+modification time stayed unchanged across before/after reads, and the captured
+responses passed the current client schemas. This establishes that reader path
+on the tested host. Checked=true and malformed/ambiguous native runs remain
+synthetic coverage; it does not establish compatibility on other macOS releases
+or validate any write path.
+There is no write action; `append_plain_text` or any other
 name is `unknown_action`, and the TypeScript client refuses anything outside
-its read-only whitelist before spawning. Error codes: `input_too_large`,
+its read-only whitelist before spawning. Caller fields cannot override the
+protocol or action. x-coredata identifiers are resolved by exact read-only
+database lookup, after opt-in and installed-hash checks. Error codes: `input_too_large`,
 `invalid_json`, `protocol_mismatch`, `unknown_action`, `invalid_request`,
 `disabled`, `store_unavailable`, `read_only_violation`,
 `private_api_unavailable`, `not_found`, `unsupported_note`, `internal_error`.
@@ -2333,6 +2370,108 @@ has the URL can save templates. The address range is shared with other
 carrier-grade NAT users, so on a Mac with another VPN in that range the
 editor could bind to that VPN's address instead; the startup message names
 the bound address.
+
+---
+
+## Permissions check
+
+`apple-notes-mcp setup --permissions` (`src/services/permissions.ts`) is a setup aid, not part of the server. It reuses the probes the server already trusts and adds nothing that writes.
+
+### Probes
+
+| Item | Probe | Status values |
+|------|-------|---------------|
+| Full Disk Access | `hasFullDiskAccess()`: `sqlite3 -readonly NoteStore.sqlite "SELECT 1;"` | granted, missing, unknown (probe threw) |
+| Automation of Notes.app | only with `--probe-automation`: `tell application "Notes" to get name of account 1`, one attempt, 60 s | granted; missing when `isPermissionDenied` matches (-1743); unknown for any other failure, and unknown (`notProbed`) when the probe is not allowed to run |
+| Shortcut bridges | `setupShortcuts(true)`, the `setup --check` path | granted, missing, unknown (the `shortcuts` command failed) |
+| Speech Recognition | public helper `speech_status`: `SFSpeechRecognizer.authorizationStatus()`, never `requestAuthorization` | granted; missing for denied or restricted, and for notDetermined before macOS 26; not_needed for notDetermined on macOS 26+; unknown while the helper is not built |
+
+Automation cannot be read without an Apple event: `get-capabilities` reports it as `unverified` for that reason. An Apple event can also raise macOS's "wants to control Notes" prompt, which is the only way to create an Automation grant (the Automation pane has no + button), and can launch Notes.app. A report-only command must not do either, so the probe is opt-in (`automationSkipReason` in `permissions.ts`) and does not run when:
+
+- `--probe-automation` was not passed (the default);
+- `--check` was passed, which reports state only; or
+- `SSH_CONNECTION` is set, because nobody at the remote shell can answer the prompt.
+
+In each case the item is `unknown` with `notProbed: true` and its detail names the reason. A not-probed item is not pending and does not fail the run: the loop does not wait on it, `--open` does not open its pane, and `report.ready` (which sets the exit code) counts it as satisfied, since checking again would not change it. The window reads the same `notProbed` field: it draws the item as "Not checked" with the item's `fix` text, gives it no Open Settings button, and the command ignores an `open` request for it. With the probe allowed, the 60-second timeout leaves time to answer the prompt. `permissionsCliProbe.test.ts` mocks the AppleScript layer to pin that the real CLI wiring sends zero events in the three cases above and exactly one with the flag.
+
+On macOS 26 and later the helper transcribes with SpeechAnalyzer, which needs no grant, so only an explicit refusal blocks it (see `checkSpeechAccess` in the helper). `speech_status` reports `requiresGrant` from the same `#available(macOS 26, *)` test, so the check and `transcribe` cannot disagree.
+
+### Whose grants
+
+TCC attributes a grant to the responsible process. A terminal passes responsibility to its children; Claude Desktop does not (see `fdaRemediation`). The check therefore walks up the process tree with `ps` to the nearest ancestor inside an `.app` bundle and names it. The result describes the process running the check. It can differ from the MCP host's, which is why the report says so and the agent guidance points to `doctor` inside the host.
+
+### Settings URLs
+
+Apple documents the Full Disk Access URL in `EndpointSecurity/ESClient.h`: `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles` on macOS 13 and later, and `x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles` until macOS 12. The Automation (`Privacy_Automation`) and Speech Recognition (`Privacy_SpeechRecognition`) anchors are not in a public header. They follow the same naming and appear in the anchor list of `/System/Library/ExtensionKit/Extensions/SecurityPrivacyExtension.appex` (checked on macOS 27.2, 2026-09-24). A future macOS could rename them; the report also prints the pane's path, so the user can still find it by hand. `openSettingsPane` opens only a URL that starts with `x-apple.systempreferences:` and belongs to a reported item.
+
+### Window
+
+The optional window (`native/permissions-window/apple-notes-permissions-window.swift`, `src/services/permissionsWindow.ts`) is built, signed, verified and installed exactly like the public helper, in its own Application Support folder with its own manifest. It speaks JSON lines: the command sends `{"type":"report","report":{...}}`, and the window sends `{"type":"open","id":...}` or `{"type":"recheck"}`. Anything else is ignored. The window holds no probe code and no URLs, so a report and its buttons cannot disagree with the terminal output, and a compromised window can at most ask to open one of the reported panes. It runs as a child of the command, so it shares the command's launching app. A `hello` line makes it answer and exit without creating a window, which is how setup and the tests verify it without showing UI.
+
+---
+
+## Template editor server
+
+`apple-notes-mcp templates edit` (src/services/templateEditor.ts) starts a local
+HTTP server. It is a command-line tool, never
+started by the MCP server, and it runs until Ctrl-C or an idle timeout.
+
+### Design
+
+- **Reuse, not a second implementation.** Validation is `parseTemplate`, the
+  preview is `renderNotesWithTemplate`, and save is `TemplateStore.save`, the
+  same functions behind `validate-markdown-template`, `export-notes-markdown`
+  and `save-markdown-template`. The page sends the raw JSON text so JSON
+  syntax errors keep their line and column.
+- **Sample notes by default.** src/utils/templateSamples.ts builds three
+  synthetic block models (structure, inline formatting, attachments) with
+  fixed metadata, so front matter placeholders have values. With the
+  standard template each renders exactly as the fixed renderer does. A real
+  note is read only with `--note <id>`, once at startup, through
+  `readExportNote`/`readExportNoteMeta` (`sqlite3 -readonly`). No asset
+  writer is passed, so file attachments render as placeholders and nothing
+  is copied.
+- **One page, no network.** The page is a string with one `<style>` and one
+  `<script>`, each with a per-response nonce. The CSP is
+  `default-src 'none'` plus those nonces and `connect-src 'self'`. The script
+  writes only `textContent`.
+
+### Request checks, in order
+
+1. `Host` must equal the bound `address:port` (HTTP 421 otherwise). This
+   stops DNS rebinding, where a hostile name resolves to 127.0.0.1.
+2. The token (32 random bytes, hex, per run) must arrive as `?token=` or
+   `Authorization: Bearer`, compared with `timingSafeEqual` (401).
+3. `Sec-Fetch-Site`, when sent, must be `same-origin` or `none`, and `Origin`,
+   when sent, must be the editor's own origin (403). There is no CORS
+   response, so a cross-origin script cannot read anything even if it
+   guessed the token.
+4. POST must carry the editor's `Origin` and `Content-Type: application/json`
+   (403/415), which a cross-site HTML form cannot send. Bodies are capped at
+   twice the template size limit (413).
+
+Only requests that pass these checks reset the idle timer, so a stray
+scanner cannot keep the editor alive. Unexpected failures return a generic
+500 without the error text. The token is printed once on stdout, as part of
+the URL, and never logged.
+
+### `--tailnet`
+
+The address comes from `os.networkInterfaces()`: the first non-internal IPv4
+in 100.64.0.0/10, preferring `utun*` interfaces. No `tailscale` command runs,
+and no Tailscale, Serve/Funnel or firewall setting is read or changed.
+`findTailnetAddress` in src/utils/localServer.ts does this. The same module
+holds the other pieces a local server needs: the per-run token, the Bearer
+header reader, the constant-time comparison, the `Host` authority and the
+cross-origin check. Without such an address the command exits 1. The same
+token, host and origin checks apply. Tailscale encrypts the traffic between
+devices, but the editor speaks plain HTTP and anyone on the tailnet who can
+reach the port and has the URL can read and save templates, and with `--note`
+can read the entire note body. The startup warning says so
+(`tailnetWarning` in src/services/templateEditorCli.ts). The address range is
+shared with other carrier-grade NAT users, so on a Mac with another VPN in
+that range the editor could bind to that VPN's address instead; the startup
+message names the bound address.
 
 ---
 

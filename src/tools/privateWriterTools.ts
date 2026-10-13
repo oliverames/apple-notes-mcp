@@ -63,14 +63,30 @@ import {
   type ErrorCode,
   type ErrorEnvelope,
 } from "../utils/errorCodes.js";
-import { UUID_PATTERN } from "../utils/noteIdentifiers.js";
-import { envelopeCode, resolveIdentifier } from "./privateHelperTools.js";
+import { UUID_PATTERN, lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+import { envelopeCode } from "./privateHelperTools.js";
 import { scopeGuardFrom, writerScopeGuardInput } from "../services/privateWriterScope.js";
 
 export const coreDataId = z.string().regex(/^x-coredata:\/\/[0-9A-F-]+\/ICNote\/p\d+$/i);
 export const notesUuid = z.string().regex(UUID_PATTERN);
 export const revisionToken = z.string().regex(/^r1:[a-f0-9]{64}$/);
-export { resolveIdentifier };
+/** Resolve an exact stable identifier without invoking Notes automation. */
+export function resolveIdentifier(
+  _manager: AppleNotesManager,
+  args: { identifier?: string; id?: string }
+): string {
+  if (args.identifier && args.id)
+    throw new PrivateHelperError("invalid_request", "Pass identifier or id, not both");
+  if (args.identifier) return args.identifier;
+  if (!args.id) throw new PrivateHelperError("invalid_request", "identifier or id is required");
+  const identifier = lookupStableIdentifiers([args.id], "ICNote").get(args.id)?.identifier;
+  if (!identifier || !UUID_PATTERN.test(identifier))
+    throw new PrivateHelperError(
+      "not_found",
+      "Could not resolve that id to a Notes UUID (needs Full Disk Access); pass identifier instead"
+    );
+  return identifier;
+}
 
 /** Map a writer code onto the server-wide error vocabulary (#185). */
 export function writerEnvelopeCode(helperCode: string, message: string): ErrorCode {

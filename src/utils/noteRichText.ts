@@ -5,14 +5,17 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { checklistRunLineStart } from "./checklistRuns.js";
 import { uniqueById } from "./uniqueById.js";
+import { namedReferenceText } from "./htmlEntities.js";
 import {
   decodeMessage,
   decodeVarint,
+  decodeWireFields,
   embeddedMessage,
   getField,
   getFields,
   stringValue,
   varintValue,
+  type WireField,
 } from "./protobuf.js";
 
 export interface NoteLink {
@@ -45,6 +48,14 @@ export interface RichNote {
     paragraphStyle?: number;
     blockQuote?: boolean;
     highlight?: boolean;
+    /** Full native attribute accounting, including fields hidden by first-value summaries. */
+    nativeSemantics?: {
+      complete: boolean;
+      unknown: boolean;
+      structuredParagraph: boolean;
+      links: boolean;
+      objects: Array<{ id: string; type: string }>;
+    };
   }>;
   /**
    * Formatting present in the stored body that Notes' AppleScript HTML
@@ -60,7 +71,11 @@ export interface RichNote {
     type: string;
     mergeable: string;
     view: number | null;
+    /** Raw stored tag/object label; normalized tag names alone cannot detect a label change. */
+    altText?: string | null;
   }>;
+  /** False when duplicate database rows disagree about an object's stored payload. */
+  nativeObjectDataComplete?: boolean;
 }
 /** Stored formatting that a full-body AppleScript rewrite cannot reproduce. */
 export type HtmlLossyFormatting = "superscript" | "subscript" | "alignment" | "highlight";
@@ -127,6 +142,101 @@ function styleValue(field: ReturnType<typeof decodeMessage>[number]): unknown {
   return Buffer.from(field.value).toString("hex");
 }
 
+/** Keep unknown and fixed-width attributes too; only length and regenerated paragraph IDs vary. */
+function storedStyleSignature(data: Uint8Array): string {
+  return JSON.stringify(
+    decodeWireFields(data)
+      .filter((field) => field.fieldNumber !== 1)
+      .map((field) => [
+        field.fieldNumber,
+        field.wireType,
+        field.bytes
+          ? styleValue({
+              fieldNumber: field.fieldNumber,
+              wireType: field.wireType,
+              value: field.bytes,
+            })
+          : field.varint!.toString(),
+      ])
+  );
+}
+
+/** Account for singular native messages without making a lossy summary look unambiguous. */
+function nativeRunSemantics(
+  data: Uint8Array
+): NonNullable<NonNullable<RichNote["styleRuns"]>[number]["nativeSemantics"]> {
+  const result = {
+    complete: true,
+    unknown: false,
+    structuredParagraph: false,
+    links: false,
+    objects: [] as Array<{ id: string; type: string }>,
+  };
+  const check = (fields: WireField[], schema: Record<number, number>) => {
+    const seen = new Set<number>();
+    for (const field of fields) {
+      if (!Object.hasOwn(schema, field.fieldNumber)) result.unknown = true;
+      else if (seen.has(field.fieldNumber) || field.wireType !== schema[field.fieldNumber])
+        result.complete = false;
+      seen.add(field.fieldNumber);
+    }
+  };
+  const nested = (field: WireField) => {
+    if (field.wireType !== 2 || !field.bytes) {
+      result.complete = false;
+      return [];
+    }
+    return decodeWireFields(field.bytes);
+  };
+  try {
+    const fields = decodeWireFields(data);
+    check(fields, { 1: 0, 2: 2, 3: 2, 5: 0, 6: 0, 7: 0, 8: 0, 9: 2, 10: 2, 12: 2, 14: 0 });
+    if (fields.filter((f) => f.fieldNumber === 1).length !== 1) result.complete = false;
+    result.links = fields.some((f) => f.fieldNumber === 9);
+    for (const field of fields) {
+      if (field.fieldNumber === 2) {
+        const paragraph = nested(field);
+        check(paragraph, { 1: 0, 2: 0, 4: 0, 5: 2, 8: 0, 9: 2 });
+        for (const style of paragraph.filter((f) => f.fieldNumber === 1)) {
+          const type =
+            style.varint === undefined ? undefined : Number(BigInt.asIntN(64, style.varint));
+          if (type !== undefined && type >= 100 && type <= 103) result.structuredParagraph = true;
+          else if (type === undefined || ![-1, 0, 1, 2, 3, 4].includes(type)) result.unknown = true;
+        }
+        for (const uuid of paragraph.filter((f) => f.fieldNumber === 9))
+          if (uuid.bytes?.length !== 16) result.complete = false;
+        for (const todo of paragraph.filter((f) => f.fieldNumber === 5)) {
+          result.structuredParagraph = true;
+          const item = nested(todo);
+          check(item, { 1: 2, 2: 0 });
+          const id = item.filter((f) => f.fieldNumber === 1);
+          if (id.length !== 1 || id[0].bytes?.length !== 16) result.complete = false;
+        }
+      } else if (field.fieldNumber === 3) check(nested(field), { 1: 2, 2: 5, 3: 0 });
+      else if (field.fieldNumber === 10) check(nested(field), { 1: 5, 2: 5, 3: 5, 4: 5 });
+      else if (field.fieldNumber === 12) {
+        const attachment = nested(field);
+        check(attachment, { 1: 2, 2: 2 });
+        const ids = attachment.filter((f) => f.fieldNumber === 1),
+          types = attachment.filter((f) => f.fieldNumber === 2);
+        if (ids.length !== 1 || types.length !== 1 || !ids[0].bytes || !types[0].bytes) {
+          result.complete = false;
+          continue;
+        }
+        const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+        const id = utf8.decode(ids[0].bytes),
+          type = utf8.decode(types[0].bytes);
+        if (!id || !type) result.complete = false;
+        result.objects.push({ id, type });
+      }
+    }
+  } catch {
+    // Ordinary reads still expose their conservative summary; writes need complete accounting.
+    result.complete = false;
+  }
+  return result;
+}
+
 /** Options for a rich-text read. */
 export interface RichNoteReadOptions {
   /**
@@ -173,11 +283,8 @@ export function parseRichNote(
       highlight: Boolean(varintValue(getField(fields, 14))),
       start: position,
       length,
-      signature: JSON.stringify(
-        fields
-          .filter((f) => (f.fieldNumber >= 2 && f.fieldNumber <= 12) || f.fieldNumber === 14)
-          .map((f) => [f.fieldNumber, styleValue(f)])
-      ),
+      signature: storedStyleSignature(run.value as Uint8Array),
+      nativeSemantics: nativeRunSemantics(run.value as Uint8Array),
     });
     // Only runs that cover visible text matter: Notes leaves attributes on a
     // trailing newline that no rewrite could lose.
@@ -253,7 +360,7 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
   const pk = /^x-coredata:\/\/[0-9a-f-]+\/ICNote\/p([0-9]+)$/i.exec(id)?.[1];
   if (!pk) throw new Error("Invalid exact note ID");
   // One read-only transaction, scoped to the requested note; no library dump.
-  const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
+  const sql = `BEGIN; SELECT hex(ZDATA) FROM ZICNOTEDATA WHERE ZNOTE=${pk}; SELECT json_group_object(ZIDENTIFIER,ZALTTEXT) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} AND ZTYPEUTI1='com.apple.notes.inlinetextattachment.hashtag'; SELECT json_group_array(json_object('id',ZIDENTIFIER,'pk',Z_PK,'type',COALESCE(ZTYPEUTI1,ZTYPEUTI),'mergeable',hex(COALESCE(ZMERGEABLEDATA1,ZMERGEABLEDATA)),'view',ZATTACHMENTVIEWTYPE,'altText',ZALTTEXT)) FROM ZICCLOUDSYNCINGOBJECT WHERE ZNOTE1=${pk} OR ZNOTE=${pk}; COMMIT;`;
   const rows = execFileSync("/usr/bin/sqlite3", ["-readonly", dbPath, sql], {
     encoding: "utf8",
     timeout: 5000,
@@ -286,7 +393,8 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
         typeof row.id !== "string" ||
         !Number.isInteger(row.pk) ||
         typeof row.mergeable !== "string" ||
-        !/^[0-9a-f]*$/i.test(row.mergeable)
+        !/^[0-9a-f]*$/i.test(row.mergeable) ||
+        (row.altText !== undefined && row.altText !== null && typeof row.altText !== "string")
     )
   )
     throw new Error("Invalid native object metadata");
@@ -297,11 +405,22 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
       .filter((row) => rich.nativeObjectIds.includes(row.id))
       .sort((a, b) => a.id.localeCompare(b.id))
   );
+  const selectedRows = new Map(rich.objectData.map((row) => [row.id, row]));
+  rich.nativeObjectDataComplete = objectData.every((candidate) => {
+    const row = selectedRows.get(candidate.id);
+    return (
+      !row ||
+      ["pk", "type", "mergeable", "view", "altText"].every(
+        (key) => candidate[key] === row[key as keyof typeof row]
+      )
+    );
+  });
   rich.revision = createHash("sha256")
     .update(rich.revision)
     .update(JSON.stringify(rich.objectData))
+    .update(JSON.stringify(rich.nativeObjectDataComplete))
     .digest("hex");
-  rich.nativeTagObjectIds = {};
+  rich.nativeTagObjectIds = Object.create(null) as Record<string, string[]>;
   for (const id of rich.nativeObjectIds)
     if (tagMap[id]) {
       const tag = tagMap[id].replace(/^#/, "");
@@ -315,15 +434,16 @@ export function readRichNote(id: string, options: RichNoteReadOptions = {}): Ric
   return rich;
 }
 
+/** amp/lt/gt/quot/nbsp: the references Notes' AppleScript HTML writes without a semicolon. */
+const LEGACY_NAMED: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  nbsp: " ",
+};
+
 function decodeEntity(value: string): string {
-  const named: Record<string, string> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " ",
-  };
   if (!value.startsWith("&") || value === "&") return value;
   const name = value.slice(1).replace(/;$/, "");
   if (name.startsWith("#")) {
@@ -334,8 +454,14 @@ function decodeEntity(value: string): string {
     if (!Number.isInteger(cp) || cp < 0 || cp > 0x10ffff) throw new Error("Invalid HTML entity");
     return String.fromCodePoint(cp);
   }
-  if (!(name in named)) throw new Error("Unsupported HTML entity");
-  return named[name];
+  const legacy = name.toLowerCase();
+  if (Object.hasOwn(LEGACY_NAMED, legacy)) return LEGACY_NAMED[legacy];
+  // Any other HTML 4 name (`&mdash;`, `&rarr;`) is decoded the way Notes'
+  // HTML importer decodes it, so an appended link label written with one is
+  // compared as the character Notes stores (#283).
+  const named = value.endsWith(";") ? namedReferenceText(name) : undefined;
+  if (named === undefined) throw new Error("Unsupported HTML entity");
+  return named;
 }
 
 interface Character {
@@ -358,20 +484,23 @@ function visibleCharacters(html: string): Character[] {
     // semicolon, immediately followed by a letter, in AppleScript HTML — the
     // old code declined to decode that case, desyncing this text stream from
     // the rich-text one and blocking every full-body edit (#166). apos is not
-    // a legacy reference and always requires the semicolon.
+    // a legacy reference and always requires the semicolon. Other names need
+    // the semicolon too; one outside the HTML 4 set stays literal text, one
+    // visible character per source character, as before (#283).
     for (const item of part[0].matchAll(
-      /&(?:#[0-9]+;?|#x[0-9a-f]+;?|(?:amp|lt|gt|quot|nbsp);?|apos;)|[\s\S]/gi
+      /&(?:#[0-9]+;?|#x[0-9a-f]+;?|(?:amp|lt|gt|quot|nbsp);?)|&(?<name>[a-z][a-z0-9]*);|[\s\S]/gi
     )) {
-      const value = decodeEntity(item[0]);
-      for (let i = 0; i < value.length; i++) {
-        if (/\s/u.test(value[i])) continue;
-        chars.push({
-          value: value[i],
-          start: part.index! + item.index!,
-          end: part.index! + item.index! + item[0].length,
-          token,
-        });
-      }
+      const start = part.index! + item.index!;
+      const name = item.groups?.name;
+      const pieces =
+        name !== undefined && namedReferenceText(name) === undefined
+          ? [...item[0]].map((value, i) => ({ value, start: start + i, end: start + i + 1 }))
+          : [{ value: decodeEntity(item[0]), start, end: start + item[0].length }];
+      for (const piece of pieces)
+        for (let i = 0; i < piece.value.length; i++) {
+          if (/\s/u.test(piece.value[i])) continue;
+          chars.push({ value: piece.value[i], start: piece.start, end: piece.end, token });
+        }
     }
   }
   return chars;

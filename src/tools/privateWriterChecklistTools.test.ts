@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+
+vi.mock(import("../utils/noteIdentifiers.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  lookupStableIdentifiers: vi.fn(),
+}));
 
 vi.mock(import("../services/privateWriterChecklist.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -25,6 +31,10 @@ const NUDGE = { nudge: true };
 
 function fixture() {
   const registerTool = vi.fn();
+  const identifier = NOTE;
+  vi.mocked(lookupStableIdentifiers).mockReturnValue(
+    identifier ? new Map([[CD, { identifier }]]) : new Map()
+  );
   const manager = {
     getNoteLinkById: vi.fn(() => `notes://showNote?identifier=${NOTE}`),
   } as unknown as AppleNotesManager;
@@ -45,6 +55,16 @@ function fixture() {
 beforeEach(() => vi.clearAllMocks());
 
 describe("checklist writer tools", () => {
+  it("keeps the upstream read-only checklist registration when enabling writes", () => {
+    const registerTool = vi.fn();
+    registerPrivateWriterChecklistTools(
+      { registerTool } as unknown as McpServer,
+      {} as AppleNotesManager,
+      undefined,
+      { includeReadState: false }
+    );
+    expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["native-set-checklist-item"]);
+  });
   it("registers a read-only state tool and an idempotent write tool", () => {
     const { config, names } = fixture();
     expect(names()).toEqual(["native-checklist-state", "native-set-checklist-item"]);

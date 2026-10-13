@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+
+vi.mock(import("../utils/noteIdentifiers.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  lookupStableIdentifiers: vi.fn(),
+}));
 
 vi.mock(import("../services/privateWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -36,6 +42,10 @@ const CD = "x-coredata://8FA9FE0E-3B93-4057-AD95-A0EB6D4B5F06/ICNote/p11331";
 
 function fixture(link: string | null = `notes://showNote?identifier=${NOTE}`) {
   const registerTool = vi.fn();
+  const identifier = link?.match(/identifier=([^&]+)/)?.[1];
+  vi.mocked(lookupStableIdentifiers).mockReturnValue(
+    identifier ? new Map([[CD, { identifier }]]) : new Map()
+  );
   const manager = { getNoteLinkById: vi.fn(() => link) } as unknown as AppleNotesManager;
   registerPrivateWriterTools({ registerTool } as unknown as McpServer, manager, () => ({
     writer: {} as never,

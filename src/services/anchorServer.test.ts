@@ -4,10 +4,11 @@
  * Every server a test starts is closed before the test ends; the resolver is
  * a stub, so no Notes data is read.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { request } from "node:http";
 import {
+  createAnchorServer,
   parseAnchorsArgs,
   runAnchorsCli,
   startAnchorServer,
@@ -68,6 +69,38 @@ function get(
     req.on("error", reject);
     req.end();
   });
+}
+
+/**
+ * The resolver's request handler driven with fake sockets, so a test can come
+ * from several peer addresses (a loopback server sees only 127.0.0.1). Nothing
+ * listens and no network is used.
+ */
+function fakePeers(options: Partial<Parameters<typeof createAnchorServer>[0]> = {}) {
+  const port = 8123;
+  const server = createAnchorServer({
+    host: "127.0.0.1",
+    port,
+    token: TOKEN,
+    resolve: lookup,
+    log: () => undefined,
+    ...options,
+  });
+  const send = (
+    peer: string,
+    path: string,
+    { method = "GET", host = `127.0.0.1:${port}` }: { method?: string; host?: string } = {}
+  ): number => {
+    let status = 0;
+    const req = { method, url: path, headers: { host }, socket: { remoteAddress: peer } };
+    const res = {
+      writeHead: (code: number) => (status = code),
+      end: () => undefined,
+    };
+    server.emit("request", req, res);
+    return status;
+  };
+  return { send };
 }
 
 describe("anchor resolver server", () => {
@@ -151,6 +184,41 @@ describe("anchor resolver server", () => {
     const { baseUrl } = await start({ maxAuthFailures: 3 });
     for (let i = 0; i < 3; i++) expect((await get(baseUrl, "/a/x?token=bad")).status).toBe(401);
     expect((await get(baseUrl, `/a/${RESOLVED}?token=${TOKEN}`)).status).toBe(429);
+  });
+
+  it("counts failed token checks per peer, so one bad peer cannot lock out another", async () => {
+    const { send } = fakePeers({ maxAuthFailures: 3 });
+    for (let i = 0; i < 3; i++) expect(send("100.64.0.1", "/a/x?token=bad")).toBe(401);
+    // The bad peer is locked out, even with the right token.
+    expect(send("100.64.0.1", `/a/${RESOLVED}?token=${TOKEN}`)).toBe(429);
+    expect(send("100.64.0.1", "/a/x?token=bad")).toBe(429);
+    // Another peer is unaffected: it still gets in and can still fail on its own count.
+    expect(send("100.64.0.2", `/a/${RESOLVED}?token=${TOKEN}`)).toBe(302);
+    expect(send("100.64.0.2", "/a/x?token=bad")).toBe(401);
+    expect(send("100.64.0.2", `/a/${RESOLVED}?token=${TOKEN}`)).toBe(302);
+  });
+
+  it("lets a peer back in once its failures are older than a minute", async () => {
+    vi.useFakeTimers();
+    try {
+      const { send } = fakePeers({ maxAuthFailures: 2 });
+      expect(send("100.64.0.1", "/a/x?token=bad")).toBe(401);
+      expect(send("100.64.0.1", "/a/x?token=bad")).toBe(401);
+      expect(send("100.64.0.1", `/a/${RESOLVED}?token=${TOKEN}`)).toBe(429);
+      vi.advanceTimersByTime(61_000);
+      expect(send("100.64.0.1", `/a/${RESOLVED}?token=${TOKEN}`)).toBe(302);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not count requests with a wrong Host or method toward the lockout", async () => {
+    const { send } = fakePeers({ maxAuthFailures: 2 });
+    for (let i = 0; i < 5; i++) {
+      expect(send("100.64.0.1", "/a/x?token=bad", { host: "evil.example" })).toBe(403);
+      expect(send("100.64.0.1", "/a/x?token=bad", { method: "POST" })).toBe(405);
+    }
+    expect(send("100.64.0.1", `/a/${RESOLVED}?token=${TOKEN}`)).toBe(302);
   });
 
   it("refuses a short token", async () => {

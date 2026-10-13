@@ -541,6 +541,7 @@ export class SidecarWriter implements AssetWriter {
   placeBytes(data: Buffer, name: string, mime: string, key: string): PlacedAsset {
     const done = this.placed.get(`generated:${key}`);
     if (done) return done;
+    if (this.directoryError) return { error: this.directoryError };
     return this.write(`generated:${key}`, name, mime, (out) => {
       let written = 0;
       while (written < data.length) written += writeSync(out, data, written, data.length - written);
@@ -549,7 +550,6 @@ export class SidecarWriter implements AssetWriter {
 
   /** Creates a free name in the directory and fills it; remembers the result under `key`. */
   private write(key: string, name: string, mime: string, fill: (out: number) => void): PlacedAsset {
-    if (this.directoryError) return { error: this.directoryError };
     try {
       if (!this.created) {
         try {

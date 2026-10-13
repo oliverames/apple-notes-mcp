@@ -39,6 +39,7 @@ import type {
   SmartFolder,
   DeleteGuardNote,
   AppleScriptResult,
+  BatchMoveResult,
 } from "@/types.js";
 import {
   BULK_LIST_MUTATION_ERROR,
@@ -1011,10 +1012,12 @@ function buildAccountScopedScript(scope: AccountScope, command: string): string 
  * ```
  *
  * @param command - The AppleScript command to execute
+ * @param handlers - Optional handlers declared outside the application tell
  * @returns Complete AppleScript ready for execution
  */
-function buildAppLevelScript(command: string): string {
+function buildAppLevelScript(command: string, handlers = ""): string {
   return `
+    ${handlers}
     tell application "Notes"
       ${command}
     end tell
@@ -1731,9 +1734,21 @@ export class AppleNotesManager {
    * This method fetches the note and its metadata using this ID.
    *
    * @param id - CoreData URL identifier for the note
-   * @returns Note object with metadata, or null if not found
+   * @returns Note object with metadata, or null if the lookup fails
    */
   getNoteById(id: string): Note | null {
+    return this.readNoteById(id).note;
+  }
+
+  /**
+   * Reads exact-ID metadata while retaining the executor or parser failure.
+   * Unlike the legacy nullable getter, callers can distinguish a missing note
+   * from denied Automation, a timeout, or an unreadable metadata response.
+   *
+   * @param id - CoreData URL identifier for the note
+   * @returns The note, or the diagnostic that prevented its metadata read
+   */
+  readNoteById(id: string): { note: Note; error?: never } | { note: null; error: string } {
     const safeId = sanitizeId(id);
     // Note IDs work at the application level, not scoped to account
     const getCommand = `
@@ -1749,24 +1764,29 @@ export class AppleNotesManager {
 
     if (!result.success) {
       console.error(`Failed to get note with ID "${id}":`, result.error);
-      return null;
+      return {
+        note: null,
+        error: result.error?.trim() ? result.error : "AppleScript note metadata read failed",
+      };
     }
 
     // Parse the AppleScript output using the shared helper
     const parsed = parseNotePropertiesOutput(result.output);
     if (!parsed) {
-      return null;
+      return { note: null, error: "Unexpected note metadata response" };
     }
 
     return {
-      id: parsed.id,
-      title: parsed.title,
-      content: "", // Not fetched to keep response small
-      tags: [],
-      created: parsed.created,
-      modified: parsed.modified,
-      shared: parsed.shared,
-      passwordProtected: parsed.passwordProtected,
+      note: {
+        id: parsed.id,
+        title: parsed.title,
+        content: "", // Not fetched to keep response small
+        tags: [],
+        created: parsed.created,
+        modified: parsed.modified,
+        shared: parsed.shared,
+        passwordProtected: parsed.passwordProtected,
+      },
     };
   }
 
@@ -4044,9 +4064,10 @@ export class AppleNotesManager {
   private createBatchResult(
     id: string,
     success: boolean,
-    error?: string
-  ): { id: string; success: boolean; error?: string } {
-    return error ? { id, success, error } : { id, success };
+    error?: string,
+    certainty?: Pick<BatchMoveResult, "committed" | "indeterminate">
+  ): BatchMoveResult {
+    return { ...(error ? { id, success, error } : { id, success }), ...certainty };
   }
 
   /**
@@ -4058,24 +4079,41 @@ export class AppleNotesManager {
     id: string,
     status: string | undefined,
     op: "delete" | "move"
-  ): { id: string; success: boolean; error?: string } {
+  ): BatchMoveResult {
+    const beforeMove =
+      op === "move" ? { committed: false as const, indeterminate: false } : undefined;
+    const uncertainMove = op === "move" ? { indeterminate: true } : undefined;
+    const scopeFailure = parseScopeFailure(status ?? "");
+    if (scopeFailure !== null)
+      return this.createBatchResult(
+        id,
+        false,
+        scopeConflictMessage(scopeFailure, op === "move" ? "batch-move" : undefined),
+        beforeMove
+      );
     switch (status) {
       case "ok":
         return this.createBatchResult(id, true);
       case "pw":
-        return this.createBatchResult(id, false, "Note is password-protected");
+        return this.createBatchResult(id, false, "Note is password-protected", beforeMove);
       case "missing":
-        return this.createBatchResult(id, false, "Note not found");
+        return this.createBatchResult(id, false, "Note not found", beforeMove);
       case "fail":
         return this.createBatchResult(
           id,
           false,
-          op === "delete" ? "Deletion failed" : "Move failed"
+          op === "delete" ? "Deletion failed" : "Move failed",
+          uncertainMove
         );
       case "wrongfolder":
-        return this.createBatchResult(id, false, "Destination folder verification failed");
+        return this.createBatchResult(
+          id,
+          false,
+          "Destination folder verification failed",
+          uncertainMove
+        );
       default:
-        return this.createBatchResult(id, false, "Unknown error");
+        return this.createBatchResult(id, false, "Unknown error", uncertainMove);
     }
   }
 
@@ -4088,6 +4126,7 @@ export class AppleNotesManager {
    * @param ids - Array of CoreData URL identifiers for notes to move
    * @param folder - Destination folder name
    * @param account - Account containing the folder (defaults to Notes.app's default account)
+   * @param scope - Shared folder preconditions checked independently before each move
    * @returns Array of results with id, success status, and optional error message
    *
    * @example
@@ -4101,9 +4140,33 @@ export class AppleNotesManager {
   batchMoveNotes(
     ids: string[],
     folder: string,
-    account?: string
-  ): { id: string; success: boolean; error?: string }[] {
+    account?: string,
+    scope?: ScopeGuard
+  ): BatchMoveResult[] {
     if (ids.length === 0) return [];
+
+    // The public builder returns on a failed precondition. Keep those returns
+    // inside a per-note handler so refusing one item never exits the batch.
+    // A script object also keeps the handler valid inside the executor's
+    // enclosing timeout block; bare handler declarations cannot appear there.
+    const scopeChecks = buildScopeGuardScript("noteRef", scope, "destFolder");
+    const moveHandler = `
+      script batchMoveWorker
+        on moveBatchNote(noteRef, destFolder, theId)
+          tell application "Notes"
+            ${scopeChecks}
+            move noteRef to destFolder
+            set movedNoteRef to note id theId
+            set actualFolder to container of movedNoteRef
+            if (id of actualFolder) is (id of destFolder) then
+              return "ok"
+            else
+              return "wrongfolder"
+            end if
+          end tell
+        end moveBatchNote
+      end script
+    `;
 
     // Collapse the whole batch into ONE osascript spawn (#26). The old path
     // spawned 5+ processes per note (getNoteById + isNotePasswordProtectedById +
@@ -4119,7 +4182,7 @@ export class AppleNotesManager {
       excludeFolderIds: this.smartFolderIds(),
     });
 
-    const results: { id: string; success: boolean; error?: string }[] = new Array(ids.length);
+    const results: BatchMoveResult[] = new Array(ids.length);
     const runnable: { index: number; safe: string }[] = [];
 
     ids.forEach((id, i) => {
@@ -4129,14 +4192,16 @@ export class AppleNotesManager {
         results[i] = this.createBatchResult(
           id,
           false,
-          e instanceof Error ? e.message : "Invalid note ID"
+          e instanceof Error ? e.message : "Invalid note ID",
+          { committed: false, indeterminate: false }
         );
       }
     });
 
     if (runnable.length > 0) {
       const idList = runnable.map((r) => `"${r.safe}"`).join(", ");
-      const script = buildAppLevelScript(`
+      const script = buildAppLevelScript(
+        `
         ${buildAccountResolution(targetAccount)}
         ${destFolderSetup}
         set out to ""
@@ -4157,14 +4222,8 @@ export class AppleNotesManager {
               set out to out & "pw" & ${AS_RECORD_SEP}
             else
               try
-                move noteRef to destFolder
-                set movedNoteRef to note id theId
-                set actualFolder to container of movedNoteRef
-                if (id of actualFolder) is (id of destFolder) then
-                  set out to out & "ok" & ${AS_RECORD_SEP}
-                else
-                  set out to out & "wrongfolder" & ${AS_RECORD_SEP}
-                end if
+                set itemStatus to batchMoveWorker's moveBatchNote(noteRef, destFolder, theId)
+                set out to out & itemStatus & ${AS_RECORD_SEP}
               on error
                 set out to out & "fail" & ${AS_RECORD_SEP}
               end try
@@ -4172,7 +4231,9 @@ export class AppleNotesManager {
           end if
         end repeat
         return out
-      `);
+      `,
+        moveHandler
+      );
       const res = executeMutationAppleScript(script);
 
       if (!res.success) {
@@ -4188,14 +4249,14 @@ export class AppleNotesManager {
           results[r.index] = this.createBatchResult(
             ids[r.index],
             false,
-            res.error ?? "Batch move failed"
+            res.error ?? "Batch move failed",
+            { indeterminate: true }
           );
         }
       } else {
-        const statuses = res.output
-          .split(RECORD_SEP)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
+        // Empty statuses still occupy a note's position; dropping one would
+        // attribute later successes or refusals to the wrong note ID.
+        const statuses = res.output.split(RECORD_SEP).map((s) => s.trim());
         runnable.forEach((r, k) => {
           results[r.index] = this.mapBatchStatus(ids[r.index], statuses[k], "move");
         });

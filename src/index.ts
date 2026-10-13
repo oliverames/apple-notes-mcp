@@ -20,7 +20,9 @@
  * @see https://modelcontextprotocol.io
  */
 
-import { createRequire } from "module";
+// Keep this first: ESM evaluates it before the runtime dependency graph.
+// Help, version, and invalid arguments exit without initializing that graph.
+import { command, version } from "./cliEntry.js";
 import {
   McpServer,
   type RegisteredTool,
@@ -35,6 +37,7 @@ import {
   exportMaxResponseBytes,
 } from "@/services/appleNotesManager.js";
 import { getSyncStatus, withSyncAwarenessSync } from "@/utils/syncDetection.js";
+import { NOTE_ID_NOT_FOUND_MESSAGE } from "@/utils/applescript.js";
 import { getChecklistItems, hasFullDiskAccess } from "@/utils/checklistParser.js";
 import { getNoteMetadata } from "@/utils/noteMetadata.js";
 import {
@@ -85,13 +88,14 @@ import {
   queryNotes,
 } from "@/utils/noteQueryStore.js";
 import type { QueryNotesResult } from "@/types.js";
-import { runDoctor, formatDoctorReport, fdaRemediation } from "@/tools/doctor.js";
-import { FULL_DISK_ACCESS_GUIDE_URL } from "@/utils/docsUrls.js";
+import { runDoctor, formatDoctorReport } from "@/tools/doctor.js";
+import { fdaRemediation } from "@/utils/fullDiskAccess.js";
 import { loadFileConfig } from "@/services/fileConfig.js";
 import { registerResourcesAndPrompts } from "@/tools/resourcesAndPrompts.js";
 import { withJsonSchema2020_12 } from "@/utils/jsonSchemaDialect.js";
 import {
   CodedError,
+  classifyError,
   errorResult,
   installSdkErrorCodes,
   unavailableWriteEnvelope,
@@ -117,6 +121,14 @@ import {
   readRichNote,
 } from "@/utils/noteRichText.js";
 import { parseNoteTable } from "@/utils/noteTables.js";
+import {
+  DEFAULT_TABLE_RESPONSE_BYTES,
+  MAX_TABLE_RESPONSE_BYTES,
+  MAX_TABLES_PER_PAGE,
+  MIN_TABLE_RESPONSE_BYTES,
+  tablePageResponse,
+  validateTablePageOptions,
+} from "@/services/tableResponse.js";
 import type { DrawingAttachment } from "@/types.js";
 import { attachmentCoreDataId, selectFirstImage } from "@/utils/attachmentAssets.js";
 import type { AttachmentAssetRecord, FirstImage, NoteAttachmentAssets } from "@/types.js";
@@ -213,6 +225,14 @@ import { registerPrivateWriterSmartFolderTools } from "@/tools/privateWriterSmar
 import { registerPrivatePaperWriterTools } from "@/tools/privatePaperWriterTools.js";
 import { registerPrivateWriterPurgeRepairTools } from "@/tools/privateWriterPurgeRepairTools.js";
 import { installWriterParagraphIdReminter } from "@/services/privateWriterReminter.js";
+
+import {
+  brokerStatus,
+  formatBrokerSetup,
+  parseBrokerArgs,
+  setupBroker,
+} from "@/services/broker.js";
+import { startBrokerProxy } from "@/services/brokerProxy.js";
 import { runTemplatesCommand } from "@/services/templateEditorCli.js";
 import { runAnchorsCli } from "@/services/anchorServer.js";
 import { AnchorRegistry } from "@/services/anchorRegistry.js";
@@ -230,38 +250,34 @@ import { ANCHOR_ID_PATTERN, DEFAULT_MIN_CONFIDENCE } from "@/utils/paragraphAnch
 // Lets users configure the server when the host app strips the MCP env block.
 loadFileConfig();
 
-// Read version from package.json to keep it in sync
-const require = createRequire(import.meta.url);
-const { version } = require("../package.json") as { version: string };
-
-if (process.argv[2] === "setup" && process.argv.slice(3).includes("--public-helper")) {
+if (command.kind === "setup" && command.target === "public-helper") {
   // Compile the public native helper (PencilKit) from the packaged source.
-  const report = buildPublicHelper(process.argv.slice(3).includes("--check"));
+  const report = buildPublicHelper(command.checkOnly);
   process.stdout.write(formatPublicHelperBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
-if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-helper")) {
+if (command.kind === "setup" && command.target === "native-helper") {
   // Opt-in private helper: compiled locally from the packaged source (#181).
-  const report = buildPrivateHelper(process.argv.slice(3).includes("--check"));
+  const report = buildPrivateHelper(command.checkOnly);
   process.stdout.write(formatHelperBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
-if (process.argv[2] === "setup" && process.argv.slice(3).includes("--native-writer")) {
-  // Opt-in private WRITER: a separate binary from the read-only helper.
-  const report = buildPrivateWriter(process.argv.slice(3).includes("--check"));
+if (command.kind === "setup" && command.target === "native-writer") {
+  const report = buildPrivateWriter(command.checkOnly);
   process.stdout.write(formatWriterBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
-if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions-window")) {
+if (command.kind === "setup" && command.target === "permissions-window") {
   // Optional checklist window, compiled locally like the public helper.
-  const report = buildPermissionsWindow(process.argv.slice(3).includes("--check"));
+  const report = buildPermissionsWindow(command.checkOnly);
   process.stdout.write(formatPermissionsWindowBuild(report) + "\n");
   process.exit(report.ok ? 0 : 1);
 }
-if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions")) {
+if (command.kind === "setup" && command.target === "permissions") {
   // Guided permissions check; opens System Settings panes only with --open.
-  const args = process.argv.slice(3);
-  const cli = defaultPermissionsCliDeps();
+  const args = command.args;
+  const options = parsePermissionsArgs(args);
+  const cli = defaultPermissionsCliDeps(options);
   let code: number;
   const window = args.includes("--window") ? inspectPermissionsWindow() : null;
   if (window?.ready) {
@@ -272,25 +288,36 @@ if (process.argv[2] === "setup" && process.argv.slice(3).includes("--permissions
     });
   } else {
     if (window) cli.write(`${window.detail} Showing the checklist here instead.\n\n`);
-    code = await runPermissionsCli(parsePermissionsArgs(args), cli);
+    code = await runPermissionsCli(options, cli);
   }
   cli.close();
   process.exit(code);
 }
-if (process.argv[2] === "setup") {
-  const report = setupShortcuts(process.argv.slice(3).includes("--check"));
+if (command.kind === "setup" && command.target === "broker") {
+  // Opt-in permission broker (#220): a signed LaunchAgent app that owns the grants.
+  const report = await setupBroker(parseBrokerArgs(command.args));
+  process.stdout.write(formatBrokerSetup(report) + "\n");
+  process.exit(report.ok ? 0 : 1);
+}
+if (command.kind === "setup") {
+  const report = setupShortcuts(command.checkOnly);
   process.stdout.write(formatShortcutSetup(report) + "\n");
   process.exit(report.ready || !report.checkOnly ? 0 : 1);
 }
-if (process.argv[2] === "templates") {
+if (command.kind === "templates") {
   // Local template editor (templates edit): a token-gated web page on loopback.
-  process.exit(await runTemplatesCommand(process.argv.slice(3)));
+  process.exit(await runTemplatesCommand(command.args));
 }
-if (process.argv[2] === "anchors") {
+if (command.kind === "anchors") {
   // Opt-in paragraph anchor resolver (loopback by default, token-gated).
   process.exit(
-    await runAnchorsCli(process.argv.slice(3), { resolve: registryLookup(new AnchorRegistry()) })
+    await runAnchorsCli(command.args, { resolve: registryLookup(new AnchorRegistry()) })
   );
+}
+// With an installed, answering permission broker (#220), this process only
+// relays stdio to a server the broker starts, and never initializes its own.
+if (await startBrokerProxy()) {
+  await new Promise<never>(() => {});
 }
 // =============================================================================
 // Server Initialization
@@ -326,7 +353,7 @@ registerPrivateHelperTools(server, notesManager);
 if (process.env[WRITES_ENV] === "1") {
   registerPrivateWriterTools(server, notesManager);
   registerComposeNoteTool(server, notesManager);
-  registerPrivateWriterChecklistTools(server, notesManager);
+  registerPrivateWriterChecklistTools(server, notesManager, undefined, { includeReadState: false });
   registerPrivateWriterHighlightTools(server, notesManager);
   registerPrivateWriterLinkCardTools(server, notesManager);
   registerPrivateWriterParagraphTools(server, notesManager);
@@ -538,7 +565,7 @@ const scopeFolderIdInput = exactIdInput("ICFolder", SCOPE_FOLDER_ID, SCOPE_FOLDE
 
 /**
  * Optional folder preconditions shared by update-note, append-to-note,
- * delete-note, and move-note. They are re-checked inside the write's own
+ * delete-note, move-note, and batch-move-notes. They are re-checked inside the write's own
  * AppleScript, immediately before the write.
  */
 const scopeGuardInputs = {
@@ -563,7 +590,7 @@ const scopeGuardInputs = {
   )
     .optional()
     .describe(
-      "Precondition: the note must not be inside any of these folders or their subfolders (for move-note, neither may the destination). Re-checked immediately before the write."
+      "Precondition: the note must not be inside any of these folders or their subfolders (for move-note and batch-move-notes, neither may the destination). Re-checked immediately before the write."
     ),
 };
 
@@ -1239,7 +1266,7 @@ registerTool(
   {
     description:
       "Use when: finding notes with a boolean expression over text and metadata — e.g. `folder:Work has:checklist -checklist:done`, `(title:invoice OR tag:finance) modified:>=2026-07-01`, `pinned words:>250`. Reads the Notes database directly, so it is fast and can match title OR body in one call.\n" +
-      'Syntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag (has:url = a link preview card, has:map = a map); checklist:open|done; flags pinned, locked, shared, quicknote (or is:pinned); words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\n' +
+      'Syntax: bare words and "quoted phrases" match title or body (case-insensitive substring); fields title:, body:, text:, folder:, account:, tag: (values may be quoted, e.g. folder:"Work Projects"); facets has:link|attachment|checklist|drawing|image|video|audio|pdf|table|scan|url|map|tag (has:url is a link preview card, has:map a map); checklist:open|done; flags pinned, locked, shared, quicknote (or is:pinned); quote a flag word such as "quicknote" to search it as text; words:>250 and created:/modified: with =, >, >=, <, <= and YYYY-MM-DD local dates. AND is implicit; OR, NOT, leading -, and parentheses are supported; operators are case-insensitive and a quoted "and" searches the literal word.\n' +
       "Returns: matching notes (most recently modified first) with id, title, folder, account, modified date, snippet, and matchedIn (where the positive text terms occur: title, body, or both; absent when the body is unreadable or the query has no text term), plus scan/match counts; includeWordCount adds wordCount. Ids work with get-note-content and every other id-based tool.\n" +
       "Do not use when: Full Disk Access is unavailable (use search-notes). Scans the most recent scanLimit notes (default 500, max 10000); raise it for older notes.\n" +
       "Safety: read-only; never writes the database. Excludes Recently Deleted and folderless notes unless includeDeleted is true. Locked notes match on title and metadata only; body predicates (including negated ones such as -body:x) never match them.",
@@ -1395,9 +1422,14 @@ registerTool(
     // Prefer ID-based lookup if provided
     if (id) {
       // Check for password protection first for better error message
-      const note = notesManager.getNoteById(id);
+      const { note, error: metadataError } = notesManager.readNoteById(id);
       if (!note) {
-        return notFoundResponse(`Note with ID "${id}" not found`);
+        const message = `Failed to read metadata of note with ID "${id}": ${metadataError}`;
+        // The executor's exact missing-ID diagnostic contains "may have been",
+        // which otherwise matches the shared uncertain-write classification.
+        return metadataError === NOTE_ID_NOT_FOUND_MESSAGE
+          ? notFoundResponse(message)
+          : errorResponse(message);
       }
       if (note.passwordProtected) {
         return errorResponse(
@@ -1680,7 +1712,7 @@ registerTool(
   "get-note-link",
   {
     description:
-      "Use when: you need the notes:// deep-link URL for a note so it can be stored in a Reminders task, shared, or opened directly.\nReturns: a notes://showNote?identifier=<uuid> URL that opens the note in Notes.app on iOS and macOS.\nDo not use when: you only need the note's CoreData id (get-note-by-id) or want to reveal the note on screen (show-note).\nNote: the primary path reads the note's identifier from the Notes database, so it needs Full Disk Access for the Node binary running this server; macOS 12-15 can fall back to the AppleScript 'note link' property, which macOS 26+ no longer exposes. Password-protected notes cannot be linked.",
+      "Use when: you need the notes:// deep-link URL for a note so it can be stored in a Reminders task, shared, or opened directly.\nReturns: a notes://showNote?identifier=<uuid> URL that opens the note in Notes.app on iOS and macOS.\nDo not use when: you only need the note's CoreData id (get-note-by-id) or want to reveal the note on screen (show-note).\nNote: the primary path reads the note's identifier from the Notes database, so it needs Full Disk Access for the responsible process (run doctor to identify it); macOS 12-15 can fall back to the AppleScript 'note link' property, which macOS 26+ no longer exposes. Password-protected notes cannot be linked.",
     inputSchema: {
       id: looseNoteId(z.string())
         .optional()
@@ -1716,7 +1748,7 @@ registerTool(
       const url = notesManager.getNoteLinkById(id);
       if (!url) {
         return errorResponse(
-          `Failed to get note link for "${note.title}". The Notes database may not be accessible — grant Full Disk Access to the Node binary running the server (or the terminal that launches it), fully quit and relaunch, then run the doctor tool. See: ${FULL_DISK_ACCESS_GUIDE_URL}. (On macOS 12–15 this also falls back to the AppleScript note link property.)`
+          `Failed to get note link for "${note.title}". The Notes database may not be accessible. ${fdaRemediation()} (On macOS 12–15 this also falls back to the AppleScript note link property.)`
         );
       }
       return successResponse(`Note link: ${url}`, { id, title: note.title, url });
@@ -1738,7 +1770,7 @@ registerTool(
     const url = notesManager.getNoteLink(title, account);
     if (!url) {
       return errorResponse(
-        `Failed to get note link for "${title}". The Notes database may not be accessible — grant Full Disk Access to the Node binary running the server (or the terminal that launches it), fully quit and relaunch, then run the doctor tool. See: ${FULL_DISK_ACCESS_GUIDE_URL}. (On macOS 12–15 this also falls back to the AppleScript note link property.)`
+        `Failed to get note link for "${title}". The Notes database may not be accessible. ${fdaRemediation()} (On macOS 12–15 this also falls back to the AppleScript note link property.)`
       );
     }
     return successResponse(`Note link: ${url}`, { title, url });
@@ -1879,18 +1911,45 @@ registerTool(
   "get-note-tables",
   {
     description:
-      "Use when: reading the native tables in one exact note as data or Markdown.\nReturns: every table in body order as GitHub-flavored Markdown (first row as header) plus JSON rows with stable row/column ids, and tableCellsComplete.\nDo not use when: you need the whole note (get-note-markdown / get-note-content) or native object ranges and checklist ids (get-native-objects).\nSafety: read-only; reads the NoteStore database and requires Full Disk Access. A cell that cannot be decoded is null in rows, listed in incompleteCells, and marked [undecoded cell] in Markdown; it is never guessed. Cell text only: links and styling inside cells are not rendered.",
-    inputSchema: { id: noteIdInput },
+      "Use when: reading the native tables in one exact note as data or Markdown.\nReturns: one page of whole tables in body order as GitHub-flavored Markdown (first row as header) plus JSON rows with stable row/column ids, tableCellsComplete, and page info. Default limit 500 and maxBytes 4 MiB; while page.hasMore is true, call again with offset set to page.nextOffset. The byte budget includes the full serialized tool response, including repeated Markdown.\nDo not use when: you need the whole note (get-note-markdown / get-note-content) or native object ranges and checklist ids (get-native-objects).\nSafety: read-only; reads the NoteStore database and requires Full Disk Access. A cell that cannot be decoded is null in rows, listed in incompleteCells, and marked [undecoded cell] in Markdown; it is never guessed. A table larger than an empty page returns metadata only with complete: false and contentOmitted: true; increase maxBytes (max 8 MiB) or export the note to a file. Cell text only: links and styling inside cells are not rendered.",
+    inputSchema: {
+      id: noteIdInput,
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .max(Number.MAX_SAFE_INTEGER)
+        .optional()
+        .describe("Zero-based position of the first table (default 0); use page.nextOffset"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_TABLES_PER_PAGE)
+        .optional()
+        .describe(`Maximum tables to return (default and max ${MAX_TABLES_PER_PAGE})`),
+      maxBytes: z
+        .number()
+        .int()
+        .min(MIN_TABLE_RESPONSE_BYTES)
+        .max(MAX_TABLE_RESPONSE_BYTES)
+        .optional()
+        .describe(
+          `Maximum UTF-8 bytes of the serialized tool response (default ${DEFAULT_TABLE_RESPONSE_BYTES}, max ${MAX_TABLE_RESPONSE_BYTES})`
+        ),
+    },
     outputSchema: {
       id: z.string().optional(),
       tables: z.array(z.record(z.unknown())).optional(),
       tableCount: z.number().optional(),
       tableCellsComplete: z.boolean().optional(),
       markdown: z.string().optional(),
+      page: z.record(z.unknown()).optional(),
     },
     annotations: { readOnlyHint: true },
   },
-  withErrorHandling(({ id }) => {
+  withErrorHandling(({ id, offset, limit, maxBytes }) => {
+    const options = validateTablePageOptions({ offset, limit, maxBytes });
     // Database-only path: the metadata read classifies missing notes and
     // Full Disk Access failures before the rich-text read is attempted.
     const { metadata, message } = getNoteMetadata(id);
@@ -1901,18 +1960,7 @@ registerTool(
       );
     }
     const result = notesManager.getNoteTablesById(id);
-    const count = result.tables.length;
-    const summary =
-      count === 0
-        ? "This note has no native tables."
-        : `${count} table(s)${result.tableCellsComplete ? "" : " (some content could not be decoded; see tables[].reason)"}:\n\n${result.markdown}`;
-    return successResponse(summary, {
-      id,
-      tables: result.tables as unknown as Array<Record<string, unknown>>,
-      tableCount: count,
-      tableCellsComplete: result.tableCellsComplete,
-      markdown: result.markdown,
-    });
+    return tablePageResponse(id, result, options);
   }, "Error reading note tables")
 );
 
@@ -1955,10 +2003,7 @@ registerTool(
       page = pageNoteBlocks(readNoteBlocks(id), { offset, limit });
     } catch (error) {
       if (!(error instanceof NoteBlocksError)) throw error;
-      const hint =
-        error.code === "no-full-disk-access"
-          ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}`
-          : "";
+      const hint = error.code === "no-full-disk-access" ? ` ${fdaRemediation()}` : "";
       return errorResponse(
         `Error reading note blocks [${error.code}]: ${error.message}${hint}`,
         error
@@ -2006,7 +2051,7 @@ registerTool(
   "list-note-paragraphs",
   {
     description:
-      "Use when: you need a note's paragraphs with their style and stored paragraph ID, for example to choose one to link to.\nReturns: one page of non-empty paragraphs in body order, each with blockIndex (as in get-note-blocks), text, style, paragraphId, paragraphIdStatus (unique, shared, missing) and, only when unique, a direct applenotes:// url that opens that paragraph; plus counts per status and page info (call again with offset set to page.nextOffset while page.hasMore is true).\nDo not use when: you need inline formatting (get-note-blocks).\nSafety: read-only; reads the NoteStore database directly and requires Full Disk Access. Paragraph IDs repeat often (Notes copies them when a paragraph is split), so shared IDs get no url. Title lookups ignore Recently Deleted. Password-protected notes are refused.",
+      "Use when: you need a note's paragraphs with their style and stored paragraph ID, for example to choose one to link to.\nReturns: one page of non-empty paragraphs in body order, each with blockIndex (as in get-note-blocks), text, style, paragraphId, paragraphIdStatus (unique, shared, missing) and, only when unique, a direct applenotes:// url that opens that paragraph; plus counts per status and page info (call again with offset set to page.nextOffset while page.hasMore is true).\nDo not use when: you need inline formatting (get-note-blocks).\nSafety: never changes Notes; reads the NoteStore database directly and requires Full Disk Access. Without recordAnchors it writes nothing; with recordAnchors it also writes the local anchor registry file (mode 0600), so the tool is not marked read-only. Paragraph IDs repeat often (Notes copies them when a paragraph is split), so shared IDs get no url. Title lookups ignore Recently Deleted. Password-protected notes are refused.",
     inputSchema: {
       ...paragraphNoteSelector,
       linkableOnly: z
@@ -2036,7 +2081,7 @@ registerTool(
       page: z.record(z.unknown()).optional(),
       anchorsRecorded: z.number().optional(),
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   },
   withErrorHandling(({ id, title, folder, linkableOnly, offset, limit, recordAnchors }) => {
     const note = readNoteParagraphs({ id, title, folder });
@@ -2075,7 +2120,7 @@ registerTool(
   "get-paragraph-link",
   {
     description:
-      "Use when: you need a link that opens Notes at one paragraph (for example a heading) of a note.\nReturns: a direct applenotes://showNote?identifier=<note>&paragraphID=<paragraph> url and the selected paragraph, only when that paragraph's stored ID is present and appears in no other paragraph of the note. Otherwise an error whose structuredContent.reason says why: paragraph-id-shared, paragraph-id-missing, no-match, ambiguous-paragraph (pass occurrence or a longer snippet), occurrence-out-of-range, ambiguous-note, encrypted.\nDo not use when: you want a link to the whole note (get-note-link).\nSafety: read-only; never creates or changes a paragraph ID, so a paragraph without a unique ID cannot be linked. Requires Full Disk Access. A later edit in Notes can replace the ID and break the link.",
+      "Use when: you need a link that opens Notes at one paragraph (for example a heading) of a note.\nReturns: a direct applenotes://showNote?identifier=<note>&paragraphID=<paragraph> url and the selected paragraph, only when that paragraph's stored ID is present and appears in no other paragraph of the note. Otherwise an error whose structuredContent.reason says why: paragraph-id-shared, paragraph-id-missing, no-match, ambiguous-paragraph (pass occurrence or a longer snippet), occurrence-out-of-range, ambiguous-note, encrypted.\nDo not use when: you want a link to the whole note (get-note-link).\nSafety: never changes Notes or a paragraph ID, so a paragraph without a unique ID cannot be linked. Requires Full Disk Access. Without recordAnchor it writes nothing; with recordAnchor it also writes the local anchor registry file (mode 0600), so the tool is not marked read-only. A later edit in Notes can replace the ID and break the link.",
     inputSchema: {
       ...paragraphNoteSelector,
       contains: z
@@ -2118,7 +2163,7 @@ registerTool(
       paragraph: z.record(z.unknown()).optional(),
       anchorId: z.string().optional(),
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
   },
   withErrorHandling(
     ({ id, title, folder, contains, match, blockIndex, occurrence, recordAnchor }) => {
@@ -3794,13 +3839,19 @@ registerTool(
       checks: z.array(z.object({}).passthrough()).optional(),
       runtimeOS: z.object({}).passthrough().optional(),
       features: z.record(z.string(), z.object({}).passthrough()).optional(),
+      publicHelper: z.object({}).passthrough().optional(),
+      broker: z.object({}).passthrough().optional(),
     },
   },
   withErrorHandling(() => {
     // Richer than health-check: Notes.app permission, account state, and Full
     // Disk Access with actionable messages + structuredContent (#22).
     const report = runDoctor(notesManager);
-    return successResponse(formatDoctorReport(report), { ...report });
+    const broker = brokerStatus();
+    return successResponse(`${formatDoctorReport(report)}\n\nPermission broker: ${broker.detail}`, {
+      ...report,
+      broker,
+    });
   }, "Error running doctor")
 );
 
@@ -4105,8 +4156,9 @@ registerTool(
   "batch-move-notes",
   {
     description:
-      "Use when: moving multiple notes by id into one destination folder.\nReturns: per-id success/failure counts after destination-folder verification.\nDo not use when: moving a single note (move-note).\nSafety: each moved note's actual container ID is compared with the destination folder ID before success is reported. The destination folder must already exist (create-folder); a smart folder is refused for the whole call (code unsupported) before any note moves.",
+      "Use when: moving multiple notes by id into one destination folder.\nReturns: per-id success/failure counts after destination-folder verification.\nDo not use when: moving a single note (move-note).\nSafety: optional folder preconditions apply independently to every note, checked live immediately before its move in the same AppleScript; a scope mismatch leaves that note unchanged and other items continue. Each moved note's actual container ID is compared with the destination folder ID before success is reported. The destination folder must already exist (create-folder); a smart folder is refused for the whole call (code unsupported) before any note moves.",
     inputSchema: {
+      ...scopeGuardInputs,
       ids: noteIdArrayInput.describe(
         `Array of note IDs to move (max ${MAX.BATCH_IDS} per request)`
       ),
@@ -4132,12 +4184,13 @@ registerTool(
       results: z.array(z.object({}).passthrough()).optional(),
     },
   },
-  withErrorHandling(({ ids, folder, account }) => {
+  withErrorHandling((args) => {
+    const { ids, folder, account } = args;
     if (ids.length === 0) {
       return errorResponse("No note IDs provided");
     }
 
-    const results = notesManager.batchMoveNotes(ids, folder, account);
+    const results = notesManager.batchMoveNotes(ids, folder, account, scopeFrom(args));
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
@@ -4150,15 +4203,28 @@ registerTool(
       }
     }
 
-    return succeeded > 0
-      ? successResponse(lines.join("\n"), {
-          ok: failed === 0,
-          folder,
-          succeeded,
-          failed,
-          results,
-        })
-      : errorResponse(lines.join("\n"));
+    if (succeeded > 0)
+      return successResponse(lines.join("\n"), {
+        ok: failed === 0,
+        folder,
+        succeeded,
+        failed,
+        results,
+      });
+
+    // Certainty belongs to the entire batch, not whichever row's prose the
+    // classifier matches first. Unknown or post-dispatch failures may follow
+    // a move even when a different item was refused by a scope guard.
+    const allRefusedBeforeMove =
+      results.length === ids.length &&
+      results.every((result) => result.committed === false && result.indeterminate === false);
+    if (!allRefusedBeforeMove)
+      lines.push("\nBatch move outcome is uncertain; read each exact note ID before retrying.");
+    const message = lines.join("\n");
+    const envelope: ErrorEnvelope = allRefusedBeforeMove
+      ? { ...classifyError(message), committed: false, indeterminate: false }
+      : { code: "verification_failed", indeterminate: true };
+    return errorResponse(message, new CodedError(message, envelope));
   }, "Error performing batch move")
 );
 
@@ -4727,10 +4793,7 @@ registerTool(
       });
     } catch (error) {
       if (!(error instanceof NotesExportError || error instanceof NoteBlocksError)) throw error;
-      const hint =
-        error.code === "no-full-disk-access"
-          ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}`
-          : "";
+      const hint = error.code === "no-full-disk-access" ? ` ${fdaRemediation()}` : "";
       if (error instanceof NotesExportError && error.details)
         return errorResponse(
           `Error exporting Markdown [${error.code}]: the template is invalid:\n` +
@@ -4767,7 +4830,7 @@ registerTool(
   "export-notes-html",
   {
     description:
-      "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.\nDrawings: classic PencilKit drawings are rendered as SVG through the public native helper (setup --public-helper) instead of Notes' PNG; Paper drawings keep the PNG. A drawing that cannot be decoded falls back to the PNG and is counted in vectorDrawings.fallbackReasons; it never fails the export. vectorDrawings false keeps every PNG.",
+      "Use when: exporting one note (by exact id) or a folder's notes as one standalone HTML file rendered from the decoded note body, with semantic tables and images, drawings, scans, audio, files and link cards in body order.\nReturns: a receipt {format, count, bytes, output} plus embedded or sidecar asset counts, attachment counts and skipped notes. The HTML itself is never returned inline.\nDo not use when: you want Markdown (export-notes-markdown) or a restorable backup (export-notes-json). A folder document is a presentation format, not something to import back.\nSafety: read-only against Notes; requires Full Disk Access. outputPath is required and create-only ([output_exists] if it exists). Assets are embedded as data URLs (each up to 10 MiB) unless embedAssets is false, which copies them to a sidecar directory (assetsDir, default <output stem>.assets) with relative URLs and never replaces existing files. No file: URLs or Notes library paths are written; missing assets show a visible unavailable marker.\nDrawings: by default every drawing keeps Notes' PNG. With vectorDrawings true, classic PencilKit drawings are rendered as SVG through the public native helper (setup --public-helper); Paper drawings keep the PNG. A drawing that cannot be decoded falls back to the PNG and is counted in vectorDrawings.fallbackReasons; it never fails the export.",
     inputSchema: {
       id: noteIdInput.optional(),
       folder: z
@@ -4808,7 +4871,7 @@ registerTool(
         .boolean()
         .optional()
         .describe(
-          "Render classic PencilKit drawings as SVG via the public native helper (default true). False keeps Notes' PNG rendering"
+          "Render classic PencilKit drawings as SVG via the public native helper (default false). When false or omitted, Notes' PNG rendering is kept and the helper never runs"
         ),
     },
     outputSchema: {
@@ -4841,10 +4904,7 @@ registerTool(
       });
     } catch (error) {
       if (!(error instanceof NotesExportError || error instanceof NoteBlocksError)) throw error;
-      const hint =
-        error.code === "no-full-disk-access"
-          ? ` Grant Full Disk Access to the Node binary running this server (run the doctor tool for its path): ${FULL_DISK_ACCESS_GUIDE_URL}`
-          : "";
+      const hint = error.code === "no-full-disk-access" ? ` ${fdaRemediation()}` : "";
       return errorResponse(`Error exporting HTML [${error.code}]: ${error.message}${hint}`, error);
     }
     const assets = receipt.assets

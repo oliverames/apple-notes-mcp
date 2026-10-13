@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppleNotesManager } from "../services/appleNotesManager.js";
+import { lookupStableIdentifiers } from "../utils/noteIdentifiers.js";
+
+vi.mock(import("../utils/noteIdentifiers.js"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  lookupStableIdentifiers: vi.fn(),
+}));
 
 vi.mock(import("../services/privatePaperWriter.js"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -39,6 +45,10 @@ function fixture(
   tool = "native-add-paper"
 ) {
   const registerTool = vi.fn();
+  const identifier = link?.match(/identifier=([^&]+)/)?.[1];
+  vi.mocked(lookupStableIdentifiers).mockReturnValue(
+    identifier ? new Map([[CD, { identifier }]]) : new Map()
+  );
   const manager = { getNoteLinkById: vi.fn(() => link) } as unknown as AppleNotesManager;
   const writer = { env: {} };
   const nudge = { marker: "nudge" };

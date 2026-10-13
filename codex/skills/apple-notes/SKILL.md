@@ -52,7 +52,7 @@ Use this skill when the user:
 | `get-selected-notes`         | Read the notes currently selected in Notes.app                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `export-notes-json`          | Export notes as JSON one page at a time (`offset`/`limit`/`modifiedSince`); repeat with `page.nextOffset` while `page.hasMore`                                                                                                                                                                                                                                                                                                                               |
 | `export-notes-markdown`      | Export one note or a folder as one Markdown document from the decoded body; optional create-only `outputPath` and `assetsDir` for attachment copies; `template`/`templateFile` render through a JSON Markdown template such as `obsidian` front matter (presentation format, not a backup)                                                                                                                                                                   |
-| `export-notes-html`          | Export one note or a folder as one standalone HTML file (semantic tables, attachments in body order); `outputPath` required and create-only; assets embedded (10 MiB each) or in a sidecar directory with `embedAssets: false`; classic drawings become SVG through the public helper (Paper keeps its PNG; failures fall back to PNG)                                                                                                                       |
+| `export-notes-html`          | Export one note or a folder as one standalone HTML file (semantic tables, attachments in body order); `outputPath` required and create-only; assets embedded (10 MiB each) or in a sidecar directory with `embedAssets: false`; `vectorDrawings: true` renders classic drawings as SVG through the public helper (default `false` keeps Notes' PNG; Paper keeps its PNG; failures fall back to PNG)                                                          |
 | `list-markdown-templates`    | List built-in and saved Markdown export templates                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `show-markdown-template`     | Show a template's JSON (portable form; `expanded` for every rule)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `validate-markdown-template` | Check a template; returns every problem with a JSON path                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -139,13 +139,15 @@ To edit a template visually, the user can run `apple-notes-mcp templates edit [n
 
 Off unless the user built it (`apple-notes-mcp setup --native-helper`) and set
 `APPLE_NOTES_MCP_ENABLE_PRIVATE=1`. Call `native-helper-status` first; use
-`native-note-state` only when it reports the feature `available`. The helper is
+`native-note-state` or `native-checklist-state` only when the corresponding
+`readNoteState` or `readChecklist` feature is `available`. The helper is
 read-only: write support was deliberately deferred by the maintainer.
 
 | Tool                   | Purpose                                                                   |
 | ---------------------- | ------------------------------------------------------------------------- |
 | `native-helper-status` | Report opt-in, build, and live-probe state with a reason code (read-only) |
 | `native-note-state`    | Read a note's native state and `revision` change token (read-only)        |
+| `native-checklist-state` | Read exact native todo identities/state and `contiguous`, `consistent`, `spansLines` ambiguity flags (read-only) |
 
 ### Private Writer (opt-in, unsupported Apple API)
 
@@ -277,11 +279,16 @@ User: "Show me my shopping list"
 Action: Search by title if needed, then use get-note-content with the exact ID
 ```
 
-For a note's tables, use `get-note-tables` with the note ID. It returns each
-table as Markdown and as JSON rows. When `tableCellsComplete` is false, some
-cells could not be decoded: they are `null` in `rows` and shown as
-`[undecoded cell]` in Markdown. Report that to the user rather than filling
-them in.
+For a note's tables, use `get-note-tables` with the note ID. It returns a page
+of whole tables as Markdown and JSON rows. While `page.hasMore` is true,
+repeat with `offset: page.nextOffset` and the same `limit` and `maxBytes`.
+The full response defaults to 4 MiB (maximum 8 MiB) and 500 tables. An
+oversized table has `contentOmitted: true`, a reason and no rows; the next
+offset advances past it. Retry its original offset with a larger `maxBytes`
+or export the note to a file. When `tableCellsComplete` is false, check each
+entry's reason: undecodable cells are `null` in `rows` and shown as
+`[undecoded cell]` in Markdown. Report missing content rather than filling
+it in.
 
 Use titles for discovery only. Mutations require the exact note ID; update,
 append, and delete also require the `contentHash` returned by
@@ -307,10 +314,10 @@ instead. That path additionally needs `scopeText` (a unique existing phrase
 from below the title line; a title-only phrase is refused),
 keeps the default blank-line `separator` and `position: "after"`, and accepts a
 fixed HTML subset: `<a> <b> <br> <code> <del> <div> <em> <h1> <h2> <h3> <i> <li>
-<ol> <p> <s> <span> <strong> <table> <tbody> <td> <th> <thead> <tr> <tt> <u>
-<ul>`, with `href` on `<a>` and a `font-size` style on `<span>` as the only
-attributes. Anything outside that subset is refused by name — rewrite the whole
-body with `update-note` instead.
+<ol> <p> <s> <span> <strong> <tt> <u> <ul>`, with `href` on `<a>` and a
+`font-size` style on `<span>` as the only attributes. A table, whole or in
+part, is refused here — use `create-table` instead. Anything else outside that
+subset is refused by name — rewrite the whole body with `update-note` instead.
 
 **Adding a web link — use `insert-link`.** Pass `url` and either `mode: "raw"`
 (the URL is its own clickable text) or `mode: "hyperlink"` with a `label`.
@@ -492,7 +499,7 @@ Every error result carries `structuredContent.code` (`not_found`, `ambiguous`, `
 If your client shows only text, not `structuredContent`, every result that has it ends with a `structuredContent: {…}` line holding the same JSON. Take `contentHash` (for `expectedContentHash`), ids, and the error `code` from that line.
 
 - **"Note not found"**: Use search-notes to find similar titles
-- **"Permission denied"**: User needs to grant automation permission in System Settings > Privacy & Security > Automation. The user can run `apple-notes-mcp setup --permissions --open` in their terminal to check every grant and open each missing pane
+- **"Permission denied"**: User needs to grant automation permission in System Settings > Privacy & Security > Automation. The user can run `apple-notes-mcp setup --permissions --open --probe-automation` in their terminal to check every grant and open each missing pane
 - **Native write times out or reports an uncertain outcome** ("Shortcuts timed out waiting for …", "Operation outcome uncertain", "readback was not verified"): do not retry. Read the exact note first — the write may have landed. If it did not, the named bridge Shortcut is likely waiting on a first-run consent prompt that a background run cannot display; ask the user to run that Shortcut once in the foreground in Shortcuts.app and choose Always Allow (once per bridge, after install or upgrade), then retry
 - **Slow Notes.app**: `create-note`, `update-note`, `append-to-note`, `delete-note`, and `move-note` accept `timeoutSeconds` (1–120) for each automation step of that call. A timed-out write is uncertain; read the exact note before retrying
 - **Read times out on a note with a large image**: Notes.app returns images inside the body as base64, so a multi-megabyte image can outlast the read timeout, which also blocks `delete-note`. The error names the large attachments when Full Disk Access is granted. Retry `get-note-content` (and then `delete-note`) with a larger `timeoutSeconds`; if it still fails, have the user remove the image or delete the note in Notes.app

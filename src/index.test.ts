@@ -810,7 +810,6 @@ describe("writer tool registration over MCP", () => {
       "native-append-plain-text",
       "native-sync-push",
       "native-edit-note",
-      "native-checklist-state",
       "native-set-checklist-item",
       "native-highlight-text",
       "native-add-url-card",
@@ -832,6 +831,7 @@ describe("writer tool registration over MCP", () => {
     expect(enabled.filter((tool) => !off.includes(tool))).toEqual(writerTools);
     expect(off).toContain("native-helper-status");
     expect(off).toContain("native-note-state");
+    expect(off).toContain("native-checklist-state");
     expect(await toolNames("0")).toEqual(off);
     expect(await toolNames("true")).toEqual(off);
   }, 90_000);
